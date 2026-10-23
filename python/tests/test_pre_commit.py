@@ -171,23 +171,36 @@ def test_coverage_calculators(tmp_path: Path) -> None:
         rs_docs2, rs_total2 = pc.calculate_rust_doc_coverage(tmp_path, force_run=True)
         assert (rs_docs2, rs_total2) == (5, 5)
 
+    rs_crate = tmp_path / "crates" / "demo" / "src"
+    rs_crate.mkdir(parents=True)
+    (rs_crate / "lib.rs").write_text(
+        f"/// Docs.{NL}/// # Arguments{NL}/// * `x` - X value.{NL}"
+        f"pub fn documented(&self, x: i32, y: i32, (a, b): (u8, u8)) {{}}{NL}"
+        f"/// Docs.{NL}pub fn no_args() {{}}{NL}",
+        encoding="utf-8",
+    )
+    assert pc.calculate_rust_arg_doc_coverage(tmp_path) == (1, 2)
+
     py_pkg = tmp_path / "python" / "libtpu"
     py_pkg.mkdir(parents=True)
     (py_pkg / "mod.py").write_text(
         f'"""Module doc."""{NL}{NL}'
-        f'class Cls:{NL}    """Class doc."""{NL}{NL}'
-        f'def fn() -> None:{NL}    """Fn doc."""{NL}',
+        f'class Cls:{NL}    """Class doc."""{NL}'
+        f"    def m(self, a: int) -> None:{NL}"
+        f'        """Method.{NL}{NL}        Args:{NL}            a: A.{NL}        """{NL}{NL}'
+        f'def fn(b: int) -> None:{NL}    """Fn doc."""{NL}',
         encoding="utf-8",
     )
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     (scripts_dir / "helper.py").write_text(
-        f"def undoc() -> None:{NL}    pass{NL}", encoding="utf-8"
+        f"class UndocCls:{NL}    pass{NL}{NL}def undoc() -> None:{NL}    pass{NL}",
+        encoding="utf-8",
     )
     py_docs, py_total = pc.calculate_python_doc_coverage(tmp_path)
-    assert (py_docs, py_total) == (3, 5)
+    assert (py_docs, py_total) == (5, 9)
 
-    xml_dir = tmp_path / "cpp" / "cpp" / "build" / "doxygen_xml"
+    xml_dir = tmp_path / "cpp" / "build" / "doxygen" / "xml"
     xml_dir.mkdir(parents=True)
     (xml_dir / "index.xml").write_text("<doxygenindex/>", encoding="utf-8")
     (xml_dir / "struct_foo.xml").write_text(
@@ -198,7 +211,14 @@ def test_coverage_calculators(tmp_path: Path) -> None:
             <sectiondef>
                 <memberdef kind="function">
                     <briefdescription><para>Fn doc</para></briefdescription>
-                    <detaileddescription></detaileddescription>
+                    <detaileddescription>
+                        <para><parameterlist kind="param"><parameteritem>
+                            <parameternamelist><parametername>x</parametername></parameternamelist>
+                        </parameteritem></parameterlist></para>
+                    </detaileddescription>
+                    <param><declname>x</declname></param>
+                    <param><declname>y</declname></param>
+                    <param><type>void</type></param>
                 </memberdef>
                 <memberdef kind="friend">
                     <briefdescription></briefdescription>
@@ -221,11 +241,11 @@ def test_coverage_calculators(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     cpp_docs, cpp_total = pc.calculate_cpp_doc_coverage(tmp_path, force_run=False)
-    assert (cpp_docs, cpp_total) == (2, 4)
+    assert (cpp_docs, cpp_total) == (3, 6)
 
     with patch.object(pc, "run_command"):
         cpp_docs2, cpp_total2 = pc.calculate_cpp_doc_coverage(tmp_path, force_run=True)
-        assert (cpp_docs2, cpp_total2) == (2, 4)
+        assert (cpp_docs2, cpp_total2) == (3, 6)
 
     empty_root = tmp_path / "empty"
     (empty_root / "python" / "libtpu").mkdir(parents=True)
@@ -305,6 +325,89 @@ def test_coverage_calculators(tmp_path: Path) -> None:
     (cov_dir / "py_coverage.json").unlink()
     with patch.object(pc, "run_command", side_effect=fake_cov_run):
         assert pc.calculate_test_coverage(tmp_path, force_run=True) == 100.0
+
+    cpp_build = tmp_path / "cpp" / "build"
+    cpp_build.mkdir(parents=True, exist_ok=True)
+    test_bin = cpp_build / "test_libtpu"
+    test_bin.write_text("bin", encoding="utf-8")
+
+    def fake_cpp_cov(
+        cmd: list[str],
+        cwd: Path,
+        env: dict[str, str] | None = None,
+        capture_output: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        """Simulates ctest, llvm-profdata, and llvm-cov export.
+
+        Args:
+            cmd: Command list.
+            cwd: Working directory.
+            env: Environment dictionary.
+            capture_output: Whether stdout is captured.
+
+        Returns:
+            CompletedProcess with synthetic llvm-cov JSON.
+        """
+        _ = (cwd, env, capture_output)
+        out = json.dumps(
+            {
+                "data": [
+                    {
+                        "totals": {
+                            "lines": {"count": 50, "covered": 50, "percent": 100.0},
+                            "functions": {"count": 10, "covered": 10, "percent": 100.0},
+                            "branches": {"count": 8, "covered": 8, "percent": 100.0},
+                        }
+                    }
+                ]
+            }
+        )
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
+
+    with patch.object(pc, "run_command", side_effect=fake_cpp_cov):
+        assert pc.calculate_cpp_test_coverage(tmp_path, force_run=True) == 100.0
+    (cpp_build / "test_libtpu.profraw").write_text("prof", encoding="utf-8")
+    with (
+        patch.object(pc, "run_command", side_effect=fake_cpp_cov),
+        patch("shutil.which", return_value=None),
+    ):
+        assert pc.calculate_cpp_test_coverage(tmp_path, force_run=True) == 100.0
+
+    (cov_dir / "cpp_coverage.json").write_text(
+        json.dumps(
+            {
+                "data": [
+                    {
+                        "totals": {
+                            "lines": {"count": 50, "covered": 50, "percent": 100.0},
+                            "functions": {"count": 10, "covered": 10, "percent": 100.0},
+                            "branches": {"count": 0, "covered": 0, "percent": 0.0},
+                        }
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert pc.calculate_cpp_test_coverage(tmp_path, force_run=False) == 100.0
+
+    (cov_dir / "cpp_coverage.json").write_text(
+        json.dumps(
+            {
+                "data": [
+                    {
+                        "totals": {
+                            "lines": {"count": 50, "covered": 45, "percent": 90.0},
+                            "functions": {"count": 10, "covered": 8, "percent": 80.0},
+                            "branches": {"count": 8, "covered": 6, "percent": 75.0},
+                        }
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert pc.calculate_cpp_test_coverage(tmp_path, force_run=False) == 75.0
 
 
 def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:

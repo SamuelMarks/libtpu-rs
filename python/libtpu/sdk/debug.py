@@ -28,7 +28,8 @@ class _UnregisterDebugCallbackArgs(ctypes.Structure):
     ]
 
 
-_ACTIVE_CALLBACKS: dict[int, Callable[[], None]] = {}
+_CDebugCallback = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
+_ACTIVE_CALLBACKS: dict[int, object] = {}
 _SHARED_CLIENT: SdkClient | None = None
 
 
@@ -41,6 +42,8 @@ def _get_debug_client() -> SdkClient:
     global _SHARED_CLIENT
     if _SHARED_CLIENT is None:
         _SHARED_CLIENT = SdkClient()
+        _SHARED_CLIENT._cdll.LibtpuSdk_TriggerDebugCallbacks.argtypes = [ctypes.c_void_p]
+        _SHARED_CLIENT._cdll.LibtpuSdk_TriggerDebugCallbacks.restype = ctypes.c_size_t
     return _SHARED_CLIENT
 
 
@@ -54,11 +57,22 @@ def register_debug_callback(cb: Callable[[], None]) -> int:
         Assigned 64-bit integer callback identifier (`callback_id`).
     """
     client = _get_debug_client()
-    args = _RegisterDebugCallbackArgs(client._handle, id(cb), 0, 0)
+
+    @_CDebugCallback
+    def _trampoline(_user_data: int | None) -> None:
+        """C FFI callback trampoline invoking the registered Python callable.
+
+        Args:
+            _user_data: Opaque user data pointer passed by the C runtime.
+        """
+        cb()
+
+    fn_addr = ctypes.cast(_trampoline, ctypes.c_void_p).value or 0
+    args = _RegisterDebugCallbackArgs(client._handle, fn_addr, 0, 0)
     err = client._cdll.LibtpuSdk_RegisterDebugCallback(ctypes.byref(args))
     _check_sdk_error(client._cdll, err)
     cb_id = int(args.callback_id)
-    _ACTIVE_CALLBACKS[cb_id] = cb
+    _ACTIVE_CALLBACKS[cb_id] = _trampoline
     return cb_id
 
 
@@ -76,6 +90,6 @@ def unregister_debug_callback(callback_id: int) -> None:
 
 
 def _trigger_debug_callback_for_test() -> None:
-    """Invokes all currently registered debug callbacks for testing."""
-    for cb in list(_ACTIVE_CALLBACKS.values()):
-        cb()
+    """Invokes all currently registered debug callbacks via `LibtpuSdk_TriggerDebugCallbacks`."""
+    client = _get_debug_client()
+    client._cdll.LibtpuSdk_TriggerDebugCallbacks(client._handle)

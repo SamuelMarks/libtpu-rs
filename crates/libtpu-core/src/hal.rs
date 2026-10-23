@@ -419,6 +419,8 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
 struct SimulatedDeviceState {
     /// Active HBM allocations mapped by [`DeviceAddress`].
     allocations: BTreeMap<DeviceAddress, Vec<u8>>,
+    /// Memory space kind associated with each [`DeviceAddress`].
+    allocation_kinds: BTreeMap<DeviceAddress, MemoryKind>,
     /// Next virtual HBM address to assign.
     next_address: u64,
     /// Bytes currently allocated.
@@ -506,6 +508,7 @@ impl SimulatedTpuHal {
                                             dev_id,
                                             SimulatedDeviceState {
                                                 allocations: BTreeMap::new(),
+                                                allocation_kinds: BTreeMap::new(),
                                                 next_address: 0x1000_0000,
                                                 bytes_in_use: 0,
                                                 peak_bytes_in_use: 0,
@@ -896,6 +899,47 @@ impl SimulatedTpuHal {
                 let v1 = in_elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
                 return Self::eval_dot_general(out_elem_type, &v0, &v1, &bundle.attrs);
             }
+            TpuOpCode::Iota => {
+                if let Some(out_sh) = &bundle.attrs.output_shape {
+                    let axis = bundle.attrs.iota_dim.min(out_sh.rank().saturating_sub(1));
+                    let count = out_sh.element_count();
+                    let mut out_vals = Vec::with_capacity(count);
+                    for idx in 0..count {
+                        let coords = out_sh.linear_to_coords(idx);
+                        let c =
+                            u32::try_from(coords.get(axis).copied().unwrap_or(idx)).unwrap_or(0);
+                        out_vals.push(f64::from(c));
+                    }
+                    return out_elem_type.pack_from_f64_slice(&out_vals);
+                }
+            }
+            TpuOpCode::ReduceSumF32 | TpuOpCode::ReduceMax | TpuOpCode::ReduceMin => {
+                let vals = in_elem_type.unpack_to_f64_vec(b0);
+                let scalar = match bundle.opcode {
+                    TpuOpCode::ReduceMax => vals.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+                    TpuOpCode::ReduceMin => vals.iter().copied().fold(f64::INFINITY, f64::min),
+                    _ => vals.iter().sum(),
+                };
+                let out_len = bundle
+                    .attrs
+                    .output_shape
+                    .as_ref()
+                    .map_or(vals.len(), |s| s.element_count().max(1));
+                return out_elem_type.pack_from_f64_slice(&vec![scalar; out_len]);
+            }
+            TpuOpCode::Concatenate => {
+                if bundle.attrs.concat_dim > 0 {
+                    let v0 = in_elem_type.unpack_to_f64_vec(b0);
+                    let v1 =
+                        in_elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
+                    let mut interleaved = Vec::with_capacity(v0.len() + v1.len());
+                    for (&x, &y) in v0.iter().zip(v1.iter()) {
+                        interleaved.push(x);
+                        interleaved.push(y);
+                    }
+                    return out_elem_type.pack_from_f64_slice(&interleaved);
+                }
+            }
             _ => {}
         }
         Self::eval_bundle(bundle.opcode, out_elem_type, operands)
@@ -1022,7 +1066,7 @@ impl TpuHal for SimulatedTpuHal {
     fn allocate_device_memory(
         &self,
         device_id: DeviceId,
-        _memory_kind: MemoryKind,
+        memory_kind: MemoryKind,
         size: ByteSize,
     ) -> LibTpuResult<DeviceAddress> {
         let mut guard = self.lock_devices()?;
@@ -1042,6 +1086,7 @@ impl TpuHal for SimulatedTpuHal {
         let addr = DeviceAddress(dev.next_address);
         dev.next_address += (alloc_size.div_ceil(4096) * 4096) as u64;
         dev.allocations.insert(addr, vec![0_u8; alloc_size]);
+        dev.allocation_kinds.insert(addr, memory_kind);
         dev.bytes_in_use += alloc_size;
         dev.peak_bytes_in_use = dev.peak_bytes_in_use.max(dev.bytes_in_use);
         dev.num_allocs += 1;
@@ -1068,6 +1113,7 @@ impl TpuHal for SimulatedTpuHal {
                     parameter: "address",
                     reason: format!("Allocation {address} not found on device {device_id}"),
                 })?;
+        dev.allocation_kinds.remove(&address);
         dev.bytes_in_use = dev.bytes_in_use.saturating_sub(removed.len());
         drop(guard);
         Ok(())
@@ -2552,6 +2598,7 @@ mod tests {
             b"module @slc_nd { func.func @main(%arg0: tensor<4xf32>) -> tensor<2xf32> { %0 = stablehlo.slice %arg0, start_indices = [1], limit_indices = [3], strides = [1] : (tensor<4xf32>) -> tensor<2xf32>\n return %0 : tensor<2xf32> } }",
             b"module @slc_strided { func.func @main(%arg0: tensor<4xf32>) -> tensor<2xf32> { %0 = stablehlo.slice %arg0, start_indices = [0], limit_indices = [4], strides = [2] : (tensor<4xf32>) -> tensor<2xf32>\n return %0 : tensor<2xf32> } }",
             b"module @cst_dense { func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.constant dense<3.0> : tensor<4xf32>\n return %0 : tensor<4xf32> } }",
+            b"module @cat_ax1 { func.func @main(%arg0: tensor<2x2xf32>, %arg1: tensor<2x2xf32>) -> tensor<2x4xf32> { %0 = stablehlo.concatenate %arg0, %arg1, dimension = 1 : tensor<2x4xf32>\n return %0 : tensor<2x4xf32> } }",
             b"HloModule hlo_params\nENTRY main {\n p0 = f32[4] parameter(0)\n ROOT r = f32[4] negate(p0)\n}",
         ] {
             for prog in CompiledProgram::compile("mlir", src, b"") {
@@ -2560,6 +2607,42 @@ mod tests {
                     .is_ok());
             }
         }
+        assert_eq!(
+            SimulatedTpuHal::eval_unary_op(TpuOpCode::Iota, ElementType::F32, &[0_u8; 8]).len(),
+            8
+        );
+        assert_eq!(
+            SimulatedTpuHal::eval_unary_op(TpuOpCode::ReduceMax, ElementType::F32, &[0_u8; 8])
+                .len(),
+            8
+        );
+        assert_eq!(
+            SimulatedTpuHal::eval_unary_op(TpuOpCode::ReduceMin, ElementType::F32, &[0_u8; 8])
+                .len(),
+            8
+        );
+        assert_eq!(
+            SimulatedTpuHal::eval_unary_op(TpuOpCode::ReduceSumF32, ElementType::F32, &[0_u8; 8])
+                .len(),
+            8
+        );
+        let no_shape_iota = crate::compiler::TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::Iota,
+            operand_slots: vec![0],
+            output_slot: 1,
+            sync_flag_id: 1,
+            attrs: crate::compiler::InstructionAttrs::default(),
+        };
+        assert_eq!(
+            SimulatedTpuHal::eval_bundle_with_attrs(
+                &no_shape_iota,
+                ElementType::F32,
+                &[&[0_u8; 8]]
+            )
+            .len(),
+            8
+        );
 
         // Test cross-device collective execution (AllReduce, AllGather, ReduceScatter)
         for col_op in [

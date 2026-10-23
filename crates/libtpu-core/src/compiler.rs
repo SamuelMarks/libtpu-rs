@@ -713,20 +713,51 @@ impl CompiledProgram {
         Ok(compiled)
     }
 
-    /// Pass 1: HLO verification and shape inference.
+    /// Pass 1: HLO verification and shape inference across parameter, bundle, and output shapes.
     pub fn pass_hlo_verification_and_shape_inference(&mut self) {
         self.memory_stats.generated_code_size_in_bytes =
             self.memory_stats.generated_code_size_in_bytes.max(256);
+        let fallback_shape = self.output_shapes.first().cloned().unwrap_or(Shape {
+            element_type: ElementType::F32,
+            dims: vec![4],
+            dynamic_dims: vec![false],
+            layout: MemoryLayout::default_tpu_tiled(1),
+        });
+        for bundle in &mut self.instruction_bundles {
+            let _ = bundle
+                .attrs
+                .output_shape
+                .get_or_insert(fallback_shape.clone());
+        }
+        let mut arg_bytes: i64 = 0;
+        for sh in &self.parameter_shapes {
+            let sz = i64::try_from(sh.unpadded_byte_size().0.max(256)).unwrap_or(256);
+            arg_bytes = arg_bytes.saturating_add(sz);
+        }
+        let mut out_bytes: i64 = 0;
+        for sh in &self.output_shapes {
+            let sz = i64::try_from(sh.unpadded_byte_size().0.max(256)).unwrap_or(256);
+            out_bytes = out_bytes.saturating_add(sz);
+        }
+        self.memory_stats.argument_size_in_bytes = arg_bytes;
+        self.memory_stats.output_size_in_bytes = out_bytes;
     }
 
     /// Pass 2: SPMD sharding propagation across replicas and partitions.
     pub fn pass_spmd_sharding_propagation(&mut self) {
         self.num_replicas = self.num_replicas.max(1);
         self.num_partitions = self.num_partitions.max(1);
+        self.parameter_memory_kinds
+            .resize(self.parameter_shapes.len(), MemoryKind::DeviceHbm);
+        self.output_memory_kinds
+            .resize(self.output_shapes.len(), MemoryKind::DeviceHbm);
     }
 
     /// Pass 3: TPU `(8, 128)` matrix sublane layout assignment and tiling.
     pub fn pass_tpu_layout_assignment_and_tiling(&mut self) {
+        for sh in &mut self.parameter_shapes {
+            sh.layout = MemoryLayout::default_tpu_tiled(sh.dims.len());
+        }
         for sh in &mut self.output_shapes {
             sh.layout = MemoryLayout::default_tpu_tiled(sh.dims.len());
         }
@@ -739,16 +770,54 @@ impl CompiledProgram {
         }
     }
 
-    /// Pass 5: On-chip VMEM scratchpad allocation.
+    /// Pass 5: On-chip VMEM scratchpad allocation based on intermediate instruction bundle footprint.
     pub fn pass_vmem_scratchpad_allocation(&mut self) {
-        self.memory_stats.temp_size_in_bytes = self.memory_stats.temp_size_in_bytes.max(256);
+        let mut scratch_bytes: i64 = 0;
+        for bundle in &self.instruction_bundles {
+            let b_bytes = bundle
+                .attrs
+                .output_shape
+                .as_ref()
+                .map_or(256_usize, |s| s.unpadded_byte_size().0.max(256));
+            scratch_bytes = scratch_bytes.saturating_add(i64::try_from(b_bytes).unwrap_or(256));
+        }
+        self.memory_stats.temp_size_in_bytes = scratch_bytes.max(256);
     }
 
-    /// Pass 6: LLO VLIW instruction bundle scheduling and sync flag assignment.
+    /// Pass 6: LLO VLIW instruction bundle scheduling, sync flag assignment, and cost analysis.
     pub fn pass_llo_vliw_bundle_scheduling(&mut self) {
+        let mut total_flops: f32 = 0.0;
+        let mut total_trans: f32 = 0.0;
         for (idx, bundle) in self.instruction_bundles.iter_mut().enumerate() {
             bundle.sync_flag_id = u32::try_from(idx + 1).unwrap_or(1);
+            let elems = u16::try_from(
+                bundle
+                    .attrs
+                    .output_shape
+                    .as_ref()
+                    .map_or(64_usize, |s| s.element_count().max(1)),
+            )
+            .unwrap_or(64);
+            if bundle.opcode == TpuOpCode::DotGeneralF32 {
+                total_flops += f32::from(elems.saturating_mul(8));
+            } else if bundle.opcode != TpuOpCode::Identity {
+                total_flops += f32::from(elems);
+            }
+            if bundle.opcode.is_transcendental() {
+                total_trans += f32::from(elems);
+            }
         }
+        let bytes_u16 = u16::try_from(
+            (self.memory_stats.argument_size_in_bytes + self.memory_stats.output_size_in_bytes)
+                .max(256),
+        )
+        .unwrap_or(512);
+        self.cost_analysis = CostAnalysis {
+            flops: total_flops,
+            transcendentals: total_trans,
+            bytes_accessed: f32::from(bytes_u16),
+            optimal_seconds: 0.000_001,
+        };
     }
 
     /// Runs all 6 compiler passes in sequence on this [`CompiledProgram`].
@@ -1479,12 +1548,17 @@ impl CompiledProgram {
                 is_dynamic_dimension: s.dynamic_dims.clone(),
             })
             .collect();
+        let instruction_opcodes = self
+            .instruction_bundles
+            .iter()
+            .map(|b| i64::from(b.opcode as u8))
+            .collect();
         TpuSerializedExecutableProto {
             name: self.name.clone(),
             fingerprint: self.fingerprint.clone(),
             num_replicas: i32::try_from(self.num_replicas).unwrap_or(1),
             num_partitions: i32::try_from(self.num_partitions).unwrap_or(1),
-            instruction_opcodes: vec![i64::from(self.opcode as u8)],
+            instruction_opcodes,
             output_shapes,
             compile_options_bytes: self.compile_options_bytes.clone(),
             hlo_module_bytes: self.source_bytes.clone(),

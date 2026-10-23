@@ -481,6 +481,21 @@ public:
   Profiler &operator=(const Profiler &other) = delete;
 
   /**
+   * @brief Move constructor transferring ownership of `TpuProfiler*` and
+   * `TpuStatus*`.
+   * @param other Rvalue profiler to move from.
+   */
+  Profiler(Profiler &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring ownership of `TpuProfiler*`
+   * and `TpuStatus*`.
+   * @param other Rvalue profiler to move from.
+   * @return Reference to this profiler.
+   */
+  Profiler &operator=(Profiler &&other) noexcept;
+
+  /**
    * @brief Starts hardware and runtime trace collection.
    * @return `true` if started successfully, `false` otherwise.
    */
@@ -581,6 +596,20 @@ public:
   SdkClient &operator=(const SdkClient &other) = delete;
 
   /**
+   * @brief Move constructor transferring ownership of `LibtpuSdk_Client*`.
+   * @param other Rvalue SDK client to move from.
+   */
+  SdkClient(SdkClient &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring ownership of
+   * `LibtpuSdk_Client*`.
+   * @param other Rvalue SDK client to move from.
+   * @return Reference to this SDK client.
+   */
+  SdkClient &operator=(SdkClient &&other) noexcept;
+
+  /**
    * @brief Queries the byte length of the runtime core state summary via
    * `GetLibtpuSdkApi()`.
    * @return Length of the core state summary string (`> 0`).
@@ -602,6 +631,30 @@ public:
    * @return Number of TPU chips on this host.
    */
   [[nodiscard]] size_t chip_count() const noexcept;
+
+  /**
+   * @brief Registers a debug callback via
+   * `GetLibtpuSdkApi()->register_debug_callback`.
+   * @param callback C callback function pointer (`void (*)(void*)`).
+   * @param user_data Opaque user context pointer passed to `callback`.
+   * @return Registered callback ID (`> 0`).
+   */
+  [[nodiscard]] int64_t register_debug_callback(const void *callback,
+                                                void *user_data) noexcept;
+
+  /**
+   * @brief Unregisters a debug callback via
+   * `GetLibtpuSdkApi()->unregister_debug_callback`.
+   * @param callback_id Callback ID returned by `register_debug_callback`.
+   * @return `true` if unregistered without error, `false` otherwise.
+   */
+  [[nodiscard]] bool unregister_debug_callback(int64_t callback_id) noexcept;
+
+  /**
+   * @brief Invokes all registered debug callbacks on this `SdkClient`.
+   * @return Number of callbacks invoked.
+   */
+  [[nodiscard]] size_t trigger_debug_callbacks() const noexcept;
 
 private:
   /** @brief Pointer to the static `LibtpuSdk_Api` vtable. */

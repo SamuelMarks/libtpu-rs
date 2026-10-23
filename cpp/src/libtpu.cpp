@@ -336,6 +336,24 @@ Profiler::~Profiler() noexcept {
   TpuStatus_Free(status_);
 }
 
+Profiler::Profiler(Profiler &&other) noexcept
+    : handle_(other.handle_), status_(other.status_) {
+  other.handle_ = nullptr;
+  other.status_ = nullptr;
+}
+
+Profiler &Profiler::operator=(Profiler &&other) noexcept {
+  TpuProfiler *next_handle = other.handle_;
+  TpuStatus *next_status = other.status_;
+  other.handle_ = nullptr;
+  other.status_ = nullptr;
+  TpuProfiler_Destroy(handle_);
+  TpuStatus_Free(status_);
+  handle_ = next_handle;
+  status_ = next_status;
+  return *this;
+}
+
 bool Profiler::start() noexcept {
   TpuProfiler_Start(handle_, status_);
   return TpuStatus_Ok(status_);
@@ -385,6 +403,20 @@ SdkClient::~SdkClient() noexcept {
   (void)api_->client_destroy(&args);
 }
 
+SdkClient::SdkClient(SdkClient &&other) noexcept
+    : api_(other.api_), handle_(other.handle_) {
+  other.handle_ = nullptr;
+}
+
+SdkClient &SdkClient::operator=(SdkClient &&other) noexcept {
+  LibtpuSdk_Client *next = other.handle_;
+  other.handle_ = nullptr;
+  LibtpuSdk_Client_Args args{handle_};
+  (void)api_->client_destroy(&args);
+  handle_ = next;
+  return *this;
+}
+
 size_t SdkClient::core_state_summary_size() const noexcept {
   LibtpuSdk_GetRuntimeStatus_Args rstat_args{
       handle_, true, {0, 0, 0, 0, 0, 0, 0}, nullptr};
@@ -409,6 +441,30 @@ size_t SdkClient::chip_count() const noexcept {
   LibtpuSdk_GetChipCoordinates_Args c_args{handle_, nullptr, 0};
   (void)api_->get_chip_coordinates(&c_args);
   return c_args.num_coords;
+}
+
+int64_t SdkClient::register_debug_callback(const void *callback,
+                                           void *user_data) noexcept {
+  LibtpuSdk_RegisterDebugCallback_Args args{handle_, callback, user_data, 0};
+  (void)api_->register_debug_callback(&args);
+  return args.callback_id;
+}
+
+bool SdkClient::unregister_debug_callback(int64_t callback_id) noexcept {
+  LibtpuSdk_UnregisterDebugCallback_Args args{handle_, callback_id};
+  LibtpuSdk_Error *err = api_->unregister_debug_callback(&args);
+  if (err != nullptr) {
+    struct DestroyArgs {
+      LibtpuSdk_Error *error;
+    } d_args{err};
+    api_->error_destroy(&d_args);
+    return false;
+  }
+  return true;
+}
+
+size_t SdkClient::trigger_debug_callbacks() const noexcept {
+  return LibtpuSdk_TriggerDebugCallbacks(handle_);
 }
 
 } // namespace libtpu

@@ -9,6 +9,16 @@
 #include <cstring>
 
 /**
+ * @brief C debug callback trampoline incrementing an `int32_t` counter at
+ * `user_data`.
+ * @param user_data Pointer to `int32_t` counter.
+ */
+extern "C" void test_debug_callback(void *user_data) {
+  int32_t *counter = static_cast<int32_t *>(user_data);
+  *counter += 1;
+}
+
+/**
  * @brief Main test entrypoint exercising all C and C++20 RAII methods and error
  * branches.
  * @return `0` on success, non-zero if any assertion fails.
@@ -172,10 +182,22 @@ int main() {
     return 14;
   }
   libtpu::SdkClient sdk_client;
+  libtpu::SdkClient sdk_moved(static_cast<libtpu::SdkClient &&>(sdk_client));
+  sdk_client = static_cast<libtpu::SdkClient &&>(sdk_moved);
   if (sdk_client.core_state_summary_size() == 0 ||
       sdk_client.metric_value_count("tpu.runtime.hbm.usage_bytes") != 4 ||
       sdk_client.chip_count() != 4) {
     return 140;
+  }
+  int32_t cb_hits = 0;
+  int64_t cb_id = sdk_client.register_debug_callback(
+      reinterpret_cast<const void *>(&test_debug_callback), &cb_hits);
+  if (cb_id <= 0 || sdk_client.trigger_debug_callbacks() != 1 || cb_hits != 1) {
+    return 141;
+  }
+  if (!sdk_client.unregister_debug_callback(cb_id) ||
+      sdk_client.unregister_debug_callback(cb_id)) {
+    return 142;
   }
 
   libtpu::Topology topo;
@@ -186,6 +208,8 @@ int main() {
   }
 
   libtpu::Profiler prof;
+  libtpu::Profiler prof_moved(static_cast<libtpu::Profiler &&>(prof));
+  prof = static_cast<libtpu::Profiler &&>(prof_moved);
   if (!prof.start()) {
     return 16;
   }

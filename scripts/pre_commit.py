@@ -384,11 +384,51 @@ def calculate_rust_doc_coverage(repo_root: Path, force_run: bool = True) -> tupl
                 total_items += int(stats["total"])
                 with_docs += int(stats["with_docs"])
 
-    return with_docs, total_items
+    rs_arg_docs, rs_arg_total = calculate_rust_arg_doc_coverage(repo_root)
+    return with_docs + rs_arg_docs, total_items + rs_arg_total
+
+
+def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
+    """Calculates documented vs total parameters across Rust `pub fn` items.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+
+    Returns:
+        Tuple of `(documented_args, total_args)`.
+    """
+    crates_dir = repo_root / "crates"
+    if not crates_dir.exists():
+        return 0, 0
+
+    fn_re = re.compile(
+        r"((?:\s*///[^\n]*\n)+(?:\s*#\[[^\n]*\n)*)\s*pub(?:\s+unsafe)?(?:\s+extern\s+\"C\")?\s+fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)",
+        re.MULTILINE,
+    )
+    param_re = re.compile(r"^\s*(?:mut\s+)?([A-Za-z0-9_]+)\s*:")
+    total_args = 0
+    doc_args = 0
+
+    for rs_file in sorted(crates_dir.rglob("*.rs")):
+        text = rs_file.read_text(encoding="utf-8")
+        for match in fn_re.finditer(text):
+            doc_block, _fn_name, raw_params = match.groups()
+            for raw_param in raw_params.split(","):
+                stripped = raw_param.strip()
+                if not stripped or stripped in ("self", "&self", "&mut self"):
+                    continue
+                pm = param_re.match(stripped)
+                if pm:
+                    param_name = pm.group(1)
+                    total_args += 1
+                    if "# Arguments" in doc_block and f"* `{param_name}` -" in doc_block:
+                        doc_args += 1
+
+    return doc_args, total_args
 
 
 def calculate_python_doc_coverage(repo_root: Path) -> tuple[int, int]:
-    """Calculates documented vs total modules, classes, and functions across Python files.
+    """Calculates documented vs total modules, classes, functions, and args in Python.
 
     Args:
         repo_root: Path to the workspace root directory.
@@ -409,16 +449,27 @@ def calculate_python_doc_coverage(repo_root: Path) -> tuple[int, int]:
         if ast.get_docstring(tree):
             with_docs += 1
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if isinstance(node, ast.ClassDef):
                 total_items += 1
                 if ast.get_docstring(node):
                     with_docs += 1
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                total_items += 1
+                doc = ast.get_docstring(node) or ""
+                if doc:
+                    with_docs += 1
+                for arg in node.args.args:
+                    if arg.arg in ("self", "cls"):
+                        continue
+                    total_items += 1
+                    if "Args:" in doc and f"{arg.arg}:" in doc:
+                        with_docs += 1
 
     return with_docs, total_items
 
 
 def calculate_cpp_doc_coverage(repo_root: Path, force_run: bool = True) -> tuple[int, int]:
-    """Calculates documented vs total compounds and members across C/C++ via Doxygen XML.
+    """Calculates documented vs total compounds, members, and params via Doxygen XML.
 
     Args:
         repo_root: Path to the workspace root directory.
@@ -427,7 +478,7 @@ def calculate_cpp_doc_coverage(repo_root: Path, force_run: bool = True) -> tuple
     Returns:
         Tuple of `(with_docs, total_items)`.
     """
-    xml_dir = repo_root / "cpp" / "cpp" / "build" / "doxygen_xml"
+    xml_dir = repo_root / "cpp" / "build" / "doxygen" / "xml"
     if force_run or not xml_dir.exists():
         run_command(["doxygen", "cpp/Doxyfile"], cwd=repo_root)
 
@@ -454,6 +505,19 @@ def calculate_cpp_doc_coverage(repo_root: Path, force_run: bool = True) -> tuple
                     deta = memberdef.find("detaileddescription")
                     if _has_xml_text_or_children(brief) or _has_xml_text_or_children(deta):
                         with_docs += 1
+                    if memberdef.get("kind") == "function":
+                        doc_param_names = {
+                            (pn.text or "").strip()
+                            for pn in memberdef.findall(
+                                ".//parameterlist[@kind='param']/parameteritem/parameternamelist/parametername"
+                            )
+                        }
+                        for param in memberdef.findall("param"):
+                            decl = param.find("declname")
+                            if decl is not None and decl.text and decl.text.strip():
+                                total_items += 1
+                                if decl.text.strip() in doc_param_names:
+                                    with_docs += 1
 
     return with_docs, total_items
 
@@ -554,13 +618,77 @@ def calculate_test_coverage(repo_root: Path, force_run: bool = True) -> float:
         py_data = json.loads(py_cov_path.read_text(encoding="utf-8"))
         py_pct = float(py_data.get("totals", {}).get("percent_covered", 100.0))
 
-    pct = min(line_pct, func_pct, branch_pct, py_pct)
+    cpp_pct = calculate_cpp_test_coverage(repo_root, force_run=force_run)
+    pct = min(line_pct, func_pct, branch_pct, py_pct, cpp_pct)
     print(
         f"==> [shields] Test coverage: Rust {covered_lines}/{total_lines} lines "
         f"(lines: {line_pct:.2f}%, functions: {func_pct:.2f}%, branches: {branch_pct:.2f}%), "
-        f"Python: {py_pct:.2f}% -> {pct:.2f}%"
+        f"Python: {py_pct:.2f}%, C/C++: {cpp_pct:.2f}% -> {pct:.2f}%"
     )
     return pct
+
+
+def calculate_cpp_test_coverage(repo_root: Path, force_run: bool = True) -> float:
+    """Calculates C/C++ line, function, and branch coverage via `llvm-profdata` and `llvm-cov`.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+        force_run: Whether to merge `.profraw` and export `cpp_coverage.json`.
+
+    Returns:
+        Minimum of C/C++ line, function, and branch coverage percentages (0.0 to 100.0).
+    """
+    cpp_cov_path = repo_root / "target" / "llvm-cov" / "cpp_coverage.json"
+    profraw = repo_root / "cpp" / "build" / "test_libtpu.profraw"
+    profdata = repo_root / "cpp" / "build" / "test_libtpu.profdata"
+    test_bin = repo_root / "cpp" / "build" / "test_libtpu"
+
+    if force_run and test_bin.exists():
+        env = get_augmented_env()
+        if not profraw.exists():
+            env["LLVM_PROFILE_FILE"] = str(profraw)
+            run_command(
+                ["ctest", "--test-dir", "cpp/build", "--output-on-failure"],
+                cwd=repo_root,
+                env=env,
+            )
+        use_xcrun = bool(shutil.which("xcrun", path=env.get("PATH")))
+        prof_prefix = ["xcrun", "llvm-profdata"] if use_xcrun else ["llvm-profdata"]
+        cov_prefix = ["xcrun", "llvm-cov"] if use_xcrun else ["llvm-cov"]
+        run_command(
+            [*prof_prefix, "merge", "-sparse", str(profraw), "-o", str(profdata)],
+            cwd=repo_root,
+            env=env,
+        )
+        res = run_command(
+            [
+                *cov_prefix,
+                "export",
+                "--format=text",
+                str(test_bin),
+                f"-instr-profile={profdata}",
+                str(repo_root / "cpp" / "src" / "libtpu.cpp"),
+                str(repo_root / "cpp" / "src" / "libtpu.hpp"),
+            ],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+        )
+        cpp_cov_path.parent.mkdir(parents=True, exist_ok=True)
+        cpp_cov_path.write_text(res.stdout, encoding="utf-8")
+
+    if not cpp_cov_path.exists():
+        return 100.0
+
+    cpp_data = json.loads(cpp_cov_path.read_text(encoding="utf-8"))
+    cpp_totals = cpp_data["data"][0]["totals"]
+    cpp_line_pct = float(cpp_totals["lines"]["percent"])
+    cpp_func_pct = float(cpp_totals.get("functions", {}).get("percent", cpp_line_pct))
+    cpp_branches = cpp_totals.get("branches", {})
+    cpp_branch_pct = (
+        float(cpp_branches["percent"]) if int(cpp_branches.get("count", 0)) > 0 else cpp_line_pct
+    )
+    return min(cpp_line_pct, cpp_func_pct, cpp_branch_pct)
 
 
 def update_readme_shields(

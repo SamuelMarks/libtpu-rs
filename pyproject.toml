@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "libtpu"
@@ -8,15 +8,26 @@ version = "0.0.50"
 description = "Clean-room Rust drop-in replacement for Google Cloud TPU runtime library (libtpu)."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0 OR MIT"
 
-[tool.setuptools.packages.find]
-where = ["python"]
-include = ["libtpu*"]
+[tool.hatch.build.targets.wheel]
+packages = ["python/libtpu"]
+artifacts = [
+    "python/libtpu/*.so",
+    "python/libtpu/*.dylib",
+    "python/libtpu/*.dll",
+    "python/libtpu/sdk/*.so",
+    "python/libtpu/sdk/*.dylib",
+    "python/libtpu/sdk/*.dll",
+]
 
-[tool.setuptools.package-data]
-"libtpu" = ["py.typed", "*.pyi", "*.so", "*.dylib", "*.dll"]
-"libtpu.sdk" = ["*.pyi", "*.so", "*.dylib", "*.dll"]
+[tool.hatch.build.targets.sdist]
+include = [
+    "python/libtpu",
+    "README.md",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+]
 
 [tool.pytest.ini_options]
 pythonpath = [".", "python"]

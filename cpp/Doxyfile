@@ -12,5 +12,6 @@ WARN_AS_ERROR          = YES
 GENERATE_HTML          = NO
 GENERATE_LATEX         = NO
 GENERATE_XML           = YES
-XML_OUTPUT             = cpp/cpp/build/doxygen_xml
+OUTPUT_DIRECTORY       = cpp/build/doxygen
+XML_OUTPUT             = xml
 QUIET                  = YES

@@ -74,6 +74,8 @@ pub struct TfTpuCoreOrdinalSelector {
     pub num_cores: u32,
     /// Atomic round-robin counter.
     next_ordinal: AtomicU32,
+    /// Active reserved `(req_id, device_ordinal)` pairs.
+    in_flight: Mutex<BTreeMap<i64, i64>>,
 }
 
 impl TfTpuCoreOrdinalSelector {
@@ -86,13 +88,37 @@ impl TfTpuCoreOrdinalSelector {
         Self {
             num_cores: num_cores.max(1),
             next_ordinal: AtomicU32::new(0),
+            in_flight: Mutex::new(BTreeMap::new()),
         }
     }
 
     /// Selects the next ordinal in round-robin order (`TfTpuOrdinalSelector_GetOrdinal`).
     pub fn get_ordinal(&self) -> i64 {
         let idx = self.next_ordinal.fetch_add(1, Ordering::Relaxed);
-        i64::from(idx % self.num_cores)
+        let ord = i64::from(idx % self.num_cores);
+        self.in_flight
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(i64::from(idx), ord);
+        ord
+    }
+
+    /// Dequeues/releases a reserved ordinal from the core selector without advancing the round-robin counter
+    /// (`TfTpuOrdinalSelector_DequeueFromCoreSelector`).
+    ///
+    /// # Arguments
+    ///
+    /// * `device_ordinal` - Reserved device ordinal to release.
+    /// * `req_id` - Request identifier associated with the reservation.
+    pub fn dequeue_ordinal(&self, device_ordinal: i32, req_id: i64) {
+        let mut guard = self
+            .in_flight
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if guard.remove(&req_id).is_none() {
+            let target = i64::from(device_ordinal);
+            guard.retain(|_, &mut ord| ord != target);
+        }
     }
 }
 
@@ -712,6 +738,16 @@ impl LibtpuSdkCoreClient {
             .ok_or(LibTpuError::CallbackNotFound { callback_id: id.0 })
     }
 
+    /// Returns a snapshot of all registered debug `(callback_addr, user_data_addr)` pairs.
+    pub fn registered_debug_callbacks(&self) -> Vec<(usize, usize)> {
+        self.debug_callbacks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .values()
+            .copied()
+            .collect()
+    }
+
     /// Returns a human-readable core state summary string (`LibtpuSdk_RuntimeStatus_GetCoreStateSummary`).
     pub fn core_state_summary(&self) -> String {
         format!(
@@ -745,6 +781,8 @@ mod tests {
         assert!(!format!("{sel:?}").is_empty());
         assert_eq!(sel.get_ordinal(), 0);
         assert_eq!(sel.get_ordinal(), 1);
+        sel.dequeue_ordinal(0, 0);
+        sel.dequeue_ordinal(1, 99);
         assert_eq!(sel.get_ordinal(), 0);
 
         let prof = TpuCoreProfiler::default();
@@ -842,7 +880,9 @@ mod tests {
         assert!(sdk.get_metric("tpu.runtime.hbm.usage_bytes").is_ok());
         assert!(sdk.get_metric("unknown").is_err());
         let cb_id = sdk.register_debug_callback(0x1234, 0x5678);
+        assert_eq!(sdk.registered_debug_callbacks(), vec![(0x1234, 0x5678)]);
         assert!(sdk.unregister_debug_callback(cb_id).is_ok());
+        assert!(sdk.registered_debug_callbacks().is_empty());
         assert!(sdk.unregister_debug_callback(cb_id).is_err());
         assert!(sdk.core_state_summary().contains("READY"));
     }

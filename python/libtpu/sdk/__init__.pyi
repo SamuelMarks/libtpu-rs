@@ -4,6 +4,9 @@ from libtpu.sdk import (
     debug as debug,
 )
 from libtpu.sdk import (
+    slice as sdk_slice,
+)
+from libtpu.sdk import (
     tpumonitoring as tpumonitoring,
 )
 from libtpu.sdk import (
@@ -31,4 +34,16 @@ from libtpu.sdk.tpumonitoring import (
     list_supported_metrics as list_supported_metrics,
 )
 
-__all__: list[str]
+__all__ = [
+    "ChipCoordinates",
+    "LibtpuSdkMetric",
+    "SdkClient",
+    "debug",
+    "get_chip_coordinates",
+    "get_core_state_summary",
+    "get_metric",
+    "list_supported_metrics",
+    "sdk_slice",
+    "tpumonitoring",
+    "tpuz",
+]

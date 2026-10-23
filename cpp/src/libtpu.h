@@ -568,6 +568,39 @@ typedef struct LibtpuSdk_RuntimeStatus_Destroy_Args {
 } LibtpuSdk_RuntimeStatus_Destroy_Args;
 
 /**
+ * @brief Argument structure for `LibtpuSdk_RegisterDebugCallback` (`32` bytes).
+ */
+typedef struct LibtpuSdk_RegisterDebugCallback_Args {
+  /** @brief Input `LibtpuSdk_Client*`. */
+  LibtpuSdk_Client *client;
+  /** @brief Callback function pointer (`void (*)(void*)`). */
+  const void *callback;
+  /** @brief Opaque user context pointer. */
+  void *user_data;
+  /** @brief Output registered callback ID (`int64_t`). */
+  int64_t callback_id;
+} LibtpuSdk_RegisterDebugCallback_Args;
+
+/**
+ * @brief Argument structure for `LibtpuSdk_UnregisterDebugCallback` (`16`
+ * bytes).
+ */
+typedef struct LibtpuSdk_UnregisterDebugCallback_Args {
+  /** @brief Input `LibtpuSdk_Client*`. */
+  LibtpuSdk_Client *client;
+  /** @brief Callback ID to unregister. */
+  int64_t callback_id;
+} LibtpuSdk_UnregisterDebugCallback_Args;
+
+/**
+ * @brief Invokes all registered debug callbacks on `client`
+ * (`LibtpuSdk_TriggerDebugCallbacks`).
+ * @param client Pointer to `LibtpuSdk_Client`.
+ * @return Number of invoked callbacks (`0` if `client` is `NULL`).
+ */
+size_t LibtpuSdk_TriggerDebugCallbacks(const LibtpuSdk_Client *client);
+
+/**
  * @brief Status structure returned by `libtpu_rs_*` C FFI functions.
  */
 typedef struct LibTpuCStatus {
