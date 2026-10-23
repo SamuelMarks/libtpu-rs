@@ -1,0 +1,17 @@
+[package]
+name = "libtpu-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[lib]
+name = "libtpu_py"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+libtpu-core.workspace = true
+
+[lints]
+workspace = true

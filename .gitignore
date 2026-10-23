@@ -1,0 +1,155 @@
+# =============================================================================
+# Rust / Cargo
+# =============================================================================
+/target/
+**/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock.bk
+
+# =============================================================================
+# C / C++ / CMake / Build Artifacts
+# =============================================================================
+build/
+**/build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+compile_commands.json
+install_manifest.txt
+Testing/
+_deps/
+
+# Compiled Object files & Libraries
+*.slo
+*.lo
+*.o
+*.obj
+*.gch
+*.pch
+*.so
+*.so.*
+*.dylib
+*.dll
+*.lai
+*.la
+*.a
+*.lib
+*.def
+*.exp
+
+# Executables
+*.exe
+*.out
+*.app
+test_libtpu
+
+# =============================================================================
+# Documentation (Doxygen / Rustdoc)
+# =============================================================================
+doxygen_xml/
+**/doxygen_xml/
+html/
+latex/
+man/
+rtf/
+xml/
+doc/
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Linters, Typecheckers & Test Runners
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.tox/
+.nox/
+cython_debug/
+
+# =============================================================================
+# Code Coverage & Profiling
+# =============================================================================
+*.profraw
+*.profdata
+lcov.info
+coverage.xml
+.coverage
+.coverage.*
+htmlcov/
+.cache
+nosetests.xml
+*.cover
+*.py,cover
+*.gcno
+*.gcda
+*.gcov
+
+# =============================================================================
+# IDEs & Editors
+# =============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =============================================================================
+# Temporary & Log Files
+# =============================================================================
+*.log
+*.tmp
+*.temp
+tmp/
+temp/

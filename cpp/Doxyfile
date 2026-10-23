@@ -1,0 +1,16 @@
+PROJECT_NAME           = "libtpu-cpp"
+PROJECT_NUMBER         = "0.0.50"
+INPUT                  = cpp/src/libtpu.h cpp/src/libtpu.hpp cpp/src/libtpu.cpp cpp/tests/test_libtpu.cpp
+RECURSIVE              = NO
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = YES
+EXTRACT_STATIC         = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES
+WARN_AS_ERROR          = YES
+GENERATE_HTML          = NO
+GENERATE_LATEX         = NO
+GENERATE_XML           = YES
+XML_OUTPUT             = cpp/cpp/build/doxygen_xml
+QUIET                  = YES

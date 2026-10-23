@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/libtpu-core",
+    "crates/libtpu-c-api",
+    "crates/libtpu-py",
+]
+
+[workspace.package]
+version = "0.0.50"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/google/libtpu-rs"
+description = "Clean-room Rust implementation of Google Cloud TPU runtime library (libtpu) with C, C++, and Python FFI."
+
+[workspace.dependencies]
+derive_more = { version = "2.1", default-features = false, features = ["add", "display", "error", "from", "into"] }
+libtpu-core = { version = "0.0", path = "crates/libtpu-core" }
+
+[workspace.lints.rust]
+missing_docs = "forbid"
+missing_debug_implementations = "deny"
+unsafe_op_in_unsafe_fn = "forbid"
+unreachable_pub = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "forbid"
+missing_crate_level_docs = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+unwrap_used = "forbid"
+expect_used = "forbid"
+panic = "forbid"
+todo = "forbid"
+unimplemented = "forbid"
+unreachable = "forbid"
+indexing_slicing = "forbid"
+dbg_macro = "forbid"
+missing_docs_in_private_items = "forbid"
+missing_errors_doc = "forbid"
+missing_panics_doc = "forbid"
+missing_safety_doc = "forbid"
+undocumented_unsafe_blocks = "forbid"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+cast_precision_loss = "deny"
+ptr_as_ptr = "deny"
+borrow_as_ptr = "deny"

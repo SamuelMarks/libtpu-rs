@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "libtpu"
+version = "0.0.50"
+description = "Clean-room Rust drop-in replacement for Google Cloud TPU runtime library (libtpu)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+
+[tool.pytest.ini_options]
+pythonpath = [".", "python"]
+testpaths = ["python/tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["libtpu"]
+omit = ["python/libtpu/__init__.pyi"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+
+[tool.mypy]
+strict = true
+python_version = "3.9"
+mypy_path = "python"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["D", "E", "F", "I", "N", "UP", "B", "A", "C4", "SIM", "ARG", "RET"]
+ignore = ["D203", "D213"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+known-first-party = ["libtpu"]
