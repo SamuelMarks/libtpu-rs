@@ -1,0 +1,235 @@
+name: Release Binaries & Python Wheels
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g., v0.0.50) for manual workflow dispatch"
+        required: false
+        default: "v0.0.50"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  pre-release-gates:
+    name: "Verify Pre-commit Quality Gates"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust nightly and stable toolchains
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: llvm-tools-preview, rustfmt, clippy
+
+      - name: Install Rust stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy, llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Install system dependencies and Python tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends clang clang-format cmake doxygen llvm
+          python -m pip install --upgrade pip ruff mypy pytest pytest-cov
+
+      - name: Run all pre-commit hooks in check mode
+        env:
+          CC: clang
+          CXX: clang++
+        run: python3 scripts/pre_commit.py all --check
+
+  build-binaries-and-wheels:
+    name: "Build Binary & Wheel (${{ matrix.os_name }}-${{ matrix.arch }})"
+    needs: pre-release-gates
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            os_name: linux
+            arch: x86_64
+            whl_plat: manylinux_2_31_x86_64
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            os_name: linux
+            arch: aarch64
+            whl_plat: manylinux_2_31_aarch64
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            os_name: macos
+            arch: arm64
+            whl_plat: macosx_11_0_arm64
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            os_name: windows
+            arch: x86_64
+            whl_plat: win_amd64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain for ${{ matrix.target }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build Rust release artifacts (libtpu-c-api & libtpu-py)
+        run: cargo build --release --workspace --target ${{ matrix.target }}
+
+      - name: Build C/C++ static library (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -B cpp/build -S cpp 
+            -DCMAKE_BUILD_TYPE=Release 
+            -DENABLE_COVERAGE=OFF 
+            -DLIBTPU_RUST_STATICLIB="${{ github.workspace }}/target/${{ matrix.target }}/release/libtpu.a"
+          cmake --build cpp/build --config Release
+
+      - name: Package OS+arch release archive and build Python .whl (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          if [[ -z "${VERSION}" || "${VERSION}" == "main" || "${VERSION}" == "master" ]]; then
+            VERSION="v0.0.50"
+          fi
+          ARCHIVE_BASENAME="libtpu-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}"
+          STAGE_DIR="dist/${ARCHIVE_BASENAME}"
+          mkdir -p "${STAGE_DIR}/lib" "${STAGE_DIR}/include" "dist/artifacts"
+
+          cp cpp/src/libtpu.h "${STAGE_DIR}/include/"
+          cp cpp/src/libtpu.hpp "${STAGE_DIR}/include/"
+          cp LICENSE-APACHE LICENSE-MIT README.md "${STAGE_DIR}/"
+
+          if [[ "${{ matrix.os_name }}" == "linux" ]]; then
+            cp "target/${{ matrix.target }}/release/libtpu.so" "${STAGE_DIR}/lib/"
+            cp "target/${{ matrix.target }}/release/libtpu.a" "${STAGE_DIR}/lib/"
+            cp "target/${{ matrix.target }}/release/liblibtpu_py.so" "${STAGE_DIR}/lib/"
+            cp "cpp/build/src/liblibtpu_cpp.a" "${STAGE_DIR}/lib/"
+            cp "target/${{ matrix.target }}/release/libtpu.so" "python/libtpu/libtpu.so"
+          else
+            cp "target/${{ matrix.target }}/release/libtpu.dylib" "${STAGE_DIR}/lib/"
+            cp "target/${{ matrix.target }}/release/libtpu.a" "${STAGE_DIR}/lib/"
+            cp "target/${{ matrix.target }}/release/liblibtpu_py.dylib" "${STAGE_DIR}/lib/"
+            cp "cpp/build/src/liblibtpu_cpp.a" "${STAGE_DIR}/lib/"
+            cp "target/${{ matrix.target }}/release/libtpu.dylib" "python/libtpu/libtpu.dylib"
+          fi
+
+          tar -C dist -czf "dist/artifacts/${ARCHIVE_BASENAME}.tar.gz" "${ARCHIVE_BASENAME}"
+
+          python -m pip install --upgrade pip build wheel
+          python -m build --wheel --outdir dist/raw_wheel
+          for whl in dist/raw_wheel/*.whl; do
+            base="$(basename "$whl")"
+            plat_whl="${base%-py3-none-any.whl}-py3-none-${{ matrix.whl_plat }}.whl"
+            cp "$whl" "dist/artifacts/${plat_whl}"
+          done
+
+          # Smoke-test the built wheel in an isolated virtual environment
+          python -m venv /tmp/test-venv
+          /tmp/test-venv/bin/pip install dist/artifacts/*.whl
+          /tmp/test-venv/bin/python -c "import libtpu, pathlib; p = libtpu.get_library_path(); assert pathlib.Path(p).exists(), p; c = libtpu.TpuClient(); assert c.device_count() == 4; c.close()"
+
+          cd dist/artifacts
+          shasum -a 256 * > "SHA256SUMS-${{ matrix.os_name }}-${{ matrix.arch }}.txt"
+
+      - name: Package OS+arch release archive and build Python .whl (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
+          if [[ -z "${VERSION}" || "${VERSION}" == "main" || "${VERSION}" == "master" ]]; then
+            VERSION="v0.0.50"
+          fi
+          ARCHIVE_BASENAME="libtpu-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}"
+          STAGE_DIR="dist/${ARCHIVE_BASENAME}"
+          mkdir -p "${STAGE_DIR}/lib" "${STAGE_DIR}/include" "dist/artifacts"
+
+          cp cpp/src/libtpu.h "${STAGE_DIR}/include/"
+          cp cpp/src/libtpu.hpp "${STAGE_DIR}/include/"
+          cp LICENSE-APACHE LICENSE-MIT README.md "${STAGE_DIR}/"
+
+          cp "target/${{ matrix.target }}/release/tpu.dll" "${STAGE_DIR}/lib/"
+          cp "target/${{ matrix.target }}/release/tpu.dll.lib" "${STAGE_DIR}/lib/" || true
+          cp "target/${{ matrix.target }}/release/tpu.lib" "${STAGE_DIR}/lib/" || true
+          cp "target/${{ matrix.target }}/release/libtpu_py.dll" "${STAGE_DIR}/lib/"
+          cp "target/${{ matrix.target }}/release/tpu.dll" "python/libtpu/tpu.dll"
+
+          (cd dist && 7z a -tzip "artifacts/${ARCHIVE_BASENAME}.zip" "${ARCHIVE_BASENAME}")
+
+          python -m pip install --upgrade pip build wheel
+          python -m build --wheel --outdir dist/raw_wheel
+          for whl in dist/raw_wheel/*.whl; do
+            base="$(basename "$whl")"
+            plat_whl="${base%-py3-none-any.whl}-py3-none-${{ matrix.whl_plat }}.whl"
+            cp "$whl" "dist/artifacts/${plat_whl}"
+          done
+
+          cd dist/artifacts
+          sha256sum * > "SHA256SUMS-${{ matrix.os_name }}-${{ matrix.arch }}.txt"
+
+      - name: Upload OS+arch release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os_name }}-${{ matrix.arch }}
+          path: dist/artifacts/*
+          if-no-files-found: error
+
+  publish-github-release:
+    name: "Publish GitHub Release"
+    needs: build-binaries-and-wheels
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all built OS+arch binaries and wheels
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate unified SHA256SUMS.txt
+        working-directory: release-assets
+        run: |
+          cat SHA256SUMS-*.txt > SHA256SUMS.txt
+          rm -f SHA256SUMS-*.txt
+          ls -lh
+
+      - name: Create GitHub Release and upload binaries & wheels
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*

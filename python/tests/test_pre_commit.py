@@ -115,6 +115,23 @@ def test_update_readme_shields_variants(tmp_path: Path) -> None:
     assert "% doc coverage" in text_only_test
     assert "% test coverage" in text_only_test
 
+    with_ci_shields = tmp_path / "with_ci_shields"
+    with_ci_shields.mkdir()
+    ci_badge = "[![CI & Pre-commit Quality Gates](https://github.com/SamuelMarks/libtpu-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/SamuelMarks/libtpu-rs/actions/workflows/ci.yml)"
+    rel_badge = "[![Release Binaries & Python Wheels](https://github.com/SamuelMarks/libtpu-rs/actions/workflows/release.yml/badge.svg)](https://github.com/SamuelMarks/libtpu-rs/actions/workflows/release.yml)"
+    lic_badge = "[![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](https://opensource.org/licenses/Apache-2.0)"
+    (with_ci_shields / "README.md").write_text(
+        f"# `libtpu-rs`{NL}{NL}{lic_badge}{NL}{ci_badge}{NL}{rel_badge}{NL}"
+        f"[![% doc coverage](https://img.shields.io/badge/doc%20coverage-95%25-green.svg)](#verification--quality-gates){NL}"
+        f"[![% test coverage](https://img.shields.io/badge/test%20coverage-95%25-green.svg)](#verification--quality-gates){NL}",
+        encoding="utf-8",
+    )
+    assert pc.update_readme_shields(with_ci_shields, 100.0, 100.0)
+    updated_with_ci = (with_ci_shields / "README.md").read_text(encoding="utf-8")
+    assert f"{lic_badge}{NL}{ci_badge}{NL}{rel_badge}" in updated_with_ci
+    assert "doc%20coverage-100%25-brightgreen.svg" in updated_with_ci
+    assert "test%20coverage-100%25-brightgreen.svg" in updated_with_ci
+
 
 def test_coverage_calculators(tmp_path: Path) -> None:
     """Tests Rust, Python, and C++ documentation and test coverage calculators.
@@ -399,3 +416,33 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
 
     with patch.object(pc, "hook_fmt", side_effect=raise_called_process_error):
         assert pc.main(["fmt"]) == 3
+
+
+def test_github_actions_workflows_present_and_complete() -> None:
+    """Verifies `.github/workflows/ci.yml` and `release.yml` exist and cover all hooks."""
+    root = pc.get_repo_root()
+    ci_path = root / ".github" / "workflows" / "ci.yml"
+    release_path = root / ".github" / "workflows" / "release.yml"
+    assert ci_path.exists()
+    assert release_path.exists()
+
+    ci_text = ci_path.read_text(encoding="utf-8")
+    for stage in ("fmt", "build", "clippy", "test", "all"):
+        assert f"scripts/pre_commit.py {stage}" in ci_text
+    assert "pre-commit run --all-files" in ci_text
+
+    release_text = release_path.read_text(encoding="utf-8")
+    assert '"v*"' in release_text
+    assert ".whl" in release_text
+    for target in (
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+    ):
+        assert target in release_text
+    assert "x86_64-apple-darwin" not in release_text
+
+    readme_text = (root / "README.md").read_text(encoding="utf-8")
+    assert "actions/workflows/ci.yml/badge.svg" in readme_text
+    assert "actions/workflows/release.yml/badge.svg" in readme_text

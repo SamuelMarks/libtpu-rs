@@ -1,11 +1,15 @@
 # `libtpu-rs`
 
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![CI & Pre-commit Quality Gates](https://github.com/SamuelMarks/libtpu-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/SamuelMarks/libtpu-rs/actions/workflows/ci.yml)
+[![Release Binaries & Python Wheels](https://github.com/SamuelMarks/libtpu-rs/actions/workflows/release.yml/badge.svg)](https://github.com/SamuelMarks/libtpu-rs/actions/workflows/release.yml)
 [![Rust Edition](https://img.shields.io/badge/rust-2021-orange.svg)](https://www.rust-lang.org/)
 [![% doc coverage](https://img.shields.io/badge/doc%20coverage-100%25-brightgreen.svg)](#verification--quality-gates)
 [![% test coverage](https://img.shields.io/badge/test%20coverage-100%25-brightgreen.svg)](#verification--quality-gates)
 
 Clean-room Rust drop-in replacement for the Google Cloud TPU runtime library (`libtpu` v0.0.50), providing 100% binary ABI compatibility across OpenXLA PJRT (`PJRT_Api` vtable + 17 chained PJRT extensions), `LibtpuSdk_Api` (`libtpu.sdk`), `TpuDriver_*`, `TpuEmbeddingEngine_*`, `TpuProfiler_*`, `TpuTopology_*`, and `TfTpu_*` entrypoints with first-class C11, C++20, and Python bindings.
+
+For full usage documentation, API examples across Python/Rust/C11/C++20, and instructions on hooking JAX, PyTorch/XLA (`torch-tpu`), and TensorFlow installations to use `libtpu-rs`, see **[USAGE.md](USAGE.md)**.
 
 ---
 

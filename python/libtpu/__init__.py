@@ -72,12 +72,20 @@ def get_library_path() -> str:
     """Resolves the filesystem path to the compiled `libtpu` shared library.
 
     Returns:
-        Absolute path string to `libtpu.dylib` or `libtpu.so`.
+        Absolute path string to `libtpu.dylib`, `libtpu.so`, or `tpu.dll`.
     """
-    repo_root = Path(__file__).resolve().parent.parent.parent
+    pkg_dir = Path(__file__).resolve().parent
+    repo_root = pkg_dir.parent.parent
     candidates = [
+        pkg_dir / "libtpu.dylib",
+        pkg_dir / "libtpu.so",
+        pkg_dir / "tpu.dll",
         repo_root / "target" / "debug" / "libtpu.dylib",
         repo_root / "target" / "debug" / "libtpu.so",
+        repo_root / "target" / "debug" / "tpu.dll",
+        repo_root / "target" / "release" / "libtpu.dylib",
+        repo_root / "target" / "release" / "libtpu.so",
+        repo_root / "target" / "release" / "tpu.dll",
     ]
     for candidate in candidates:
         if candidate.exists():
