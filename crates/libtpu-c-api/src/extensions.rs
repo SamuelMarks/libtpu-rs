@@ -26,9 +26,10 @@ use libtpu_core::compiler::COMPILATION_PHASE_NAMES;
 use libtpu_core::config::global_init_config;
 use libtpu_core::driver::TpuCoreProfiler;
 use libtpu_core::error::LibTpuError;
+use parking_lot::Mutex;
 use std::ptr;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
 
 /// Monotonic counter recording extension invocations across all 138 extension and profiler entrypoints.
 static EXTENSION_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -50,7 +51,7 @@ pub fn extension_call_count() -> u64 {
 /// # Safety
 ///
 /// `raw_args` must be null or point to a struct beginning with `usize`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Extension_ValidateArgs(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -61,10 +62,10 @@ pub unsafe extern "C" fn PJRT_Extension_ValidateArgs(
     }
     // SAFETY: `raw_args` is non-null and starts with `usize struct_size`.
     let actual_size = unsafe { *raw_args.cast::<usize>() };
-    if actual_size < std::mem::size_of::<usize>() {
+    if actual_size < size_of::<usize>() {
         return box_pjrt_error(LibTpuError::InvalidStructSize {
             struct_name: "PJRT_Extension_Base",
-            expected_min: std::mem::size_of::<usize>(),
+            expected_min: size_of::<usize>(),
             actual: actual_size,
         });
     }
@@ -646,45 +647,45 @@ pub struct PJRT_RawBuffer_Destroy_Args {
     pub raw_buffer: *mut std::ffi::c_void,
 }
 
-const _: () = assert!(std::mem::size_of::<PLUGIN_Profiler_Error_Destroy_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PLUGIN_Profiler_Error_Message_Args>() == 40);
-const _: () = assert!(std::mem::size_of::<PLUGIN_Profiler_Error_GetCode_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PLUGIN_Profiler_Create_Args>() == 40);
-const _: () = assert!(std::mem::size_of::<PLUGIN_Profiler_Destroy_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PLUGIN_Profiler_Start_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PLUGIN_Profiler_Stop_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PLUGIN_Profiler_CollectData_Args>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_MultiSlice_Config_Destroy_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PJRT_MultiSlice_Config_NumSlices_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_MultiSlice_Config_NumDevicesPerSlice_Args>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_MultiSlice_Config_SliceId_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_Collectives_Destroy_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PJRT_Collectives_CreateCommunicator_Args>() == 48);
-const _: () = assert!(std::mem::size_of::<PJRT_Communicator_Destroy_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PJRT_Communicator_AllGather_Args>() == 56);
-const _: () = assert!(std::mem::size_of::<PJRT_Communicator_CollectivePermute_Args>() == 64);
-const _: () = assert!(std::mem::size_of::<PJRT_Communicator_ToString_Args>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_AbiVersion_Get_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_AbiVersion_Destroy_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PJRT_AbiVersion_IsCompatible_Args>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_AbiVersion_PlatformId_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_AbiVersion_FromProto_Args>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_Megascale_Handle_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PJRT_Megascale_Query_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_Megascale_Data_Args>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_TpuExecutable_ProtoQuery_Args>() == 48);
-const _: () = assert!(std::mem::size_of::<PJRT_TpuExecutable_ErrorCheck_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_TpuTopology_ScalarQuery_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_TpuTopology_BoundsQuery_Args>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_TpuTopology_MappingQuery_Args>() == 48);
-const _: () = assert!(std::mem::size_of::<PJRT_Callback_Invoke_Args>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_PhaseCompile_GetCompiler_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_PhaseCompile_Destroy_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PJRT_CrossHostTransfers_Args>() == 56);
-const _: () = assert!(std::mem::size_of::<PJRT_Metadata_Get_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_Metadata_Destroy_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PJRT_RawBuffer_Query_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_RawBuffer_Destroy_Args>() == 24);
+const _: () = assert!(size_of::<PLUGIN_Profiler_Error_Destroy_Args>() == 24);
+const _: () = assert!(size_of::<PLUGIN_Profiler_Error_Message_Args>() == 40);
+const _: () = assert!(size_of::<PLUGIN_Profiler_Error_GetCode_Args>() == 32);
+const _: () = assert!(size_of::<PLUGIN_Profiler_Create_Args>() == 40);
+const _: () = assert!(size_of::<PLUGIN_Profiler_Destroy_Args>() == 24);
+const _: () = assert!(size_of::<PLUGIN_Profiler_Start_Args>() == 24);
+const _: () = assert!(size_of::<PLUGIN_Profiler_Stop_Args>() == 24);
+const _: () = assert!(size_of::<PLUGIN_Profiler_CollectData_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_MultiSlice_Config_Destroy_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_MultiSlice_Config_NumSlices_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_MultiSlice_Config_NumDevicesPerSlice_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_MultiSlice_Config_SliceId_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Collectives_Destroy_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Collectives_CreateCommunicator_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_Communicator_Destroy_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Communicator_AllGather_Args>() == 56);
+const _: () = assert!(size_of::<PJRT_Communicator_CollectivePermute_Args>() == 64);
+const _: () = assert!(size_of::<PJRT_Communicator_ToString_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_AbiVersion_Get_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_AbiVersion_Destroy_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_AbiVersion_IsCompatible_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_AbiVersion_PlatformId_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_AbiVersion_FromProto_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_Megascale_Handle_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Megascale_Query_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_Data_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_TpuExecutable_ProtoQuery_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuExecutable_ErrorCheck_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ScalarQuery_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_BoundsQuery_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_TpuTopology_MappingQuery_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_Callback_Invoke_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_PhaseCompile_GetCompiler_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_PhaseCompile_Destroy_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_CrossHostTransfers_Args>() == 56);
+const _: () = assert!(size_of::<PJRT_Metadata_Get_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Metadata_Destroy_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_RawBuffer_Query_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_RawBuffer_Destroy_Args>() == 24);
 
 /// Argument structure for `PJRT_Layouts_MemoryLayout_Destroy` (`24` bytes).
 #[repr(C)]
@@ -1032,25 +1033,25 @@ pub struct PJRT_RawBuffer_CopyRaw_Args {
     pub event: *mut std::ffi::c_void,
 }
 
-const _: () = assert!(std::mem::size_of::<PJRT_XlaTransform_Register_Args>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_XlaTransform_WaitForAll_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PJRT_XlaTransform_Unregister_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_XlaTransform_List_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_HostMemoryAllocator_Get_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_MultiSlice_Config_Serialize_Args>() == 48);
-const _: () = assert!(std::mem::size_of::<PJRT_Communicator_AllReduce_Args>() == 64);
-const _: () = assert!(std::mem::size_of::<PJRT_AbiVersion_ToProto_Args>() == 48);
-const _: () = assert!(std::mem::size_of::<PJRT_TpuExecutable_GetCompiledMemoryStats_Args>() == 64);
-const _: () = assert!(std::mem::size_of::<PJRT_Callback_Register_Args>() == 48);
-const _: () = assert!(std::mem::size_of::<PJRT_PhaseCompile_RunPhase_Args>() == 56);
-const _: () = assert!(std::mem::size_of::<PJRT_RawBuffer_CopyRaw_Args>() == 56);
-const _: () = assert!(std::mem::size_of::<PJRT_Layouts_MemoryLayout_Destroy_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<PJRT_Layouts_MemoryLayout_Serialize_Args>() == 56);
-const _: () = assert!(std::mem::size_of::<PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args>() == 56);
-const _: () = assert!(std::mem::size_of::<PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_Shardings_PJRT_Executable_Shardings_Args>() == 48);
-const _: () = assert!(std::mem::size_of::<PJRT_PhaseCompile_GetPhaseNames_Args>() == 48);
-const _: () = assert!(std::mem::size_of::<PJRT_Triton_Compile_Args>() == 88);
+const _: () = assert!(size_of::<PJRT_XlaTransform_Register_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_XlaTransform_WaitForAll_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_XlaTransform_Unregister_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_XlaTransform_List_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_HostMemoryAllocator_Get_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_MultiSlice_Config_Serialize_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_Communicator_AllReduce_Args>() == 64);
+const _: () = assert!(size_of::<PJRT_AbiVersion_ToProto_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuExecutable_GetCompiledMemoryStats_Args>() == 64);
+const _: () = assert!(size_of::<PJRT_Callback_Register_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_PhaseCompile_RunPhase_Args>() == 56);
+const _: () = assert!(size_of::<PJRT_RawBuffer_CopyRaw_Args>() == 56);
+const _: () = assert!(size_of::<PJRT_Layouts_MemoryLayout_Destroy_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Layouts_MemoryLayout_Serialize_Args>() == 56);
+const _: () = assert!(size_of::<PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args>() == 56);
+const _: () = assert!(size_of::<PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Shardings_PJRT_Executable_Shardings_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_PhaseCompile_GetPhaseNames_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_Triton_Compile_Args>() == 88);
 
 /// Stateful coordinator and registry backing the 17 TPU PJRT extension structures.
 #[derive(Debug, Default)]
@@ -1182,7 +1183,7 @@ unsafe fn handle_profiler_error_destroy(args: &mut PLUGIN_Profiler_Error_Destroy
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Error_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PLUGIN_Profiler_Error_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1214,7 +1215,7 @@ unsafe fn handle_profiler_error_message(args: &mut PLUGIN_Profiler_Error_Message
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Error_Message_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PLUGIN_Profiler_Error_Message(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1245,7 +1246,7 @@ unsafe fn handle_profiler_error_get_code(args: &mut PLUGIN_Profiler_Error_GetCod
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Error_GetCode_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PLUGIN_Profiler_Error_GetCode(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1265,7 +1266,7 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Error_GetCode(
 /// `args` must be a valid [`PLUGIN_Profiler_Create_Args`].
 unsafe fn handle_profiler_create(args: &mut PLUGIN_Profiler_Create_Args) {
     let _ = extension_profiler();
-    args.profiler = 1 as *mut std::ffi::c_void;
+    args.profiler = std::ptr::dangling_mut::<std::ffi::c_void>();
 }
 
 /// Creates a `PLUGIN_Profiler` session (`PLUGIN_Profiler_Create`).
@@ -1277,7 +1278,7 @@ unsafe fn handle_profiler_create(args: &mut PLUGIN_Profiler_Create_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Create_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PLUGIN_Profiler_Create(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1308,7 +1309,7 @@ unsafe fn handle_profiler_destroy(args: &mut PLUGIN_Profiler_Destroy_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PLUGIN_Profiler_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1327,9 +1328,7 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Destroy(
 ///
 /// `args` must be a valid [`PLUGIN_Profiler_Start_Args`].
 unsafe fn handle_profiler_start(_args: &mut PLUGIN_Profiler_Start_Args) {
-    let prof = extension_profiler()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let prof = extension_profiler().lock();
     let _ = prof.start();
 }
 
@@ -1342,7 +1341,7 @@ unsafe fn handle_profiler_start(_args: &mut PLUGIN_Profiler_Start_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Start_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PLUGIN_Profiler_Start(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
@@ -1356,9 +1355,7 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Start(raw_args: *mut std::ffi::c_void) 
 ///
 /// `args` must be a valid [`PLUGIN_Profiler_Stop_Args`].
 unsafe fn handle_profiler_stop(_args: &mut PLUGIN_Profiler_Stop_Args) {
-    let prof = extension_profiler()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let prof = extension_profiler().lock();
     let _ = prof.stop();
 }
 
@@ -1371,7 +1368,7 @@ unsafe fn handle_profiler_stop(_args: &mut PLUGIN_Profiler_Stop_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Stop_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PLUGIN_Profiler_Stop(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
@@ -1385,10 +1382,7 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Stop(raw_args: *mut std::ffi::c_void) -
 ///
 /// `args` must be a valid [`PLUGIN_Profiler_CollectData_Args`].
 unsafe fn handle_profiler_collect_data(args: &mut PLUGIN_Profiler_CollectData_Args) {
-    let xspace_bytes = extension_profiler()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .collect_xspace_bytes();
+    let xspace_bytes = extension_profiler().lock().collect_xspace_bytes();
     let xspace_len = xspace_bytes.len();
     if !args.size_in_bytes.is_null() {
         // SAFETY: `args.size_in_bytes` is non-null.
@@ -1413,7 +1407,7 @@ unsafe fn handle_profiler_collect_data(args: &mut PLUGIN_Profiler_CollectData_Ar
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_CollectData_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PLUGIN_Profiler_CollectData(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1439,9 +1433,7 @@ unsafe fn handle_xla_transform_register(args: &mut PJRT_XlaTransform_Register_Ar
         let bytes = unsafe { std::slice::from_raw_parts(args.name.cast::<u8>(), args.name_size) };
         String::from_utf8_lossy(bytes).into_owned()
     };
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.registered_transforms = st.registered_transforms.saturating_add(1);
     let count = st.registered_transforms;
     st.transform_passes.insert(pass_name, count);
@@ -1457,7 +1449,7 @@ unsafe fn handle_xla_transform_register(args: &mut PJRT_XlaTransform_Register_Ar
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_XlaTransform_Register_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_XlaTransform_Register(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1476,10 +1468,7 @@ pub unsafe extern "C" fn PJRT_XlaTransform_Register(
 ///
 /// `args` must be a valid [`PJRT_XlaTransform_WaitForAll_Args`].
 unsafe fn handle_xla_transform_wait_for_all(_args: &mut PJRT_XlaTransform_WaitForAll_Args) {
-    let _ = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .registered_transforms;
+    let _ = extension_state().lock().registered_transforms;
 }
 
 /// Waits for all registered XLA transforms to complete (`PJRT_XlaTransform_WaitForAll`).
@@ -1491,7 +1480,7 @@ unsafe fn handle_xla_transform_wait_for_all(_args: &mut PJRT_XlaTransform_WaitFo
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_XlaTransform_WaitForAll_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_XlaTransform_WaitForAll(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1517,9 +1506,7 @@ unsafe fn handle_xla_transform_unregister(args: &mut PJRT_XlaTransform_Unregiste
         let bytes = unsafe { std::slice::from_raw_parts(args.name.cast::<u8>(), args.name_size) };
         String::from_utf8_lossy(bytes).into_owned()
     };
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.transform_passes.remove(&pass_name);
     st.registered_transforms = st.registered_transforms.saturating_sub(1);
 }
@@ -1533,7 +1520,7 @@ unsafe fn handle_xla_transform_unregister(args: &mut PJRT_XlaTransform_Unregiste
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_XlaTransform_Unregister_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_XlaTransform_Unregister(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1552,9 +1539,7 @@ pub unsafe extern "C" fn PJRT_XlaTransform_Unregister(
 ///
 /// `args` must be a valid [`PJRT_XlaTransform_List_Args`].
 unsafe fn handle_xla_transform_list(args: &mut PJRT_XlaTransform_List_Args) {
-    let st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let st = extension_state().lock();
     args.num_names_out = st.transform_passes.len().max(st.registered_transforms);
 }
 
@@ -1567,7 +1552,7 @@ unsafe fn handle_xla_transform_list(args: &mut PJRT_XlaTransform_List_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_XlaTransform_List_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_XlaTransform_List(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1598,7 +1583,7 @@ unsafe fn handle_host_memory_allocator_get(args: &mut PJRT_HostMemoryAllocator_G
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_HostMemoryAllocator_Get_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_HostMemoryAllocator_Get(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1629,7 +1614,7 @@ unsafe fn handle_multislice_config_destroy(args: &mut PJRT_MultiSlice_Config_Des
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_MultiSlice_Config_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1661,7 +1646,7 @@ unsafe fn handle_multislice_config_num_slices(args: &mut PJRT_MultiSlice_Config_
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_NumSlices_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_MultiSlice_Config_NumSlices(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1696,7 +1681,7 @@ unsafe fn handle_multislice_config_num_devices_per_slice(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_NumDevicesPerSlice_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_MultiSlice_Config_NumDevicesPerSlice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1727,7 +1712,7 @@ unsafe fn handle_multislice_config_slice_id(args: &mut PJRT_MultiSlice_Config_Sl
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_SliceId_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_MultiSlice_Config_Serialize(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1749,7 +1734,7 @@ pub unsafe extern "C" fn PJRT_MultiSlice_Config_Serialize(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_SliceId_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_MultiSlice_Config_SliceId(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1776,13 +1761,11 @@ unsafe fn handle_multislice_config_serialize(args: &mut PJRT_MultiSlice_Config_S
         coordinator_address: String::from("127.0.0.1:8080"),
     }
     .encode();
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.last_serialized_bytes = encoded;
     args.serialized_bytes = st.last_serialized_bytes.as_ptr().cast();
     args.serialized_bytes_size = st.last_serialized_bytes.len();
-    args.serialized_config = 1 as *mut std::ffi::c_void;
+    args.serialized_config = std::ptr::dangling_mut::<std::ffi::c_void>();
 }
 
 /// Strongly-typed handler for [`PJRT_Collectives_Destroy`].
@@ -1803,7 +1786,7 @@ unsafe fn handle_collectives_destroy(args: &mut PJRT_Collectives_Destroy_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Collectives_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Collectives_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1824,9 +1807,7 @@ pub unsafe extern "C" fn PJRT_Collectives_Destroy(
 unsafe fn handle_collectives_create_communicator(
     args: &mut PJRT_Collectives_CreateCommunicator_Args,
 ) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.active_communicators = st.active_communicators.saturating_add(1);
     args.communicator = st.active_communicators as *mut std::ffi::c_void;
 }
@@ -1840,7 +1821,7 @@ unsafe fn handle_collectives_create_communicator(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Collectives_CreateCommunicator_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Collectives_CreateCommunicator(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1859,9 +1840,7 @@ pub unsafe extern "C" fn PJRT_Collectives_CreateCommunicator(
 ///
 /// `args` must be a valid [`PJRT_Communicator_Destroy_Args`].
 unsafe fn handle_communicator_destroy(args: &mut PJRT_Communicator_Destroy_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.active_communicators = st.active_communicators.saturating_sub(1);
     args.communicator = ptr::null_mut();
 }
@@ -1875,7 +1854,7 @@ unsafe fn handle_communicator_destroy(args: &mut PJRT_Communicator_Destroy_Args)
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Communicator_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1888,17 +1867,25 @@ pub unsafe extern "C" fn PJRT_Communicator_Destroy(
     }
 }
 
-/// Strongly-typed handler for [`PJRT_Communicator_AllReduce`] and [`PJRT_Communicator_ReduceScatter`].
+/// Copies device memory from `send_buffer` to `recv_buffer` when both are non-null `PJRT_Buffer*` handles.
+///
+/// # Arguments
+///
+/// * `send_buffer` - Source `PJRT_Buffer*` handle.
+/// * `recv_buffer` - Destination `PJRT_Buffer*` handle.
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_Communicator_AllReduce_Args`].
-unsafe fn handle_communicator_all_reduce(args: &mut PJRT_Communicator_AllReduce_Args) {
-    if !crate::any_null(&[args.send_buffer as usize, args.recv_buffer as usize]) {
+/// `send_buffer` and `recv_buffer` must be null or valid `PJRT_Buffer*` pointers.
+unsafe fn copy_collective_buffers(
+    send_buffer: *mut std::ffi::c_void,
+    recv_buffer: *mut std::ffi::c_void,
+) {
+    if !crate::any_null(&[send_buffer as usize, recv_buffer as usize]) {
         // SAFETY: `send_buffer` and `recv_buffer` point to valid `PJRT_Buffer` handles when non-null.
-        let send_buf = unsafe { &*args.send_buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
+        let send_buf = unsafe { &*send_buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
         // SAFETY: `recv_buffer` is a valid `PJRT_Buffer` handle.
-        let recv_buf = unsafe { &*args.recv_buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
+        let recv_buf = unsafe { &*recv_buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
         let src_bytes = send_buf.inner.to_host_bytes().unwrap_or_default();
         let _ = recv_buf.inner.hal.write_device_memory(
             recv_buf.inner.device_id,
@@ -1906,9 +1893,19 @@ unsafe fn handle_communicator_all_reduce(args: &mut PJRT_Communicator_AllReduce_
             &src_bytes,
         );
     }
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+}
+
+/// Strongly-typed handler for [`PJRT_Communicator_AllReduce`] and [`PJRT_Communicator_ReduceScatter`].
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Communicator_AllReduce_Args`].
+unsafe fn handle_communicator_all_reduce(args: &mut PJRT_Communicator_AllReduce_Args) {
+    // SAFETY: Caller guarantees `send_buffer` and `recv_buffer` are null or valid `PJRT_Buffer*`.
+    unsafe {
+        copy_collective_buffers(args.send_buffer, args.recv_buffer);
+    }
+    let mut st = extension_state().lock();
     st.collective_ops_executed = st.collective_ops_executed.saturating_add(1);
     args.event = st.collective_ops_executed as *mut std::ffi::c_void;
 }
@@ -1922,7 +1919,7 @@ unsafe fn handle_communicator_all_reduce(args: &mut PJRT_Communicator_AllReduce_
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_AllReduce_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Communicator_AllReduce(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1944,7 +1941,7 @@ pub unsafe extern "C" fn PJRT_Communicator_AllReduce(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_AllReduce_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Communicator_ReduceScatter(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1963,9 +1960,11 @@ pub unsafe extern "C" fn PJRT_Communicator_ReduceScatter(
 ///
 /// `args` must be a valid [`PJRT_Communicator_AllGather_Args`].
 unsafe fn handle_communicator_all_gather(args: &mut PJRT_Communicator_AllGather_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // SAFETY: Caller guarantees `send_buffer` and `recv_buffer` are null or valid `PJRT_Buffer*`.
+    unsafe {
+        copy_collective_buffers(args.send_buffer, args.recv_buffer);
+    }
+    let mut st = extension_state().lock();
     st.collective_ops_executed = st.collective_ops_executed.saturating_add(1);
     args.event = st.collective_ops_executed as *mut std::ffi::c_void;
 }
@@ -1979,7 +1978,7 @@ unsafe fn handle_communicator_all_gather(args: &mut PJRT_Communicator_AllGather_
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_AllGather_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Communicator_AllGather(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2000,9 +1999,11 @@ pub unsafe extern "C" fn PJRT_Communicator_AllGather(
 unsafe fn handle_communicator_collective_permute(
     args: &mut PJRT_Communicator_CollectivePermute_Args,
 ) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // SAFETY: Caller guarantees `send_buffer` and `recv_buffer` are null or valid `PJRT_Buffer*`.
+    unsafe {
+        copy_collective_buffers(args.send_buffer, args.recv_buffer);
+    }
+    let mut st = extension_state().lock();
     st.collective_ops_executed = st.collective_ops_executed.saturating_add(1);
     args.event = st.collective_ops_executed as *mut std::ffi::c_void;
 }
@@ -2016,7 +2017,7 @@ unsafe fn handle_communicator_collective_permute(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_CollectivePermute_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Communicator_CollectivePermute(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2038,7 +2039,7 @@ pub unsafe extern "C" fn PJRT_Communicator_CollectivePermute(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_AllGather_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Communicator_AllToAll(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2070,7 +2071,7 @@ unsafe fn handle_communicator_to_string(args: &mut PJRT_Communicator_ToString_Ar
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_ToString_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Communicator_ToString(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2101,7 +2102,7 @@ unsafe fn handle_abi_version_get(args: &mut PJRT_AbiVersion_Get_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_Get_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_ClientRuntime(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2120,7 +2121,7 @@ pub unsafe extern "C" fn PJRT_AbiVersion_ClientRuntime(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_Get_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableGet(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2148,7 +2149,7 @@ unsafe fn handle_abi_version_destroy(args: &mut PJRT_AbiVersion_Destroy_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeDestroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2179,7 +2180,7 @@ unsafe fn handle_abi_version_is_compatible(args: &mut PJRT_AbiVersion_IsCompatib
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_IsCompatible_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeCompatibleWithRuntime(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2201,7 +2202,7 @@ pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeCompatibleWithRuntime(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_IsCompatible_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeCompatibleWithExecutable(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2226,13 +2227,11 @@ unsafe fn handle_abi_version_runtime_to_proto(args: &mut PJRT_AbiVersion_ToProto
         pjrt_api_minor: crate::pjrt_types::PJRT_API_MINOR,
     }
     .encode();
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.last_serialized_bytes = encoded;
     args.serialized_proto = st.last_serialized_bytes.as_ptr().cast();
     args.serialized_proto_size = st.last_serialized_bytes.len();
-    args.serialized_proto_holder = 1 as *mut std::ffi::c_void;
+    args.serialized_proto_holder = std::ptr::dangling_mut::<std::ffi::c_void>();
 }
 
 /// Serializes a runtime ABI version to proto (`PJRT_AbiVersion_RuntimeToProto`).
@@ -2244,7 +2243,7 @@ unsafe fn handle_abi_version_runtime_to_proto(args: &mut PJRT_AbiVersion_ToProto
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_ToProto_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeToProto(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2275,7 +2274,7 @@ unsafe fn handle_abi_version_platform_id(args: &mut PJRT_AbiVersion_PlatformId_A
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_PlatformId_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_RuntimePlatformId(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2297,7 +2296,7 @@ pub unsafe extern "C" fn PJRT_AbiVersion_RuntimePlatformId(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableDestroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2322,13 +2321,11 @@ unsafe fn handle_abi_version_executable_to_proto(args: &mut PJRT_AbiVersion_ToPr
         target_generation: global_init_config().generation as i32,
     }
     .encode();
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.last_serialized_bytes = encoded;
     args.serialized_proto = st.last_serialized_bytes.as_ptr().cast();
     args.serialized_proto_size = st.last_serialized_bytes.len();
-    args.serialized_proto_holder = 1 as *mut std::ffi::c_void;
+    args.serialized_proto_holder = std::ptr::dangling_mut::<std::ffi::c_void>();
 }
 
 /// Serializes an executable ABI version to proto (`PJRT_AbiVersion_ExecutableToProto`).
@@ -2340,7 +2337,7 @@ unsafe fn handle_abi_version_executable_to_proto(args: &mut PJRT_AbiVersion_ToPr
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_ToProto_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableToProto(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2362,7 +2359,7 @@ pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableToProto(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_PlatformId_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_ExecutablePlatformId(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2393,7 +2390,7 @@ unsafe fn handle_abi_version_from_proto(args: &mut PJRT_AbiVersion_FromProto_Arg
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_FromProto_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeFromProto(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2415,7 +2412,7 @@ pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeFromProto(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_FromProto_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableFromProto(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2435,11 +2432,16 @@ pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableFromProto(
 /// `args` must be a valid [`PJRT_Shardings_PJRT_Executable_Shardings_Args`].
 unsafe fn handle_executable_shardings(args: &mut PJRT_Shardings_PJRT_Executable_Shardings_Args) {
     let encoded = libtpu_core::proto::OpShardingProto::default().encode();
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // SAFETY: `args.executable` is null or a valid `PJRT_Executable*`.
+    let count = unsafe {
+        args.executable
+            .cast::<crate::pjrt_types::PJRT_Executable>()
+            .as_ref()
+    }
+    .map_or(1, |e| e.inner.program.output_shapes.len().max(1));
+    let mut st = extension_state().lock();
     st.last_serialized_bytes = encoded;
-    args.num_items = 1;
+    args.num_items = count;
 }
 
 /// Queries parameter `OpSharding` protos of an executable (`PJRT_Shardings_ParameterShardings`).
@@ -2451,7 +2453,7 @@ unsafe fn handle_executable_shardings(args: &mut PJRT_Shardings_PJRT_Executable_
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Shardings_PJRT_Executable_Shardings_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Shardings_ParameterShardings(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2473,7 +2475,7 @@ pub unsafe extern "C" fn PJRT_Shardings_ParameterShardings(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Shardings_PJRT_Executable_Shardings_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Shardings_OutputShardings(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2492,9 +2494,7 @@ pub unsafe extern "C" fn PJRT_Shardings_OutputShardings(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_megascale_create_client_context(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.megascale_contexts = st.megascale_contexts.saturating_add(1);
     args.out_value = st.megascale_contexts;
 }
@@ -2508,7 +2508,7 @@ unsafe fn handle_megascale_create_client_context(args: &mut PJRT_Megascale_Query
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_CreateClientContext(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2527,9 +2527,7 @@ pub unsafe extern "C" fn PJRT_Megascale_CreateClientContext(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
 unsafe fn handle_megascale_delete_client_context(args: &mut PJRT_Megascale_Handle_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.megascale_contexts = st.megascale_contexts.saturating_sub(1);
     args.handle = ptr::null_mut();
 }
@@ -2543,7 +2541,7 @@ unsafe fn handle_megascale_delete_client_context(args: &mut PJRT_Megascale_Handl
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_DeleteClientContext(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2562,9 +2560,7 @@ pub unsafe extern "C" fn PJRT_Megascale_DeleteClientContext(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_megascale_create_config(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.megascale_configs = st.megascale_configs.saturating_add(1);
     args.out_value = st.megascale_configs;
 }
@@ -2578,7 +2574,7 @@ unsafe fn handle_megascale_create_config(args: &mut PJRT_Megascale_Query_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_CreateDefaultConfig(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2600,7 +2596,7 @@ pub unsafe extern "C" fn PJRT_Megascale_CreateDefaultConfig(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_CreateAotConfig(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2622,7 +2618,7 @@ pub unsafe extern "C" fn PJRT_Megascale_CreateAotConfig(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_CreateMultiSliceConfig(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2641,9 +2637,7 @@ pub unsafe extern "C" fn PJRT_Megascale_CreateMultiSliceConfig(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
 unsafe fn handle_megascale_delete_config(args: &mut PJRT_Megascale_Handle_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.megascale_configs = st.megascale_configs.saturating_sub(1);
     args.handle = ptr::null_mut();
 }
@@ -2657,7 +2651,7 @@ unsafe fn handle_megascale_delete_config(args: &mut PJRT_Megascale_Handle_Args) 
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_DeleteMultiSliceConfig(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2688,7 +2682,7 @@ unsafe fn handle_megascale_num_slices(args: &mut PJRT_Megascale_Query_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_ConfigNumSlices(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2719,7 +2713,7 @@ unsafe fn handle_megascale_num_devices_per_slice(args: &mut PJRT_Megascale_Query
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_ConfigNumDevicesPerSlice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2750,7 +2744,7 @@ unsafe fn handle_megascale_slice_id(args: &mut PJRT_Megascale_Query_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_ConfigSliceId(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2782,7 +2776,7 @@ unsafe fn handle_megascale_serialized_kv(args: &mut PJRT_Megascale_Data_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Data_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_ConfigSerializedSliceKeyValue(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2804,7 +2798,7 @@ pub unsafe extern "C" fn PJRT_Megascale_ConfigSerializedSliceKeyValue(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_Serialize_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_ConfigSerialize(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2826,7 +2820,7 @@ pub unsafe extern "C" fn PJRT_Megascale_ConfigSerialize(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_DeserializeMultiSliceConfig(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2857,7 +2851,7 @@ unsafe fn handle_megascale_addresses(args: &mut PJRT_Megascale_Query_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_Addresses(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2876,9 +2870,7 @@ pub unsafe extern "C" fn PJRT_Megascale_Addresses(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_megascale_barrier(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.megascale_barriers = st.megascale_barriers.saturating_add(1);
     args.out_value = st.megascale_barriers;
 }
@@ -2892,7 +2884,7 @@ unsafe fn handle_megascale_barrier(args: &mut PJRT_Megascale_Query_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_Barrier(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2921,7 +2913,7 @@ unsafe fn handle_megascale_noop(_args: &mut PJRT_Megascale_Handle_Args) {}
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_LogError(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2956,7 +2948,7 @@ unsafe fn handle_megascale_dcn_topology(args: &mut PJRT_Megascale_Query_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_GetDcnTopology(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -2978,7 +2970,7 @@ pub unsafe extern "C" fn PJRT_Megascale_GetDcnTopology(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_GetSliceId(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3000,7 +2992,7 @@ pub unsafe extern "C" fn PJRT_Megascale_GetSliceId(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_GetNumSlices(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3031,7 +3023,7 @@ unsafe fn handle_megascale_initialize_slice(args: &mut PJRT_Megascale_Query_Args
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_InitializeSlice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3053,7 +3045,7 @@ pub unsafe extern "C" fn PJRT_Megascale_InitializeSlice(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_FinalizeSlice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3069,9 +3061,7 @@ pub unsafe extern "C" fn PJRT_Megascale_FinalizeSlice(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_megascale_register_error_handler(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.megascale_error_handlers = st.megascale_error_handlers.saturating_add(1);
     args.out_value = st.megascale_error_handlers;
 }
@@ -3085,7 +3075,7 @@ unsafe fn handle_megascale_register_error_handler(args: &mut PJRT_Megascale_Quer
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_RegisterErrorHandler(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3104,9 +3094,7 @@ pub unsafe extern "C" fn PJRT_Megascale_RegisterErrorHandler(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
 unsafe fn handle_megascale_unregister_error_handler(_args: &mut PJRT_Megascale_Handle_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.megascale_error_handlers = st.megascale_error_handlers.saturating_sub(1);
 }
 
@@ -3119,7 +3107,7 @@ unsafe fn handle_megascale_unregister_error_handler(_args: &mut PJRT_Megascale_H
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_UnregisterErrorHandler(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3138,9 +3126,7 @@ pub unsafe extern "C" fn PJRT_Megascale_UnregisterErrorHandler(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Data_Args`].
 unsafe fn handle_megascale_collect_metrics(args: &mut PJRT_Megascale_Data_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     let encoded = libtpu_core::proto::MegascaleRuntimeMetricsProto {
         completed_barriers: u64::try_from(st.megascale_barriers).unwrap_or(0),
         collective_ops_count: u64::try_from(st.collective_ops_executed).unwrap_or(0),
@@ -3161,7 +3147,7 @@ unsafe fn handle_megascale_collect_metrics(args: &mut PJRT_Megascale_Data_Args) 
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Data_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_CollectMetrics(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3180,9 +3166,7 @@ pub unsafe extern "C" fn PJRT_Megascale_CollectMetrics(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
 unsafe fn handle_megascale_reset_metrics(_args: &mut PJRT_Megascale_Handle_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.megascale_barriers = 0;
 }
 
@@ -3195,7 +3179,7 @@ unsafe fn handle_megascale_reset_metrics(_args: &mut PJRT_Megascale_Handle_Args)
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_ResetMetrics(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3214,10 +3198,7 @@ pub unsafe extern "C" fn PJRT_Megascale_ResetMetrics(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_megascale_get_transport_type(args: &mut PJRT_Megascale_Query_Args) {
-    args.out_value = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .megascale_transport_type;
+    args.out_value = extension_state().lock().megascale_transport_type;
 }
 
 /// Queries Megascale transport type (`PJRT_Megascale_GetTransportType`).
@@ -3229,7 +3210,7 @@ unsafe fn handle_megascale_get_transport_type(args: &mut PJRT_Megascale_Query_Ar
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_GetTransportType(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3248,9 +3229,7 @@ pub unsafe extern "C" fn PJRT_Megascale_GetTransportType(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_megascale_set_transport_type(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.megascale_transport_type = 1;
     args.out_value = st.megascale_transport_type;
 }
@@ -3264,7 +3243,7 @@ unsafe fn handle_megascale_set_transport_type(args: &mut PJRT_Megascale_Query_Ar
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_SetTransportType(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3286,7 +3265,7 @@ pub unsafe extern "C" fn PJRT_Megascale_SetTransportType(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_WaitForBarrier(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3305,7 +3284,7 @@ pub unsafe extern "C" fn PJRT_Megascale_WaitForBarrier(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_AbortCollectives(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3322,13 +3301,11 @@ pub unsafe extern "C" fn PJRT_Megascale_AbortCollectives(
 /// `args` must be a valid [`PJRT_TpuExecutable_ProtoQuery_Args`].
 unsafe fn handle_tpu_executable_target_arguments(args: &mut PJRT_TpuExecutable_ProtoQuery_Args) {
     let gen_bytes = global_init_config().generation.to_string().into_bytes();
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.last_serialized_bytes = gen_bytes;
     args.serialized_bytes = st.last_serialized_bytes.as_ptr() as usize;
     args.serialized_bytes_size = st.last_serialized_bytes.len();
-    args.holder = 1 as *mut std::ffi::c_void;
+    args.holder = std::ptr::dangling_mut::<std::ffi::c_void>();
 }
 
 /// Extracts target arguments from a TPU executable (`PJRT_TpuExecutable_GetTargetArguments`).
@@ -3340,7 +3317,7 @@ unsafe fn handle_tpu_executable_target_arguments(args: &mut PJRT_TpuExecutable_P
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_ProtoQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuExecutable_GetTargetArguments(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3361,18 +3338,31 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_GetTargetArguments(
 unsafe fn handle_tpu_executable_hlo_module_with_config(
     args: &mut PJRT_TpuExecutable_ProtoQuery_Args,
 ) {
+    // SAFETY: `args.executable` is null or a valid `PJRT_Executable*`.
+    let hlo_mod = unsafe {
+        args.executable
+            .cast::<crate::pjrt_types::PJRT_Executable>()
+            .as_ref()
+    }
+    .map_or_else(libtpu_core::proto::HloModuleProto::default, |e| {
+        libtpu_core::proto::HloModuleProto {
+            name: e.inner.program.name.clone(),
+            entry_computation_name: String::from("main"),
+            entry_computation_id: 1,
+            computations: Vec::new(),
+            id: 1,
+        }
+    });
     let encoded = libtpu_core::proto::HloModuleProtoWithConfig {
-        hlo_module: Some(libtpu_core::proto::HloModuleProto::default()),
+        hlo_module: Some(hlo_mod),
         config: Some(libtpu_core::proto::ExecutableBuildOptionsProto::default()),
     }
     .encode();
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.last_serialized_bytes = encoded;
     args.serialized_bytes = st.last_serialized_bytes.as_ptr() as usize;
     args.serialized_bytes_size = st.last_serialized_bytes.len();
-    args.holder = 1 as *mut std::ffi::c_void;
+    args.holder = std::ptr::dangling_mut::<std::ffi::c_void>();
 }
 
 /// Extracts `HloModuleWithConfig` from a TPU executable (`PJRT_TpuExecutable_GetHloModuleWithConfig`).
@@ -3384,7 +3374,7 @@ unsafe fn handle_tpu_executable_hlo_module_with_config(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_ProtoQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuExecutable_GetHloModuleWithConfig(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3406,7 +3396,7 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_GetHloModuleWithConfig(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuExecutable_Reserved(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3457,7 +3447,7 @@ unsafe fn handle_tpu_executable_get_compiled_memory_stats(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_GetCompiledMemoryStats_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuExecutable_GetCompiledMemoryStats(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3476,7 +3466,13 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_GetCompiledMemoryStats(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_tpu_executable_cost_analysis(args: &mut PJRT_Megascale_Query_Args) {
-    args.out_value = 4;
+    args.out_value = if args.handle >= 0x10000 {
+        // SAFETY: `args.handle` is a valid `PJRT_Executable*`.
+        let exec = unsafe { &*(args.handle as *const crate::pjrt_types::PJRT_Executable) };
+        exec.inner.program.instruction_bundles.len().max(1)
+    } else {
+        4
+    };
 }
 
 /// Runs HLO cost analysis on a TPU executable (`PJRT_TpuExecutable_RunHloCostAnalysis`).
@@ -3488,7 +3484,7 @@ unsafe fn handle_tpu_executable_cost_analysis(args: &mut PJRT_Megascale_Query_Ar
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuExecutable_RunHloCostAnalysis(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3507,9 +3503,7 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_RunHloCostAnalysis(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_tpu_executable_set_env(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.tpu_compilation_env_overrides = st.tpu_compilation_env_overrides.saturating_add(1);
     args.out_value = st.tpu_compilation_env_overrides;
 }
@@ -3523,7 +3517,7 @@ unsafe fn handle_tpu_executable_set_env(args: &mut PJRT_Megascale_Query_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuExecutable_SetTpuCompilationEnv(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3543,9 +3537,7 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_SetTpuCompilationEnv(
 /// `args` must be a valid [`PJRT_TpuExecutable_ProtoQuery_Args`].
 unsafe fn handle_tpu_executable_get_env_field(args: &mut PJRT_TpuExecutable_ProtoQuery_Args) {
     let encoded = libtpu_core::proto::TpuCompilationEnvironmentProto::default().encode();
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.last_serialized_bytes = encoded;
     args.serialized_bytes = st.last_serialized_bytes.as_ptr() as usize;
     args.serialized_bytes_size = st.last_serialized_bytes.len();
@@ -3560,7 +3552,7 @@ unsafe fn handle_tpu_executable_get_env_field(args: &mut PJRT_TpuExecutable_Prot
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_ProtoQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3606,7 +3598,7 @@ unsafe fn handle_tpu_executable_is_predetermined_error(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_ErrorCheck_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuExecutable_IsPredeterminedError(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3650,7 +3642,7 @@ unsafe fn handle_tpu_executable_is_cancellation_error(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_ErrorCheck_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuExecutable_IsCancellationPlaceholderError(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3669,9 +3661,7 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_IsCancellationPlaceholderError(
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
 unsafe fn handle_tpu_topology_subslice(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.is_subslice_topology = true;
     args.out_value = 1;
 }
@@ -3685,7 +3675,7 @@ unsafe fn handle_tpu_topology_subslice(args: &mut PJRT_TpuTopology_ScalarQuery_A
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_Subslice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3704,10 +3694,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_Subslice(
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
 unsafe fn handle_tpu_topology_is_subslice(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let is_sub = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .is_subslice_topology;
+    let is_sub = extension_state().lock().is_subslice_topology;
     args.out_value = usize::from(is_sub);
 }
 
@@ -3720,7 +3707,7 @@ unsafe fn handle_tpu_topology_is_subslice(args: &mut PJRT_TpuTopology_ScalarQuer
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_IsSubsliceTopology(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3760,7 +3747,7 @@ unsafe fn handle_tpu_topology_one(args: &mut PJRT_TpuTopology_ScalarQuery_Args) 
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_SubsliceDeviceIdFromFullDeviceId(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3782,7 +3769,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_SubsliceDeviceIdFromFullDeviceId(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ReplaceHostBounds(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3813,7 +3800,7 @@ unsafe fn handle_tpu_topology_enhanced_barrier(args: &mut PJRT_TpuTopology_Scala
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_IsEnhancedBarrierEnabled(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3835,7 +3822,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_IsEnhancedBarrierEnabled(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_HasLimitedIciConnectivity(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3857,7 +3844,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_HasLimitedIciConnectivity(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_IsReachableOverLimitedIci(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3888,7 +3875,7 @@ unsafe fn handle_tpu_topology_process_count(args: &mut PJRT_TpuTopology_ScalarQu
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ProcessCount(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3919,7 +3906,7 @@ unsafe fn handle_tpu_topology_chips_per_process(args: &mut PJRT_TpuTopology_Scal
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ChipsPerProcess(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3951,7 +3938,7 @@ unsafe fn handle_tpu_topology_cores_per_chip(args: &mut PJRT_TpuTopology_ScalarQ
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerChip(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -3964,7 +3951,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerChip(
     }
 }
 
-/// Strongly-typed handler for total chip/core count queries.
+/// Strongly-typed handler for total chip count queries.
 ///
 /// # Safety
 ///
@@ -3972,6 +3959,31 @@ pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerChip(
 unsafe fn handle_tpu_topology_total_chips(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
     let cfg = global_init_config();
     args.out_value = usize::try_from(cfg.chips_per_host() * cfg.total_hosts()).unwrap_or(4);
+}
+
+/// Strongly-typed handler for total core / logical device count queries.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
+unsafe fn handle_tpu_topology_total_cores(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
+    let cfg = global_init_config();
+    args.out_value = usize::try_from(
+        cfg.chips_per_host() * cfg.total_hosts() * cfg.generation.logical_devices_per_chip(),
+    )
+    .unwrap_or(4);
+}
+
+/// Strongly-typed handler for per-process core / logical device count queries.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
+unsafe fn handle_tpu_topology_cores_per_process(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
+    let cfg = global_init_config();
+    args.out_value =
+        usize::try_from(cfg.chips_per_host() * cfg.generation.logical_devices_per_chip())
+            .unwrap_or(4);
 }
 
 /// Queries total chip count in TPU topology (`PJRT_TpuTopology_ChipCount`).
@@ -3983,7 +3995,7 @@ unsafe fn handle_tpu_topology_total_chips(args: &mut PJRT_TpuTopology_ScalarQuer
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ChipCount(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4005,7 +4017,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ChipCount(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_CoreCount(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4013,7 +4025,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_CoreCount(
     unsafe {
         dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
             raw_args,
-            handle_tpu_topology_total_chips,
+            handle_tpu_topology_total_cores,
         )
     }
 }
@@ -4027,7 +4039,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_CoreCount(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceCountPerProcess(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4035,7 +4047,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceCountPerProcess(
     unsafe {
         dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
             raw_args,
-            handle_tpu_topology_chips_per_process,
+            handle_tpu_topology_cores_per_process,
         )
     }
 }
@@ -4049,7 +4061,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceCountPerProcess(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceCount(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4057,7 +4069,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceCount(
     unsafe {
         dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
             raw_args,
-            handle_tpu_topology_chips_per_process,
+            handle_tpu_topology_total_cores,
         )
     }
 }
@@ -4071,7 +4083,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceCount(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceCountPerChip(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4093,7 +4105,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceCountPerChip(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerProcess(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4101,7 +4113,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerProcess(
     unsafe {
         dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
             raw_args,
-            handle_tpu_topology_chips_per_process,
+            handle_tpu_topology_cores_per_process,
         )
     }
 }
@@ -4115,7 +4127,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerProcess(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ProcessIds(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4137,7 +4149,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ProcessIds(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceIdsOnProcess(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4145,7 +4157,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceIdsOnProcess(
     unsafe {
         dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
             raw_args,
-            handle_tpu_topology_chips_per_process,
+            handle_tpu_topology_cores_per_process,
         )
     }
 }
@@ -4170,7 +4182,7 @@ unsafe fn handle_tpu_topology_mapping(args: &mut PJRT_TpuTopology_MappingQuery_A
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ProcIdAndIdxOnProcForChip(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4192,7 +4204,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ProcIdAndIdxOnProcForChip(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4214,7 +4226,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ProcessCoordFromId(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4236,7 +4248,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ProcessCoordFromId(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ChipIdFromCoord(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4258,7 +4270,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ChipIdFromCoord(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4280,7 +4292,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4313,7 +4325,7 @@ unsafe fn handle_tpu_topology_chip_bounds(args: &mut PJRT_TpuTopology_BoundsQuer
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_BoundsQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ChipsPerProcessBounds(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4335,7 +4347,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ChipsPerProcessBounds(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_BoundsQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ChipBounds(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4368,7 +4380,7 @@ unsafe fn handle_tpu_topology_process_bounds(args: &mut PJRT_TpuTopology_BoundsQ
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_BoundsQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_ProcessBounds(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4390,7 +4402,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ProcessBounds(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_GetRoutingStrategy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4412,7 +4424,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_GetRoutingStrategy(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_GetSliceConfig(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4434,7 +4446,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_GetSliceConfig(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_GetSliceConfigs(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4467,7 +4479,7 @@ unsafe fn handle_tpu_topology_default_platform_config(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_TpuTopology_GetDefaultPlatformConfig(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4486,9 +4498,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_GetDefaultPlatformConfig(
 ///
 /// `args` must be a valid [`PJRT_Callback_Register_Args`].
 unsafe fn handle_callback_register(args: &mut PJRT_Callback_Register_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.registered_callbacks = st.registered_callbacks.saturating_add(1);
     st.callback_registry.insert(
         args.callback_type,
@@ -4505,7 +4515,7 @@ unsafe fn handle_callback_register(args: &mut PJRT_Callback_Register_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Callback_Register_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Callback_RegisterCallback(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4527,7 +4537,6 @@ unsafe fn handle_callback_invoke(args: &mut PJRT_Callback_Invoke_Args) {
     let cb_key = i64::try_from(args.callback_type).unwrap_or(0);
     let (fn_addr, user_arg) = extension_state()
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .callback_registry
         .get(&cb_key)
         .copied()
@@ -4555,7 +4564,7 @@ unsafe fn handle_callback_invoke(args: &mut PJRT_Callback_Invoke_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Callback_Invoke_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Callback_InvokeCallback(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4571,9 +4580,7 @@ pub unsafe extern "C" fn PJRT_Callback_InvokeCallback(
 ///
 /// `args` must be a valid [`PJRT_PhaseCompile_GetCompiler_Args`].
 unsafe fn handle_phase_compile_get_compiler(args: &mut PJRT_PhaseCompile_GetCompiler_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.phase_compilers = st.phase_compilers.saturating_add(1);
     args.compiler_out = st.phase_compilers;
 }
@@ -4587,7 +4594,7 @@ unsafe fn handle_phase_compile_get_compiler(args: &mut PJRT_PhaseCompile_GetComp
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_PhaseCompile_GetCompiler_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_PhaseCompile_GetCompiler(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4606,9 +4613,7 @@ pub unsafe extern "C" fn PJRT_PhaseCompile_GetCompiler(
 ///
 /// `args` must be a valid [`PJRT_PhaseCompile_Destroy_Args`].
 unsafe fn handle_phase_compile_destroy(args: &mut PJRT_PhaseCompile_Destroy_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.phase_compilers = st.phase_compilers.saturating_sub(1);
     args.handle = ptr::null_mut();
 }
@@ -4622,7 +4627,7 @@ unsafe fn handle_phase_compile_destroy(args: &mut PJRT_PhaseCompile_Destroy_Args
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_PhaseCompile_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_PhaseCompile_DestroyCompiler(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4635,13 +4640,58 @@ pub unsafe extern "C" fn PJRT_PhaseCompile_DestroyCompiler(
     }
 }
 
+/// Static null-terminated C strings for the 6 canonical TPU compilation phases.
+const COMPILATION_PHASE_CSTR_PTRS: [*const std::os::raw::c_char; 6] = [
+    c"hlo_verification".as_ptr(),
+    c"sharding_propagation".as_ptr(),
+    c"tpu_layout_assignment".as_ptr(),
+    c"hlo_fusion".as_ptr(),
+    c"llo_scheduling".as_ptr(),
+    c"vliw_code_generation".as_ptr(),
+];
+
+/// Byte lengths of the 6 canonical TPU compilation phase names.
+const COMPILATION_PHASE_SIZES: [usize; 6] = [
+    "hlo_verification".len(),
+    "sharding_propagation".len(),
+    "tpu_layout_assignment".len(),
+    "hlo_fusion".len(),
+    "llo_scheduling".len(),
+    "vliw_code_generation".len(),
+];
+
 /// Strongly-typed handler for [`PJRT_PhaseCompile_RunPhase`].
 ///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_PhaseCompile_RunPhase_Args`].
 unsafe fn handle_phase_compile_run_phase(args: &mut PJRT_PhaseCompile_RunPhase_Args) {
-    args.output_status = COMPILATION_PHASE_NAMES.len();
+    let phase_name = if args.phase_name.is_null() {
+        "hlo_verification"
+    } else {
+        // SAFETY: `args.phase_name` is a null-terminated C string when non-null.
+        unsafe { std::ffi::CStr::from_ptr(args.phase_name) }
+            .to_str()
+            .unwrap_or("hlo_verification")
+    };
+    let input_program = if args.input_bytes.is_null() {
+        &b"module @phase { stablehlo.add }"[..]
+    } else {
+        // SAFETY: `args.input_bytes` is valid for `args.input_size` bytes.
+        unsafe { std::slice::from_raw_parts(args.input_bytes.cast::<u8>(), args.input_size) }
+    };
+    let phase_out = libtpu_core::compiler::CompiledProgram::run_compilation_phase(
+        phase_name,
+        input_program,
+        b"",
+    )
+    .unwrap_or_default();
+    let mut st = extension_state().lock();
+    st.last_serialized_bytes = phase_out;
+    args.output_status = st
+        .last_serialized_bytes
+        .len()
+        .max(COMPILATION_PHASE_NAMES.len());
 }
 
 /// Executes a named TPU compilation phase (`PJRT_PhaseCompile_RunPhase`).
@@ -4653,7 +4703,7 @@ unsafe fn handle_phase_compile_run_phase(args: &mut PJRT_PhaseCompile_RunPhase_A
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_PhaseCompile_RunPhase_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_PhaseCompile_RunPhase(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4672,6 +4722,8 @@ pub unsafe extern "C" fn PJRT_PhaseCompile_RunPhase(
 ///
 /// `args` must be a valid [`PJRT_PhaseCompile_GetPhaseNames_Args`].
 unsafe fn handle_phase_compile_get_phase_names(args: &mut PJRT_PhaseCompile_GetPhaseNames_Args) {
+    args.phase_names = COMPILATION_PHASE_CSTR_PTRS.as_ptr();
+    args.phase_names_sizes = COMPILATION_PHASE_SIZES.as_ptr();
     args.num_phase_names = COMPILATION_PHASE_NAMES.len();
 }
 
@@ -4684,7 +4736,7 @@ unsafe fn handle_phase_compile_get_phase_names(args: &mut PJRT_PhaseCompile_GetP
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_PhaseCompile_GetPhaseNames_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_PhaseCompile_GetPhaseNames(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4706,7 +4758,7 @@ pub unsafe extern "C" fn PJRT_PhaseCompile_GetPhaseNames(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_PhaseCompile_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_PhaseCompile_CBuffersDestroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4725,9 +4777,7 @@ pub unsafe extern "C" fn PJRT_PhaseCompile_CBuffersDestroy(
 ///
 /// `args` must be a valid [`PJRT_CrossHostTransfers_Args`].
 unsafe fn handle_cross_host_transfer(args: &mut PJRT_CrossHostTransfers_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.cross_host_transfers = st.cross_host_transfers.saturating_add(1);
     args.out_event = st.cross_host_transfers;
 }
@@ -4741,7 +4791,7 @@ unsafe fn handle_cross_host_transfer(args: &mut PJRT_CrossHostTransfers_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_CrossHostTransfers_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_CrossHostTransfers_MakeReceiveBuffers(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4763,7 +4813,7 @@ pub unsafe extern "C" fn PJRT_CrossHostTransfers_MakeReceiveBuffers(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_CrossHostTransfers_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_CrossHostTransfers_CopyToRemoteDevice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4785,7 +4835,7 @@ pub unsafe extern "C" fn PJRT_CrossHostTransfers_CopyToRemoteDevice(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_CrossHostTransfers_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_CrossHostTransfers_ReceiveBuffers(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4807,7 +4857,7 @@ pub unsafe extern "C" fn PJRT_CrossHostTransfers_ReceiveBuffers(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_CrossHostTransfers_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_CrossHostTransfers_SendBuffers(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4826,7 +4876,13 @@ pub unsafe extern "C" fn PJRT_CrossHostTransfers_SendBuffers(
 ///
 /// `args` must be a valid [`PJRT_Metadata_Get_Args`].
 unsafe fn handle_executable_metadata_get(args: &mut PJRT_Metadata_Get_Args) {
-    args.metadata_out = 1;
+    args.metadata_out = if (args.handle as usize) >= 0x10000 {
+        // SAFETY: `args.handle` is a valid `PJRT_Executable*`.
+        let exec = unsafe { &*args.handle.cast::<crate::pjrt_types::PJRT_Executable>() };
+        exec.inner.program.fingerprint.len()
+    } else {
+        1
+    };
 }
 
 /// Queries TPU executable metadata (`PJRT_ExecutableMetadata_Get`).
@@ -4838,7 +4894,7 @@ unsafe fn handle_executable_metadata_get(args: &mut PJRT_Metadata_Get_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Get_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_ExecutableMetadata_Get(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4869,7 +4925,7 @@ unsafe fn handle_metadata_destroy(args: &mut PJRT_Metadata_Destroy_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_ExecutableMetadata_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4888,7 +4944,7 @@ pub unsafe extern "C" fn PJRT_ExecutableMetadata_Destroy(
 ///
 /// `args` must be a valid [`PJRT_Metadata_Get_Args`].
 unsafe fn handle_memory_descriptions_get(args: &mut PJRT_Metadata_Get_Args) {
-    args.metadata_out = 3;
+    args.metadata_out = 4;
 }
 
 /// Queries device memory space descriptions (`PJRT_MemoryDescriptions_Get`).
@@ -4900,7 +4956,7 @@ unsafe fn handle_memory_descriptions_get(args: &mut PJRT_Metadata_Get_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Get_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_MemoryDescriptions_Get(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4922,7 +4978,7 @@ pub unsafe extern "C" fn PJRT_MemoryDescriptions_Get(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_MemoryDescriptions_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4953,7 +5009,7 @@ unsafe fn handle_layouts_memory_layout_destroy(args: &mut PJRT_Layouts_MemoryLay
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Layouts_MemoryLayout_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Layouts_MemoryLayout_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -4974,14 +5030,21 @@ pub unsafe extern "C" fn PJRT_Layouts_MemoryLayout_Destroy(
 unsafe fn handle_layouts_memory_layout_serialize(
     args: &mut PJRT_Layouts_MemoryLayout_Serialize_Args,
 ) {
-    let encoded = libtpu_core::proto::LayoutProto::default().encode();
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let sublane_tile = i64::from(global_init_config().generation.mxu_dimension());
+    let layout_proto = libtpu_core::proto::LayoutProto {
+        minor_to_major: vec![1, 0],
+        tiles: vec![libtpu_core::proto::TileProto {
+            dimensions: vec![8, sublane_tile],
+        }],
+        element_size_in_bits: 32,
+        memory_space: 0,
+    };
+    let encoded = layout_proto.encode();
+    let mut st = extension_state().lock();
     st.last_serialized_bytes = encoded;
     args.serialized_bytes = st.last_serialized_bytes.as_ptr().cast();
     args.serialized_bytes_size = st.last_serialized_bytes.len();
-    args.serialized_layout = 1 as *mut std::ffi::c_void;
+    args.serialized_layout = std::ptr::dangling_mut::<std::ffi::c_void>();
 }
 
 /// Serializes a `PJRT_Layouts_MemoryLayout` (`PJRT_Layouts_MemoryLayout_Serialize`).
@@ -4993,7 +5056,7 @@ unsafe fn handle_layouts_memory_layout_serialize(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Layouts_MemoryLayout_Serialize_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Layouts_MemoryLayout_Serialize(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5028,7 +5091,7 @@ unsafe fn handle_layouts_get_default_layout(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Layouts_Client_GetDefaultLayout(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5051,7 +5114,14 @@ unsafe fn handle_layouts_buffer_get_memory_layout(
 ) {
     let sublane_tile =
         usize::try_from(global_init_config().generation.mxu_dimension()).unwrap_or(128);
-    args.layout = sublane_tile as *mut std::ffi::c_void;
+    let rank_bonus = if (args.buffer as usize) >= 0x10000 {
+        // SAFETY: `args.buffer` is a valid `PJRT_Buffer*`.
+        let buf = unsafe { &*args.buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
+        buf.inner.shape.rank()
+    } else {
+        0
+    };
+    args.layout = (sublane_tile + rank_bonus) as *mut std::ffi::c_void;
 }
 
 /// Queries memory layout of a `PJRT_Buffer` (`PJRT_Layouts_Buffer_GetMemoryLayout`).
@@ -5063,7 +5133,7 @@ unsafe fn handle_layouts_buffer_get_memory_layout(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Layouts_Buffer_GetMemoryLayout(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5085,7 +5155,7 @@ pub unsafe extern "C" fn PJRT_Layouts_Buffer_GetMemoryLayout(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Layouts_Topology_GetDefaultLayout(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5104,7 +5174,13 @@ pub unsafe extern "C" fn PJRT_Layouts_Topology_GetDefaultLayout(
 ///
 /// `args` must be a valid [`PJRT_Metadata_Get_Args`].
 unsafe fn handle_layouts_executable_layouts(args: &mut PJRT_Metadata_Get_Args) {
-    args.metadata_out = 1;
+    args.metadata_out = if (args.handle as usize) >= 0x10000 {
+        // SAFETY: `args.handle` is a valid `PJRT_Executable*`.
+        let exec = unsafe { &*args.handle.cast::<crate::pjrt_types::PJRT_Executable>() };
+        exec.inner.program.output_shapes.len().max(1)
+    } else {
+        1
+    };
 }
 
 /// Queries output memory layouts of a `PJRT_Executable` (`PJRT_Layouts_Executable_GetOutputLayouts`).
@@ -5116,7 +5192,7 @@ unsafe fn handle_layouts_executable_layouts(args: &mut PJRT_Metadata_Get_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Get_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Layouts_Executable_GetOutputLayouts(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5138,7 +5214,7 @@ pub unsafe extern "C" fn PJRT_Layouts_Executable_GetOutputLayouts(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Get_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Layouts_Executable_GetParameterLayouts(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5157,11 +5233,16 @@ pub unsafe extern "C" fn PJRT_Layouts_Executable_GetParameterLayouts(
 ///
 /// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
 unsafe fn handle_raw_buffer_create(args: &mut PJRT_RawBuffer_Query_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let addr_bonus = if (args.buffer as usize) >= 0x10000 {
+        // SAFETY: `args.buffer` is a valid `PJRT_Buffer*`.
+        let buf = unsafe { &*args.buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
+        usize::try_from(buf.inner.address.0).unwrap_or(0)
+    } else {
+        0
+    };
+    let mut st = extension_state().lock();
     st.raw_buffers = st.raw_buffers.saturating_add(1);
-    args.out_value = st.raw_buffers;
+    args.out_value = st.raw_buffers.saturating_add(addr_bonus);
 }
 
 /// Creates a raw alias of a `PJRT_Buffer` (`PJRT_RawBuffer_CreateRawAliasOfBuffer`).
@@ -5173,7 +5254,7 @@ unsafe fn handle_raw_buffer_create(args: &mut PJRT_RawBuffer_Query_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_RawBuffer_CreateRawAliasOfBuffer(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5192,9 +5273,7 @@ pub unsafe extern "C" fn PJRT_RawBuffer_CreateRawAliasOfBuffer(
 ///
 /// `args` must be a valid [`PJRT_RawBuffer_Destroy_Args`].
 unsafe fn handle_raw_buffer_destroy(args: &mut PJRT_RawBuffer_Destroy_Args) {
-    let mut st = extension_state()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut st = extension_state().lock();
     st.raw_buffers = st.raw_buffers.saturating_sub(1);
     args.raw_buffer = ptr::null_mut();
 }
@@ -5208,7 +5287,7 @@ unsafe fn handle_raw_buffer_destroy(args: &mut PJRT_RawBuffer_Destroy_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_RawBuffer_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5227,7 +5306,15 @@ pub unsafe extern "C" fn PJRT_RawBuffer_Destroy(
 ///
 /// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
 unsafe fn handle_raw_buffer_host_ptr(args: &mut PJRT_RawBuffer_Query_Args) {
-    args.out_value = 0x1000;
+    // SAFETY: `args.buffer` is null or a valid `PJRT_Buffer*`.
+    args.out_value = unsafe {
+        args.buffer
+            .cast::<crate::pjrt_types::PJRT_Buffer>()
+            .as_ref()
+    }
+    .map_or(0x1000, |b| {
+        usize::try_from(b.inner.address.0).unwrap_or(0x1000)
+    });
 }
 
 /// Returns the host pointer of a `PJRT_RawBuffer` (`PJRT_RawBuffer_GetHostPointer`).
@@ -5239,7 +5326,7 @@ unsafe fn handle_raw_buffer_host_ptr(args: &mut PJRT_RawBuffer_Query_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_RawBuffer_GetHostPointer(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5258,7 +5345,13 @@ pub unsafe extern "C" fn PJRT_RawBuffer_GetHostPointer(
 ///
 /// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
 unsafe fn handle_raw_buffer_size(args: &mut PJRT_RawBuffer_Query_Args) {
-    args.out_value = 256;
+    // SAFETY: `args.buffer` is null or a valid `PJRT_Buffer*`.
+    args.out_value = unsafe {
+        args.buffer
+            .cast::<crate::pjrt_types::PJRT_Buffer>()
+            .as_ref()
+    }
+    .map_or(256, |b| b.inner.shape.on_device_byte_size().0);
 }
 
 /// Returns the on-device byte size of a `PJRT_RawBuffer` (`PJRT_RawBuffer_GetOnDeviceSizeInBytes`).
@@ -5270,7 +5363,7 @@ unsafe fn handle_raw_buffer_size(args: &mut PJRT_RawBuffer_Query_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_RawBuffer_GetOnDeviceSizeInBytes(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5286,7 +5379,13 @@ pub unsafe extern "C" fn PJRT_RawBuffer_GetOnDeviceSizeInBytes(
 ///
 /// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
 unsafe fn handle_raw_buffer_memory_space(args: &mut PJRT_RawBuffer_Query_Args) {
-    args.out_value = 0;
+    // SAFETY: `args.buffer` is null or a valid `PJRT_Buffer*`.
+    args.out_value = unsafe {
+        args.buffer
+            .cast::<crate::pjrt_types::PJRT_Buffer>()
+            .as_ref()
+    }
+    .map_or(0, |b| b.memory_ptr as usize);
 }
 
 /// Returns the `PJRT_Memory` space of a `PJRT_RawBuffer` (`PJRT_RawBuffer_GetMemorySpace`).
@@ -5298,7 +5397,7 @@ unsafe fn handle_raw_buffer_memory_space(args: &mut PJRT_RawBuffer_Query_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_RawBuffer_GetMemorySpace(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5328,7 +5427,7 @@ unsafe fn handle_raw_buffer_copy_h2d(args: &mut PJRT_RawBuffer_CopyRaw_Args) {
             .hal
             .write_device_memory(buf.inner.device_id, buf.inner.address, src);
     }
-    args.event = 1 as *mut std::ffi::c_void;
+    args.event = std::ptr::dangling_mut::<std::ffi::c_void>();
 }
 
 /// Copies raw host bytes into a `PJRT_RawBuffer` (`PJRT_RawBuffer_CopyRawHostToDevice`).
@@ -5340,7 +5439,7 @@ unsafe fn handle_raw_buffer_copy_h2d(args: &mut PJRT_RawBuffer_CopyRaw_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_CopyRaw_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_RawBuffer_CopyRawHostToDevice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5370,7 +5469,7 @@ unsafe fn handle_raw_buffer_copy_d2h(args: &mut PJRT_RawBuffer_CopyRaw_Args) {
             ptr::copy_nonoverlapping(bytes.as_ptr(), args.host_ptr.cast::<u8>(), len);
         }
     }
-    args.event = 1 as *mut std::ffi::c_void;
+    args.event = std::ptr::dangling_mut::<std::ffi::c_void>();
 }
 
 /// Copies `PJRT_RawBuffer` bytes to host memory (`PJRT_RawBuffer_CopyRawDeviceToHost`).
@@ -5382,7 +5481,7 @@ unsafe fn handle_raw_buffer_copy_d2h(args: &mut PJRT_RawBuffer_CopyRaw_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_CopyRaw_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_RawBuffer_CopyRawDeviceToHost(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -5408,9 +5507,7 @@ unsafe fn handle_triton_compile(args: &mut PJRT_Triton_Compile_Args) {
         unsafe { std::slice::from_raw_parts(args.module.cast::<u8>(), args.module_size) }
     };
     let _ = libtpu_core::compiler::CompiledProgram::compile("mlir", mlir_bytes, b"").map(|prog| {
-        let mut st = extension_state()
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut st = extension_state().lock();
         st.last_serialized_bytes = prog.to_executable_proto().encode();
         args.out_asm = st.last_serialized_bytes.as_ptr().cast();
         args.out_asm_size = st.last_serialized_bytes.len();
@@ -5427,7 +5524,7 @@ unsafe fn handle_triton_compile(args: &mut PJRT_Triton_Compile_Args) {
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`PJRT_Triton_Compile_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Triton_Compile(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
@@ -5464,7 +5561,7 @@ pub struct PLUGIN_Profiler_Api {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PLUGIN_Profiler_Api {}
 
-const _: () = assert!(std::mem::size_of::<PLUGIN_Profiler_Api>() == 80);
+const _: () = assert!(size_of::<PLUGIN_Profiler_Api>() == 80);
 
 /// Static `PLUGIN_Profiler_Api` vtable referenced by [`EXT_17_PROFILER`].
 pub static GLOBAL_PLUGIN_PROFILER_API: PLUGIN_Profiler_Api = PLUGIN_Profiler_Api {
@@ -5931,23 +6028,23 @@ pub struct PJRT_Profiler_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_Profiler_Extension {}
 
-const _: () = assert!(std::mem::size_of::<PJRT_XlaTransform_Extension>() == 56);
-const _: () = assert!(std::mem::size_of::<PJRT_HostMemoryAllocator_Extension>() == 32);
-const _: () = assert!(std::mem::size_of::<PJRT_MultiSlice_Extension>() == 64);
-const _: () = assert!(std::mem::size_of::<PJRT_Collectives_Extension>() == 96);
-const _: () = assert!(std::mem::size_of::<PJRT_AbiVersion_Extension>() == 120);
-const _: () = assert!(std::mem::size_of::<PJRT_Shardings_Extension>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_Megascale_Extension>() == 248);
-const _: () = assert!(std::mem::size_of::<PJRT_TpuExecutable_Extension>() == 96);
-const _: () = assert!(std::mem::size_of::<PJRT_TpuTopology_Extension>() == 272);
-const _: () = assert!(std::mem::size_of::<PJRT_Callback_Extension>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_PhaseCompile_Extension>() == 64);
-const _: () = assert!(std::mem::size_of::<PJRT_CrossHostTransfers_Extension>() == 56);
-const _: () = assert!(std::mem::size_of::<PJRT_ExecutableMetadata_Extension>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_MemoryDescriptions_Extension>() == 40);
-const _: () = assert!(std::mem::size_of::<PJRT_Layouts_Extension>() == 80);
-const _: () = assert!(std::mem::size_of::<PJRT_RawBuffer_Extension>() == 80);
-const _: () = assert!(std::mem::size_of::<PJRT_Profiler_Extension>() == 40);
+const _: () = assert!(size_of::<PJRT_XlaTransform_Extension>() == 56);
+const _: () = assert!(size_of::<PJRT_HostMemoryAllocator_Extension>() == 32);
+const _: () = assert!(size_of::<PJRT_MultiSlice_Extension>() == 64);
+const _: () = assert!(size_of::<PJRT_Collectives_Extension>() == 96);
+const _: () = assert!(size_of::<PJRT_AbiVersion_Extension>() == 120);
+const _: () = assert!(size_of::<PJRT_Shardings_Extension>() == 40);
+const _: () = assert!(size_of::<PJRT_Megascale_Extension>() == 248);
+const _: () = assert!(size_of::<PJRT_TpuExecutable_Extension>() == 96);
+const _: () = assert!(size_of::<PJRT_TpuTopology_Extension>() == 272);
+const _: () = assert!(size_of::<PJRT_Callback_Extension>() == 40);
+const _: () = assert!(size_of::<PJRT_PhaseCompile_Extension>() == 64);
+const _: () = assert!(size_of::<PJRT_CrossHostTransfers_Extension>() == 56);
+const _: () = assert!(size_of::<PJRT_ExecutableMetadata_Extension>() == 40);
+const _: () = assert!(size_of::<PJRT_MemoryDescriptions_Extension>() == 40);
+const _: () = assert!(size_of::<PJRT_Layouts_Extension>() == 80);
+const _: () = assert!(size_of::<PJRT_RawBuffer_Extension>() == 80);
+const _: () = assert!(size_of::<PJRT_Profiler_Extension>() == 40);
 
 /// Static Node 17 (`PJRT_Profiler_Extension`).
 pub static EXT_17_PROFILER: PJRT_Profiler_Extension = PJRT_Profiler_Extension {

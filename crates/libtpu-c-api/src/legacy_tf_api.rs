@@ -1,4 +1,6 @@
-//! Legacy TensorFlow TPU (`TfTpu_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuDriver_*`) C API entrypoints.
+//! Legacy TensorFlow TPU C API entrypoints.
+//!
+//! Exports `TfTpu_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*`, and `TpuDriver_*`.
 
 use super::*;
 
@@ -13,7 +15,7 @@ use super::*;
 /// # Safety
 ///
 /// `args` must be null or point to `num_args` null-terminated C strings.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TfTpu_Initialize(
     init_library: bool,
     num_args: i32,
@@ -36,7 +38,7 @@ pub unsafe extern "C" fn TfTpu_Initialize(
 }
 
 /// TensorFlow kernel initialization hook (`TF_InitKernel`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TF_InitKernel() {}
 
 /// TensorFlow `NextPluggableDevice` plugin initialization hook (`TFNPD_InitPlugin`).
@@ -49,7 +51,7 @@ pub extern "C" fn TF_InitKernel() {}
 /// # Safety
 ///
 /// `params` and `status` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TFNPD_InitPlugin(params: *mut TFNPD_PluginParams, status: *mut TpuStatus) {
     if params.is_null() {
         // SAFETY: `TpuStatus_Set` checks `status` for null.
@@ -79,7 +81,7 @@ pub unsafe extern "C" fn TFNPD_InitPlugin(params: *mut TFNPD_PluginParams, statu
 /// # Safety
 ///
 /// `topology_proto` and `status` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SetGlobalTPUArrayOp_DoWork(
     topology_len: usize,
     topology_proto: *const c_char,
@@ -123,7 +125,7 @@ pub unsafe extern "C" fn SetGlobalTPUArrayOp_DoWork(
 /// # Safety
 ///
 /// `params` must be null or a valid mutable pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TfTpu_GetTpuPartitionedCallParams(
     params: *mut TpuPartitionedCall_Params,
 ) -> i32 {
@@ -152,7 +154,7 @@ pub unsafe extern "C" fn TfTpu_GetTpuPartitionedCallParams(
 /// # Safety
 ///
 /// `ptr` must be null or a valid `CString` raw pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuConfigurationApi_FreeCharArray(ptr: *mut c_char) {
     if !ptr.is_null() {
         // SAFETY: `ptr` was allocated via `CString::into_raw`.
@@ -172,7 +174,7 @@ pub unsafe extern "C" fn TpuConfigurationApi_FreeCharArray(ptr: *mut c_char) {
 /// # Safety
 ///
 /// `host_shape` and `infeed_shape` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTransferManager_GetInfeedLayout(
     host_shape: *const XLA_Shape,
     infeed_shape: *mut XLA_Shape,
@@ -199,7 +201,7 @@ pub unsafe extern "C" fn TpuTransferManager_GetInfeedLayout(
 /// # Arguments
 ///
 /// * `table_name` - Null-terminated embedding table name.
-/// * `num_samples_per_sparse_core` - Batch samples per SparseCore.
+/// * `num_samples_per_sparse_core` - Batch samples per `SparseCore`.
 /// * `feature_width` - Embedding feature width.
 /// * `max_ids_per_partition` - Output pointer receiving max IDs per partition.
 /// * `max_unique_ids_per_partition` - Output pointer receiving max unique IDs per partition.
@@ -208,7 +210,7 @@ pub unsafe extern "C" fn TpuTransferManager_GetInfeedLayout(
 /// # Safety
 ///
 /// All pointers must be null or valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn SparseCore_GetMaxIdsAndUniques(
     table_name: *const c_char,
     num_samples_per_sparse_core: i64,
@@ -241,7 +243,7 @@ pub unsafe extern "C" fn SparseCore_GetMaxIdsAndUniques(
 }
 
 /// Allocates a new OK [`TpuStatus`] (`TpuStatus_New`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuStatus_New() -> *mut TpuStatus {
     Box::into_raw(Box::new(TpuStatus {
         inner: TpuCoreStatus::ok(),
@@ -259,7 +261,7 @@ pub extern "C" fn TpuStatus_New() -> *mut TpuStatus {
 /// # Safety
 ///
 /// `msg` must be null or a valid null-terminated C string.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuStatus_Create(code: i32, msg: *const c_char) -> *mut TpuStatus {
     let text = if msg.is_null() {
         String::new()
@@ -286,7 +288,7 @@ pub unsafe extern "C" fn TpuStatus_Create(code: i32, msg: *const c_char) -> *mut
 /// # Safety
 ///
 /// `status` and `msg` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuStatus_Set(
     status: *mut TpuStatus,
     code: i32,
@@ -317,7 +319,7 @@ pub unsafe extern "C" fn TpuStatus_Set(
 /// # Safety
 ///
 /// `status` must be null or allocated by `TpuStatus_New` / `TpuStatus_Create`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuStatus_Free(status: *mut TpuStatus) {
     if !status.is_null() {
         // SAFETY: `status` is non-null and heap-allocated.
@@ -336,7 +338,7 @@ pub unsafe extern "C" fn TpuStatus_Free(status: *mut TpuStatus) {
 /// # Safety
 ///
 /// `status` must be null or a valid pointer to [`TpuStatus`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuStatus_Message(status: *const TpuStatus) -> *const c_char {
     if status.is_null() {
         return ptr::null();
@@ -354,7 +356,7 @@ pub unsafe extern "C" fn TpuStatus_Message(status: *const TpuStatus) -> *const c
 /// # Safety
 ///
 /// `status` must be null or a valid pointer to [`TpuStatus`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuStatus_Code(status: *const TpuStatus) -> i32 {
     if status.is_null() {
         return -1;
@@ -372,7 +374,7 @@ pub unsafe extern "C" fn TpuStatus_Code(status: *const TpuStatus) -> i32 {
 /// # Safety
 ///
 /// `status` must be null or a valid pointer to [`TpuStatus`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuStatus_Ok(status: *const TpuStatus) -> bool {
     if status.is_null() {
         return false;
@@ -391,7 +393,7 @@ pub unsafe extern "C" fn TpuStatus_Ok(status: *const TpuStatus) -> bool {
 /// # Safety
 ///
 /// `selector_out` must be null or a valid mutable pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TfTpuOrdinalSelector_Create(
     selector_out: *mut *mut TfTpuOrdinalSelector,
     num_cores: i32,
@@ -417,7 +419,7 @@ pub unsafe extern "C" fn TfTpuOrdinalSelector_Create(
 /// # Safety
 ///
 /// `selector` must be null or allocated by `TfTpuOrdinalSelector_Create`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TfTpuOrdinalSelector_Destroy(selector: *mut TfTpuOrdinalSelector) {
     if !selector.is_null() {
         // SAFETY: `selector` is non-null.
@@ -438,7 +440,7 @@ pub unsafe extern "C" fn TfTpuOrdinalSelector_Destroy(selector: *mut TfTpuOrdina
 /// # Safety
 ///
 /// `selector`, `seed`, and `ordinal_out` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TfTpuOrdinalSelector_GetOrdinal(
     selector: *const TfTpuOrdinalSelector,
     seed: *mut u64,
@@ -470,7 +472,7 @@ pub unsafe extern "C" fn TfTpuOrdinalSelector_GetOrdinal(
 /// # Safety
 ///
 /// `selector` must be null or a valid pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TfTpuOrdinalSelector_DequeueFromCoreSelector(
     selector: *mut TfTpuOrdinalSelector,
     device_ordinal: i32,
@@ -510,14 +512,14 @@ fn build_topology_from_config(cfg: &TpuInitConfig) -> TpuTopology {
 }
 
 /// Global mutable `TpuTopology` pointer synchronized with `global_init_config`.
-static GLOBAL_TOPOLOGY: OnceLock<std::sync::Mutex<usize>> = OnceLock::new();
+static GLOBAL_TOPOLOGY: OnceLock<parking_lot::Mutex<usize>> = OnceLock::new();
 
 /// Returns a reference to the global [`TpuTopology`] pointer mutex.
-fn global_topology_mutex() -> &'static std::sync::Mutex<usize> {
+fn global_topology_mutex() -> &'static parking_lot::Mutex<usize> {
     GLOBAL_TOPOLOGY.get_or_init(|| {
         let cfg = libtpu_core::config::global_init_config();
         let ptr_val = Box::into_raw(Box::new(build_topology_from_config(&cfg))) as usize;
-        std::sync::Mutex::new(ptr_val)
+        parking_lot::Mutex::new(ptr_val)
     })
 }
 
@@ -525,16 +527,12 @@ fn global_topology_mutex() -> &'static std::sync::Mutex<usize> {
 fn refresh_global_topology() {
     let cfg = libtpu_core::config::global_init_config();
     let ptr_val = Box::into_raw(Box::new(build_topology_from_config(&cfg))) as usize;
-    *global_topology_mutex()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = ptr_val;
+    *global_topology_mutex().lock() = ptr_val;
 }
 
 /// Returns a static reference to the current global [`TpuTopology`].
 fn global_topology() -> &'static TpuTopology {
-    let addr = *global_topology_mutex()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let addr = *global_topology_mutex().lock();
     // SAFETY: `addr` points to a heap-allocated `TpuTopology` with static lifetime.
     unsafe { &*(addr as *const TpuTopology) }
 }
@@ -559,13 +557,13 @@ unsafe fn resolve_topology<'a>(topo: *const TpuTopology) -> &'a TpuTopology {
 }
 
 /// Returns a pointer to the singleton [`TpuTopology`] (`TpuUtil_GetTopologyPtr`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuUtil_GetTopologyPtr() -> *const TpuTopology {
     ptr::from_ref(global_topology())
 }
 
 /// Returns the XLA minor-dimension alignment pad size (`TpuUtil_GetXlaPadSizeFromTpuTopology`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuUtil_GetXlaPadSizeFromTpuTopology() -> i32 {
     global_topology()
         .hal
@@ -584,7 +582,7 @@ pub extern "C" fn TpuUtil_GetXlaPadSizeFromTpuTopology() -> i32 {
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_LogicalDevicesPerHost(
     topo: *const TpuTopology,
     core_type: i32,
@@ -603,7 +601,7 @@ pub unsafe extern "C" fn TpuTopology_LogicalDevicesPerHost(
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_LogicalDevicesPerChip(
     topo: *const TpuTopology,
     core_type: i32,
@@ -630,7 +628,7 @@ pub unsafe extern "C" fn TpuTopology_LogicalDevicesPerChip(
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_HostCount(topo: *const TpuTopology) -> i32 {
     // SAFETY: `topo` is null or valid.
     let t = unsafe { resolve_topology(topo) };
@@ -647,7 +645,7 @@ pub unsafe extern "C" fn TpuTopology_HostCount(topo: *const TpuTopology) -> i32 
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_ChipsPerHost(topo: *const TpuTopology) -> i32 {
     // SAFETY: `topo` is null or valid.
     let t = unsafe { resolve_topology(topo) };
@@ -663,7 +661,7 @@ pub unsafe extern "C" fn TpuTopology_ChipsPerHost(topo: *const TpuTopology) -> i
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_ChipBounds_X(topo: *const TpuTopology) -> i32 {
     // SAFETY: `topo` is null or valid.
     let t = unsafe { resolve_topology(topo) };
@@ -679,7 +677,7 @@ pub unsafe extern "C" fn TpuTopology_ChipBounds_X(topo: *const TpuTopology) -> i
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_ChipBounds_Y(topo: *const TpuTopology) -> i32 {
     // SAFETY: `topo` is null or valid.
     let t = unsafe { resolve_topology(topo) };
@@ -695,7 +693,7 @@ pub unsafe extern "C" fn TpuTopology_ChipBounds_Y(topo: *const TpuTopology) -> i
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_ChipBounds_Z(topo: *const TpuTopology) -> i32 {
     // SAFETY: `topo` is null or valid.
     let t = unsafe { resolve_topology(topo) };
@@ -714,7 +712,7 @@ pub unsafe extern "C" fn TpuTopology_ChipBounds_Z(topo: *const TpuTopology) -> i
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_HasChip(
     topo: *const TpuTopology,
     x: i32,
@@ -747,7 +745,7 @@ pub unsafe extern "C" fn TpuTopology_HasChip(
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_CoreForId(
     topo: *const TpuTopology,
     _core_type: i32,
@@ -773,7 +771,7 @@ pub unsafe extern "C" fn TpuTopology_CoreForId(
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_Core(
     topo: *const TpuTopology,
     _core_type: i32,
@@ -800,7 +798,7 @@ pub unsafe extern "C" fn TpuTopology_Core(
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_NumCores(topo: *const TpuTopology, core_type: i32) -> i32 {
     // SAFETY: `topo` is null or valid.
     let t = unsafe { resolve_topology(topo) };
@@ -825,7 +823,7 @@ pub unsafe extern "C" fn TpuTopology_NumCores(topo: *const TpuTopology, core_typ
 /// # Safety
 ///
 /// `cores_out` must be null or point to an array of at least `TpuTopology_NumCores` pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_Cores(
     topo: *const TpuTopology,
     _core_type: i32,
@@ -856,7 +854,7 @@ pub unsafe extern "C" fn TpuTopology_Cores(
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_IdForHost(
     topo: *const TpuTopology,
     x: i32,
@@ -880,7 +878,7 @@ pub unsafe extern "C" fn TpuTopology_IdForHost(
 /// # Safety
 ///
 /// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_Version(topo: *const TpuTopology) -> i32 {
     // SAFETY: `topo` is null or valid.
     let t = unsafe { resolve_topology(topo) };
@@ -893,7 +891,7 @@ pub unsafe extern "C" fn TpuTopology_Version(topo: *const TpuTopology) -> i32 {
 ///
 /// * `_mesh_state` - Optional [`TpuMeshState`] pointer.
 /// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuTopology_AvailableCoreCount(
     _mesh_state: *const TpuMeshState,
     core_type: i32,
@@ -907,7 +905,7 @@ pub extern "C" fn TpuTopology_AvailableCoreCount(
 /// # Arguments
 ///
 /// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuTopology_AvailableCoresPerChip(core_type: i32) -> i32 {
     // SAFETY: Passing null uses `global_topology()`.
     unsafe { TpuTopology_LogicalDevicesPerChip(ptr::null(), core_type) }
@@ -918,7 +916,7 @@ pub extern "C" fn TpuTopology_AvailableCoresPerChip(core_type: i32) -> i32 {
 /// # Arguments
 ///
 /// * `_core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuTopology_MaybeAvailableSparseCoresPerLogicalDevice(_core_type: i32) -> i32 {
     i32::try_from(
         global_topology()
@@ -942,7 +940,7 @@ pub extern "C" fn TpuTopology_MaybeAvailableSparseCoresPerLogicalDevice(_core_ty
 /// # Safety
 ///
 /// All pointers must be null or valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuCoreLocation_ChipCoordinates(
     core: *const TpuCoreLocation,
     x_out: *mut i32,
@@ -977,7 +975,7 @@ pub unsafe extern "C" fn TpuCoreLocation_ChipCoordinates(
 /// # Safety
 ///
 /// All pointers must be null or valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuCoreLocation_HostCoordinates(
     core: *const TpuCoreLocation,
     x_out: *mut i32,
@@ -1010,7 +1008,7 @@ pub unsafe extern "C" fn TpuCoreLocation_HostCoordinates(
 /// # Safety
 ///
 /// `core` must be null or a valid pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuCoreLocation_Index(core: *const TpuCoreLocation) -> i32 {
     if core.is_null() {
         return -1;
@@ -1028,7 +1026,7 @@ pub unsafe extern "C" fn TpuCoreLocation_Index(core: *const TpuCoreLocation) -> 
 /// # Safety
 ///
 /// `core` must be null or a valid pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuCoreLocation_Id(core: *const TpuCoreLocation) -> i32 {
     if core.is_null() {
         return -1;
@@ -1046,7 +1044,7 @@ pub unsafe extern "C" fn TpuCoreLocation_Id(core: *const TpuCoreLocation) -> i32
 /// # Safety
 ///
 /// `host` must be null or a valid pointer to [`TpuHostLocation`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuHostLocation_Id(host: *const TpuHostLocation) -> i32 {
     if host.is_null() {
         0
@@ -1066,7 +1064,7 @@ pub unsafe extern "C" fn TpuHostLocation_Id(host: *const TpuHostLocation) -> i32
 /// # Safety
 ///
 /// `host` must be null or a valid pointer to [`TpuHostLocation`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuHostLocation_NumCores(
     host: *const TpuHostLocation,
     core_type: i32,
@@ -1093,7 +1091,7 @@ pub unsafe extern "C" fn TpuHostLocation_NumCores(
 /// # Safety
 ///
 /// `cores_out` must be null or point to an array of sufficient size.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuHostLocation_Cores(
     _host: *const TpuHostLocation,
     core_type: i32,
@@ -1106,7 +1104,7 @@ pub unsafe extern "C" fn TpuHostLocation_Cores(
 }
 
 /// Creates a [`TpuMeshState`] (`TpuMeshState_Create`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuMeshState_Create() -> *mut TpuMeshState {
     Box::into_raw(Box::new(TpuMeshState {
         mesh_common_state: 1,
@@ -1122,7 +1120,7 @@ pub extern "C" fn TpuMeshState_Create() -> *mut TpuMeshState {
 /// # Safety
 ///
 /// `state` must be null or allocated by `TpuMeshState_Create`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuMeshState_Free(state: *mut TpuMeshState) {
     if !state.is_null() {
         // SAFETY: `state` is non-null.
@@ -1141,7 +1139,7 @@ pub unsafe extern "C" fn TpuMeshState_Free(state: *mut TpuMeshState) {
 /// # Safety
 ///
 /// `state` must be null or a valid pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuMeshState_MeshCommonState(
     state: *const TpuMeshState,
 ) -> *const std::ffi::c_void {
@@ -1161,7 +1159,7 @@ pub unsafe extern "C" fn TpuMeshState_MeshCommonState(
 /// # Safety
 ///
 /// `profiler_out` must be null or a valid mutable pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuProfiler_Create(
     profiler_out: *mut *mut TpuProfiler,
     status: *mut TpuStatus,
@@ -1191,7 +1189,7 @@ pub unsafe extern "C" fn TpuProfiler_Create(
 /// # Safety
 ///
 /// `profiler` must be null or allocated by `TpuProfiler_Create`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuProfiler_Destroy(profiler: *mut TpuProfiler) {
     if !profiler.is_null() {
         // SAFETY: `profiler` is non-null.
@@ -1211,7 +1209,7 @@ pub unsafe extern "C" fn TpuProfiler_Destroy(profiler: *mut TpuProfiler) {
 /// # Safety
 ///
 /// `profiler` and `status` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuProfiler_Start(profiler: *mut TpuProfiler, status: *mut TpuStatus) {
     if profiler.is_null() {
         // SAFETY: `TpuStatus_Set` handles null `status`.
@@ -1240,7 +1238,7 @@ pub unsafe extern "C" fn TpuProfiler_Start(profiler: *mut TpuProfiler, status: *
 /// # Safety
 ///
 /// `profiler` and `status` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuProfiler_Stop(profiler: *mut TpuProfiler, status: *mut TpuStatus) {
     if profiler.is_null() {
         // SAFETY: `TpuStatus_Set` handles null `status`.
@@ -1271,7 +1269,7 @@ pub unsafe extern "C" fn TpuProfiler_Stop(profiler: *mut TpuProfiler, status: *m
 /// # Safety
 ///
 /// All pointers must be null or valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuProfiler_CollectData(
     profiler: *mut TpuProfiler,
     status: *mut TpuStatus,
@@ -1300,7 +1298,7 @@ pub unsafe extern "C" fn TpuProfiler_CollectData(
 }
 
 /// Creates a [`TpuEmbeddingEngineState`] (`TpuEmbeddingEngineState_Create`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuEmbeddingEngineState_Create() -> *mut TpuEmbeddingEngineState {
     Box::into_raw(Box::new(TpuEmbeddingEngineState {
         inner: TpuCoreEmbeddingEngine::new(),
@@ -1316,7 +1314,7 @@ pub extern "C" fn TpuEmbeddingEngineState_Create() -> *mut TpuEmbeddingEngineSta
 /// # Safety
 ///
 /// `state` must be null or allocated by `TpuEmbeddingEngineState_Create`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngineState_Free(state: *mut TpuEmbeddingEngineState) {
     if !state.is_null() {
         // SAFETY: `state` is non-null.
@@ -1331,7 +1329,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngineState_Free(state: *mut TpuEmbeddingEn
 /// # Arguments
 ///
 /// * `state` - Pointer to [`TpuEmbeddingEngineState`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuEmbeddingEngineState_GetState(
     state: *const TpuEmbeddingEngineState,
 ) -> *const std::ffi::c_void {
@@ -1339,12 +1337,12 @@ pub extern "C" fn TpuEmbeddingEngineState_GetState(
 }
 
 /// Process-wide [`TpuCoreEmbeddingEngine`] backing `TpuEmbeddingEngine_*` C entrypoints.
-static GLOBAL_EMBEDDING_ENGINE: OnceLock<std::sync::Mutex<TpuCoreEmbeddingEngine>> =
+static GLOBAL_EMBEDDING_ENGINE: OnceLock<parking_lot::Mutex<TpuCoreEmbeddingEngine>> =
     OnceLock::new();
 
-/// Returns a reference to the process-wide [`std::sync::Mutex<TpuCoreEmbeddingEngine>`].
-fn global_embedding_engine() -> &'static std::sync::Mutex<TpuCoreEmbeddingEngine> {
-    GLOBAL_EMBEDDING_ENGINE.get_or_init(|| std::sync::Mutex::new(TpuCoreEmbeddingEngine::new()))
+/// Returns a reference to the process-wide [`parking_lot::Mutex<TpuCoreEmbeddingEngine>`].
+fn global_embedding_engine() -> &'static parking_lot::Mutex<TpuCoreEmbeddingEngine> {
+    GLOBAL_EMBEDDING_ENGINE.get_or_init(|| parking_lot::Mutex::new(TpuCoreEmbeddingEngine::new()))
 }
 
 /// Executes the TPU embedding partitioner (`TpuEmbeddingEngine_ExecutePartitioner`).
@@ -1356,7 +1354,7 @@ fn global_embedding_engine() -> &'static std::sync::Mutex<TpuCoreEmbeddingEngine
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_ExecutePartitioner_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_ExecutePartitioner(
     params: *mut TpuEmbeddingEngine_ExecutePartitioner_Params,
 ) -> i32 {
@@ -1383,9 +1381,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ExecutePartitioner(
             )
         }
     };
-    let mut eng = global_embedding_engine()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut eng = global_embedding_engine().lock();
     let partitioned = eng.execute_partitioner(cfg_bytes);
     drop(eng);
     if !p.common_config_string_size.is_null() {
@@ -1413,7 +1409,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ExecutePartitioner(
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_ConfigureMemory_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_ConfigureMemory(
     params: *mut TpuEmbeddingEngine_ConfigureMemory_Params,
 ) -> i32 {
@@ -1441,9 +1437,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ConfigureMemory(
             .to_vec()
         }
     };
-    let mut eng = global_embedding_engine()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut eng = global_embedding_engine().lock();
     eng.configure_memory(cfg_bytes.clone());
     drop(eng);
     if !p.task_host_config_size.is_null() {
@@ -1470,7 +1464,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ConfigureMemory(
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_CollateMemory_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_CollateMemory(
     params: *mut TpuEmbeddingEngine_CollateMemory_Params,
 ) -> i32 {
@@ -1486,10 +1480,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_CollateMemory(
         }
         return -1;
     }
-    let collated = global_embedding_engine()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .collate_memory();
+    let collated = global_embedding_engine().lock().collate_memory();
     if !p.collated_size.is_null() {
         // SAFETY: `p.collated_size` is non-null.
         unsafe {
@@ -1508,7 +1499,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_CollateMemory(
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_ConfigureHost_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_ConfigureHost(
     params: *mut TpuEmbeddingEngine_ConfigureHost_Params,
 ) -> i32 {
@@ -1535,9 +1526,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ConfigureHost(
             )
         }
     };
-    let mut eng = global_embedding_engine()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut eng = global_embedding_engine().lock();
     let net_cfg = eng.configure_host(host_slice);
     drop(eng);
     if !p.network_config_size.is_null() {
@@ -1564,7 +1553,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ConfigureHost(
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_ConnectHosts_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_ConnectHosts(
     params: *mut TpuEmbeddingEngine_ConnectHosts_Params,
 ) -> i32 {
@@ -1580,10 +1569,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ConnectHosts(
         }
         return -1;
     }
-    global_embedding_engine()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .connect_hosts();
+    global_embedding_engine().lock().connect_hosts();
     0
 }
 
@@ -1596,17 +1582,14 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ConnectHosts(
 /// # Safety
 ///
 /// `params` must be null or a valid mutable pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_Finalize(
     params: *mut TpuEmbeddingEngine_Finalize_Params,
 ) -> i32 {
     if params.is_null() {
         return -1;
     }
-    global_embedding_engine()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .finalize();
+    global_embedding_engine().lock().finalize();
     0
 }
 
@@ -1619,17 +1602,14 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_Finalize(
 /// # Safety
 ///
 /// `params` must be null or a valid pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_IsInitialized(
     params: *const TpuEmbeddingEngine_IsInitialized_Params,
 ) -> bool {
     if params.is_null() {
         return false;
     }
-    let is_init = global_embedding_engine()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .initialized;
+    let is_init = global_embedding_engine().lock().initialized;
     // SAFETY: `params` is non-null; write `is_init` if `is_embedding_initialized` is non-null.
     unsafe {
         if !(*params).is_embedding_initialized.is_null() {
@@ -1648,7 +1628,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_IsInitialized(
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_WriteParameters_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_WriteParameters(
     params: *mut TpuEmbeddingEngine_WriteParameters_Params,
 ) -> i32 {
@@ -1694,7 +1674,6 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_WriteParameters(
     }
     global_embedding_engine()
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .write_parameters(table_name, payload);
     0
 }
@@ -1708,7 +1687,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_WriteParameters(
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_WriteParameters_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_ReadParameters(
     params: *mut TpuEmbeddingEngine_WriteParameters_Params,
 ) -> i32 {
@@ -1738,9 +1717,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ReadParameters(
     } else {
         String::from("default_table")
     };
-    let eng = global_embedding_engine()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let eng = global_embedding_engine().lock();
     let stored = eng.read_parameters(&table_name).unwrap_or_default();
     let dst_ptr = if !p.parameters_out.is_null() {
         p.parameters_out.cast::<u8>()
@@ -1763,7 +1740,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ReadParameters(
 }
 
 /// Creates tensor batch fixed state (`TpuEmbeddingTensorBatchFixedState_Create`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuEmbeddingTensorBatchFixedState_Create() -> *mut std::ffi::c_void {
     Box::into_raw(Box::new(1_u64)).cast::<std::ffi::c_void>()
 }
@@ -1777,7 +1754,7 @@ pub extern "C" fn TpuEmbeddingTensorBatchFixedState_Create() -> *mut std::ffi::c
 /// # Safety
 ///
 /// `ptr` must be null or allocated by `TpuEmbeddingTensorBatchFixedState_Create`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingTensorBatchFixedState_Destroy(ptr: *mut std::ffi::c_void) {
     if !ptr.is_null() {
         // SAFETY: `ptr` was allocated as `Box<u64>`.
@@ -1796,7 +1773,7 @@ pub unsafe extern "C" fn TpuEmbeddingTensorBatchFixedState_Destroy(ptr: *mut std
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_EnqueueTensorBatch_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_EnqueueTensorBatch(
     params: *mut TpuEmbeddingEngine_EnqueueTensorBatch_Params,
 ) -> i32 {
@@ -1824,14 +1801,11 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_EnqueueTensorBatch(
     } else {
         8
     };
-    global_embedding_engine()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .enqueue_tensor_batch(
-            i32::try_from(p.device_ordinal).unwrap_or(0),
-            num_indices,
-            num_weights,
-        );
+    global_embedding_engine().lock().enqueue_tensor_batch(
+        i32::try_from(p.device_ordinal).unwrap_or(0),
+        num_indices,
+        num_weights,
+    );
     0
 }
 
@@ -1864,7 +1838,6 @@ unsafe fn build_embedding_xla_computation(
     }
     let hlo_bytes = global_embedding_engine()
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .generate_xla_computation(kind);
     if !p.xla_computation_out.is_null() {
         let c_str = to_c_string(&String::from_utf8_lossy(&hlo_bytes));
@@ -1889,7 +1862,7 @@ unsafe fn build_embedding_xla_computation(
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_Computation_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_RecvActivationsComputation(
     params: *mut TpuEmbeddingEngine_Computation_Params,
 ) -> i32 {
@@ -1906,7 +1879,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_RecvActivationsComputation(
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_Computation_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_RecvTPUEmbeddingDeduplicationDataComputation(
     params: *mut TpuEmbeddingEngine_Computation_Params,
 ) -> i32 {
@@ -1923,7 +1896,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_RecvTPUEmbeddingDeduplicationDataCom
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_Computation_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_SendTPUEmbeddingGradientsComputation(
     params: *mut TpuEmbeddingEngine_Computation_Params,
 ) -> i32 {
@@ -1940,7 +1913,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_SendTPUEmbeddingGradientsComputation
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_Computation_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_DedupDataSizeComputation(
     params: *mut TpuEmbeddingEngine_Computation_Params,
 ) -> i32 {
@@ -1957,7 +1930,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_DedupDataSizeComputation(
 /// # Safety
 ///
 /// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_Computation_Params`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuEmbeddingEngine_DedupDataTupleMaskComputation(
     params: *mut TpuEmbeddingEngine_Computation_Params,
 ) -> i32 {
@@ -1971,7 +1944,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_DedupDataTupleMaskComputation(
 ///
 /// * `driver` - Pointer to [`TpuDriver`].
 /// * `num_bytes` - Unpadded byte count.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuDriver_ComputeLinearizedBytesFromShape(
     driver: *mut TpuDriver,
     num_bytes: i64,
@@ -1995,7 +1968,7 @@ pub extern "C" fn TpuDriver_ComputeLinearizedBytesFromShape(
 /// # Safety
 ///
 /// `driver`, `hlo_text`, and `ains` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_CompileProgramFromText(
     driver: *mut TpuDriver,
     hlo_text: *const c_char,
@@ -2023,7 +1996,7 @@ pub unsafe extern "C" fn TpuDriver_CompileProgramFromText(
 ///
 /// * `driver` - Pointer to [`TpuDriver`].
 /// * `handle` - Pointer to [`crate::tpu_driver_types::TpuCompiledProgramHandle`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuDriver_GetCompiledProgramShape(
     driver: *mut TpuDriver,
     handle: *mut crate::tpu_driver_types::TpuCompiledProgramHandle,
@@ -2042,7 +2015,7 @@ pub extern "C" fn TpuDriver_GetCompiledProgramShape(
 /// * `event` - Pointer to [`crate::tpu_driver_types::TpuEvent`].
 /// * `callback_fn` - Callback function pointer.
 /// * `user_arg` - User context pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuDriver_AddCallback(
     driver: *mut TpuDriver,
     event: *mut crate::tpu_driver_types::TpuEvent,
@@ -2053,7 +2026,7 @@ pub extern "C" fn TpuDriver_AddCallback(
 }
 
 /// Returns the `TpuDriver` API version string (`TpuDriver_Version`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuDriver_Version() -> *const c_char {
     c"0.0.50".as_ptr()
 }
@@ -2091,12 +2064,33 @@ static GLOBAL_TPU_DRIVER_FN_TABLE: TpuDriverFn = TpuDriverFn {
     version: TpuDriver_Version as *const std::ffi::c_void,
 };
 
-/// Opens a [`TpuDriver`] instance (`TpuDriver_Open`).
+/// Populates a [`TpuDriverFn`] vtable and optionally initializes the TPU driver (`TpuDriver_Initialize`).
+///
+/// # Arguments
+///
+/// * `driver_fn` - Output pointer to [`TpuDriverFn`] to populate.
+/// * `initialize` - Whether to initialize the global TPU runtime.
+///
+/// # Safety
+///
+/// `driver_fn` must be null or a valid pointer to [`TpuDriverFn`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuDriver_Initialize(driver_fn: *mut TpuDriverFn, initialize: bool) {
+    let _ = initialize;
+    if !driver_fn.is_null() {
+        // SAFETY: `driver_fn` is non-null and points to a valid `TpuDriverFn`.
+        unsafe {
+            *driver_fn = GLOBAL_TPU_DRIVER_FN_TABLE;
+        }
+    }
+}
+
+/// Opens a low-level [`TpuDriver`] instance (`TpuDriver_Open`).
 ///
 /// # Arguments
 ///
 /// * `_worker` - Null-terminated worker specification string (e.g., `"local://"` or null).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn TpuDriver_Open(_worker: *const c_char) -> *mut TpuDriver {
     Box::into_raw(Box::new(TpuDriver {
         fn_table: ptr::addr_of!(GLOBAL_TPU_DRIVER_FN_TABLE),
@@ -2113,7 +2107,7 @@ pub extern "C" fn TpuDriver_Open(_worker: *const c_char) -> *mut TpuDriver {
 /// # Safety
 ///
 /// `driver` must be null or allocated by `TpuDriver_Open`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_Close(driver: *mut TpuDriver) {
     if !driver.is_null() {
         // SAFETY: `driver` is non-null.
@@ -2132,7 +2126,7 @@ pub unsafe extern "C" fn TpuDriver_Close(driver: *mut TpuDriver) {
 /// # Safety
 ///
 /// `driver` must be null or a valid pointer to [`TpuDriver`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_Reset(driver: *mut TpuDriver) -> *mut TpuStatus {
     if driver.is_null() {
         // SAFETY: Static CStr literal is valid and null-terminated.
@@ -2152,7 +2146,7 @@ pub unsafe extern "C" fn TpuDriver_Reset(driver: *mut TpuDriver) -> *mut TpuStat
 /// # Safety
 ///
 /// `driver` must be null or a valid pointer to [`TpuDriver`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_QuerySystemInfo(
     driver: *mut TpuDriver,
 ) -> *mut crate::tpu_driver_types::TpuSystemInfo {
@@ -2177,7 +2171,7 @@ pub unsafe extern "C" fn TpuDriver_QuerySystemInfo(
 /// # Safety
 ///
 /// `info` must be null or allocated by [`TpuDriver_QuerySystemInfo`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_FreeSystemInfo(
     info: *mut crate::tpu_driver_types::TpuSystemInfo,
 ) {
@@ -2202,7 +2196,7 @@ pub unsafe extern "C" fn TpuDriver_FreeSystemInfo(
 /// # Safety
 ///
 /// `driver`, `source`, and `ains` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_Compile(
     driver: *mut TpuDriver,
     source: *const crate::tpu_driver_types::HloProto,
@@ -2243,7 +2237,7 @@ pub unsafe extern "C" fn TpuDriver_Compile(
 /// # Safety
 ///
 /// `handle` must be null or allocated by [`TpuDriver_Compile`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_FreeCompiledProgramHandle(
     handle: *mut crate::tpu_driver_types::TpuCompiledProgramHandle,
 ) {
@@ -2268,7 +2262,7 @@ pub unsafe extern "C" fn TpuDriver_FreeCompiledProgramHandle(
 /// # Safety
 ///
 /// `driver` and `compiled_program_handle` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_LoadProgram(
     driver: *mut TpuDriver,
     core_id: i32,
@@ -2300,7 +2294,7 @@ pub unsafe extern "C" fn TpuDriver_LoadProgram(
 /// # Safety
 ///
 /// `driver` and `loaded_program_handle` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_UnloadProgram(
     driver: *mut TpuDriver,
     loaded_program_handle: *mut crate::tpu_driver_types::TpuLoadedProgramHandle,
@@ -2335,7 +2329,7 @@ pub unsafe extern "C" fn TpuDriver_UnloadProgram(
 /// # Safety
 ///
 /// All pointer arguments must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn TpuDriver_ExecuteProgram(
     driver: *mut TpuDriver,
@@ -2391,7 +2385,7 @@ pub unsafe extern "C" fn TpuDriver_ExecuteProgram(
 /// # Safety
 ///
 /// `driver` and `ains` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_Allocate(
     driver: *mut TpuDriver,
     core_id: i32,
@@ -2440,7 +2434,7 @@ pub unsafe extern "C" fn TpuDriver_Allocate(
 /// # Safety
 ///
 /// `driver`, `children`, and `ains` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_AllocateTuple(
     driver: *mut TpuDriver,
     core_id: i32,
@@ -2470,7 +2464,7 @@ pub unsafe extern "C" fn TpuDriver_AllocateTuple(
 /// # Safety
 ///
 /// `driver` and `ains` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_AllocateShape(
     driver: *mut TpuDriver,
     core_id: i32,
@@ -2495,7 +2489,7 @@ pub unsafe extern "C" fn TpuDriver_AllocateShape(
 /// # Safety
 ///
 /// `driver` and `buf` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_Deallocate(
     driver: *mut TpuDriver,
     buf: *mut crate::tpu_driver_types::TpuBufferHandle,
@@ -2535,7 +2529,7 @@ pub unsafe extern "C" fn TpuDriver_Deallocate(
 /// # Safety
 ///
 /// `driver`, `src`, `dst`, and `ains` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_TransferToDevice(
     driver: *mut TpuDriver,
     src: *const std::ffi::c_void,
@@ -2577,7 +2571,7 @@ pub unsafe extern "C" fn TpuDriver_TransferToDevice(
 /// # Safety
 ///
 /// `driver`, `src`, `dst`, and `ains` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_TransferFromDevice(
     driver: *mut TpuDriver,
     src: *mut crate::tpu_driver_types::TpuBufferHandle,
@@ -2619,7 +2613,7 @@ pub unsafe extern "C" fn TpuDriver_TransferFromDevice(
 /// # Safety
 ///
 /// `driver`, `src`, `dst`, and `ains` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_TransferFromDeviceToDevice(
     driver: *mut TpuDriver,
     src: *mut crate::tpu_driver_types::TpuBufferHandle,
@@ -2661,7 +2655,7 @@ pub unsafe extern "C" fn TpuDriver_TransferFromDeviceToDevice(
 /// # Safety
 ///
 /// `driver`, `dst`, and `src` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_LinearizeShape(
     driver: *mut TpuDriver,
     dst: *mut std::ffi::c_void,
@@ -2699,7 +2693,7 @@ pub unsafe extern "C" fn TpuDriver_LinearizeShape(
 /// # Safety
 ///
 /// `driver`, `dst`, and `src` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_DelinearizeShape(
     driver: *mut TpuDriver,
     dst: *mut std::ffi::c_void,
@@ -2740,7 +2734,7 @@ pub unsafe extern "C" fn TpuDriver_DelinearizeShape(
 /// # Safety
 ///
 /// `driver` must be null or a valid pointer to [`TpuDriver`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_CreateEvent(
     driver: *mut TpuDriver,
 ) -> *mut crate::tpu_driver_types::TpuEvent {
@@ -2762,7 +2756,7 @@ pub unsafe extern "C" fn TpuDriver_CreateEvent(
 /// # Safety
 ///
 /// `event` must be null or allocated by [`TpuDriver_CreateEvent`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_FreeEvent(event: *mut crate::tpu_driver_types::TpuEvent) {
     if !event.is_null() {
         // SAFETY: `event` was allocated by `TpuDriver_CreateEvent`.
@@ -2785,7 +2779,7 @@ pub unsafe extern "C" fn TpuDriver_FreeEvent(event: *mut crate::tpu_driver_types
 /// # Safety
 ///
 /// `driver` and `events` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_WaitForEvents(
     driver: *mut TpuDriver,
     num_events: i32,

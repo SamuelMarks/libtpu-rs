@@ -11,7 +11,7 @@ use super::*;
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_Error_GetMessage_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_Error_GetMessage(raw_args: *mut std::ffi::c_void) {
     let args_ptr = raw_args.cast::<LibtpuSdk_Error_GetMessage_Args>();
     if args_ptr.is_null() {
@@ -41,7 +41,7 @@ pub unsafe extern "C" fn LibtpuSdk_Error_GetMessage(raw_args: *mut std::ffi::c_v
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_Error_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_Error_Destroy(raw_args: *mut std::ffi::c_void) {
     let args_ptr = raw_args.cast::<LibtpuSdk_Error_Destroy_Args>();
     if args_ptr.is_null() {
@@ -66,7 +66,7 @@ pub unsafe extern "C" fn LibtpuSdk_Error_Destroy(raw_args: *mut std::ffi::c_void
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_Error_GetCode_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_Error_GetCode(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -95,7 +95,7 @@ pub unsafe extern "C" fn LibtpuSdk_Error_GetCode(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_Client_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_Client_Create(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -140,7 +140,7 @@ pub unsafe extern "C" fn LibtpuSdk_Client_Create(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_Client_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_Client_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -171,7 +171,7 @@ pub unsafe extern "C" fn LibtpuSdk_Client_Destroy(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_GetChipCoordinates_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_GetChipCoordinates(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -205,7 +205,7 @@ pub unsafe extern "C" fn LibtpuSdk_GetChipCoordinates(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_GetHostName_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_GetHostName(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -237,7 +237,7 @@ pub unsafe extern "C" fn LibtpuSdk_GetHostName(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_GetChipIndex_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_GetChipIndex(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -266,7 +266,7 @@ pub unsafe extern "C" fn LibtpuSdk_GetChipIndex(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_GetCartesianCoordinates_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_GetCartesianCoordinates(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -298,7 +298,7 @@ pub unsafe extern "C" fn LibtpuSdk_GetCartesianCoordinates(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_GetMetric_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_GetMetric(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -348,7 +348,7 @@ pub unsafe extern "C" fn LibtpuSdk_GetMetric(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_GetMetricDescription_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_GetMetricDescription(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -383,7 +383,7 @@ pub unsafe extern "C" fn LibtpuSdk_GetMetricDescription(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_GetMetricValues_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_GetMetricValues(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -417,7 +417,7 @@ pub unsafe extern "C" fn LibtpuSdk_GetMetricValues(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_GetRuntimeStatus_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_GetRuntimeStatus(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -454,7 +454,7 @@ pub unsafe extern "C" fn LibtpuSdk_GetRuntimeStatus(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_RuntimeStatus_GetCoreStateSummary_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_RuntimeStatus_GetCoreStateSummary(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -489,7 +489,7 @@ pub unsafe extern "C" fn LibtpuSdk_RuntimeStatus_GetCoreStateSummary(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_RuntimeStatus_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_RuntimeStatus_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -517,7 +517,7 @@ pub unsafe extern "C" fn LibtpuSdk_RuntimeStatus_Destroy(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_RegisterDebugCallback_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_RegisterDebugCallback(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -555,7 +555,7 @@ pub unsafe extern "C" fn LibtpuSdk_RegisterDebugCallback(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`LibtpuSdk_UnregisterDebugCallback_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_UnregisterDebugCallback(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut LibtpuSdk_Error {
@@ -593,7 +593,7 @@ pub unsafe extern "C" fn LibtpuSdk_UnregisterDebugCallback(
 /// `client` must be null or a valid pointer to [`LibtpuSdk_Client`], and any registered
 /// non-null callback pointers with `fn_addr >= 0x10000` must be valid `extern "C" fn(*mut c_void)`
 /// function pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_TriggerDebugCallbacks(client: *const LibtpuSdk_Client) -> usize {
     if client.is_null() {
         return 0;
@@ -639,7 +639,7 @@ static GLOBAL_SDK_API: LibtpuSdk_Api = LibtpuSdk_Api {
 };
 
 /// Secondary SDK C API entrypoint exported by `libtpu.so` (`GetLibtpuSdkApi`).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn GetLibtpuSdkApi() -> *const LibtpuSdk_Api {
     ptr::addr_of!(GLOBAL_SDK_API)
 }

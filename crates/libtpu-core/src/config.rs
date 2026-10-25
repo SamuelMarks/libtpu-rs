@@ -6,8 +6,9 @@
 
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::types::{ByteSize, ChipCoordinates, DeviceId, ProcessIndex, TpuGeneration};
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// Process-wide global [`TpuInitConfig`] synchronized across `TfTpu_Initialize`,
 /// `SetGlobalTPUArrayOp_DoWork`, `PJRT_Client_Create`, and `libtpu.set_init_args`.
@@ -19,11 +20,9 @@ fn global_config_mutex() -> &'static Mutex<TpuInitConfig> {
 }
 
 /// Returns a cloned snapshot of the current process-wide [`TpuInitConfig`].
+#[must_use]
 pub fn global_init_config() -> TpuInitConfig {
-    global_config_mutex()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
+    global_config_mutex().lock().clone()
 }
 
 /// Replaces the process-wide [`TpuInitConfig`].
@@ -32,9 +31,7 @@ pub fn global_init_config() -> TpuInitConfig {
 ///
 /// * `config` - New configuration state to install globally.
 pub fn set_global_init_config(config: TpuInitConfig) {
-    *global_config_mutex()
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = config;
+    *global_config_mutex().lock() = config;
 }
 
 /// Applies CLI flag tokens to the process-wide [`TpuInitConfig`] (`TfTpu_Initialize`).
@@ -186,7 +183,8 @@ impl TpuInitConfig {
                     self.host_bounds = Self::parse_bounds(value)?;
                 }
                 _ => {
-                    self.extra_flags.insert(key.to_string(), value.to_string());
+                    self.extra_flags
+                        .insert(String::from(key), String::from(value));
                 }
             }
         }
@@ -295,18 +293,20 @@ impl TpuInitConfig {
     }
 
     /// Returns the total number of hosts in the configured TPU pod slice.
-    pub fn total_hosts(&self) -> u32 {
+    #[must_use]
+    pub const fn total_hosts(&self) -> u32 {
         self.host_bounds.x * self.host_bounds.y * self.host_bounds.z
     }
 
     /// Returns the number of physical TPU chips per host.
-    pub fn chips_per_host(&self) -> u32 {
+    #[must_use]
+    pub const fn chips_per_host(&self) -> u32 {
         self.chips_per_host_bounds.x * self.chips_per_host_bounds.y * self.chips_per_host_bounds.z
     }
 }
 
 #[cfg(test)]
-#[allow(for_loops_over_fallibles)]
+#[allow(for_loops_over_fallibles, clippy::cognitive_complexity)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -326,7 +326,7 @@ mod tests {
         let mut cfg = TpuInitConfig::default();
         assert_eq!(cfg.total_hosts(), 1);
         assert_eq!(cfg.chips_per_host(), 4);
-        assert!(!format!("{cfg:?}").is_empty());
+        assert_ne!(format!("{cfg:?}"), "");
         let cloned = cfg.clone();
         assert_eq!(cloned.chips_per_host(), 4);
 
@@ -346,19 +346,22 @@ mod tests {
             Some("true")
         );
 
-        assert!(cfg
-            .apply_init_args("--xla_tpu_allow_async_allocations=1")
-            .is_ok());
+        assert!(
+            cfg.apply_init_args("--xla_tpu_allow_async_allocations=1")
+                .is_ok()
+        );
         assert!(cfg.allow_async_allocations);
 
         assert!(cfg.apply_init_args("---").is_err());
-        assert!(cfg
-            .apply_init_args("--xla_tpu_allow_async_allocations=maybe")
-            .is_err());
+        assert!(
+            cfg.apply_init_args("--xla_tpu_allow_async_allocations=maybe")
+                .is_err()
+        );
         assert!(cfg.apply_init_args("--tpu_generation=invalid").is_err());
-        assert!(cfg
-            .apply_init_args("--tpu_chips_per_host_bounds=bad")
-            .is_err());
+        assert!(
+            cfg.apply_init_args("--tpu_chips_per_host_bounds=bad")
+                .is_err()
+        );
         assert!(cfg.apply_init_args("--tpu_host_bounds=bad").is_err());
     }
 

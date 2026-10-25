@@ -157,6 +157,7 @@ jobs:
           CXX: clang++
         run: |
           python3 scripts/pre_commit.py build --check
+          python3 scripts/pre_commit.py abi --check
           python3 scripts/pre_commit.py test --check
 
   coverage-and-shields:

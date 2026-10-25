@@ -10,7 +10,7 @@ use crate::error::{LibTpuError, LibTpuResult};
 use crate::types::{
     ByteSize, ChipCoordinates, ChipId, CoreId, DeviceAddress, DeviceId, ElementType, EventFdHandle,
     FileDescriptor, HostId, IoctlCommand, LocalHardwareId, MemoryKind, MemoryLayout, MmioOffset,
-    ProcessIndex, Shape, TpuGeneration,
+    PciDeviceId, PciVendorId, ProcessIndex, Shape, TpuGeneration,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -179,12 +179,426 @@ pub struct VfioIrqSetIoctl {
     pub event_fd: i32,
 }
 
-const _: () = assert!(std::mem::size_of::<GasketPageTableIoctl>() == 32);
-const _: () = assert!(std::mem::size_of::<GasketInterruptEventFd>() == 32);
-const _: () = assert!(std::mem::size_of::<GasketPageTableDmaBuf>() == 24);
-const _: () = assert!(std::mem::size_of::<VfioDmaMapIoctl>() == 32);
-const _: () = assert!(std::mem::size_of::<VfioDmaUnmapIoctl>() == 24);
-const _: () = assert!(std::mem::size_of::<VfioIrqSetIoctl>() == 24);
+const _: () = assert!(size_of::<GasketPageTableIoctl>() == 32);
+const _: () = assert!(std::mem::offset_of!(GasketPageTableIoctl, page_table_index) == 0);
+const _: () = assert!(std::mem::offset_of!(GasketPageTableIoctl, size) == 8);
+const _: () = assert!(std::mem::offset_of!(GasketPageTableIoctl, host_address) == 16);
+const _: () = assert!(std::mem::offset_of!(GasketPageTableIoctl, device_address) == 24);
+const _: () = assert!(size_of::<GasketInterruptEventFd>() == 32);
+const _: () = assert!(std::mem::offset_of!(GasketInterruptEventFd, interrupt) == 0);
+const _: () = assert!(std::mem::offset_of!(GasketInterruptEventFd, event_fd) == 8);
+const _: () = assert!(std::mem::offset_of!(GasketInterruptEventFd, reserved) == 16);
+const _: () = assert!(size_of::<GasketPageTableDmaBuf>() == 24);
+const _: () = assert!(std::mem::offset_of!(GasketPageTableDmaBuf, page_table_index) == 0);
+const _: () = assert!(std::mem::offset_of!(GasketPageTableDmaBuf, device_address) == 8);
+const _: () = assert!(std::mem::offset_of!(GasketPageTableDmaBuf, dma_buf_fd) == 16);
+const _: () = assert!(std::mem::offset_of!(GasketPageTableDmaBuf, flags) == 20);
+const _: () = assert!(size_of::<VfioDmaMapIoctl>() == 32);
+const _: () = assert!(std::mem::offset_of!(VfioDmaMapIoctl, argsz) == 0);
+const _: () = assert!(std::mem::offset_of!(VfioDmaMapIoctl, flags) == 4);
+const _: () = assert!(std::mem::offset_of!(VfioDmaMapIoctl, vaddr) == 8);
+const _: () = assert!(std::mem::offset_of!(VfioDmaMapIoctl, iova) == 16);
+const _: () = assert!(std::mem::offset_of!(VfioDmaMapIoctl, size) == 24);
+const _: () = assert!(size_of::<VfioDmaUnmapIoctl>() == 24);
+const _: () = assert!(std::mem::offset_of!(VfioDmaUnmapIoctl, argsz) == 0);
+const _: () = assert!(std::mem::offset_of!(VfioDmaUnmapIoctl, flags) == 4);
+const _: () = assert!(std::mem::offset_of!(VfioDmaUnmapIoctl, iova) == 8);
+const _: () = assert!(std::mem::offset_of!(VfioDmaUnmapIoctl, size) == 16);
+const _: () = assert!(size_of::<VfioIrqSetIoctl>() == 24);
+const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, argsz) == 0);
+const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, flags) == 4);
+const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, index) == 8);
+const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, start) == 12);
+const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, count) == 16);
+const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, event_fd) == 20);
+
+bitflags::bitflags! {
+    /// Strongly-typed bitmask flags for `BAR0_CSR_TENSORCORE_RUN_CONTROL`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct TensorCoreControlFlags: u64 {
+        /// Starts `TensorCore` instruction execution (`1 << 0`).
+        const START = 1 << 0;
+        /// Halts `TensorCore` instruction execution (`1 << 1`).
+        const HALT = 1 << 1;
+        /// Advances `TensorCore` by a single VLIW bundle (`1 << 2`).
+        const SINGLE_STEP = 1 << 2;
+        /// Performs a soft architectural reset of the `TensorCore` (`1 << 3`).
+        const SOFT_RESET = 1 << 3;
+        /// Clears sticky fault bits in the `TensorCore` status CSR (`1 << 4`).
+        const CLEAR_FAULT = 1 << 4;
+    }
+
+    /// Strongly-typed bitmask flags for `BAR0_CSR_TENSORCORE_STATUS`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct TensorCoreStatusFlags: u64 {
+        /// `TensorCore` is idle and ready for launch (`1 << 0`).
+        const IDLE = 1 << 0;
+        /// `TensorCore` is actively executing bundles (`1 << 1`).
+        const RUNNING = 1 << 1;
+        /// `TensorCore` has completed the last launched program (`1 << 2`).
+        const COMPLETED = 1 << 2;
+        /// Uncorrectable HBM ECC error detected (`1 << 3`).
+        const HBM_ECC_ERROR = 1 << 3;
+        /// Matrix Multiply Unit (MXU) arithmetic fault (`1 << 4`).
+        const MXU_OVERFLOW = 1 << 4;
+        /// Architectural `SyncFlag` barrier timeout (`1 << 5`).
+        const SYNC_FLAG_TIMEOUT = 1 << 5;
+        /// Device execution has been poisoned (`1 << 6`).
+        const POISONED = 1 << 6;
+    }
+
+    /// Strongly-typed bitmask flags for `VFIO_IOMMU_MAP_DMA` (`VfioDmaMapIoctl::flags`).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct VfioDmaMapFlags: u32 {
+        /// Device may read from the mapped DMA region (`1 << 0`).
+        const READ = 1 << 0;
+        /// Device may write to the mapped DMA region (`1 << 1`).
+        const WRITE = 1 << 1;
+    }
+
+    /// Strongly-typed bitmask flags for `VFIO_DEVICE_SET_IRQS` (`VfioIrqSetIoctl::flags`).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct VfioIrqSetFlags: u32 {
+        /// No payload data (`1 << 0`).
+        const DATA_NONE = 1 << 0;
+        /// Boolean payload (`1 << 1`).
+        const DATA_BOOL = 1 << 1;
+        /// Linux `eventfd` payload (`1 << 2`).
+        const DATA_EVENTFD = 1 << 2;
+        /// Mask the interrupt (`1 << 3`).
+        const ACTION_MASK = 1 << 3;
+        /// Unmask the interrupt (`1 << 4`).
+        const ACTION_UNMASK = 1 << 4;
+        /// Trigger the interrupt (`1 << 5`).
+        const ACTION_TRIGGER = 1 << 5;
+    }
+}
+
+/// Hardware 32-byte HBM DMA ring descriptor (`HbmDmaRingDescriptor`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct HbmDmaRingDescriptor {
+    /// Source IOVA or HBM physical address.
+    pub src_iova: u64,
+    /// Destination IOVA or HBM physical address.
+    pub dst_iova: u64,
+    /// Transfer length in bytes.
+    pub length_bytes: u32,
+    /// DMA direction and attribute flags (`0` = H2D, `1` = D2H, `2` = D2D).
+    pub direction_flags: u32,
+    /// Architectural `SyncFlag` ID incremented upon DMA completion.
+    pub completion_sync_flag: u64,
+}
+
+const _: () = assert!(size_of::<HbmDmaRingDescriptor>() == 32);
+
+/// Coalescing free-list and allocated-interval tracker for TPU HBM and VMEM address spaces.
+#[derive(Debug, Clone)]
+pub struct HbmRegionAllocator {
+    /// Base virtual/physical address of the managed memory space.
+    pub base_address: u64,
+    /// Total capacity in bytes of the managed memory space.
+    pub capacity_bytes: usize,
+    /// Map of free block start addresses to their contiguous byte lengths.
+    free_blocks: BTreeMap<u64, usize>,
+    /// Map of active allocation start addresses to their aligned byte lengths.
+    allocated_blocks: BTreeMap<u64, usize>,
+}
+
+impl HbmRegionAllocator {
+    /// Creates a new [`HbmRegionAllocator`] managing `[base_address, base_address + capacity_bytes)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_address` - Starting HBM/VMEM address (e.g., `0x1000_0000`).
+    /// * `capacity_bytes` - Total capacity of the region in bytes.
+    #[must_use]
+    pub fn new(base_address: u64, capacity_bytes: usize) -> Self {
+        let mut free_blocks = BTreeMap::new();
+        if capacity_bytes > 0 {
+            free_blocks.insert(base_address, capacity_bytes);
+        }
+        Self {
+            base_address,
+            capacity_bytes,
+            free_blocks,
+            allocated_blocks: BTreeMap::new(),
+        }
+    }
+
+    /// Resizes the total capacity of the allocator and resets free blocks around active allocations.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_capacity` - New total capacity in bytes.
+    pub fn set_capacity(&mut self, new_capacity: usize) {
+        self.capacity_bytes = new_capacity;
+        let used: usize = self.allocated_blocks.values().sum();
+        self.free_blocks.clear();
+        if new_capacity > used {
+            let next_start = self
+                .allocated_blocks
+                .iter()
+                .next_back()
+                .map_or(self.base_address, |(&addr, &len)| addr + len as u64);
+            self.free_blocks.insert(next_start, new_capacity - used);
+        }
+    }
+
+    /// Allocates a page-aligned (`4096`-byte) block of at least `requested_bytes` using first-fit
+    /// and splits any remaining tail back into the free list.
+    ///
+    /// # Arguments
+    ///
+    /// * `requested_bytes` - Number of bytes requested.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::OutOfMemory`] if no contiguous free block is large enough.
+    pub fn allocate(&mut self, requested_bytes: usize) -> LibTpuResult<DeviceAddress> {
+        let aligned_size = requested_bytes.max(256).div_ceil(4096) * 4096;
+        let candidate = self
+            .free_blocks
+            .iter()
+            .find(|(_, len)| **len >= aligned_size)
+            .map(|(&addr, &len)| (addr, len));
+        let Some((addr, block_len)) = candidate else {
+            return Err(LibTpuError::OutOfMemory {
+                requested_bytes,
+                available_bytes: self.largest_free_block_bytes(),
+            });
+        };
+        self.free_blocks.remove(&addr);
+        let remainder = block_len - aligned_size;
+        if remainder > 0 {
+            self.free_blocks
+                .insert(addr + aligned_size as u64, remainder);
+        }
+        self.allocated_blocks.insert(addr, aligned_size);
+        Ok(DeviceAddress(addr))
+    }
+
+    /// Frees a previously allocated block at `address` and coalesces it with adjacent predecessor
+    /// and successor free blocks.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - [`DeviceAddress`] returned by [`HbmRegionAllocator::allocate`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `address` is not an active allocation.
+    pub fn deallocate(&mut self, address: DeviceAddress) -> LibTpuResult<usize> {
+        let Some(freed_len) = self.allocated_blocks.remove(&address.0) else {
+            return Err(LibTpuError::InvalidArgument {
+                parameter: "address",
+                reason: format!("HBM block {address} is not allocated"),
+            });
+        };
+        let mut merged_start = address.0;
+        let mut merged_len = freed_len;
+
+        let prev_merge = self
+            .free_blocks
+            .range(..address.0)
+            .next_back()
+            .filter(|&(&prev_start, &prev_len)| prev_start + prev_len as u64 == merged_start)
+            .map(|(&prev_start, &prev_len)| (prev_start, prev_len));
+        if let Some((prev_start, prev_len)) = prev_merge {
+            self.free_blocks.remove(&prev_start);
+            merged_start = prev_start;
+            merged_len += prev_len;
+        }
+        let next_expected = merged_start + merged_len as u64;
+        if let Some(next_len) = self.free_blocks.remove(&next_expected) {
+            merged_len += next_len;
+        }
+        self.free_blocks.insert(merged_start, merged_len);
+        Ok(freed_len)
+    }
+
+    /// Returns the size in bytes of the largest contiguous free block in the allocator.
+    #[must_use]
+    pub fn largest_free_block_bytes(&self) -> usize {
+        self.free_blocks.values().copied().max().unwrap_or(0)
+    }
+}
+
+/// Safe volatile MMIO wrapper around an `mmap`-ed `PCIe` BAR0/BAR2 virtual memory aperture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MappedBarAperture {
+    /// Base user-space virtual address returned by `mmap`.
+    pub base_vaddr: usize,
+    /// Total mapped aperture length in bytes.
+    pub size: ByteSize,
+}
+
+impl MappedBarAperture {
+    /// Performs a bounds-checked, 8-byte-aligned volatile 64-bit CSR read at `offset`.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - Byte offset within the mapped BAR aperture.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` is unaligned or exceeds `self.size`.
+    pub fn read_csr_u64(&self, offset: MmioOffset) -> LibTpuResult<u64> {
+        let off = usize::try_from(offset.0).unwrap_or(usize::MAX);
+        if (off & 7) != 0 || off.saturating_add(8) > self.size.0 || self.base_vaddr == 0 {
+            return Err(LibTpuError::MmioOutOfBounds {
+                bar_index: 0,
+                offset: offset.0,
+                size: 8,
+            });
+        }
+        let reg_ptr = (self.base_vaddr + off) as *const u64;
+        // SAFETY: `reg_ptr` is 8-byte aligned and within `[base_vaddr, base_vaddr + size)`.
+        let val = unsafe { std::ptr::read_volatile(reg_ptr) };
+        Ok(val)
+    }
+
+    /// Performs a bounds-checked, 8-byte-aligned volatile 64-bit CSR write at `offset`.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - Byte offset within the mapped BAR aperture.
+    /// * `value` - 64-bit CSR value to write.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` is unaligned or exceeds `self.size`.
+    pub fn write_csr_u64(&self, offset: MmioOffset, value: u64) -> LibTpuResult<()> {
+        let off = usize::try_from(offset.0).unwrap_or(usize::MAX);
+        if (off & 7) != 0 || off.saturating_add(8) > self.size.0 || self.base_vaddr == 0 {
+            return Err(LibTpuError::MmioOutOfBounds {
+                bar_index: 0,
+                offset: offset.0,
+                size: 8,
+            });
+        }
+        let reg_ptr = (self.base_vaddr + off) as *mut u64;
+        // SAFETY: `reg_ptr` is 8-byte aligned and within `[base_vaddr, base_vaddr + size)`.
+        unsafe {
+            std::ptr::write_volatile(reg_ptr, value);
+        }
+        Ok(())
+    }
+}
+
+/// Discovered `PCIe` Google Cloud TPU device descriptor from `/sys/bus/pci/devices/*`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredPciTpuDevice {
+    /// `PCIe` BDF slot name (e.g., `"0000:00:04.0"`).
+    pub bdf_slot: String,
+    /// `PCIe` Vendor ID (`0x1ae0`).
+    pub vendor_id: PciVendorId,
+    /// `PCIe` Device ID (`0x0027`, `0x0056`, `0x005e`, `0x0062`, `0x0063`, `0x006f`, `0x0076`).
+    pub device_id: PciDeviceId,
+    /// Detected TPU architecture generation.
+    pub generation: TpuGeneration,
+    /// Detected kernel driver binding mode (`Gasket` or `Vfio`).
+    pub driver_mode: KernelDriverMode,
+    /// Device node path (e.g., `"/dev/accel0"` or `"/dev/vfio/0"`).
+    pub device_node_path: String,
+}
+
+/// Linux `sysfs` `PCIe` hardware enumerator for Google Cloud TPU ASICs (`0x1ae0`).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PciDeviceEnumerator;
+
+impl PciDeviceEnumerator {
+    /// Maps a Google `PCIe` Device ID (`0x1ae0:<device_id>`) to its [`TpuGeneration`].
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - 16-bit `PCIe` Device ID.
+    #[must_use]
+    pub const fn generation_from_pci_device_id(device_id: PciDeviceId) -> Option<TpuGeneration> {
+        match device_id.0 {
+            0x0027 => Some(TpuGeneration::V3),
+            0x0056 => Some(TpuGeneration::V4),
+            0x005e | 0x0062 => Some(TpuGeneration::V5p),
+            0x0063 => Some(TpuGeneration::V5e),
+            0x006f => Some(TpuGeneration::V6e),
+            0x0076 => Some(TpuGeneration::V7x),
+            _ => None,
+        }
+    }
+
+    /// Parses a hexadecimal `sysfs` attribute string such as `"0x1ae0\n"` into a `u16`.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw contents of a `sysfs` `vendor` or `device` file.
+    #[must_use]
+    pub fn parse_hex_u16(raw: &str) -> Option<u16> {
+        let trimmed = raw.trim().trim_start_matches("0x").trim_start_matches("0X");
+        u16::from_str_radix(trimmed, 16).ok()
+    }
+
+    /// Scans a `sysfs` PCI devices directory (e.g., `/sys/bus/pci/devices`) and `/dev` root to
+    /// discover all attached Google Cloud TPU `PCIe` functions.
+    ///
+    /// # Arguments
+    ///
+    /// * `sysfs_pci_dir` - Path to `/sys/bus/pci/devices`.
+    /// * `dev_root` - Path to `/dev`.
+    #[must_use]
+    pub fn scan_sysfs(
+        sysfs_pci_dir: &std::path::Path,
+        dev_root: &std::path::Path,
+    ) -> Vec<DiscoveredPciTpuDevice> {
+        let Ok(entries) = std::fs::read_dir(sysfs_pci_dir) else {
+            return Vec::new();
+        };
+        let mut slot_paths: Vec<std::path::PathBuf> =
+            entries.filter_map(|e| e.ok().map(|d| d.path())).collect();
+        slot_paths.sort();
+
+        slot_paths
+            .into_iter()
+            .enumerate()
+            .filter_map(|(idx, path)| {
+                let vendor_str = std::fs::read_to_string(path.join("vendor")).unwrap_or_default();
+                let device_str = std::fs::read_to_string(path.join("device")).unwrap_or_default();
+                let vendor_raw = Self::parse_hex_u16(&vendor_str).filter(|&v| v == 0x1ae0)?;
+                let device_raw = Self::parse_hex_u16(&device_str)?;
+                let pci_dev_id = PciDeviceId(device_raw);
+                let generation = Self::generation_from_pci_device_id(pci_dev_id)?;
+                let bdf_slot = path
+                    .file_name()
+                    .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+                let (driver_mode, device_node_path) = if path.join("vfio").exists() {
+                    (
+                        KernelDriverMode::Vfio,
+                        dev_root
+                            .join("vfio")
+                            .join(idx.to_string())
+                            .to_string_lossy()
+                            .into_owned(),
+                    )
+                } else {
+                    (
+                        KernelDriverMode::Gasket,
+                        dev_root
+                            .join(format!("accel{idx}"))
+                            .to_string_lossy()
+                            .into_owned(),
+                    )
+                };
+                Some(DiscoveredPciTpuDevice {
+                    bdf_slot,
+                    vendor_id: PciVendorId(vendor_raw),
+                    device_id: pci_dev_id,
+                    generation,
+                    driver_mode,
+                    device_node_path,
+                })
+            })
+            .collect()
+    }
+}
 
 /// Specification for a single logical TPU device in a discovered topology.
 #[derive(Debug, Clone)]
@@ -417,12 +831,12 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
 /// Internal per-device state for [`SimulatedTpuHal`].
 #[derive(Debug)]
 struct SimulatedDeviceState {
+    /// Page-aligned (`4096` B) HBM region allocator with free-block coalescing.
+    region_allocator: HbmRegionAllocator,
     /// Active HBM allocations mapped by [`DeviceAddress`].
     allocations: BTreeMap<DeviceAddress, Vec<u8>>,
     /// Memory space kind associated with each [`DeviceAddress`].
     allocation_kinds: BTreeMap<DeviceAddress, MemoryKind>,
-    /// Next virtual HBM address to assign.
-    next_address: u64,
     /// Bytes currently allocated.
     bytes_in_use: usize,
     /// Peak bytes allocated.
@@ -454,6 +868,7 @@ impl SimulatedTpuHal {
     /// # Arguments
     ///
     /// * `config` - Initialization configuration specifying generation and mesh bounds.
+    #[must_use]
     pub fn new(config: &TpuInitConfig) -> Self {
         let generation = config.generation;
         let devs_per_chip = generation.logical_devices_per_chip();
@@ -507,9 +922,12 @@ impl SimulatedTpuHal {
                                         state_map.insert(
                                             dev_id,
                                             SimulatedDeviceState {
+                                                region_allocator: HbmRegionAllocator::new(
+                                                    0x1000_0000,
+                                                    generation.hbm_capacity_bytes().0,
+                                                ),
                                                 allocations: BTreeMap::new(),
                                                 allocation_kinds: BTreeMap::new(),
-                                                next_address: 0x1000_0000,
                                                 bytes_in_use: 0,
                                                 peak_bytes_in_use: 0,
                                                 num_allocs: 0,
@@ -583,12 +1001,15 @@ impl SimulatedTpuHal {
     ///
     /// Returns [`LibTpuError::DeviceNotFound`] if `device_id` does not exist.
     pub fn set_device_capacity(&self, device_id: DeviceId, capacity: ByteSize) -> LibTpuResult<()> {
-        self.lock_devices()?
+        let mut guard = self.lock_devices()?;
+        let dev = guard
             .get_mut(&device_id)
             .ok_or(LibTpuError::DeviceNotFound {
                 device_id: device_id.0,
-            })?
-            .capacity_bytes = capacity.0;
+            })?;
+        dev.capacity_bytes = capacity.0;
+        dev.region_allocator.set_capacity(capacity.0);
+        drop(guard);
         Ok(())
     }
 
@@ -758,6 +1179,7 @@ impl SimulatedTpuHal {
     /// * `bundle` - Lowered [`crate::compiler::TpuInstructionBundle`].
     /// * `default_elem_type` - Default [`ElementType`] if not overridden by `bundle.attrs`.
     /// * `operands` - Slice of operand byte slices.
+    #[allow(clippy::too_many_lines, clippy::or_fun_call)]
     fn eval_bundle_with_attrs(
         bundle: &crate::compiler::TpuInstructionBundle,
         default_elem_type: ElementType,
@@ -927,18 +1349,15 @@ impl SimulatedTpuHal {
                     .map_or(vals.len(), |s| s.element_count().max(1));
                 return out_elem_type.pack_from_f64_slice(&vec![scalar; out_len]);
             }
-            TpuOpCode::Concatenate => {
-                if bundle.attrs.concat_dim > 0 {
-                    let v0 = in_elem_type.unpack_to_f64_vec(b0);
-                    let v1 =
-                        in_elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
-                    let mut interleaved = Vec::with_capacity(v0.len() + v1.len());
-                    for (&x, &y) in v0.iter().zip(v1.iter()) {
-                        interleaved.push(x);
-                        interleaved.push(y);
-                    }
-                    return out_elem_type.pack_from_f64_slice(&interleaved);
+            TpuOpCode::Concatenate if bundle.attrs.concat_dim > 0 => {
+                let v0 = in_elem_type.unpack_to_f64_vec(b0);
+                let v1 = in_elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
+                let mut interleaved = Vec::with_capacity(v0.len() + v1.len());
+                for (&x, &y) in v0.iter().zip(v1.iter()) {
+                    interleaved.push(x);
+                    interleaved.push(y);
                 }
+                return out_elem_type.pack_from_f64_slice(&interleaved);
             }
             _ => {}
         }
@@ -960,7 +1379,7 @@ impl SimulatedTpuHal {
             let sel: Vec<f64> = c
                 .iter()
                 .zip(t.iter().zip(f.iter()))
-                .map(|(&cond, (&tv, &fv))| if cond != 0.0 { tv } else { fv })
+                .map(|(&cond, (&tv, &fv))| if cond == 0.0 { fv } else { tv })
                 .collect();
             elem_type.pack_from_f64_slice(&sel)
         } else if opcode.is_binary() {
@@ -1076,15 +1495,7 @@ impl TpuHal for SimulatedTpuHal {
                 device_id: device_id.0,
             })?;
         let alloc_size = size.0.max(256);
-        let available = dev.capacity_bytes.saturating_sub(dev.bytes_in_use);
-        if alloc_size > available {
-            return Err(LibTpuError::OutOfMemory {
-                requested_bytes: alloc_size,
-                available_bytes: available,
-            });
-        }
-        let addr = DeviceAddress(dev.next_address);
-        dev.next_address += (alloc_size.div_ceil(4096) * 4096) as u64;
+        let addr = dev.region_allocator.allocate(alloc_size)?;
         dev.allocations.insert(addr, vec![0_u8; alloc_size]);
         dev.allocation_kinds.insert(addr, memory_kind);
         dev.bytes_in_use += alloc_size;
@@ -1113,6 +1524,7 @@ impl TpuHal for SimulatedTpuHal {
                     parameter: "address",
                     reason: format!("Allocation {address} not found on device {device_id}"),
                 })?;
+        let _ = dev.region_allocator.deallocate(address);
         dev.allocation_kinds.remove(&address);
         dev.bytes_in_use = dev.bytes_in_use.saturating_sub(removed.len());
         drop(guard);
@@ -1310,7 +1722,7 @@ impl TpuHal for SimulatedTpuHal {
             device_id: device_id.0,
         })?;
         let free_bytes =
-            i64::try_from(dev.capacity_bytes.saturating_sub(dev.bytes_in_use)).unwrap_or(0);
+            i64::try_from(dev.region_allocator.largest_free_block_bytes()).unwrap_or(0);
         let in_use = i64::try_from(dev.bytes_in_use).unwrap_or(0);
         let peak = i64::try_from(dev.peak_bytes_in_use).unwrap_or(0);
         let largest = i64::try_from(dev.largest_alloc_size).unwrap_or(0);
@@ -1425,11 +1837,11 @@ pub enum IoctlPayload<'a> {
 #[derive(Debug)]
 pub struct EmulatedKernelDriverBackend {
     /// BAR0 MMIO 64-bit registers indexed by byte offset.
-    bar0_registers: Mutex<BTreeMap<u64, u64>>,
+    bar0_registers: parking_lot::Mutex<BTreeMap<u64, u64>>,
     /// Emulated IOMMU page table mapping IOVA addresses to mapped byte sizes.
-    iommu_mappings: Mutex<BTreeMap<u64, u64>>,
+    iommu_mappings: parking_lot::Mutex<BTreeMap<u64, u64>>,
     /// Registered interrupt `eventfd` handles indexed by interrupt vector ID.
-    interrupt_eventfds: Mutex<BTreeMap<u32, i32>>,
+    interrupt_eventfds: parking_lot::Mutex<BTreeMap<u32, i32>>,
     /// Total BAR0 aperture size in bytes.
     bar0_size: usize,
     /// Next allocated file descriptor.
@@ -1448,6 +1860,7 @@ impl EmulatedKernelDriverBackend {
     /// # Arguments
     ///
     /// * `bar0_size` - Size of the simulated `PCIe` BAR0 MMIO region in bytes.
+    #[must_use]
     pub fn new(bar0_size: usize) -> Self {
         let mut regs = BTreeMap::new();
         regs.insert(BAR0_CSR_TENSORCORE_RUN_CONTROL, 0);
@@ -1460,9 +1873,9 @@ impl EmulatedKernelDriverBackend {
         regs.insert(BAR0_CSR_POWER_MILLIWATTS, 175_000);
         regs.insert(BAR0_CSR_DUTY_CYCLE_PERCENT, 100);
         Self {
-            bar0_registers: Mutex::new(regs),
-            iommu_mappings: Mutex::new(BTreeMap::new()),
-            interrupt_eventfds: Mutex::new(BTreeMap::new()),
+            bar0_registers: parking_lot::Mutex::new(regs),
+            iommu_mappings: parking_lot::Mutex::new(BTreeMap::new()),
+            interrupt_eventfds: parking_lot::Mutex::new(BTreeMap::new()),
             bar0_size,
             next_fd: AtomicI32::new(100),
         }
@@ -1477,10 +1890,7 @@ impl EmulatedKernelDriverBackend {
     pub fn apply_typed_ioctl(&self, request: u64, payload: IoctlPayload<'_>) {
         match payload {
             IoctlPayload::GasketPageTable(pt) => {
-                let mut guard = self
-                    .iommu_mappings
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut guard = self.iommu_mappings.lock();
                 if request == GASKET_IOCTL_UNMAP_BUFFER {
                     guard.remove(&pt.device_address);
                 } else {
@@ -1488,47 +1898,29 @@ impl EmulatedKernelDriverBackend {
                 }
             }
             IoctlPayload::GasketDmaBuf(db) => {
-                self.iommu_mappings
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(db.device_address, 4096);
+                self.iommu_mappings.lock().insert(db.device_address, 4096);
             }
             IoctlPayload::VfioDmaMap(vm) => {
-                self.iommu_mappings
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(vm.iova, vm.size);
+                self.iommu_mappings.lock().insert(vm.iova, vm.size);
             }
             IoctlPayload::VfioDmaUnmap(vu) => {
-                self.iommu_mappings
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .remove(&vu.iova);
+                self.iommu_mappings.lock().remove(&vu.iova);
             }
             IoctlPayload::GasketInterruptEventFd(ge) => {
-                self.interrupt_eventfds
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(
-                        u32::try_from(ge.interrupt).unwrap_or(0),
-                        i32::try_from(ge.event_fd).unwrap_or(0),
-                    );
+                self.interrupt_eventfds.lock().insert(
+                    u32::try_from(ge.interrupt).unwrap_or(0),
+                    i32::try_from(ge.event_fd).unwrap_or(0),
+                );
             }
             IoctlPayload::VfioIrqSet(vi) => {
-                self.interrupt_eventfds
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(vi.index, vi.event_fd);
+                self.interrupt_eventfds.lock().insert(vi.index, vi.event_fd);
             }
         }
     }
 
     /// Returns the number of active IOVA mappings in the emulated IOMMU page table.
     pub fn mapped_iova_count(&self) -> usize {
-        self.iommu_mappings
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .len()
+        self.iommu_mappings.lock().len()
     }
 
     /// Returns the registered `eventfd` for interrupt `index`, if present.
@@ -1537,19 +1929,12 @@ impl EmulatedKernelDriverBackend {
     ///
     /// * `index` - Interrupt vector index.
     pub fn registered_interrupt_fd(&self, index: u32) -> Option<i32> {
-        self.interrupt_eventfds
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&index)
-            .copied()
+        self.interrupt_eventfds.lock().get(&index).copied()
     }
 
     /// Clears all registered interrupt `eventfd` bindings.
     pub fn clear_interrupt_fds(&self) {
-        self.interrupt_eventfds
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clear();
+        self.interrupt_eventfds.lock().clear();
     }
 
     /// Creates a simulated Linux `eventfd` handle.
@@ -1566,7 +1951,6 @@ impl EmulatedKernelDriverBackend {
     pub fn get_csr(&self, csr_offset: u64) -> u64 {
         self.bar0_registers
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&csr_offset)
             .copied()
             .unwrap_or(0)
@@ -1579,10 +1963,7 @@ impl EmulatedKernelDriverBackend {
     /// * `csr_offset` - Byte offset of the BAR0 CSR.
     /// * `value` - 64-bit register value to store.
     pub fn set_csr(&self, csr_offset: u64, value: u64) {
-        self.bar0_registers
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(csr_offset, value);
+        self.bar0_registers.lock().insert(csr_offset, value);
     }
 
     /// Reads a 64-bit CSR from `PCIe` BAR `bar_index` at `offset`.
@@ -1608,14 +1989,12 @@ impl EmulatedKernelDriverBackend {
                 size: 8,
             });
         }
-        let guard = self
+        let val = self
             .bar0_registers
             .lock()
-            .map_err(|_| LibTpuError::LockPoisoned {
-                resource: "bar0_registers",
-            })?;
-        let val = guard.get(&offset.0).copied().unwrap_or(0);
-        drop(guard);
+            .get(&offset.0)
+            .copied()
+            .unwrap_or(0);
         Ok(val)
     }
 
@@ -1648,12 +2027,7 @@ impl EmulatedKernelDriverBackend {
                 size: 8,
             });
         }
-        let mut guard = self
-            .bar0_registers
-            .lock()
-            .map_err(|_| LibTpuError::LockPoisoned {
-                resource: "bar0_registers",
-            })?;
+        let mut guard = self.bar0_registers.lock();
         guard.insert(offset.0, value);
         if offset.0 == BAR0_CSR_TENSORCORE_RUN_CONTROL && value != 0 {
             let sync = guard
@@ -1681,11 +2055,7 @@ impl EmulatedKernelDriverBackend {
         fd: FileDescriptor,
         payload: &GasketPageTableDmaBuf,
     ) -> LibTpuResult<()> {
-        self.ioctl_device(
-            fd.0,
-            GASKET_IOCTL_MAP_DMABUF,
-            std::mem::size_of_val(payload),
-        )?;
+        self.ioctl_device(fd.0, GASKET_IOCTL_MAP_DMABUF, size_of_val(payload))?;
         self.apply_typed_ioctl(GASKET_IOCTL_MAP_DMABUF, IoctlPayload::GasketDmaBuf(payload));
         Ok(())
     }
@@ -1732,48 +2102,12 @@ pub const POSIX_FIOCLEX_IOCTL: u64 = 0x2000_6601;
 #[cfg(not(target_os = "macos"))]
 pub const POSIX_FIOCLEX_IOCTL: u64 = 0x5451;
 
-/// Low-level POSIX C library (`libc`) FFI declarations for [`PosixKernelDriverBackend`].
+/// Low-level POSIX C library (`libc`) FFI wrappers for [`PosixKernelDriverBackend`].
 mod posix_libc {
-    use std::ffi::{c_char, c_int, c_ulong, c_void};
-
-    /// `O_RDWR` file open flag (`2`).
-    pub(super) const O_RDWR: c_int = 2;
-    /// `PROT_READ` memory protection flag (`1`).
-    pub(super) const PROT_READ: c_int = 1;
-    /// `PROT_WRITE` memory protection flag (`2`).
-    pub(super) const PROT_WRITE: c_int = 2;
-    /// `MAP_SHARED` `mmap` flag (`1`).
-    pub(super) const MAP_SHARED: c_int = 1;
-    /// `MAP_PRIVATE` `mmap` flag (`2`).
-    pub(super) const MAP_PRIVATE: c_int = 2;
-    /// `MAP_ANONYMOUS` `mmap` flag (`0x1000` on macOS, `0x20` on Linux).
-    #[cfg(target_os = "macos")]
-    pub(super) const MAP_ANONYMOUS: c_int = 0x1000;
-    /// `MAP_ANONYMOUS` `mmap` flag (`0x20` on Linux).
-    #[cfg(not(target_os = "macos"))]
-    pub(super) const MAP_ANONYMOUS: c_int = 0x20;
-
-    extern "C" {
-        /// Opens a POSIX file path.
-        pub(super) fn open(path: *const c_char, oflag: c_int, ...) -> c_int;
-        /// Closes an open POSIX file descriptor.
-        pub(super) fn close(fd: c_int) -> c_int;
-        /// Executes a device `ioctl` command on `fd`.
-        pub(super) fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
-        /// Maps a file descriptor or anonymous page range into the process address space.
-        pub(super) fn mmap(
-            addr: *mut c_void,
-            len: usize,
-            prot: c_int,
-            flags: c_int,
-            fd: c_int,
-            offset: i64,
-        ) -> *mut c_void;
-        /// Unmaps a previously mapped virtual memory region.
-        pub(super) fn munmap(addr: *mut c_void, len: usize) -> c_int;
-        /// Creates a unidirectional POSIX pipe pair.
-        pub(super) fn pipe(fds: *mut c_int) -> c_int;
-    }
+    pub(super) use libc::{
+        MAP_ANON as MAP_ANONYMOUS, MAP_PRIVATE, MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE, close,
+        ioctl, mmap, munmap, open, pipe,
+    };
 }
 
 /// Real POSIX kernel driver backend invoking `libc` `open`, `close`, `ioctl`, `mmap`, `munmap`,
@@ -1783,8 +2117,74 @@ pub struct PosixKernelDriverBackend;
 
 impl PosixKernelDriverBackend {
     /// Creates a new [`PosixKernelDriverBackend`].
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
+    }
+
+    /// Issues a typed `#[repr(C)]` `ioctl` command on `fd` passing a mutable pointer to `payload`.
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - Open POSIX file descriptor.
+    /// * `request` - Raw `ioctl` command number.
+    /// * `payload` - Mutable reference to a `#[repr(C)]` `ioctl` payload structure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::IoctlFailed`] if `libc::ioctl` returns `< 0`.
+    pub fn ioctl_with_payload<T>(
+        &self,
+        fd: i32,
+        request: u64,
+        payload: &mut T,
+    ) -> LibTpuResult<i32> {
+        #[allow(clippy::cast_possible_truncation)]
+        let req_ulong = request as libc::c_ulong;
+        let ptr = std::ptr::from_mut::<T>(payload).cast::<libc::c_void>();
+        // SAFETY: `ptr` points to a valid, mutable `T` structure on the stack.
+        let rc = unsafe { posix_libc::ioctl(fd, req_ulong, ptr) };
+        if rc < 0 {
+            let err = std::io::Error::last_os_error();
+            return Err(LibTpuError::IoctlFailed {
+                request,
+                errno: err.raw_os_error().unwrap_or(9),
+                message: err.to_string(),
+            });
+        }
+        Ok(rc)
+    }
+
+    /// Maps a `PCIe` BAR aperture of `size` bytes into a [`MappedBarAperture`].
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - Open device file descriptor (or `-1` for anonymous mapping).
+    /// * `size` - Mapping byte size (must be `> 0`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareIoError`] if `mmap` fails.
+    pub fn mmap_bar_aperture(
+        &self,
+        fd: FileDescriptor,
+        size: ByteSize,
+    ) -> LibTpuResult<MappedBarAperture> {
+        let base_vaddr = self.mmap_bar0(fd.0, size.0)?;
+        Ok(MappedBarAperture { base_vaddr, size })
+    }
+
+    /// Unmaps a [`MappedBarAperture`] previously mapped with [`PosixKernelDriverBackend::mmap_bar_aperture`].
+    ///
+    /// # Arguments
+    ///
+    /// * `aperture` - Mapped BAR aperture to unmap.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareIoError`] if `munmap` fails.
+    pub fn munmap_bar_aperture(&self, aperture: MappedBarAperture) -> LibTpuResult<()> {
+        self.munmap_bar0(aperture.base_vaddr, aperture.size.0)
     }
 
     /// Maps a `PCIe` BAR0 region of `size` bytes on file descriptor `fd` (or anonymous memory when `fd == -1`).
@@ -1850,6 +2250,7 @@ impl PosixKernelDriverBackend {
     }
 
     /// Allocates an OS-backed event notification descriptor (`eventfd` / pipe read end).
+    #[must_use]
     pub fn create_eventfd(&self) -> EventFdHandle {
         let mut fds = [0_i32; 2];
         // SAFETY: `fds` points to a valid 2-element `c_int` array.
@@ -1954,12 +2355,12 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
             syscalls.ioctl_device(
                 fd,
                 GASKET_IOCTL_NUMBER_PAGE_TABLES,
-                std::mem::size_of::<GasketPageTableIoctl>(),
+                size_of::<GasketPageTableIoctl>(),
             )?;
             syscalls.ioctl_device(
                 fd,
                 GASKET_IOCTL_PARTITION_PAGE_TABLE,
-                std::mem::size_of::<GasketPageTableIoctl>(),
+                size_of::<GasketPageTableIoctl>(),
             )?;
         }
         Ok(Self {
@@ -2016,7 +2417,7 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
                 self.syscalls.ioctl_device(
                     self.device_fd,
                     GASKET_IOCTL_SET_EVENTFD,
-                    std::mem::size_of_val(&payload),
+                    size_of_val(&payload),
                 )?;
                 self.mmio.apply_typed_ioctl(
                     GASKET_IOCTL_SET_EVENTFD,
@@ -2035,7 +2436,7 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
                 self.syscalls.ioctl_device(
                     self.device_fd,
                     VFIO_DEVICE_SET_IRQS_IOCTL,
-                    std::mem::size_of_val(&payload),
+                    size_of_val(&payload),
                 )?;
                 self.mmio.apply_typed_ioctl(
                     VFIO_DEVICE_SET_IRQS_IOCTL,
@@ -2095,7 +2496,7 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
                 self.syscalls.ioctl_device(
                     self.device_fd,
                     GASKET_IOCTL_MAP_BUFFER,
-                    std::mem::size_of_val(&payload),
+                    size_of_val(&payload),
                 )?;
                 self.mmio.apply_typed_ioctl(
                     GASKET_IOCTL_MAP_BUFFER,
@@ -2113,7 +2514,7 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
                 self.syscalls.ioctl_device(
                     self.device_fd,
                     VFIO_IOMMU_MAP_DMA_IOCTL,
-                    std::mem::size_of_val(&payload),
+                    size_of_val(&payload),
                 )?;
                 self.mmio.apply_typed_ioctl(
                     VFIO_IOMMU_MAP_DMA_IOCTL,
@@ -2140,7 +2541,7 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
                 self.syscalls.ioctl_device(
                     self.device_fd,
                     GASKET_IOCTL_UNMAP_BUFFER,
-                    std::mem::size_of_val(&payload),
+                    size_of_val(&payload),
                 )?;
                 self.mmio.apply_typed_ioctl(
                     GASKET_IOCTL_UNMAP_BUFFER,
@@ -2157,7 +2558,7 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
                 self.syscalls.ioctl_device(
                     self.device_fd,
                     VFIO_IOMMU_UNMAP_DMA_IOCTL,
-                    std::mem::size_of_val(&payload),
+                    size_of_val(&payload),
                 )?;
                 self.mmio.apply_typed_ioctl(
                     VFIO_IOMMU_UNMAP_DMA_IOCTL,
@@ -2233,24 +2634,171 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
     }
 }
 
+/// Polymorphic Hardware Abstraction Layer backend dispatching across [`LinuxDeviceHal`]
+/// and [`SimulatedTpuHal`].
+#[derive(Debug)]
+pub enum HalBackend<S: SyscallProvider = EmulatedKernelDriverBackend> {
+    /// Deterministic in-memory TPU hardware simulation backend.
+    Simulated(SimulatedTpuHal),
+    /// Linux Gasket/VFIO kernel driver backend (`LinuxDeviceHal<S>`).
+    Linux(LinuxDeviceHal<S>),
+}
+
+impl HalBackend<EmulatedKernelDriverBackend> {
+    /// Selects and initializes a [`HalBackend`] from `config`.
+    ///
+    /// When `--tpu_driver_mode=simulated` is present in `config.extra_flags`, returns
+    /// [`HalBackend::Simulated`]; otherwise returns [`HalBackend::Linux`] driving the
+    /// Gasket/VFIO protocol stack.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - TPU initialization configuration.
+    #[must_use]
+    pub fn from_config(config: &TpuInitConfig) -> Self {
+        if config
+            .extra_flags
+            .get("--tpu_driver_mode")
+            .is_some_and(|mode| mode == "simulated")
+        {
+            Self::Simulated(SimulatedTpuHal::new(config))
+        } else {
+            Self::Linux(LinuxDeviceHal {
+                mode: KernelDriverMode::Gasket,
+                syscalls: EmulatedKernelDriverBackend::default(),
+                device_fd: 3,
+                mmio: EmulatedKernelDriverBackend::default(),
+                inner: SimulatedTpuHal::new(config),
+            })
+        }
+    }
+}
+
+impl<S: SyscallProvider> TpuHal for HalBackend<S> {
+    fn discover_topology(&self) -> LibTpuResult<TopologySpec> {
+        match self {
+            Self::Simulated(sim) => sim.discover_topology(),
+            Self::Linux(linux) => linux.discover_topology(),
+        }
+    }
+
+    fn allocate_device_memory(
+        &self,
+        device_id: DeviceId,
+        memory_kind: MemoryKind,
+        size: ByteSize,
+    ) -> LibTpuResult<DeviceAddress> {
+        match self {
+            Self::Simulated(sim) => sim.allocate_device_memory(device_id, memory_kind, size),
+            Self::Linux(linux) => linux.allocate_device_memory(device_id, memory_kind, size),
+        }
+    }
+
+    fn deallocate_device_memory(
+        &self,
+        device_id: DeviceId,
+        address: DeviceAddress,
+    ) -> LibTpuResult<()> {
+        match self {
+            Self::Simulated(sim) => sim.deallocate_device_memory(device_id, address),
+            Self::Linux(linux) => linux.deallocate_device_memory(device_id, address),
+        }
+    }
+
+    fn write_device_memory(
+        &self,
+        device_id: DeviceId,
+        address: DeviceAddress,
+        data: &[u8],
+    ) -> LibTpuResult<()> {
+        match self {
+            Self::Simulated(sim) => sim.write_device_memory(device_id, address, data),
+            Self::Linux(linux) => linux.write_device_memory(device_id, address, data),
+        }
+    }
+
+    fn read_device_memory(
+        &self,
+        device_id: DeviceId,
+        address: DeviceAddress,
+        out: &mut [u8],
+    ) -> LibTpuResult<()> {
+        match self {
+            Self::Simulated(sim) => sim.read_device_memory(device_id, address, out),
+            Self::Linux(linux) => linux.read_device_memory(device_id, address, out),
+        }
+    }
+
+    fn copy_device_to_device(
+        &self,
+        src_device: DeviceId,
+        src_addr: DeviceAddress,
+        dst_device: DeviceId,
+        dst_addr: DeviceAddress,
+        size: ByteSize,
+    ) -> LibTpuResult<()> {
+        match self {
+            Self::Simulated(sim) => {
+                sim.copy_device_to_device(src_device, src_addr, dst_device, dst_addr, size)
+            }
+            Self::Linux(linux) => {
+                linux.copy_device_to_device(src_device, src_addr, dst_device, dst_addr, size)
+            }
+        }
+    }
+
+    fn execute_program(
+        &self,
+        device_id: DeviceId,
+        program: &CompiledProgram,
+        inputs: &[DeviceAddress],
+        outputs: &[DeviceAddress],
+    ) -> LibTpuResult<()> {
+        match self {
+            Self::Simulated(sim) => sim.execute_program(device_id, program, inputs, outputs),
+            Self::Linux(linux) => linux.execute_program(device_id, program, inputs, outputs),
+        }
+    }
+
+    fn memory_stats(&self, device_id: DeviceId) -> LibTpuResult<DeviceMemoryStats> {
+        match self {
+            Self::Simulated(sim) => sim.memory_stats(device_id),
+            Self::Linux(linux) => linux.memory_stats(device_id),
+        }
+    }
+
+    fn clear_memory_stats(&self, device_id: DeviceId) -> LibTpuResult<()> {
+        match self {
+            Self::Simulated(sim) => sim.clear_memory_stats(device_id),
+            Self::Linux(linux) => linux.clear_memory_stats(device_id),
+        }
+    }
+
+    fn poison_device(&self, device_id: DeviceId, reason: String) -> LibTpuResult<()> {
+        match self {
+            Self::Simulated(sim) => sim.poison_device(device_id, reason),
+            Self::Linux(linux) => linux.poison_device(device_id, reason),
+        }
+    }
+}
+
 /// Creates the default [`TpuHal`] instance for `config`, routing allocations, DMA ring transfers,
-/// and `TensorCore` execution through [`LinuxDeviceHal`] and [`EmulatedKernelDriverBackend`].
+/// and `TensorCore` execution through [`HalBackend::from_config`].
 ///
 /// # Arguments
 ///
 /// * `config` - TPU initialization configuration.
+#[must_use]
 pub fn create_default_hal(config: &TpuInitConfig) -> std::sync::Arc<dyn TpuHal> {
-    std::sync::Arc::new(LinuxDeviceHal {
-        mode: KernelDriverMode::Gasket,
-        syscalls: EmulatedKernelDriverBackend::default(),
-        device_fd: 3,
-        mmio: EmulatedKernelDriverBackend::default(),
-        inner: SimulatedTpuHal::new(config),
-    })
+    std::sync::Arc::new(HalBackend::from_config(config))
 }
 
 #[cfg(test)]
-#[allow(for_loops_over_fallibles)]
+#[allow(
+    for_loops_over_fallibles,
+    clippy::cognitive_complexity,
+    clippy::too_many_lines
+)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -2311,19 +2859,19 @@ mod tests {
         };
 
         let hal = SimulatedTpuHal::new(&cfg);
-        assert!(!format!("{hal:?}").is_empty());
+        assert_ne!(format!("{hal:?}"), "");
         let topo = hal.discover_topology();
         assert!(topo.is_ok());
         for t in topo {
             assert_eq!(t.devices.len(), 2);
             for d0 in t.devices.first() {
                 assert!(d0.is_addressable);
-                assert!(!format!("{d0:?}").is_empty());
+                assert_ne!(format!("{d0:?}"), "");
             }
             for d1 in t.devices.get(1) {
                 assert!(!d1.is_addressable);
             }
-            assert!(!format!("{t:?}").is_empty());
+            assert_ne!(format!("{t:?}"), "");
         }
 
         let filtered_cfg = TpuInitConfig {
@@ -2343,52 +2891,62 @@ mod tests {
         assert!(a1.is_ok());
         let a2 = hal.allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(256));
         assert!(a2.is_ok());
-        assert!(hal
-            .allocate_device_memory(DeviceId(99), MemoryKind::DeviceHbm, ByteSize(256))
-            .is_err());
+        assert!(
+            hal.allocate_device_memory(DeviceId(99), MemoryKind::DeviceHbm, ByteSize(256))
+                .is_err()
+        );
 
         let addr1 = a1.unwrap_or(DeviceAddress(0));
         let addr2 = a2.unwrap_or(DeviceAddress(0));
 
-        assert!(hal
-            .write_device_memory(DeviceId(0), addr1, &[1, 2, 3, 4])
-            .is_ok());
+        assert!(
+            hal.write_device_memory(DeviceId(0), addr1, &[1, 2, 3, 4])
+                .is_ok()
+        );
         assert!(hal.write_device_memory(DeviceId(99), addr1, &[1]).is_err());
-        assert!(hal
-            .write_device_memory(DeviceId(0), DeviceAddress(0xdead), &[1])
-            .is_err());
-        assert!(hal
-            .write_device_memory(DeviceId(0), addr1, &vec![0_u8; 1024])
-            .is_err());
+        assert!(
+            hal.write_device_memory(DeviceId(0), DeviceAddress(0xdead), &[1])
+                .is_err()
+        );
+        assert!(
+            hal.write_device_memory(DeviceId(0), addr1, &vec![0_u8; 1024])
+                .is_err()
+        );
 
         let mut read_buf = [0_u8; 4];
-        assert!(hal
-            .read_device_memory(DeviceId(0), addr1, &mut read_buf)
-            .is_ok());
+        assert!(
+            hal.read_device_memory(DeviceId(0), addr1, &mut read_buf)
+                .is_ok()
+        );
         assert_eq!(read_buf, [1, 2, 3, 4]);
-        assert!(hal
-            .read_device_memory(DeviceId(99), addr1, &mut read_buf)
-            .is_err());
-        assert!(hal
-            .read_device_memory(DeviceId(0), DeviceAddress(0xdead), &mut read_buf)
-            .is_err());
+        assert!(
+            hal.read_device_memory(DeviceId(99), addr1, &mut read_buf)
+                .is_err()
+        );
+        assert!(
+            hal.read_device_memory(DeviceId(0), DeviceAddress(0xdead), &mut read_buf)
+                .is_err()
+        );
         let mut huge_buf = vec![0_u8; 1024];
-        assert!(hal
-            .read_device_memory(DeviceId(0), addr1, &mut huge_buf)
-            .is_err());
+        assert!(
+            hal.read_device_memory(DeviceId(0), addr1, &mut huge_buf)
+                .is_err()
+        );
 
-        assert!(hal
-            .copy_device_to_device(DeviceId(0), addr1, DeviceId(0), addr2, ByteSize(4))
-            .is_ok());
-        assert!(hal
-            .copy_device_to_device(DeviceId(99), addr1, DeviceId(0), addr2, ByteSize(4))
-            .is_err());
+        assert!(
+            hal.copy_device_to_device(DeviceId(0), addr1, DeviceId(0), addr2, ByteSize(4))
+                .is_ok()
+        );
+        assert!(
+            hal.copy_device_to_device(DeviceId(99), addr1, DeviceId(0), addr2, ByteSize(4))
+                .is_err()
+        );
 
         let stats = hal.memory_stats(DeviceId(0));
         assert!(stats.is_ok());
         for s in stats {
             assert_eq!(s.num_allocs, 2);
-            assert!(!format!("{s:?}").is_empty());
+            assert_ne!(format!("{s:?}"), "");
         }
         assert!(hal.memory_stats(DeviceId(99)).is_err());
         assert!(hal.clear_memory_stats(DeviceId(0)).is_ok());
@@ -2400,12 +2958,14 @@ mod tests {
         assert!(hal.deallocate_device_memory(DeviceId(0), addr2).is_ok());
 
         assert!(hal.set_device_capacity(DeviceId(0), ByteSize(512)).is_ok());
-        assert!(hal
-            .set_device_capacity(DeviceId(99), ByteSize(512))
-            .is_err());
-        assert!(hal
-            .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(1024))
-            .is_err());
+        assert!(
+            hal.set_device_capacity(DeviceId(99), ByteSize(512))
+                .is_err()
+        );
+        assert!(
+            hal.allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(1024))
+                .is_err()
+        );
     }
 
     #[test]
@@ -2418,28 +2978,33 @@ mod tests {
         })
         .join();
         assert!(hal.set_device_capacity(DeviceId(0), ByteSize(256)).is_err());
-        assert!(hal
-            .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(256))
-            .is_err());
-        assert!(hal
-            .deallocate_device_memory(DeviceId(0), DeviceAddress(0))
-            .is_err());
-        assert!(hal
-            .write_device_memory(DeviceId(0), DeviceAddress(0), &[1])
-            .is_err());
+        assert!(
+            hal.allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(256))
+                .is_err()
+        );
+        assert!(
+            hal.deallocate_device_memory(DeviceId(0), DeviceAddress(0))
+                .is_err()
+        );
+        assert!(
+            hal.write_device_memory(DeviceId(0), DeviceAddress(0), &[1])
+                .is_err()
+        );
         let mut buf = [0_u8; 1];
-        assert!(hal
-            .read_device_memory(DeviceId(0), DeviceAddress(0), &mut buf)
-            .is_err());
+        assert!(
+            hal.read_device_memory(DeviceId(0), DeviceAddress(0), &mut buf)
+                .is_err()
+        );
         for prog in CompiledProgram::compile("mlir", b"return", b"") {
             assert!(hal.execute_program(DeviceId(0), &prog, &[], &[]).is_err());
         }
         assert!(hal.memory_stats(DeviceId(0)).is_err());
         assert!(hal.clear_memory_stats(DeviceId(0)).is_err());
         assert!(hal.poison_device(DeviceId(0), String::from("err")).is_err());
-        assert!(hal
-            .execute_collective(TpuOpCode::AllReduceSumF32, ElementType::F32, &[], 4)
-            .is_err());
+        assert!(
+            hal.execute_collective(TpuOpCode::AllReduceSumF32, ElementType::F32, &[], 4)
+                .is_err()
+        );
     }
 
     #[test]
@@ -2650,104 +3215,123 @@ mod tests {
             TpuOpCode::AllGather,
             TpuOpCode::ReduceScatter,
         ] {
-            assert!(hal
-                .execute_collective(
+            assert!(
+                hal.execute_collective(
                     col_op,
                     ElementType::F32,
                     &[(DeviceId(0), in0, out), (DeviceId(0), in1, out)],
                     4,
                 )
-                .is_ok());
+                .is_ok()
+            );
         }
-        assert!(hal
-            .execute_collective(
+        assert!(
+            hal.execute_collective(
                 TpuOpCode::AllReduceSumF32,
                 ElementType::F32,
                 &[(DeviceId(99), in0, out)],
                 4,
             )
-            .is_err());
-        assert!(hal
-            .execute_collective(
+            .is_err()
+        );
+        assert!(
+            hal.execute_collective(
                 TpuOpCode::AllReduceSumF32,
                 ElementType::F32,
                 &[(DeviceId(0), DeviceAddress(0xdead), out)],
                 4,
             )
-            .is_err());
-        assert!(hal
-            .execute_collective(
+            .is_err()
+        );
+        assert!(
+            hal.execute_collective(
                 TpuOpCode::AllReduceSumF32,
                 ElementType::F32,
                 &[(DeviceId(0), in0, DeviceAddress(0xdead))],
                 4,
             )
-            .is_err());
+            .is_err()
+        );
 
         for id_prog in CompiledProgram::compile("mlir", b"return", b"") {
-            assert!(hal
-                .execute_program(DeviceId(99), &id_prog, &[in0], &[out])
-                .is_err());
-            assert!(hal
-                .execute_program(DeviceId(0), &id_prog, &[in0], &[])
-                .is_err());
-            assert!(hal
-                .execute_program(DeviceId(0), &id_prog, &[], &[out])
-                .is_err());
-            assert!(hal
-                .execute_program(DeviceId(0), &id_prog, &[DeviceAddress(0xdead)], &[out])
-                .is_err());
-            assert!(hal
-                .execute_program(DeviceId(0), &id_prog, &[in0], &[DeviceAddress(0xdead)])
-                .is_err());
+            assert!(
+                hal.execute_program(DeviceId(99), &id_prog, &[in0], &[out])
+                    .is_err()
+            );
+            assert!(
+                hal.execute_program(DeviceId(0), &id_prog, &[in0], &[])
+                    .is_err()
+            );
+            assert!(
+                hal.execute_program(DeviceId(0), &id_prog, &[], &[out])
+                    .is_err()
+            );
+            assert!(
+                hal.execute_program(DeviceId(0), &id_prog, &[DeviceAddress(0xdead)], &[out])
+                    .is_err()
+            );
+            assert!(
+                hal.execute_program(DeviceId(0), &id_prog, &[in0], &[DeviceAddress(0xdead)])
+                    .is_err()
+            );
         }
         for add_prog in CompiledProgram::compile("mlir", b"add", b"") {
-            assert!(hal
-                .execute_program(DeviceId(0), &add_prog, &[in0], &[out])
-                .is_err());
-            assert!(hal
-                .execute_program(
+            assert!(
+                hal.execute_program(DeviceId(0), &add_prog, &[in0], &[out])
+                    .is_err()
+            );
+            assert!(
+                hal.execute_program(
                     DeviceId(0),
                     &add_prog,
                     &[DeviceAddress(0xdead), in1],
                     &[out]
                 )
-                .is_err());
-            assert!(hal
-                .execute_program(
+                .is_err()
+            );
+            assert!(
+                hal.execute_program(
                     DeviceId(0),
                     &add_prog,
                     &[in0, DeviceAddress(0xdead)],
                     &[out]
                 )
-                .is_err());
+                .is_err()
+            );
         }
 
-        assert!(hal
-            .poison_device(DeviceId(99), String::from("bad"))
-            .is_err());
-        assert!(hal
-            .poison_device(DeviceId(0), String::from("injected hardware fault"))
-            .is_ok());
+        assert!(
+            hal.poison_device(DeviceId(99), String::from("bad"))
+                .is_err()
+        );
+        assert!(
+            hal.poison_device(DeviceId(0), String::from("injected hardware fault"))
+                .is_ok()
+        );
         for id_prog in CompiledProgram::compile("mlir", b"return", b"") {
-            assert!(hal
-                .execute_program(DeviceId(0), &id_prog, &[in0], &[out])
-                .is_err());
+            assert!(
+                hal.execute_program(DeviceId(0), &id_prog, &[in0], &[out])
+                    .is_err()
+            );
         }
     }
 
     #[test]
     fn test_emulated_kernel_driver_backend_and_mmio() {
         let backend = EmulatedKernelDriverBackend::default();
-        assert!(!format!("{backend:?}").is_empty());
+        assert_ne!(format!("{backend:?}"), "");
         assert_eq!(backend.create_eventfd(), EventFdHandle(100));
         assert!(backend.open_device("/dev/accel0").is_ok());
-        assert!(backend
-            .ioctl_device(100, GASKET_IOCTL_MAP_BUFFER, 32)
-            .is_ok());
-        assert!(backend
-            .ioctl_device(-1, GASKET_IOCTL_MAP_BUFFER, 32)
-            .is_err());
+        assert!(
+            backend
+                .ioctl_device(100, GASKET_IOCTL_MAP_BUFFER, 32)
+                .is_ok()
+        );
+        assert!(
+            backend
+                .ioctl_device(-1, GASKET_IOCTL_MAP_BUFFER, 32)
+                .is_err()
+        );
         assert!(backend.close_device(100).is_ok());
         assert!(backend.close_device(-1).is_err());
 
@@ -2758,7 +3342,7 @@ mod tests {
             flags: 0,
         };
         let ioctl_p = IoctlPayload::GasketDmaBuf(&dmabuf);
-        assert!(!format!("{dmabuf:?}{ioctl_p:?}").is_empty());
+        assert_ne!(format!("{dmabuf:?}{ioctl_p:?}"), "");
         assert!(backend.map_dmabuf(FileDescriptor(100), &dmabuf).is_ok());
         assert_eq!(backend.mapped_iova_count(), 1);
         assert!(backend.registered_interrupt_fd(0).is_none());
@@ -2770,35 +3354,31 @@ mod tests {
                 .ok(),
             Some(1)
         );
-        assert!(backend
-            .write_mmio_u64(0, MmioOffset(BAR0_CSR_TENSORCORE_RUN_CONTROL), 1)
-            .is_ok());
+        assert!(
+            backend
+                .write_mmio_u64(0, MmioOffset(BAR0_CSR_TENSORCORE_RUN_CONTROL), 1)
+                .is_ok()
+        );
         assert_eq!(
             backend
                 .read_mmio_u64(0, MmioOffset(BAR0_CSR_TENSORCORE_SYNC_FLAG))
                 .ok(),
             Some(2)
         );
-        assert!(backend
-            .write_mmio_u64(0, MmioOffset(BAR0_CSR_TENSORCORE_RUN_CONTROL), 0)
-            .is_ok());
+        assert!(
+            backend
+                .write_mmio_u64(0, MmioOffset(BAR0_CSR_TENSORCORE_RUN_CONTROL), 0)
+                .is_ok()
+        );
         assert!(backend.write_mmio_u64(0, MmioOffset(0x2000), 42).is_ok());
         assert!(backend.read_mmio_u64(2, MmioOffset(0)).is_err());
         assert!(backend.read_mmio_u64(0, MmioOffset(0x100_0000)).is_err());
         assert!(backend.write_mmio_u64(2, MmioOffset(0), 1).is_err());
-        assert!(backend
-            .write_mmio_u64(0, MmioOffset(0x100_0000), 1)
-            .is_err());
-
-        let b_arc = Arc::new(EmulatedKernelDriverBackend::default());
-        let b_clone1 = Arc::clone(&b_arc);
-        let _ = std::thread::spawn(move || {
-            let _g2 = b_clone1.bar0_registers.lock();
-            std::panic::resume_unwind(Box::new(()));
-        })
-        .join();
-        assert!(b_arc.read_mmio_u64(0, MmioOffset(0)).is_err());
-        assert!(b_arc.write_mmio_u64(0, MmioOffset(0), 1).is_err());
+        assert!(
+            backend
+                .write_mmio_u64(0, MmioOffset(0x100_0000), 1)
+                .is_err()
+        );
     }
 
     #[test]
@@ -2837,10 +3417,13 @@ mod tests {
             count: 1,
             event_fd: 1,
         };
-        assert!(!format!("{g_ioctl:?}{g_efd:?}{v_map:?}{v_unmap:?}{v_irq:?}").is_empty());
+        assert_ne!(
+            format!("{g_ioctl:?}{g_efd:?}{v_map:?}{v_unmap:?}{v_irq:?}"),
+            ""
+        );
 
         for mode in [KernelDriverMode::Gasket, KernelDriverMode::Vfio] {
-            assert!(!format!("{mode:?}").is_empty());
+            assert_ne!(format!("{mode:?}"), "");
             let hal_res = LinuxDeviceHal::open(
                 mode,
                 MockSyscalls {
@@ -2852,7 +3435,7 @@ mod tests {
             );
             assert!(hal_res.is_ok());
             for hal in hal_res {
-                assert!(!format!("{hal:?}").is_empty());
+                assert_ne!(format!("{hal:?}"), "");
                 assert!(hal.discover_topology().is_ok());
                 assert_eq!(hal.read_telemetry_csrs(), (45_000, 175_000, 100));
                 assert!(hal.register_interrupt_eventfd(-1).is_err());
@@ -2865,56 +3448,64 @@ mod tests {
                 let addr2 = hal
                     .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(256))
                     .unwrap_or(DeviceAddress(0));
-                assert!(hal
-                    .write_device_memory(DeviceId(0), addr, &[9, 8, 7, 6])
-                    .is_ok());
+                assert!(
+                    hal.write_device_memory(DeviceId(0), addr, &[9, 8, 7, 6])
+                        .is_ok()
+                );
                 let mut out = [0_u8; 4];
                 assert!(hal.read_device_memory(DeviceId(0), addr, &mut out).is_ok());
                 assert_eq!(out, [9, 8, 7, 6]);
-                assert!(hal
-                    .copy_device_to_device(DeviceId(0), addr, DeviceId(0), addr2, ByteSize(4))
-                    .is_ok());
+                assert!(
+                    hal.copy_device_to_device(DeviceId(0), addr, DeviceId(0), addr2, ByteSize(4))
+                        .is_ok()
+                );
                 for prog in CompiledProgram::compile("mlir", b"return", b"") {
-                    assert!(hal
-                        .execute_program(DeviceId(0), &prog, &[addr], &[addr2])
-                        .is_ok());
+                    assert!(
+                        hal.execute_program(DeviceId(0), &prog, &[addr], &[addr2])
+                            .is_ok()
+                    );
                 }
                 assert!(hal.memory_stats(DeviceId(0)).is_ok());
                 assert!(hal.clear_memory_stats(DeviceId(0)).is_ok());
-                assert!(hal
-                    .poison_device(DeviceId(0), String::from("fault"))
-                    .is_ok());
+                assert!(
+                    hal.poison_device(DeviceId(0), String::from("fault"))
+                        .is_ok()
+                );
                 assert!(hal.deallocate_device_memory(DeviceId(0), addr).is_ok());
                 assert!(hal.deallocate_device_memory(DeviceId(0), addr2).is_ok());
                 assert!(hal.close().is_ok());
             }
         }
 
-        assert!(LinuxDeviceHal::open(
-            KernelDriverMode::Gasket,
-            MockSyscalls {
-                open_err: true,
-                ioctl_err_cmd: None,
-                close_err: false,
-            },
-            &cfg
-        )
-        .is_err());
+        assert!(
+            LinuxDeviceHal::open(
+                KernelDriverMode::Gasket,
+                MockSyscalls {
+                    open_err: true,
+                    ioctl_err_cmd: None,
+                    close_err: false,
+                },
+                &cfg
+            )
+            .is_err()
+        );
 
         for cmd in [
             GASKET_IOCTL_NUMBER_PAGE_TABLES,
             GASKET_IOCTL_PARTITION_PAGE_TABLE,
         ] {
-            assert!(LinuxDeviceHal::open(
-                KernelDriverMode::Gasket,
-                MockSyscalls {
-                    open_err: false,
-                    ioctl_err_cmd: Some(cmd),
-                    close_err: false,
-                },
-                &cfg
-            )
-            .is_err());
+            assert!(
+                LinuxDeviceHal::open(
+                    KernelDriverMode::Gasket,
+                    MockSyscalls {
+                        open_err: false,
+                        ioctl_err_cmd: Some(cmd),
+                        close_err: false,
+                    },
+                    &cfg
+                )
+                .is_err()
+            );
         }
 
         for g_hal in LinuxDeviceHal::open(
@@ -2926,12 +3517,16 @@ mod tests {
             },
             &cfg,
         ) {
-            assert!(g_hal
-                .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(256))
-                .is_err());
-            assert!(g_hal
-                .allocate_device_memory(DeviceId(99), MemoryKind::DeviceHbm, ByteSize(256))
-                .is_err());
+            assert!(
+                g_hal
+                    .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(256))
+                    .is_err()
+            );
+            assert!(
+                g_hal
+                    .allocate_device_memory(DeviceId(99), MemoryKind::DeviceHbm, ByteSize(256))
+                    .is_err()
+            );
             assert!(g_hal.close().is_err());
         }
 
@@ -2961,6 +3556,71 @@ mod tests {
         }
         let default_hal = create_default_hal(&cfg);
         assert!(default_hal.discover_topology().is_ok());
+
+        let mut sim_mode_cfg = TpuInitConfig::default();
+        sim_mode_cfg
+            .extra_flags
+            .insert(String::from("--tpu_driver_mode"), String::from("simulated"));
+        let mut other_mode_cfg = TpuInitConfig::default();
+        other_mode_cfg
+            .extra_flags
+            .insert(String::from("--tpu_driver_mode"), String::from("linux"));
+        for backend in [
+            HalBackend::from_config(&sim_mode_cfg),
+            HalBackend::from_config(&other_mode_cfg),
+            HalBackend::from_config(&cfg),
+        ] {
+            assert_ne!(format!("{backend:?}"), "");
+            assert!(backend.discover_topology().is_ok());
+            let b_addr1 = backend
+                .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(256))
+                .unwrap_or(DeviceAddress(0));
+            let b_addr2 = backend
+                .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(256))
+                .unwrap_or(DeviceAddress(0));
+            assert!(
+                backend
+                    .write_device_memory(DeviceId(0), b_addr1, &[1, 2, 3, 4])
+                    .is_ok()
+            );
+            let mut b_out = [0_u8; 4];
+            assert!(
+                backend
+                    .read_device_memory(DeviceId(0), b_addr1, &mut b_out)
+                    .is_ok()
+            );
+            assert_eq!(b_out, [1, 2, 3, 4]);
+            assert!(
+                backend
+                    .copy_device_to_device(DeviceId(0), b_addr1, DeviceId(0), b_addr2, ByteSize(4))
+                    .is_ok()
+            );
+            for prog in CompiledProgram::compile("mlir", b"return", b"") {
+                assert!(
+                    backend
+                        .execute_program(DeviceId(0), &prog, &[b_addr1], &[b_addr2])
+                        .is_ok()
+                );
+            }
+            assert!(backend.memory_stats(DeviceId(0)).is_ok());
+            assert!(backend.clear_memory_stats(DeviceId(0)).is_ok());
+            assert!(
+                backend
+                    .poison_device(DeviceId(0), String::from("fault"))
+                    .is_ok()
+            );
+            assert!(
+                backend
+                    .deallocate_device_memory(DeviceId(0), b_addr1)
+                    .is_ok()
+            );
+            assert!(
+                backend
+                    .deallocate_device_memory(DeviceId(0), b_addr2)
+                    .is_ok()
+            );
+        }
+
         for emu_hal in LinuxDeviceHal::open(
             KernelDriverMode::Gasket,
             EmulatedKernelDriverBackend::default(),
@@ -2979,26 +3639,184 @@ mod tests {
 
         let posix = PosixKernelDriverBackend::new();
         assert_eq!(posix, PosixKernelDriverBackend);
-        assert!(!format!("{posix:?}").is_empty());
+        assert_ne!(format!("{posix:?}"), "");
         assert!(posix.open_device("bad\0path").is_err());
-        assert!(posix
-            .open_device("/nonexistent_libtpu_device_node_xyz")
-            .is_err());
+        assert!(
+            posix
+                .open_device("/nonexistent_libtpu_device_node_xyz")
+                .is_err()
+        );
         assert!(posix.ioctl_device(-1, GASKET_IOCTL_MAP_BUFFER, 32).is_err());
         assert!(posix.close_device(-1).is_err());
         assert!(posix.mmap_bar0(0, 0).is_err());
         assert!(posix.munmap_bar0(0x1000, 0).is_err());
 
         for fd in posix.open_device("/dev/null") {
+            let mut flag: i32 = 0;
+            assert!(
+                posix
+                    .ioctl_with_payload(fd, POSIX_FIOCLEX_IOCTL, &mut flag)
+                    .is_ok()
+            );
             assert!(posix.ioctl_device(fd, POSIX_FIOCLEX_IOCTL, 0).is_ok());
             assert!(posix.close_device(fd).is_ok());
         }
-        for mapped in posix.mmap_bar0(-1, 4096) {
-            assert!(mapped != 0);
-            assert!(posix.munmap_bar0(mapped, 4096).is_ok());
+        let mut dummy_flag: i32 = 0;
+        assert!(
+            posix
+                .ioctl_with_payload(-1, POSIX_FIOCLEX_IOCTL, &mut dummy_flag)
+                .is_err()
+        );
+
+        for aperture in posix.mmap_bar_aperture(FileDescriptor(-1), ByteSize(4096)) {
+            assert!(
+                aperture
+                    .write_csr_u64(MmioOffset(0), 0xCAFE_BABE_1234_5678)
+                    .is_ok()
+            );
+            assert_eq!(
+                aperture.read_csr_u64(MmioOffset(0)).ok(),
+                Some(0xCAFE_BABE_1234_5678)
+            );
+            assert!(aperture.read_csr_u64(MmioOffset(3)).is_err());
+            assert!(aperture.write_csr_u64(MmioOffset(3), 1).is_err());
+            assert!(aperture.read_csr_u64(MmioOffset(4096)).is_err());
+            assert!(aperture.write_csr_u64(MmioOffset(4096), 1).is_err());
+            assert!(posix.munmap_bar_aperture(aperture).is_ok());
         }
+        let null_aperture = MappedBarAperture {
+            base_vaddr: 0,
+            size: ByteSize(4096),
+        };
+        assert_ne!(format!("{null_aperture:?}"), "");
+        assert!(null_aperture.read_csr_u64(MmioOffset(0)).is_err());
+        assert!(null_aperture.write_csr_u64(MmioOffset(0), 1).is_err());
+
         let efd = posix.create_eventfd();
         assert!(efd.0 >= 0);
         assert!(posix.close_device(efd.0).is_ok());
+
+        // Test bitflags, HbmDmaRingDescriptor, HbmRegionAllocator, and PciDeviceEnumerator
+        let ctrl = TensorCoreControlFlags::START | TensorCoreControlFlags::CLEAR_FAULT;
+        let status = TensorCoreStatusFlags::IDLE | TensorCoreStatusFlags::COMPLETED;
+        let dma_f = VfioDmaMapFlags::READ | VfioDmaMapFlags::WRITE;
+        let irq_f = VfioIrqSetFlags::DATA_EVENTFD | VfioIrqSetFlags::ACTION_TRIGGER;
+        let ring_desc = HbmDmaRingDescriptor {
+            src_iova: 0x1000,
+            dst_iova: 0x2000,
+            length_bytes: 4096,
+            direction_flags: 0,
+            completion_sync_flag: 1,
+        };
+        assert_ne!(
+            format!("{ctrl:?}{status:?}{dma_f:?}{irq_f:?}{ring_desc:?}"),
+            ""
+        );
+        assert_eq!(bytemuck::bytes_of(&ring_desc).len(), 32);
+
+        let empty_alloc = HbmRegionAllocator::new(0x1000_0000, 0);
+        assert_eq!(empty_alloc.largest_free_block_bytes(), 0);
+
+        let mut region = HbmRegionAllocator::new(0x1000_0000, 16384);
+        assert_ne!(format!("{region:?}"), "");
+        assert_eq!(region.largest_free_block_bytes(), 16384);
+        let b1 = region.allocate(4096).unwrap_or(DeviceAddress(0));
+        let b2 = region.allocate(4096).unwrap_or(DeviceAddress(0));
+        let b3 = region.allocate(4096).unwrap_or(DeviceAddress(0));
+        let b4 = region.allocate(4096).unwrap_or(DeviceAddress(0));
+        assert!(region.allocate(4096).is_err());
+        assert!(region.deallocate(DeviceAddress(0xdead)).is_err());
+        // Free b1 and b3 first, then b4 (which has free predecessor b1 not adjacent and b3 adjacent), then b2
+        assert_eq!(region.deallocate(b1).ok(), Some(4096));
+        assert_eq!(region.deallocate(b4).ok(), Some(4096));
+        assert_eq!(region.deallocate(b3).ok(), Some(4096));
+        assert_eq!(region.deallocate(b2).ok(), Some(4096));
+        assert_eq!(region.largest_free_block_bytes(), 16384);
+        let b_keep = region.allocate(4096).unwrap_or(DeviceAddress(0));
+        region.set_capacity(32768);
+        assert_eq!(region.largest_free_block_bytes(), 28672);
+        region.set_capacity(2048);
+        assert_eq!(region.largest_free_block_bytes(), 0);
+        assert_eq!(region.deallocate(b_keep).ok(), Some(4096));
+        region.set_capacity(8192);
+        assert_eq!(region.largest_free_block_bytes(), 8192);
+
+        assert_eq!(
+            PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x0027)),
+            Some(TpuGeneration::V3)
+        );
+        assert_eq!(
+            PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x0056)),
+            Some(TpuGeneration::V4)
+        );
+        assert_eq!(
+            PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x005e)),
+            Some(TpuGeneration::V5p)
+        );
+        assert_eq!(
+            PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x0063)),
+            Some(TpuGeneration::V5e)
+        );
+        assert_eq!(
+            PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x006f)),
+            Some(TpuGeneration::V6e)
+        );
+        assert_eq!(
+            PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x0076)),
+            Some(TpuGeneration::V7x)
+        );
+        assert_eq!(
+            PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0xffff)),
+            None
+        );
+        assert_eq!(PciDeviceEnumerator::parse_hex_u16("0x1ae0\n"), Some(0x1ae0));
+        assert_eq!(PciDeviceEnumerator::parse_hex_u16("not_hex"), None);
+        assert_eq!(
+            PciDeviceEnumerator::scan_sysfs(
+                std::path::Path::new("/nonexistent_sysfs_pci_dir"),
+                std::path::Path::new("/dev")
+            )
+            .len(),
+            0
+        );
+
+        let tmp_dir =
+            std::env::temp_dir().join(format!("libtpu_sysfs_test_{}", std::process::id()));
+        let sysfs_dir = tmp_dir.join("sysfs");
+        let dev_dir = tmp_dir.join("dev");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:04.0"));
+        let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:05.0/vfio"));
+        let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:06.0"));
+        let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:07.0"));
+        let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:08.0"));
+        let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:09.0"));
+        let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:0a.0"));
+        let _ = std::fs::create_dir_all(dev_dir.join("vfio"));
+        // 04.0: Valid Gasket TPU v6e
+        let _ = std::fs::write(sysfs_dir.join("0000:00:04.0/vendor"), "0x1ae0\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:04.0/device"), "0x006f\n");
+        // 05.0: Valid VFIO TPU v5p
+        let _ = std::fs::write(sysfs_dir.join("0000:00:05.0/vendor"), "0x1ae0\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:05.0/device"), "0x005e\n");
+        // 06.0: Non-Google vendor
+        let _ = std::fs::write(sysfs_dir.join("0000:00:06.0/vendor"), "0x8086\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:06.0/device"), "0x1234\n");
+        // 07.0: Missing device file
+        let _ = std::fs::write(sysfs_dir.join("0000:00:07.0/vendor"), "0x1ae0\n");
+        // 08.0: Invalid vendor hex
+        let _ = std::fs::write(sysfs_dir.join("0000:00:08.0/vendor"), "bad\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:08.0/device"), "0x006f\n");
+        // 09.0: Invalid device hex
+        let _ = std::fs::write(sysfs_dir.join("0000:00:09.0/vendor"), "0x1ae0\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:09.0/device"), "bad\n");
+        // 0a.0: Unknown Google PCI device ID
+        let _ = std::fs::write(sysfs_dir.join("0000:00:0a.0/vendor"), "0x1ae0\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:0a.0/device"), "0x9999\n");
+
+        let scanned = PciDeviceEnumerator::scan_sysfs(&sysfs_dir, &dev_dir);
+        assert_eq!(scanned.len(), 2);
+        assert_ne!(format!("{PciDeviceEnumerator:?}{scanned:?}"), "");
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }

@@ -477,6 +477,7 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
         patch.object(pc, "hook_fmt", return_value=0),
         patch.object(pc, "hook_build", return_value=0),
         patch.object(pc, "hook_clippy", return_value=0),
+        patch.object(pc, "hook_abi", return_value=0),
         patch.object(pc, "hook_test", return_value=0),
         patch.object(pc, "hook_shields", return_value=0),
     ):
@@ -492,6 +493,7 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
         patch.object(pc, "hook_fmt", return_value=0),
         patch.object(pc, "hook_build", return_value=0),
         patch.object(pc, "hook_clippy", return_value=0),
+        patch.object(pc, "hook_abi", return_value=0),
         patch.object(pc, "hook_test", return_value=0),
         patch.object(pc, "hook_shields", return_value=0),
         patch.object(pc, "hook_all", return_value=0),
@@ -500,6 +502,7 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
         assert pc.main(["build"]) == 0
         assert pc.main(["clippy"]) == 0
         assert pc.main(["lint"]) == 0
+        assert pc.main(["abi"]) == 0
         assert pc.main(["test"]) == 0
         assert pc.main(["shields"]) == 0
         assert pc.main(["all"]) == 0
@@ -519,6 +522,129 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
 
     with patch.object(pc, "hook_fmt", side_effect=raise_called_process_error):
         assert pc.main(["fmt"]) == 3
+
+
+def test_abi_compatibility_hook(tmp_path: Path) -> None:
+    """Tests `hook_abi` and Google `libtpu` binary ABI compatibility verifiers.
+
+    Args:
+        tmp_path: Pytest temporary directory fixture.
+    """
+    import ctypes
+
+    real_root = pc.get_repo_root()
+    assert pc.verify_rust_and_c_abi_sources(real_root) == []
+    real_cdylib = pc.resolve_compiled_cdylib(real_root)
+    assert real_cdylib is not None
+    assert pc.verify_binary_vtable_abi(real_cdylib) == []
+    assert pc.hook_abi(real_root, check_only=True) == 0
+
+    # Test resolve_compiled_cdylib when no library exists vs when one exists
+    assert pc.resolve_compiled_cdylib(tmp_path) is None
+    fake_lib = tmp_path / "target" / "debug" / "libtpu.dylib"
+    fake_lib.parent.mkdir(parents=True, exist_ok=True)
+    fake_lib.write_text("stub", encoding="utf-8")
+    assert pc.resolve_compiled_cdylib(tmp_path) == fake_lib
+
+    # Test verify_rust_and_c_abi_sources failure branches
+    assert pc.verify_rust_and_c_abi_sources(tmp_path) == [
+        "Missing crates/libtpu-c-api/src or cpp/src/libtpu.h"
+    ]
+    c_src = tmp_path / "crates" / "libtpu-c-api" / "src"
+    c_src.mkdir(parents=True, exist_ok=True)
+    (c_src / "lib.rs").write_text("// empty", encoding="utf-8")
+    h_dir = tmp_path / "cpp" / "src"
+    h_dir.mkdir(parents=True, exist_ok=True)
+    (h_dir / "libtpu.h").write_text("/* empty */", encoding="utf-8")
+    py_init = tmp_path / "python" / "libtpu"
+    py_init.mkdir(parents=True, exist_ok=True)
+    (py_init / "__init__.py").write_text("# empty", encoding="utf-8")
+    src_errs = pc.verify_rust_and_c_abi_sources(tmp_path)
+    assert any("missing from crates/libtpu-c-api/src" in e for e in src_errs)
+    assert any("missing from cpp/src/libtpu.h" in e for e in src_errs)
+    assert any("size_of assertion missing" in e for e in src_errs)
+    assert any("Missing Python wheel API module" in e for e in src_errs)
+    assert any("Python wheel API symbol" in e for e in src_errs)
+
+    # Test hook_abi source error branch
+    assert pc.hook_abi(tmp_path) == 1
+
+    # Test hook_abi when cdylib is built on demand vs missing after build vs binary errors
+    with (
+        patch.object(pc, "verify_rust_and_c_abi_sources", return_value=[]),
+        patch.object(pc, "resolve_compiled_cdylib", side_effect=[None, None]),
+        patch.object(pc, "run_command"),
+    ):
+        assert pc.hook_abi(tmp_path) == 1
+
+    with (
+        patch.object(pc, "verify_rust_and_c_abi_sources", return_value=[]),
+        patch.object(pc, "resolve_compiled_cdylib", return_value=real_cdylib),
+        patch.object(pc, "verify_binary_vtable_abi", return_value=["bad vtable"]),
+    ):
+        assert pc.hook_abi(tmp_path) == 1
+
+    # Test verify_binary_vtable_abi error branches using synthetic ctypes buffers
+    class _MissingSymLib:
+        """Stub CDLL missing exported symbols."""
+
+    with patch.object(ctypes, "CDLL", return_value=_MissingSymLib()):
+        errs = pc.verify_binary_vtable_abi(fake_lib)
+        assert any("missing from dynamic symbol table" in e for e in errs)
+
+    class _NullApiLib:
+        """Stub CDLL returning NULL from GetPjrtApi / GetLibtpuSdkApi."""
+
+        def __getattr__(self, _name: str) -> object:
+            """Returns a callable returning 0 for any symbol lookup.
+
+            Args:
+                _name: Attribute name.
+
+            Returns:
+                Callable returning 0.
+            """
+            return lambda *_a: 0
+
+    with patch.object(ctypes, "CDLL", return_value=_NullApiLib()):
+        errs = pc.verify_binary_vtable_abi(fake_lib)
+        assert errs == ["GetPjrtApi() or GetLibtpuSdkApi() returned NULL"]
+
+    bad_pjrt_buf = (ctypes.c_uint64 * 143)()
+    bad_pjrt_buf[0] = 999
+    bad_sdk_buf = (ctypes.c_uint64 * 18)()
+    bad_drv_fn_buf = (ctypes.c_uint64 * 28)()
+    bad_drv_buf = (ctypes.c_uint64 * 2)(ctypes.addressof(bad_drv_fn_buf), 0)
+
+    class _CorruptVtableLib:
+        """Stub CDLL with corrupt vtable headers and NULL slots."""
+
+        def __init__(self, drv_ret: int) -> None:
+            """Initializes the corrupt vtable stub.
+
+            Args:
+                drv_ret: Value returned by `TpuDriver_Open`.
+            """
+            self._drv_ret = drv_ret
+            for sym in pc.GOOGLE_LIBTPU_EXPORTED_SYMBOLS:
+                setattr(self, sym, lambda *_a: 0)
+            self.GetPjrtApi = lambda: ctypes.addressof(bad_pjrt_buf)
+            self.GetLibtpuSdkApi = lambda: ctypes.addressof(bad_sdk_buf)
+            self.TpuDriver_Open = lambda _w: self._drv_ret
+            self.TpuDriver_Close = lambda _d: None
+
+    with patch.object(ctypes, "CDLL", return_value=_CorruptVtableLib(0)):
+        errs = pc.verify_binary_vtable_abi(fake_lib)
+        assert any("PJRT_Api header/slots mismatch" in e for e in errs)
+        assert any("PJRT_Extension_Base chain mismatch" in e for e in errs)
+        assert any("LibtpuSdk_Api mismatch" in e for e in errs)
+        assert any("TpuDriver_Open returned NULL" in e for e in errs)
+
+    with patch.object(
+        ctypes, "CDLL", return_value=_CorruptVtableLib(ctypes.addressof(bad_drv_buf))
+    ):
+        errs = pc.verify_binary_vtable_abi(fake_lib)
+        assert any("TpuDriverFn null slots" in e for e in errs)
 
 
 def test_github_actions_workflows_present_and_complete() -> None:

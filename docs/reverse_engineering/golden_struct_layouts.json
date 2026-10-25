@@ -1,0 +1,1097 @@
+{
+  "pjrt_api_size": 1144,
+  "pjrt_api_version_size": 24,
+  "pjrt_extension_base_size": 24,
+  "plugin_profiler_api_size": 80,
+  "libtpu_sdk_api_size": 144,
+  "tpu_driver_fn_size": 224,
+  "extensions": [
+    {
+      "index": 1,
+      "name": "PJRT_XlaTransform_Extension",
+      "ext_type": 29,
+      "struct_size": 56,
+      "num_functions": 4
+    },
+    {
+      "index": 2,
+      "name": "PJRT_HostMemoryAllocator_Extension",
+      "ext_type": 28,
+      "struct_size": 32,
+      "num_functions": 1
+    },
+    {
+      "index": 3,
+      "name": "PJRT_MultiSlice_Extension",
+      "ext_type": 26,
+      "struct_size": 64,
+      "num_functions": 5
+    },
+    {
+      "index": 4,
+      "name": "PJRT_Collectives_Extension",
+      "ext_type": 25,
+      "struct_size": 96,
+      "num_functions": 9
+    },
+    {
+      "index": 5,
+      "name": "PJRT_AbiVersion_Extension",
+      "ext_type": 20,
+      "struct_size": 120,
+      "num_functions": 12
+    },
+    {
+      "index": 6,
+      "name": "PJRT_Shardings_Extension",
+      "ext_type": 19,
+      "struct_size": 40,
+      "num_functions": 2
+    },
+    {
+      "index": 7,
+      "name": "PJRT_Megascale_Extension",
+      "ext_type": 18,
+      "struct_size": 248,
+      "num_functions": 28
+    },
+    {
+      "index": 8,
+      "name": "PJRT_TpuExecutable_Extension",
+      "ext_type": 17,
+      "struct_size": 96,
+      "num_functions": 9
+    },
+    {
+      "index": 9,
+      "name": "PJRT_TpuTopology_Extension",
+      "ext_type": 16,
+      "struct_size": 272,
+      "num_functions": 31
+    },
+    {
+      "index": 10,
+      "name": "PJRT_Callback_Extension",
+      "ext_type": 14,
+      "struct_size": 40,
+      "num_functions": 2
+    },
+    {
+      "index": 11,
+      "name": "PJRT_PhaseCompile_Extension",
+      "ext_type": 9,
+      "struct_size": 64,
+      "num_functions": 5
+    },
+    {
+      "index": 12,
+      "name": "PJRT_CrossHostTransfers_Extension",
+      "ext_type": 12,
+      "struct_size": 56,
+      "num_functions": 4
+    },
+    {
+      "index": 13,
+      "name": "PJRT_ExecutableMetadata_Extension",
+      "ext_type": 11,
+      "struct_size": 40,
+      "num_functions": 2
+    },
+    {
+      "index": 14,
+      "name": "PJRT_MemoryDescriptions_Extension",
+      "ext_type": 7,
+      "struct_size": 40,
+      "num_functions": 2
+    },
+    {
+      "index": 15,
+      "name": "PJRT_Layouts_Extension",
+      "ext_type": 6,
+      "struct_size": 80,
+      "num_functions": 7
+    },
+    {
+      "index": 16,
+      "name": "PJRT_RawBuffer_Extension",
+      "ext_type": 8,
+      "struct_size": 80,
+      "num_functions": 7
+    },
+    {
+      "index": 17,
+      "name": "PJRT_Profiler_Extension",
+      "ext_type": 1,
+      "struct_size": 40,
+      "num_functions": 8
+    }
+  ],
+  "pjrt_slots": [
+    {
+      "word_index": 5,
+      "byte_offset": "0x028",
+      "min_struct_size": 24,
+      "vaddr": "0x0c591220",
+      "mangled_symbol": "_ZN4pjrt18PJRT_Error_DestroyEP23PJRT_Error_Destroy_Args"
+    },
+    {
+      "word_index": 6,
+      "byte_offset": "0x030",
+      "min_struct_size": 40,
+      "vaddr": "0x0c591300",
+      "mangled_symbol": "_ZN4pjrt18PJRT_Error_MessageEP23PJRT_Error_Message_Args"
+    },
+    {
+      "word_index": 7,
+      "byte_offset": "0x038",
+      "min_struct_size": 28,
+      "vaddr": "0x0c5913f0",
+      "mangled_symbol": "_ZN4pjrt18PJRT_Error_GetCodeEP23PJRT_Error_GetCode_Args"
+    },
+    {
+      "word_index": 8,
+      "byte_offset": "0x040",
+      "min_struct_size": 16,
+      "vaddr": "0x0b4fbbd0",
+      "mangled_symbol": "_ZN4pjrt10tpu_plugin22PJRT_Plugin_InitializeEP27PJRT_Plugin_Initialize_Args"
+    },
+    {
+      "word_index": 9,
+      "byte_offset": "0x048",
+      "min_struct_size": 32,
+      "vaddr": "0x0b4fbbe0",
+      "mangled_symbol": "_ZN4pjrt10tpu_plugin22PJRT_Plugin_AttributesEP27PJRT_Plugin_Attributes_Args"
+    },
+    {
+      "word_index": 10,
+      "byte_offset": "0x050",
+      "min_struct_size": 24,
+      "vaddr": "0x0c5a12a0",
+      "mangled_symbol": "_ZN4pjrt18PJRT_Event_DestroyEP23PJRT_Event_Destroy_Args"
+    },
+    {
+      "word_index": 11,
+      "byte_offset": "0x058",
+      "min_struct_size": 25,
+      "vaddr": "0x0c5a1350",
+      "mangled_symbol": "_ZN4pjrt18PJRT_Event_IsReadyEP23PJRT_Event_IsReady_Args"
+    },
+    {
+      "word_index": 12,
+      "byte_offset": "0x060",
+      "min_struct_size": 24,
+      "vaddr": "0x0c5a1510",
+      "mangled_symbol": "_ZN4pjrt16PJRT_Event_ErrorEP21PJRT_Event_Error_Args"
+    },
+    {
+      "word_index": 13,
+      "byte_offset": "0x068",
+      "min_struct_size": 24,
+      "vaddr": "0x0c5a13e0",
+      "mangled_symbol": "_ZN4pjrt16PJRT_Event_AwaitEP21PJRT_Event_Await_Args"
+    },
+    {
+      "word_index": 14,
+      "byte_offset": "0x070",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5a15d0",
+      "mangled_symbol": "_ZN4pjrt18PJRT_Event_OnReadyEP23PJRT_Event_OnReady_Args"
+    },
+    {
+      "word_index": 15,
+      "byte_offset": "0x078",
+      "min_struct_size": 88,
+      "vaddr": "0x0b4fa500",
+      "mangled_symbol": "_ZN4pjrt10tpu_plugin18PJRT_Client_CreateEP23PJRT_Client_Create_Args"
+    },
+    {
+      "word_index": 16,
+      "byte_offset": "0x080",
+      "min_struct_size": 24,
+      "vaddr": "0x0c591520",
+      "mangled_symbol": "_ZN4pjrt19PJRT_Client_DestroyEP24PJRT_Client_Destroy_Args"
+    },
+    {
+      "word_index": 17,
+      "byte_offset": "0x088",
+      "min_struct_size": 40,
+      "vaddr": "0x0c591770",
+      "mangled_symbol": "_ZN4pjrt24PJRT_Client_PlatformNameEP29PJRT_Client_PlatformName_Args"
+    },
+    {
+      "word_index": 18,
+      "byte_offset": "0x090",
+      "min_struct_size": 28,
+      "vaddr": "0x0c591720",
+      "mangled_symbol": "_ZN4pjrt24PJRT_Client_ProcessIndexEP29PJRT_Client_ProcessIndex_Args"
+    },
+    {
+      "word_index": 19,
+      "byte_offset": "0x098",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5917d0",
+      "mangled_symbol": "_ZN4pjrt27PJRT_Client_PlatformVersionEP32PJRT_Client_PlatformVersion_Args"
+    },
+    {
+      "word_index": 20,
+      "byte_offset": "0x0a0",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5918b0",
+      "mangled_symbol": "_ZN4pjrt19PJRT_Client_DevicesEP24PJRT_Client_Devices_Args"
+    },
+    {
+      "word_index": 21,
+      "byte_offset": "0x0a8",
+      "min_struct_size": 40,
+      "vaddr": "0x0c591910",
+      "mangled_symbol": "_ZN4pjrt30PJRT_Client_AddressableDevicesEP35PJRT_Client_AddressableDevices_Args"
+    },
+    {
+      "word_index": 22,
+      "byte_offset": "0x0b0",
+      "min_struct_size": 40,
+      "vaddr": "0x0c591970",
+      "mangled_symbol": "_ZN4pjrt24PJRT_Client_LookupDeviceEP29PJRT_Client_LookupDevice_Args"
+    },
+    {
+      "word_index": 23,
+      "byte_offset": "0x0b8",
+      "min_struct_size": 40,
+      "vaddr": "0x0c591ba0",
+      "mangled_symbol": "_ZN4pjrt35PJRT_Client_LookupAddressableDeviceEP40PJRT_Client_LookupAddressableDevice_Args"
+    },
+    {
+      "word_index": 24,
+      "byte_offset": "0x0c0",
+      "min_struct_size": 40,
+      "vaddr": "0x0c591f70",
+      "mangled_symbol": "_ZN4pjrt31PJRT_Client_AddressableMemoriesEP36PJRT_Client_AddressableMemories_Args"
+    },
+    {
+      "word_index": 25,
+      "byte_offset": "0x0c8",
+      "min_struct_size": 56,
+      "vaddr": "0x0c593890",
+      "mangled_symbol": "_ZN4pjrt19PJRT_Client_CompileEP24PJRT_Client_Compile_Args"
+    },
+    {
+      "word_index": 26,
+      "byte_offset": "0x0d0",
+      "min_struct_size": 48,
+      "vaddr": "0x0c595000",
+      "mangled_symbol": "_ZN4pjrt35PJRT_Client_DefaultDeviceAssignmentEP40PJRT_Client_DefaultDeviceAssignment_Args"
+    },
+    {
+      "word_index": 27,
+      "byte_offset": "0x0d8",
+      "min_struct_size": 120,
+      "vaddr": "0x0c596420",
+      "mangled_symbol": "_ZN4pjrt32PJRT_Client_BufferFromHostBufferEP37PJRT_Client_BufferFromHostBuffer_Args"
+    },
+    {
+      "word_index": 28,
+      "byte_offset": "0x0e0",
+      "min_struct_size": 28,
+      "vaddr": "0x0c5971f0",
+      "mangled_symbol": "_ZN4pjrt25PJRT_DeviceDescription_IdEP30PJRT_DeviceDescription_Id_Args"
+    },
+    {
+      "word_index": 29,
+      "byte_offset": "0x0e8",
+      "min_struct_size": 28,
+      "vaddr": "0x0c597240",
+      "mangled_symbol": "_ZN4pjrt35PJRT_DeviceDescription_ProcessIndexEP40PJRT_DeviceDescription_ProcessIndex_Args"
+    },
+    {
+      "word_index": 30,
+      "byte_offset": "0x0f0",
+      "min_struct_size": 40,
+      "vaddr": "0x0c597290",
+      "mangled_symbol": "_ZN4pjrt33PJRT_DeviceDescription_AttributesEP38PJRT_DeviceDescription_Attributes_Args"
+    },
+    {
+      "word_index": 31,
+      "byte_offset": "0x0f8",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5972f0",
+      "mangled_symbol": "_ZN4pjrt27PJRT_DeviceDescription_KindEP32PJRT_DeviceDescription_Kind_Args"
+    },
+    {
+      "word_index": 32,
+      "byte_offset": "0x100",
+      "min_struct_size": 40,
+      "vaddr": "0x0c597360",
+      "mangled_symbol": "_ZN4pjrt34PJRT_DeviceDescription_DebugStringEP39PJRT_DeviceDescription_DebugString_Args"
+    },
+    {
+      "word_index": 33,
+      "byte_offset": "0x108",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5976d0",
+      "mangled_symbol": "_ZN4pjrt31PJRT_DeviceDescription_ToStringEP36PJRT_DeviceDescription_ToString_Args"
+    },
+    {
+      "word_index": 34,
+      "byte_offset": "0x110",
+      "min_struct_size": 32,
+      "vaddr": "0x0c5977b0",
+      "mangled_symbol": "_ZN4pjrt26PJRT_Device_GetDescriptionEP31PJRT_Device_GetDescription_Args"
+    },
+    {
+      "word_index": 35,
+      "byte_offset": "0x118",
+      "min_struct_size": 25,
+      "vaddr": "0x0c597800",
+      "mangled_symbol": "_ZN4pjrt25PJRT_Device_IsAddressableEP30PJRT_Device_IsAddressable_Args"
+    },
+    {
+      "word_index": 36,
+      "byte_offset": "0x120",
+      "min_struct_size": 28,
+      "vaddr": "0x0c597850",
+      "mangled_symbol": "_ZN4pjrt27PJRT_Device_LocalHardwareIdEP32PJRT_Device_LocalHardwareId_Args"
+    },
+    {
+      "word_index": 37,
+      "byte_offset": "0x128",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5978a0",
+      "mangled_symbol": "_ZN4pjrt31PJRT_Device_AddressableMemoriesEP36PJRT_Device_AddressableMemories_Args"
+    },
+    {
+      "word_index": 38,
+      "byte_offset": "0x130",
+      "min_struct_size": 32,
+      "vaddr": "0x0c597900",
+      "mangled_symbol": "_ZN4pjrt25PJRT_Device_DefaultMemoryEP30PJRT_Device_DefaultMemory_Args"
+    },
+    {
+      "word_index": 39,
+      "byte_offset": "0x138",
+      "min_struct_size": 185,
+      "vaddr": "0x0c5979a0",
+      "mangled_symbol": "_ZN4pjrt23PJRT_Device_MemoryStatsEP28PJRT_Device_MemoryStats_Args"
+    },
+    {
+      "word_index": 40,
+      "byte_offset": "0x140",
+      "min_struct_size": 28,
+      "vaddr": "0x0c597b70",
+      "mangled_symbol": "_ZN4pjrt14PJRT_Memory_IdEP19PJRT_Memory_Id_Args"
+    },
+    {
+      "word_index": 41,
+      "byte_offset": "0x148",
+      "min_struct_size": 40,
+      "vaddr": "0x0c597bd0",
+      "mangled_symbol": "_ZN4pjrt16PJRT_Memory_KindEP21PJRT_Memory_Kind_Args"
+    },
+    {
+      "word_index": 42,
+      "byte_offset": "0x150",
+      "min_struct_size": 40,
+      "vaddr": "0x0c597ca0",
+      "mangled_symbol": "_ZN4pjrt23PJRT_Memory_DebugStringEP28PJRT_Memory_DebugString_Args"
+    },
+    {
+      "word_index": 43,
+      "byte_offset": "0x158",
+      "min_struct_size": 40,
+      "vaddr": "0x0c597d10",
+      "mangled_symbol": "_ZN4pjrt20PJRT_Memory_ToStringEP25PJRT_Memory_ToString_Args"
+    },
+    {
+      "word_index": 44,
+      "byte_offset": "0x160",
+      "min_struct_size": 40,
+      "vaddr": "0x0c597d80",
+      "mangled_symbol": "_ZN4pjrt32PJRT_Memory_AddressableByDevicesEP37PJRT_Memory_AddressableByDevices_Args"
+    },
+    {
+      "word_index": 45,
+      "byte_offset": "0x168",
+      "min_struct_size": 24,
+      "vaddr": "0x0c597e70",
+      "mangled_symbol": "_ZN4pjrt23PJRT_Executable_DestroyEP28PJRT_Executable_Destroy_Args"
+    },
+    {
+      "word_index": 46,
+      "byte_offset": "0x170",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5984c0",
+      "mangled_symbol": "_ZN4pjrt20PJRT_Executable_NameEP25PJRT_Executable_Name_Args"
+    },
+    {
+      "word_index": 47,
+      "byte_offset": "0x178",
+      "min_struct_size": 32,
+      "vaddr": "0x0c598520",
+      "mangled_symbol": "_ZN4pjrt27PJRT_Executable_NumReplicasEP32PJRT_Executable_NumReplicas_Args"
+    },
+    {
+      "word_index": 48,
+      "byte_offset": "0x180",
+      "min_struct_size": 32,
+      "vaddr": "0x0c598580",
+      "mangled_symbol": "_ZN4pjrt29PJRT_Executable_NumPartitionsEP34PJRT_Executable_NumPartitions_Args"
+    },
+    {
+      "word_index": 49,
+      "byte_offset": "0x188",
+      "min_struct_size": 32,
+      "vaddr": "0x0c5986a0",
+      "mangled_symbol": "_ZN4pjrt26PJRT_Executable_NumOutputsEP31PJRT_Executable_NumOutputs_Args"
+    },
+    {
+      "word_index": 50,
+      "byte_offset": "0x190",
+      "min_struct_size": 32,
+      "vaddr": "0x0c598e70",
+      "mangled_symbol": "_ZN4pjrt42PJRT_Executable_SizeOfGeneratedCodeInBytesEP47PJRT_Executable_SizeOfGeneratedCodeInBytes_Args"
+    },
+    {
+      "word_index": 51,
+      "byte_offset": "0x198",
+      "min_struct_size": 40,
+      "vaddr": "0x0c599740",
+      "mangled_symbol": "_ZN4pjrt31PJRT_Executable_GetCostAnalysisEP36PJRT_Executable_GetCostAnalysis_Args"
+    },
+    {
+      "word_index": 52,
+      "byte_offset": "0x1a0",
+      "min_struct_size": 48,
+      "vaddr": "0x0c59b100",
+      "mangled_symbol": "_ZN4pjrt33PJRT_Executable_OutputMemoryKindsEP38PJRT_Executable_OutputMemoryKinds_Args"
+    },
+    {
+      "word_index": 53,
+      "byte_offset": "0x1a8",
+      "min_struct_size": 32,
+      "vaddr": "0x0c598ed0",
+      "mangled_symbol": "_ZN4pjrt32PJRT_Executable_OptimizedProgramEP37PJRT_Executable_OptimizedProgram_Args"
+    },
+    {
+      "word_index": 54,
+      "byte_offset": "0x1b0",
+      "min_struct_size": 56,
+      "vaddr": "0x0c59e150",
+      "mangled_symbol": "_ZN4pjrt25PJRT_Executable_SerializeEP30PJRT_Executable_Serialize_Args"
+    },
+    {
+      "word_index": 55,
+      "byte_offset": "0x1b8",
+      "min_struct_size": 24,
+      "vaddr": "0x0c598400",
+      "mangled_symbol": "_ZN4pjrt29PJRT_LoadedExecutable_DestroyEP34PJRT_LoadedExecutable_Destroy_Args"
+    },
+    {
+      "word_index": 56,
+      "byte_offset": "0x1c0",
+      "min_struct_size": 32,
+      "vaddr": "0x0c59edb0",
+      "mangled_symbol": "_ZN4pjrt35PJRT_LoadedExecutable_GetExecutableEP40PJRT_LoadedExecutable_GetExecutable_Args"
+    },
+    {
+      "word_index": 57,
+      "byte_offset": "0x1c8",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5985e0",
+      "mangled_symbol": "_ZN4pjrt40PJRT_LoadedExecutable_AddressableDevicesEP45PJRT_LoadedExecutable_AddressableDevices_Args"
+    },
+    {
+      "word_index": 58,
+      "byte_offset": "0x1d0",
+      "min_struct_size": 24,
+      "vaddr": "0x0c59b660",
+      "mangled_symbol": "_ZN4pjrt28PJRT_LoadedExecutable_DeleteEP33PJRT_LoadedExecutable_Delete_Args"
+    },
+    {
+      "word_index": 59,
+      "byte_offset": "0x1d8",
+      "min_struct_size": 25,
+      "vaddr": "0x0c59b6b0",
+      "mangled_symbol": "_ZN4pjrt31PJRT_LoadedExecutable_IsDeletedEP36PJRT_LoadedExecutable_IsDeleted_Args"
+    },
+    {
+      "word_index": 60,
+      "byte_offset": "0x1e0",
+      "min_struct_size": 80,
+      "vaddr": "0x0c59b700",
+      "mangled_symbol": "_ZN4pjrt29PJRT_LoadedExecutable_ExecuteEP34PJRT_LoadedExecutable_Execute_Args"
+    },
+    {
+      "word_index": 61,
+      "byte_offset": "0x1e8",
+      "min_struct_size": 64,
+      "vaddr": "0x0c59ea10",
+      "mangled_symbol": "_ZN4pjrt34PJRT_Executable_DeserializeAndLoadEP39PJRT_Executable_DeserializeAndLoad_Args"
+    },
+    {
+      "word_index": 62,
+      "byte_offset": "0x1f0",
+      "min_struct_size": null,
+      "vaddr": "0x0c591ef0",
+      "mangled_symbol": "_ZN4pjrt33PJRT_LoadedExecutable_FingerprintEP38PJRT_LoadedExecutable_Fingerprint_Args"
+    },
+    {
+      "word_index": 63,
+      "byte_offset": "0x1f8",
+      "min_struct_size": 24,
+      "vaddr": "0x0c59ee20",
+      "mangled_symbol": "_ZN4pjrt19PJRT_Buffer_DestroyEP24PJRT_Buffer_Destroy_Args"
+    },
+    {
+      "word_index": 64,
+      "byte_offset": "0x200",
+      "min_struct_size": 28,
+      "vaddr": "0x0c59f000",
+      "mangled_symbol": "_ZN4pjrt23PJRT_Buffer_ElementTypeEP28PJRT_Buffer_ElementType_Args"
+    },
+    {
+      "word_index": 65,
+      "byte_offset": "0x208",
+      "min_struct_size": 40,
+      "vaddr": "0x0c59f060",
+      "mangled_symbol": "_ZN4pjrt22PJRT_Buffer_DimensionsEP27PJRT_Buffer_Dimensions_Args"
+    },
+    {
+      "word_index": 66,
+      "byte_offset": "0x210",
+      "min_struct_size": 40,
+      "vaddr": "0x0c59f0d0",
+      "mangled_symbol": "_ZN4pjrt30PJRT_Buffer_UnpaddedDimensionsEP35PJRT_Buffer_UnpaddedDimensions_Args"
+    },
+    {
+      "word_index": 67,
+      "byte_offset": "0x218",
+      "min_struct_size": 40,
+      "vaddr": "0x0c59f280",
+      "mangled_symbol": "_ZN4pjrt35PJRT_Buffer_DynamicDimensionIndicesEP40PJRT_Buffer_DynamicDimensionIndices_Args"
+    },
+    {
+      "word_index": 68,
+      "byte_offset": "0x220",
+      "min_struct_size": 104,
+      "vaddr": "0x0c59f3a0",
+      "mangled_symbol": "_ZN4pjrt27PJRT_Buffer_GetMemoryLayoutEP32PJRT_Buffer_GetMemoryLayout_Args"
+    },
+    {
+      "word_index": 69,
+      "byte_offset": "0x228",
+      "min_struct_size": 32,
+      "vaddr": "0x0c59f820",
+      "mangled_symbol": "_ZN4pjrt31PJRT_Buffer_OnDeviceSizeInBytesEP36PJRT_Buffer_OnDeviceSizeInBytes_Args"
+    },
+    {
+      "word_index": 70,
+      "byte_offset": "0x230",
+      "min_struct_size": 32,
+      "vaddr": "0x0c59f8d0",
+      "mangled_symbol": "_ZN4pjrt18PJRT_Buffer_DeviceEP23PJRT_Buffer_Device_Args"
+    },
+    {
+      "word_index": 71,
+      "byte_offset": "0x238",
+      "min_struct_size": 32,
+      "vaddr": "0x0c59f9e0",
+      "mangled_symbol": "_ZN4pjrt18PJRT_Buffer_MemoryEP23PJRT_Buffer_Memory_Args"
+    },
+    {
+      "word_index": 72,
+      "byte_offset": "0x240",
+      "min_struct_size": 24,
+      "vaddr": "0x0c59fbf0",
+      "mangled_symbol": "_ZN4pjrt18PJRT_Buffer_DeleteEP23PJRT_Buffer_Delete_Args"
+    },
+    {
+      "word_index": 73,
+      "byte_offset": "0x248",
+      "min_struct_size": 25,
+      "vaddr": "0x0c59fc40",
+      "mangled_symbol": "_ZN4pjrt21PJRT_Buffer_IsDeletedEP26PJRT_Buffer_IsDeleted_Args"
+    },
+    {
+      "word_index": 74,
+      "byte_offset": "0x250",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5a0040",
+      "mangled_symbol": "_ZN4pjrt24PJRT_Buffer_CopyToDeviceEP29PJRT_Buffer_CopyToDevice_Args"
+    },
+    {
+      "word_index": 75,
+      "byte_offset": "0x258",
+      "min_struct_size": 56,
+      "vaddr": "0x0c5a02f0",
+      "mangled_symbol": "_ZN4pjrt24PJRT_Buffer_ToHostBufferEP29PJRT_Buffer_ToHostBuffer_Args"
+    },
+    {
+      "word_index": 76,
+      "byte_offset": "0x260",
+      "min_struct_size": 25,
+      "vaddr": "0x0c5a08d0",
+      "mangled_symbol": "_ZN4pjrt19PJRT_Buffer_IsOnCpuEP24PJRT_Buffer_IsOnCpu_Args"
+    },
+    {
+      "word_index": 77,
+      "byte_offset": "0x268",
+      "min_struct_size": 32,
+      "vaddr": "0x0c5a0930",
+      "mangled_symbol": "_ZN4pjrt22PJRT_Buffer_ReadyEventEP27PJRT_Buffer_ReadyEvent_Args"
+    },
+    {
+      "word_index": 78,
+      "byte_offset": "0x270",
+      "min_struct_size": 32,
+      "vaddr": "0x0c5a09b0",
+      "mangled_symbol": "_ZN4pjrt25PJRT_Buffer_UnsafePointerEP30PJRT_Buffer_UnsafePointer_Args"
+    },
+    {
+      "word_index": 79,
+      "byte_offset": "0x278",
+      "min_struct_size": 24,
+      "vaddr": "0x0c5a0a60",
+      "mangled_symbol": "_ZN4pjrt42PJRT_Buffer_IncreaseExternalReferenceCountEP47PJRT_Buffer_IncreaseExternalReferenceCount_Args"
+    },
+    {
+      "word_index": 80,
+      "byte_offset": "0x280",
+      "min_struct_size": 24,
+      "vaddr": "0x0c5a0c30",
+      "mangled_symbol": "_ZN4pjrt42PJRT_Buffer_DecreaseExternalReferenceCountEP47PJRT_Buffer_DecreaseExternalReferenceCount_Args"
+    },
+    {
+      "word_index": 81,
+      "byte_offset": "0x288",
+      "min_struct_size": 32,
+      "vaddr": "0x0c5a0d20",
+      "mangled_symbol": "_ZN4pjrt41PJRT_Buffer_OpaqueDeviceMemoryDataPointerEP46PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args"
+    },
+    {
+      "word_index": 82,
+      "byte_offset": "0x290",
+      "min_struct_size": 24,
+      "vaddr": "0x0c5a1060",
+      "mangled_symbol": "_ZN4pjrt31PJRT_CopyToDeviceStream_DestroyEP36PJRT_CopyToDeviceStream_Destroy_Args"
+    },
+    {
+      "word_index": 83,
+      "byte_offset": "0x298",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5a10d0",
+      "mangled_symbol": "_ZN4pjrt32PJRT_CopyToDeviceStream_AddChunkEP37PJRT_CopyToDeviceStream_AddChunk_Args"
+    },
+    {
+      "word_index": 84,
+      "byte_offset": "0x2a0",
+      "min_struct_size": 32,
+      "vaddr": "0x0c5a1190",
+      "mangled_symbol": "_ZN4pjrt34PJRT_CopyToDeviceStream_TotalBytesEP39PJRT_CopyToDeviceStream_TotalBytes_Args"
+    },
+    {
+      "word_index": 85,
+      "byte_offset": "0x2a8",
+      "min_struct_size": 32,
+      "vaddr": "0x0c5a11e0",
+      "mangled_symbol": "_ZN4pjrt35PJRT_CopyToDeviceStream_GranuleSizeEP40PJRT_CopyToDeviceStream_GranuleSize_Args"
+    },
+    {
+      "word_index": 86,
+      "byte_offset": "0x2b0",
+      "min_struct_size": 32,
+      "vaddr": "0x0c5a1230",
+      "mangled_symbol": "_ZN4pjrt36PJRT_CopyToDeviceStream_CurrentBytesEP41PJRT_CopyToDeviceStream_CurrentBytes_Args"
+    },
+    {
+      "word_index": 87,
+      "byte_offset": "0x2b8",
+      "min_struct_size": 56,
+      "vaddr": "0x0b4fba20",
+      "mangled_symbol": "_ZN4pjrt10tpu_plugin31PJRT_TopologyDescription_CreateEP36PJRT_TopologyDescription_Create_Args"
+    },
+    {
+      "word_index": 88,
+      "byte_offset": "0x2c0",
+      "min_struct_size": 24,
+      "vaddr": "0x0c5a1900",
+      "mangled_symbol": "_ZN4pjrt32PJRT_TopologyDescription_DestroyEP37PJRT_TopologyDescription_Destroy_Args"
+    },
+    {
+      "word_index": 89,
+      "byte_offset": "0x2c8",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5a1aa0",
+      "mangled_symbol": "_ZN4pjrt37PJRT_TopologyDescription_PlatformNameEP42PJRT_TopologyDescription_PlatformName_Args"
+    },
+    {
+      "word_index": 90,
+      "byte_offset": "0x2d0",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5a1b00",
+      "mangled_symbol": "_ZN4pjrt40PJRT_TopologyDescription_PlatformVersionEP45PJRT_TopologyDescription_PlatformVersion_Args"
+    },
+    {
+      "word_index": 91,
+      "byte_offset": "0x2d8",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5a1b60",
+      "mangled_symbol": "_ZN4pjrt46PJRT_TopologyDescription_GetDeviceDescriptionsEP51PJRT_TopologyDescription_GetDeviceDescriptions_Args"
+    },
+    {
+      "word_index": 92,
+      "byte_offset": "0x2e0",
+      "min_struct_size": 56,
+      "vaddr": "0x0c5a1bc0",
+      "mangled_symbol": "_ZN4pjrt34PJRT_TopologyDescription_SerializeEP39PJRT_TopologyDescription_Serialize_Args"
+    },
+    {
+      "word_index": 93,
+      "byte_offset": "0x2e8",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5a1e50",
+      "mangled_symbol": "_ZN4pjrt35PJRT_TopologyDescription_AttributesEP40PJRT_TopologyDescription_Attributes_Args"
+    },
+    {
+      "word_index": 94,
+      "byte_offset": "0x2f0",
+      "min_struct_size": 64,
+      "vaddr": "0x0c5a2280",
+      "mangled_symbol": "_ZN4pjrt12PJRT_CompileEP17PJRT_Compile_Args"
+    },
+    {
+      "word_index": 95,
+      "byte_offset": "0x2f8",
+      "min_struct_size": 40,
+      "vaddr": "0x0c59a140",
+      "mangled_symbol": "_ZN4pjrt34PJRT_Executable_OutputElementTypesEP39PJRT_Executable_OutputElementTypes_Args"
+    },
+    {
+      "word_index": 96,
+      "byte_offset": "0x300",
+      "min_struct_size": 48,
+      "vaddr": "0x0c59a5b0",
+      "mangled_symbol": "_ZN4pjrt32PJRT_Executable_OutputDimensionsEP37PJRT_Executable_OutputDimensions_Args"
+    },
+    {
+      "word_index": 97,
+      "byte_offset": "0x308",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5a01a0",
+      "mangled_symbol": "_ZN4pjrt24PJRT_Buffer_CopyToMemoryEP29PJRT_Buffer_CopyToMemory_Args"
+    },
+    {
+      "word_index": 98,
+      "byte_offset": "0x310",
+      "min_struct_size": null,
+      "vaddr": "0x0c596ed0",
+      "mangled_symbol": "_ZN4pjrt36PJRT_Client_CreateViewOfDeviceBufferEP41PJRT_Client_CreateViewOfDeviceBuffer_Args"
+    },
+    {
+      "word_index": 99,
+      "byte_offset": "0x318",
+      "min_struct_size": 40,
+      "vaddr": "0x0c599690",
+      "mangled_symbol": "_ZN4pjrt27PJRT_Executable_FingerprintEP32PJRT_Executable_Fingerprint_Args"
+    },
+    {
+      "word_index": 100,
+      "byte_offset": "0x320",
+      "min_struct_size": 32,
+      "vaddr": "0x0c591830",
+      "mangled_symbol": "_ZN4pjrt31PJRT_Client_TopologyDescriptionEP36PJRT_Client_TopologyDescription_Args"
+    },
+    {
+      "word_index": 101,
+      "byte_offset": "0x328",
+      "min_struct_size": 112,
+      "vaddr": "0x0c59e5f0",
+      "mangled_symbol": "_ZN4pjrt38PJRT_Executable_GetCompiledMemoryStatsEP43PJRT_Executable_GetCompiledMemoryStats_Args"
+    },
+    {
+      "word_index": 102,
+      "byte_offset": "0x330",
+      "min_struct_size": 28,
+      "vaddr": "0x0c597c40",
+      "mangled_symbol": "_ZN4pjrt19PJRT_Memory_Kind_IdEP24PJRT_Memory_Kind_Id_Args"
+    },
+    {
+      "word_index": 103,
+      "byte_offset": "0x338",
+      "min_struct_size": 24,
+      "vaddr": "0x0b4fb9f0",
+      "mangled_symbol": "_ZN4pjrt10tpu_plugin26PJRT_ExecuteContext_CreateEP31PJRT_ExecuteContext_Create_Args"
+    },
+    {
+      "word_index": 104,
+      "byte_offset": "0x340",
+      "min_struct_size": 24,
+      "vaddr": "0x0c597de0",
+      "mangled_symbol": "_ZN4pjrt27PJRT_ExecuteContext_DestroyEP32PJRT_ExecuteContext_Destroy_Args"
+    },
+    {
+      "word_index": 105,
+      "byte_offset": "0x348",
+      "min_struct_size": 56,
+      "vaddr": "0x0c59fca0",
+      "mangled_symbol": "_ZN4pjrt25PJRT_Buffer_CopyRawToHostEP30PJRT_Buffer_CopyRawToHost_Args"
+    },
+    {
+      "word_index": 106,
+      "byte_offset": "0x350",
+      "min_struct_size": 24,
+      "vaddr": "0x0c5928d0",
+      "mangled_symbol": "_ZN4pjrt45PJRT_AsyncHostToDeviceTransferManager_DestroyEP50PJRT_AsyncHostToDeviceTransferManager_Destroy_Args"
+    },
+    {
+      "word_index": 107,
+      "byte_offset": "0x358",
+      "min_struct_size": 72,
+      "vaddr": "0x0c592940",
+      "mangled_symbol": "_ZN4pjrt50PJRT_AsyncHostToDeviceTransferManager_TransferDataEP55PJRT_AsyncHostToDeviceTransferManager_TransferData_Args"
+    },
+    {
+      "word_index": 108,
+      "byte_offset": "0x360",
+      "min_struct_size": 72,
+      "vaddr": "0x0c591fd0",
+      "mangled_symbol": "_ZN4pjrt45PJRT_Client_CreateBuffersForAsyncHostToDeviceEP50PJRT_Client_CreateBuffersForAsyncHostToDevice_Args"
+    },
+    {
+      "word_index": 109,
+      "byte_offset": "0x368",
+      "min_struct_size": 40,
+      "vaddr": "0x0c593370",
+      "mangled_symbol": "_ZN4pjrt52PJRT_AsyncHostToDeviceTransferManager_RetrieveBufferEP57PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args"
+    },
+    {
+      "word_index": 110,
+      "byte_offset": "0x370",
+      "min_struct_size": 32,
+      "vaddr": "0x0c593420",
+      "mangled_symbol": "_ZN4pjrt44PJRT_AsyncHostToDeviceTransferManager_DeviceEP49PJRT_AsyncHostToDeviceTransferManager_Device_Args"
+    },
+    {
+      "word_index": 111,
+      "byte_offset": "0x378",
+      "min_struct_size": 32,
+      "vaddr": "0x0c593530",
+      "mangled_symbol": "_ZN4pjrt49PJRT_AsyncHostToDeviceTransferManager_BufferCountEP54PJRT_AsyncHostToDeviceTransferManager_BufferCount_Args"
+    },
+    {
+      "word_index": 112,
+      "byte_offset": "0x380",
+      "min_struct_size": 40,
+      "vaddr": "0x0c593580",
+      "mangled_symbol": "_ZN4pjrt48PJRT_AsyncHostToDeviceTransferManager_BufferSizeEP53PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args"
+    },
+    {
+      "word_index": 113,
+      "byte_offset": "0x388",
+      "min_struct_size": 48,
+      "vaddr": "0x0c5935e0",
+      "mangled_symbol": "_ZN4pjrt52PJRT_AsyncHostToDeviceTransferManager_SetBufferErrorEP57PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args"
+    },
+    {
+      "word_index": 114,
+      "byte_offset": "0x390",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5936a0",
+      "mangled_symbol": "_ZN4pjrt49PJRT_AsyncHostToDeviceTransferManager_AddMetadataEP54PJRT_AsyncHostToDeviceTransferManager_AddMetadata_Args"
+    },
+    {
+      "word_index": 115,
+      "byte_offset": "0x398",
+      "min_struct_size": 40,
+      "vaddr": "0x0c592810",
+      "mangled_symbol": "_ZN4pjrt18PJRT_Client_DmaMapEP23PJRT_Client_DmaMap_Args"
+    },
+    {
+      "word_index": 116,
+      "byte_offset": "0x3a0",
+      "min_struct_size": 32,
+      "vaddr": "0x0c592870",
+      "mangled_symbol": "_ZN4pjrt20PJRT_Client_DmaUnmapEP25PJRT_Client_DmaUnmap_Args"
+    },
+    {
+      "word_index": 117,
+      "byte_offset": "0x3a8",
+      "min_struct_size": 80,
+      "vaddr": "0x0c595690",
+      "mangled_symbol": "_ZN4pjrt37PJRT_Client_CreateUninitializedBufferEP42PJRT_Client_CreateUninitializedBuffer_Args"
+    },
+    {
+      "word_index": 118,
+      "byte_offset": "0x3b0",
+      "min_struct_size": 40,
+      "vaddr": "0x0c591c50",
+      "mangled_symbol": "_ZN4pjrt35PJRT_Client_UpdateGlobalProcessInfoEP40PJRT_Client_UpdateGlobalProcessInfo_Args"
+    },
+    {
+      "word_index": 119,
+      "byte_offset": "0x3b8",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5a2930",
+      "mangled_symbol": "_ZN4pjrt36PJRT_TopologyDescription_DeserializeEP41PJRT_TopologyDescription_Deserialize_Args"
+    },
+    {
+      "word_index": 120,
+      "byte_offset": "0x3c0",
+      "min_struct_size": 80,
+      "vaddr": "0x0c595d20",
+      "mangled_symbol": "_ZN4pjrt29PJRT_Client_CreateAliasBufferEP34PJRT_Client_CreateAliasBuffer_Args"
+    },
+    {
+      "word_index": 121,
+      "byte_offset": "0x3c8",
+      "min_struct_size": 64,
+      "vaddr": "0x0c596150",
+      "mangled_symbol": "_ZN4pjrt30PJRT_Client_FulfillAliasBufferEP35PJRT_Client_FulfillAliasBuffer_Args"
+    },
+    {
+      "word_index": 122,
+      "byte_offset": "0x3d0",
+      "min_struct_size": 56,
+      "vaddr": "0x0c5a2be0",
+      "mangled_symbol": "_ZN4pjrt41PJRT_LoadedExecutable_GetDeviceAssignmentEP46PJRT_LoadedExecutable_GetDeviceAssignment_Args"
+    },
+    {
+      "word_index": 123,
+      "byte_offset": "0x3d8",
+      "min_struct_size": 112,
+      "vaddr": "0x0c5958a0",
+      "mangled_symbol": "_ZN4pjrt29PJRT_Client_CreateErrorBufferEP34PJRT_Client_CreateErrorBuffer_Args"
+    },
+    {
+      "word_index": 124,
+      "byte_offset": "0x3e0",
+      "min_struct_size": 80,
+      "vaddr": "0x0c592b90",
+      "mangled_symbol": "_ZN4pjrt53PJRT_AsyncHostToDeviceTransferManager_TransferLiteralEP58PJRT_AsyncHostToDeviceTransferManager_TransferLiteral_Args"
+    },
+    {
+      "word_index": 125,
+      "byte_offset": "0x3e8",
+      "min_struct_size": 64,
+      "vaddr": "0x0c59fda0",
+      "mangled_symbol": "_ZN4pjrt31PJRT_Buffer_CopyRawToHostFutureEP36PJRT_Buffer_CopyRawToHostFuture_Args"
+    },
+    {
+      "word_index": 126,
+      "byte_offset": "0x3f0",
+      "min_struct_size": 72,
+      "vaddr": "0x0c592f30",
+      "mangled_symbol": "_ZN4pjrt27PJRT_Device_PoisonExecutionEP32PJRT_Device_PoisonExecution_Args"
+    },
+    {
+      "word_index": 127,
+      "byte_offset": "0x3f8",
+      "min_struct_size": 48,
+      "vaddr": "0x0c593280",
+      "mangled_symbol": "_ZN4pjrt36PJRT_Device_CreateAsyncTrackingEventEP41PJRT_Device_CreateAsyncTrackingEvent_Args"
+    },
+    {
+      "word_index": 128,
+      "byte_offset": "0x400",
+      "min_struct_size": 24,
+      "vaddr": "0x0c593300",
+      "mangled_symbol": "_ZN4pjrt31PJRT_AsyncTrackingEvent_DestroyEP36PJRT_AsyncTrackingEvent_Destroy_Args"
+    },
+    {
+      "word_index": 129,
+      "byte_offset": "0x408",
+      "min_struct_size": 56,
+      "vaddr": "0x0c59e270",
+      "mangled_symbol": "_ZN4pjrt33PJRT_Executable_GetCompileOptionsEP38PJRT_Executable_GetCompileOptions_Args"
+    },
+    {
+      "word_index": 130,
+      "byte_offset": "0x410",
+      "min_struct_size": 48,
+      "vaddr": "0x0c5a0df0",
+      "mangled_symbol": "_ZN4pjrt39PJRT_Buffer_DonateWithControlDependencyEP44PJRT_Buffer_DonateWithControlDependency_Args"
+    },
+    {
+      "word_index": 131,
+      "byte_offset": "0x418",
+      "min_struct_size": 24,
+      "vaddr": "0x0c5a1770",
+      "mangled_symbol": "_ZN4pjrt17PJRT_Event_CreateEP22PJRT_Event_Create_Args"
+    },
+    {
+      "word_index": 132,
+      "byte_offset": "0x420",
+      "min_struct_size": 48,
+      "vaddr": "0x0c5a1860",
+      "mangled_symbol": "_ZN4pjrt14PJRT_Event_SetEP19PJRT_Event_Set_Args"
+    },
+    {
+      "word_index": 133,
+      "byte_offset": "0x428",
+      "min_struct_size": 56,
+      "vaddr": "0x0c5a4f80",
+      "mangled_symbol": "_ZN4pjrt25PJRT_Device_GetAttributesEP30PJRT_Device_GetAttributes_Args"
+    },
+    {
+      "word_index": 134,
+      "byte_offset": "0x430",
+      "min_struct_size": 56,
+      "vaddr": "0x0c594980",
+      "mangled_symbol": "_ZN4pjrt16PJRT_Client_LoadEP21PJRT_Client_Load_Args"
+    },
+    {
+      "word_index": 135,
+      "byte_offset": "0x438",
+      "min_struct_size": 40,
+      "vaddr": "0x0c598640",
+      "mangled_symbol": "_ZN4pjrt49PJRT_LoadedExecutable_AddressableDeviceLogicalIdsEP54PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args"
+    },
+    {
+      "word_index": 136,
+      "byte_offset": "0x440",
+      "min_struct_size": 64,
+      "vaddr": "0x0c594ca0",
+      "mangled_symbol": "_ZN4pjrt19PJRT_Buffer_BitcastEP24PJRT_Buffer_Bitcast_Args"
+    },
+    {
+      "word_index": 137,
+      "byte_offset": "0x448",
+      "min_struct_size": 40,
+      "vaddr": "0x0c591440",
+      "mangled_symbol": "_ZN4pjrt25PJRT_Error_ForEachPayloadEP30PJRT_Error_ForEachPayload_Args"
+    },
+    {
+      "word_index": 138,
+      "byte_offset": "0x450",
+      "min_struct_size": 32,
+      "vaddr": "0x0c5a1da0",
+      "mangled_symbol": "_ZN4pjrt36PJRT_TopologyDescription_FingerprintEP41PJRT_TopologyDescription_Fingerprint_Args"
+    },
+    {
+      "word_index": 139,
+      "byte_offset": "0x458",
+      "min_struct_size": 48,
+      "vaddr": "0x0c59aba0",
+      "mangled_symbol": "_ZN4pjrt36PJRT_Executable_ParameterMemoryKindsEP41PJRT_Executable_ParameterMemoryKinds_Args"
+    },
+    {
+      "word_index": 140,
+      "byte_offset": "0x460",
+      "min_struct_size": 24,
+      "vaddr": "0x0c592ed0",
+      "mangled_symbol": "_ZN4pjrt28PJRT_Device_ClearMemoryStatsEP33PJRT_Device_ClearMemoryStats_Args"
+    },
+    {
+      "word_index": 141,
+      "byte_offset": "0x468",
+      "min_struct_size": 88,
+      "vaddr": "0x0c5a1eb0",
+      "mangled_symbol": "_ZN4pjrt57PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpaceEP62PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args"
+    },
+    {
+      "word_index": 142,
+      "byte_offset": "0x470",
+      "min_struct_size": 40,
+      "vaddr": "0x0c5a2220",
+      "mangled_symbol": "_ZN4pjrt46PJRT_TopologyDescription_GetMemorySpaceKindIdsEP51PJRT_TopologyDescription_GetMemorySpaceKindIds_Args"
+    }
+  ]
+}

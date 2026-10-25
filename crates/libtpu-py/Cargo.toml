@@ -2,15 +2,20 @@
 name = "libtpu-py"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+readme.workspace = true
 description.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [lib]
 name = "libtpu_py"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+libtpu-c-api = { path = "../libtpu-c-api" }
 libtpu-core.workspace = true
 
 [lints]

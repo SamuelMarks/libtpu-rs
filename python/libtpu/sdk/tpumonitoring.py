@@ -237,33 +237,54 @@ def _bind_sdk_cdll() -> ctypes.CDLL:
         Configured `ctypes.CDLL` handle.
     """
     cdll = ctypes.CDLL(libtpu.get_library_path())
-    for void_fn_name in (
-        "LibtpuSdk_Error_GetMessage",
-        "LibtpuSdk_Error_Destroy",
-    ):
-        void_fn = getattr(cdll, void_fn_name)
-        void_fn.argtypes = [ctypes.c_void_p]
-        void_fn.restype = None
-    for fn_name in (
-        "LibtpuSdk_Error_GetCode",
-        "LibtpuSdk_Client_Create",
-        "LibtpuSdk_Client_Destroy",
-        "LibtpuSdk_GetChipCoordinates",
-        "LibtpuSdk_GetHostName",
-        "LibtpuSdk_GetChipIndex",
-        "LibtpuSdk_GetCartesianCoordinates",
-        "LibtpuSdk_GetMetric",
-        "LibtpuSdk_GetMetricDescription",
-        "LibtpuSdk_GetMetricValues",
-        "LibtpuSdk_GetRuntimeStatus",
-        "LibtpuSdk_RuntimeStatus_GetCoreStateSummary",
-        "LibtpuSdk_RuntimeStatus_Destroy",
-        "LibtpuSdk_RegisterDebugCallback",
-        "LibtpuSdk_UnregisterDebugCallback",
-    ):
-        fn_obj = getattr(cdll, fn_name)
-        fn_obj.argtypes = [ctypes.c_void_p]
-        fn_obj.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_Error_GetMessage.argtypes = [ctypes.POINTER(_ErrorGetMessageArgs)]
+    cdll.LibtpuSdk_Error_GetMessage.restype = None
+
+    cdll.LibtpuSdk_Error_Destroy.argtypes = [ctypes.POINTER(_ErrorDestroyArgs)]
+    cdll.LibtpuSdk_Error_Destroy.restype = None
+
+    cdll.LibtpuSdk_Error_GetCode.argtypes = [ctypes.POINTER(_ErrorGetCodeArgs)]
+    cdll.LibtpuSdk_Error_GetCode.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_Client_Create.argtypes = [ctypes.POINTER(_ClientArgs)]
+    cdll.LibtpuSdk_Client_Create.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_Client_Destroy.argtypes = [ctypes.POINTER(_ClientArgs)]
+    cdll.LibtpuSdk_Client_Destroy.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_GetChipCoordinates.argtypes = [ctypes.POINTER(_GetChipCoordinatesArgs)]
+    cdll.LibtpuSdk_GetChipCoordinates.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_GetHostName.argtypes = [ctypes.POINTER(_GetHostNameArgs)]
+    cdll.LibtpuSdk_GetHostName.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_GetChipIndex.argtypes = [ctypes.POINTER(_GetChipIndexArgs)]
+    cdll.LibtpuSdk_GetChipIndex.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_GetCartesianCoordinates.argtypes = [ctypes.POINTER(_GetCartesianCoordinatesArgs)]
+    cdll.LibtpuSdk_GetCartesianCoordinates.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_GetMetric.argtypes = [ctypes.POINTER(_GetMetricArgs)]
+    cdll.LibtpuSdk_GetMetric.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_GetMetricDescription.argtypes = [ctypes.POINTER(_GetMetricDescriptionArgs)]
+    cdll.LibtpuSdk_GetMetricDescription.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_GetMetricValues.argtypes = [ctypes.POINTER(_GetMetricValuesArgs)]
+    cdll.LibtpuSdk_GetMetricValues.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_GetRuntimeStatus.argtypes = [ctypes.POINTER(_GetRuntimeStatusArgs)]
+    cdll.LibtpuSdk_GetRuntimeStatus.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_RuntimeStatus_GetCoreStateSummary.argtypes = [
+        ctypes.POINTER(_GetCoreStateSummaryArgs)
+    ]
+    cdll.LibtpuSdk_RuntimeStatus_GetCoreStateSummary.restype = ctypes.c_void_p
+
+    cdll.LibtpuSdk_RuntimeStatus_Destroy.argtypes = [ctypes.POINTER(_RuntimeStatusDestroyArgs)]
+    cdll.LibtpuSdk_RuntimeStatus_Destroy.restype = ctypes.c_void_p
+
     return cdll
 
 

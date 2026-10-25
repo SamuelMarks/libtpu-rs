@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import ctypes
+import json
 import os
 from pathlib import Path
 from unittest import mock
@@ -70,11 +71,13 @@ def test_client_buffer_executable_and_profiler() -> None:
     executable = client.compile("module @add { stablehlo.add }", fmt="mlir")
     assert len(executable.fingerprint()) == 32
     assert executable.flops() > 0.0
+    assert b"stablehlo.add" in executable.optimized_program_bytes()
     ser_bytes = executable.serialize()
     deser_exec = client.deserialize_executable(ser_bytes)
     out_buf = deser_exec.execute(0, [b0, b1])
     assert out_buf.shape() == (4,)
     assert out_buf.dtype() == libtpu.DataType.F32
+    assert out_buf.tile_count() == 1
     assert out_buf.to_float_list() == [11.5, 22.5, 33.5, 44.5]
     deser_exec.close()
 
@@ -250,11 +253,26 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
         "TpuEmbeddingEngine_SendTPUEmbeddingGradientsComputation",
         "TpuEmbeddingEngine_DedupDataSizeComputation",
         "TpuEmbeddingEngine_DedupDataTupleMaskComputation",
+        "TpuDriver_Initialize",
         "TpuDriver_Open",
         "TpuDriver_Close",
     )
     for sym in exported_symbols:
         assert hasattr(cdll, sym), f"Missing exported C ABI symbol: {sym}"
+
+    manifest_path = (
+        Path(libtpu.__file__).resolve().parent.parent.parent
+        / "docs"
+        / "reverse_engineering"
+        / "golden_binary_manifest.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert len(manifest["libtpu_so"]["sha256"]) == 64
+    assert len(manifest["sdk_so"]["sha256"]) == 64
+    assert manifest["libtpu_so"]["exported_functions_count"] == 78
+    assert len(manifest["libtpu_so"]["exported_functions"]) == 78
+    for fn_meta in manifest["libtpu_so"]["exported_functions"]:
+        assert hasattr(cdll, fn_meta["name"])
 
     cdll.GetPjrtApi.argtypes = []
     cdll.GetPjrtApi.restype = ctypes.c_void_p
@@ -296,15 +314,15 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     fn_buf_destroy = pjrt_fn_type(int(pjrt_words[63]))
     fn_buf_to_host = pjrt_fn_type(int(pjrt_words[75]))
 
-    create_words = (ctypes.c_uint64 * 9)(72, 0, 0, 0, 0, 0, 0, 0, 0)
+    create_words = (ctypes.c_uint64 * 11)(88, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     assert fn_client_create(ctypes.byref(create_words)) is None
-    raw_pjrt_client = int(create_words[8])
+    raw_pjrt_client = int(create_words[10])
     assert raw_pjrt_client != 0
 
     in_floats = (ctypes.c_float * 4)(2.0, 4.0, 6.0, 8.0)
     dims_arr = (ctypes.c_int64 * 1)(4)
-    h2d_words = (ctypes.c_uint64 * 14)(
-        112,
+    h2d_words = (ctypes.c_uint64 * 15)(
+        120,
         0,
         raw_pjrt_client,
         ctypes.addressof(in_floats),
@@ -318,9 +336,10 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
         0,
         0,
         0,
+        0,
     )
     assert fn_buf_from_host(ctypes.byref(h2d_words)) is None
-    raw_buf = int(h2d_words[13])
+    raw_buf = int(h2d_words[14])
     assert raw_buf != 0
 
     mlir_src = b"module @vtable_add { stablehlo.add }"
@@ -350,14 +369,17 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     in_lists = (ctypes.c_uint64 * 1)(ctypes.addressof(in_list))
     out_list = (ctypes.c_uint64 * 1)(0)
     out_lists = (ctypes.c_uint64 * 1)(ctypes.addressof(out_list))
-    exec_words = (ctypes.c_uint64 * 7)(
-        56,
+    exec_words = (ctypes.c_uint64 * 10)(
+        80,
         0,
         raw_exec,
         0,
         ctypes.addressof(in_lists),
         1,
+        2,
         ctypes.addressof(out_lists),
+        0,
+        0,
     )
     assert fn_exec_execute(ctypes.byref(exec_words)) is None
     raw_out_buf = int(out_list[0])
@@ -383,6 +405,56 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     assert fn_exec_destroy(ctypes.byref(e_del)) is None
     c_del = (ctypes.c_uint64 * 3)(24, 0, raw_pjrt_client)
     assert fn_client_destroy(ctypes.byref(c_del)) is None
+
+    # Verify all 138 PJRT_Api slots against golden_struct_layouts.json min_struct_size
+    golden_path = (
+        Path(libtpu.__file__).resolve().parent.parent.parent
+        / "docs"
+        / "reverse_engineering"
+        / "golden_struct_layouts.json"
+    )
+    golden_layouts = json.loads(golden_path.read_text(encoding="utf-8"))
+    pjrt_u64_fn_type = ctypes.CFUNCTYPE(ctypes.c_uint64, ctypes.c_void_p)
+    pjrt_void_fn_type = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
+    fn_err_destroy = pjrt_void_fn_type(int(pjrt_words[5]))
+    fn_err_message = pjrt_void_fn_type(int(pjrt_words[6]))
+    fn_ev_destroy = pjrt_u64_fn_type(int(pjrt_words[10]))
+    for slot_entry in golden_layouts["pjrt_slots"]:
+        word_idx = int(slot_entry["word_index"])
+        min_sz = slot_entry["min_struct_size"]
+        if word_idx >= 7 and min_sz is not None:
+            slot_fn = pjrt_u64_fn_type(int(pjrt_words[word_idx]))
+            small_buf = (ctypes.c_uint64 * 32)()
+            small_buf[0] = int(min_sz) - 1
+            err_ptr = int(slot_fn(ctypes.byref(small_buf)))
+            assert err_ptr != 0, (
+                f"Slot word {word_idx} accepted struct_size={int(min_sz) - 1} < {min_sz}"
+            )
+            msg_buf = (ctypes.c_uint64 * 5)(40, 0, err_ptr, 0, 0)
+            fn_err_message(ctypes.byref(msg_buf))
+            err_text = ctypes.string_at(int(msg_buf[3]), int(msg_buf[4])).decode("utf-8")
+            assert "struct_size" in err_text
+            err_del = (ctypes.c_uint64 * 3)(24, 0, err_ptr)
+            fn_err_destroy(ctypes.byref(err_del))
+
+            valid_buf = (ctypes.c_uint64 * 32)()
+            valid_buf[0] = int(min_sz)
+            ok_err = int(slot_fn(ctypes.byref(valid_buf)))
+            if ok_err != 0:
+                msg_buf2 = (ctypes.c_uint64 * 5)(40, 0, ok_err, 0, 0)
+                fn_err_message(ctypes.byref(msg_buf2))
+                err_text2 = ctypes.string_at(int(msg_buf2[3]), int(msg_buf2[4])).decode("utf-8")
+                assert "struct_size" not in err_text2, (
+                    f"Slot word {word_idx} rejected valid struct_size={min_sz}: {err_text2}"
+                )
+                err_del2 = (ctypes.c_uint64 * 3)(24, 0, ok_err)
+                fn_err_destroy(ctypes.byref(err_del2))
+            if word_idx == 15 and int(valid_buf[10]) != 0:
+                cl_del = (ctypes.c_uint64 * 3)(24, 0, int(valid_buf[10]))
+                assert fn_client_destroy(ctypes.byref(cl_del)) is None
+            if word_idx == 131 and int(valid_buf[2]) != 0:
+                ev_del = (ctypes.c_uint64 * 3)(24, 0, int(valid_buf[2]))
+                assert int(fn_ev_destroy(ctypes.byref(ev_del))) == 0
 
     for mod_path in (
         Path(libtpu.__file__),

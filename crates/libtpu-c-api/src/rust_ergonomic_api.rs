@@ -36,7 +36,7 @@ fn c_status_err(err: &LibTpuError) -> LibTpuCStatus {
 /// # Safety
 ///
 /// `status.message` must be null or allocated by `c_status_err`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_status_free(status: LibTpuCStatus) {
     if !status.message.is_null() {
         // SAFETY: `status.message` was allocated via `CString::into_raw`.
@@ -55,7 +55,7 @@ pub unsafe extern "C" fn libtpu_rs_status_free(status: LibTpuCStatus) {
 /// # Safety
 ///
 /// `client_out` must be null or a valid mutable pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_client_create(
     client_out: *mut *mut PJRT_Client,
 ) -> LibTpuCStatus {
@@ -65,7 +65,7 @@ pub unsafe extern "C" fn libtpu_rs_client_create(
         });
     }
     let mut args = PJRT_Client_Create_Args {
-        struct_size: std::mem::size_of::<PJRT_Client_Create_Args>(),
+        struct_size: size_of::<PJRT_Client_Create_Args>(),
         extension_start: ptr::null_mut(),
         create_options: ptr::null(),
         num_options: 0,
@@ -73,6 +73,8 @@ pub unsafe extern "C" fn libtpu_rs_client_create(
         kv_get_user_arg: ptr::null_mut(),
         kv_put_callback: ptr::null(),
         kv_put_user_arg: ptr::null_mut(),
+        kv_try_get_callback: ptr::null(),
+        kv_try_get_user_arg: ptr::null_mut(),
         client: ptr::null_mut(),
     };
     // SAFETY: Passing valid stack `args`.
@@ -93,13 +95,13 @@ pub unsafe extern "C" fn libtpu_rs_client_create(
 /// # Safety
 ///
 /// `client` must be null or allocated by `libtpu_rs_client_create`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_client_destroy(client: *mut PJRT_Client) {
     if client.is_null() {
         return;
     }
     let mut args = PJRT_Client_Destroy_Args {
-        struct_size: std::mem::size_of::<PJRT_Client_Destroy_Args>(),
+        struct_size: size_of::<PJRT_Client_Destroy_Args>(),
         extension_start: ptr::null_mut(),
         client,
     };
@@ -116,7 +118,7 @@ pub unsafe extern "C" fn libtpu_rs_client_destroy(client: *mut PJRT_Client) {
 /// # Safety
 ///
 /// `client` must be null or a valid pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_client_device_count(client: *const PJRT_Client) -> i32 {
     if client.is_null() {
         return -1;
@@ -141,7 +143,7 @@ pub unsafe extern "C" fn libtpu_rs_client_device_count(client: *const PJRT_Clien
 /// # Safety
 ///
 /// All pointers must be null or valid for their respective lengths.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_buffer_from_host(
     client: *mut PJRT_Client,
     device_id: u32,
@@ -195,11 +197,7 @@ pub unsafe extern "C" fn libtpu_rs_buffer_from_host(
                 .first()
                 .copied()
                 .unwrap_or(ptr::null_mut());
-            let handle = Box::into_raw(Box::new(PJRT_Buffer {
-                inner: core_buf,
-                device_ptr: dev_ptr,
-                memory_ptr: mem_ptr,
-            }));
+            let handle = Box::into_raw(Box::new(PJRT_Buffer::new(core_buf, dev_ptr, mem_ptr)));
             // SAFETY: `buffer_out` is non-null.
             unsafe {
                 *buffer_out = handle;
@@ -221,7 +219,7 @@ pub unsafe extern "C" fn libtpu_rs_buffer_from_host(
 /// # Safety
 ///
 /// `buffer` and `host_out` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_buffer_to_host(
     buffer: *const PJRT_Buffer,
     host_out: *mut u8,
@@ -264,7 +262,7 @@ pub unsafe extern "C" fn libtpu_rs_buffer_to_host(
 /// # Safety
 ///
 /// `buffer` must be null or allocated by `libtpu_rs_buffer_from_host` / `libtpu_rs_execute`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_buffer_destroy(buffer: *mut PJRT_Buffer) {
     if !buffer.is_null() {
         // SAFETY: `buffer` is non-null.
@@ -288,7 +286,7 @@ pub unsafe extern "C" fn libtpu_rs_buffer_destroy(buffer: *mut PJRT_Buffer) {
 /// # Safety
 ///
 /// All pointers must be null or valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_compile(
     client: *mut PJRT_Client,
     format: *const c_char,
@@ -314,14 +312,12 @@ pub unsafe extern "C" fn libtpu_rs_compile(
     let client_ref = unsafe { &*client };
     match client_ref.inner.compile_and_load(&fmt_str, code_slice, b"") {
         Ok(loaded) => {
-            let exec_ptr = Box::into_raw(Box::new(PJRT_Executable {
-                inner: loaded.executable.clone(),
-            }));
-            let loaded_ptr = Box::into_raw(Box::new(PJRT_LoadedExecutable {
-                inner: loaded,
-                executable_ptr: exec_ptr,
-                device_ptrs: client_ref.addressable_device_ptrs.clone(),
-            }));
+            let exec_ptr = Box::into_raw(Box::new(PJRT_Executable::new(loaded.executable.clone())));
+            let loaded_ptr = Box::into_raw(Box::new(PJRT_LoadedExecutable::new(
+                loaded,
+                exec_ptr,
+                client_ref.addressable_device_ptrs.clone(),
+            )));
             // SAFETY: `exec_out` is non-null.
             unsafe {
                 *exec_out = loaded_ptr;
@@ -345,7 +341,7 @@ pub unsafe extern "C" fn libtpu_rs_compile(
 /// # Safety
 ///
 /// All pointers must be null or valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_execute(
     executable: *const PJRT_LoadedExecutable,
     device_id: u32,
@@ -381,11 +377,11 @@ pub unsafe extern "C" fn libtpu_rs_execute(
     ) {
         Ok(outs) => {
             for first in outs {
-                let handle = Box::into_raw(Box::new(PJRT_Buffer {
-                    inner: first,
-                    device_ptr: ptr::null_mut(),
-                    memory_ptr: ptr::null_mut(),
-                }));
+                let handle = Box::into_raw(Box::new(PJRT_Buffer::new(
+                    first,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )));
                 // SAFETY: `output_out` is non-null.
                 unsafe {
                     *output_out = handle;
@@ -406,7 +402,7 @@ pub unsafe extern "C" fn libtpu_rs_execute(
 /// # Safety
 ///
 /// `executable` must be null or allocated by `libtpu_rs_compile` / `PJRT_Client_Compile`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_executable_destroy(executable: *mut PJRT_LoadedExecutable) {
     if !executable.is_null() {
         // SAFETY: `executable` is non-null.
@@ -429,7 +425,7 @@ pub unsafe extern "C" fn libtpu_rs_executable_destroy(executable: *mut PJRT_Load
 /// # Safety
 ///
 /// `buffer`, `out_dims`, and `out_num_dims` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_buffer_dimensions(
     buffer: *const PJRT_Buffer,
     out_dims: *mut i64,
@@ -466,7 +462,7 @@ pub unsafe extern "C" fn libtpu_rs_buffer_dimensions(
 /// # Safety
 ///
 /// `buffer` must be null or a valid pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_buffer_element_type(buffer: *const PJRT_Buffer) -> i32 {
     if buffer.is_null() {
         return 0;
@@ -487,7 +483,7 @@ pub unsafe extern "C" fn libtpu_rs_buffer_element_type(buffer: *const PJRT_Buffe
 /// # Safety
 ///
 /// All pointers must be null or valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_buffer_copy_to_device(
     client: *mut PJRT_Client,
     buffer: *const PJRT_Buffer,
@@ -516,11 +512,7 @@ pub unsafe extern "C" fn libtpu_rs_buffer_copy_to_device(
                 .first()
                 .copied()
                 .unwrap_or(ptr::null_mut());
-            let handle = Box::into_raw(Box::new(PJRT_Buffer {
-                inner: copied,
-                device_ptr: dev_ptr,
-                memory_ptr: mem_ptr,
-            }));
+            let handle = Box::into_raw(Box::new(PJRT_Buffer::new(copied, dev_ptr, mem_ptr)));
             // SAFETY: `out_buffer` is non-null.
             unsafe {
                 *out_buffer = handle;
@@ -545,7 +537,7 @@ pub unsafe extern "C" fn libtpu_rs_buffer_copy_to_device(
 /// # Safety
 ///
 /// All pointers must be null or valid for their respective counts.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_execute_multi(
     executable: *const PJRT_LoadedExecutable,
     device_id: u32,
@@ -582,11 +574,11 @@ pub unsafe extern "C" fn libtpu_rs_execute_multi(
     ) {
         Ok(outs) => {
             for (idx, out_buf) in outs.into_iter().take(num_outputs).enumerate() {
-                let handle = Box::into_raw(Box::new(PJRT_Buffer {
-                    inner: out_buf,
-                    device_ptr: ptr::null_mut(),
-                    memory_ptr: ptr::null_mut(),
-                }));
+                let handle = Box::into_raw(Box::new(PJRT_Buffer::new(
+                    out_buf,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )));
                 // SAFETY: `outputs_out` has `num_outputs` capacity.
                 unsafe {
                     *outputs_out.add(idx) = handle;
@@ -610,7 +602,7 @@ pub unsafe extern "C" fn libtpu_rs_execute_multi(
 /// # Safety
 ///
 /// All pointers must be null or valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_executable_serialize(
     executable: *const PJRT_LoadedExecutable,
     out_bytes: *mut u8,
@@ -650,7 +642,7 @@ pub unsafe extern "C" fn libtpu_rs_executable_serialize(
 /// # Safety
 ///
 /// All pointers must be null or valid.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_executable_deserialize(
     client: *mut PJRT_Client,
     bytes: *const u8,
@@ -666,14 +658,12 @@ pub unsafe extern "C" fn libtpu_rs_executable_deserialize(
     let (slice, client_ref) = unsafe { (std::slice::from_raw_parts(bytes, bytes_len), &*client) };
     match client_ref.inner.deserialize_and_load(slice) {
         Ok(loaded) => {
-            let exec_ptr = Box::into_raw(Box::new(PJRT_Executable {
-                inner: loaded.executable.clone(),
-            }));
-            let loaded_ptr = Box::into_raw(Box::new(PJRT_LoadedExecutable {
-                inner: loaded,
-                executable_ptr: exec_ptr,
-                device_ptrs: client_ref.addressable_device_ptrs.clone(),
-            }));
+            let exec_ptr = Box::into_raw(Box::new(PJRT_Executable::new(loaded.executable.clone())));
+            let loaded_ptr = Box::into_raw(Box::new(PJRT_LoadedExecutable::new(
+                loaded,
+                exec_ptr,
+                client_ref.addressable_device_ptrs.clone(),
+            )));
             // SAFETY: `exec_out` is non-null.
             unsafe {
                 *exec_out = loaded_ptr;
@@ -695,7 +685,7 @@ pub unsafe extern "C" fn libtpu_rs_executable_deserialize(
 /// # Safety
 ///
 /// `executable` and `out_buf` must be null or valid pointers.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_executable_fingerprint(
     executable: *const PJRT_LoadedExecutable,
     out_buf: *mut c_char,
@@ -733,7 +723,7 @@ pub unsafe extern "C" fn libtpu_rs_executable_fingerprint(
 /// # Safety
 ///
 /// `executable` must be null or a valid pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn libtpu_rs_executable_flops(
     executable: *const PJRT_LoadedExecutable,
 ) -> f32 {

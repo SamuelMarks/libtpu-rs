@@ -25,7 +25,7 @@ unsafe fn handle_device_description_id(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_DeviceDescription_Id_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_DeviceDescription_Id(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -61,7 +61,7 @@ unsafe fn handle_device_description_process_index(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_DeviceDescription_ProcessIndex_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_DeviceDescription_ProcessIndex(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -82,8 +82,16 @@ pub unsafe extern "C" fn PJRT_DeviceDescription_ProcessIndex(
 unsafe fn handle_device_description_attributes(
     args: &mut crate::pjrt_types::PJRT_DeviceDescription_Attributes_Args,
 ) -> Result<(), LibTpuError> {
-    args.attributes = GLOBAL_PLUGIN_ATTRIBUTES.as_ptr();
-    args.num_attributes = GLOBAL_PLUGIN_ATTRIBUTES.len();
+    // SAFETY: `device_description` is null or a valid `PJRT_DeviceDescription*`.
+    let (ptr, len) = unsafe { args.device_description.as_ref() }.map_or(
+        (
+            GLOBAL_PLUGIN_ATTRIBUTES.as_ptr(),
+            GLOBAL_PLUGIN_ATTRIBUTES.len(),
+        ),
+        |d| (d.attributes.as_ptr(), d.attributes.len()),
+    );
+    args.attributes = ptr;
+    args.num_attributes = len;
     Ok(())
 }
 
@@ -96,7 +104,7 @@ unsafe fn handle_device_description_attributes(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_DeviceDescription_Attributes_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_DeviceDescription_Attributes(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -139,7 +147,7 @@ unsafe fn handle_device_description_kind(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_DeviceDescription_Kind_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_DeviceDescription_Kind(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -182,7 +190,7 @@ unsafe fn handle_device_description_debug_string(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_DeviceDescription_DebugString_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_DeviceDescription_DebugString(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -225,7 +233,7 @@ unsafe fn handle_device_description_to_string(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_DeviceDescription_ToString_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_DeviceDescription_ToString(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -261,7 +269,7 @@ unsafe fn handle_device_get_description(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Device_GetDescription_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Device_GetDescription(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -297,7 +305,7 @@ unsafe fn handle_device_is_addressable(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Device_IsAddressable_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Device_IsAddressable(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -333,7 +341,7 @@ unsafe fn handle_device_local_hardware_id(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Device_LocalHardwareId_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Device_LocalHardwareId(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -354,10 +362,15 @@ pub unsafe extern "C" fn PJRT_Device_LocalHardwareId(
 unsafe fn handle_device_addressable_memories(
     args: &mut crate::pjrt_types::PJRT_Device_AddressableMemories_Args,
 ) -> Result<(), LibTpuError> {
-    args.memories = ptr::null();
     // SAFETY: `device` is null or a valid `PJRT_Device*`.
-    let dev_opt = unsafe { args.device.as_ref() };
-    args.num_memories = dev_opt.map_or(0, |d| d.inner.memory_space_ids.len());
+    let (ptr, len) = unsafe { args.device.as_ref() }.map_or((ptr::null(), 0), |d| {
+        (
+            d.addressable_memory_ptrs.as_ptr(),
+            d.addressable_memory_ptrs.len(),
+        )
+    });
+    args.memories = ptr;
+    args.num_memories = len;
     Ok(())
 }
 
@@ -370,7 +383,7 @@ unsafe fn handle_device_addressable_memories(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Device_AddressableMemories_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Device_AddressableMemories(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -391,7 +404,8 @@ pub unsafe extern "C" fn PJRT_Device_AddressableMemories(
 unsafe fn handle_device_default_memory(
     args: &mut crate::pjrt_types::PJRT_Device_DefaultMemory_Args,
 ) -> Result<(), LibTpuError> {
-    args.memory = ptr::null_mut();
+    // SAFETY: `device` is null or a valid `PJRT_Device*`.
+    args.memory = unsafe { args.device.as_ref() }.map_or(ptr::null_mut(), |d| d.default_memory_ptr);
     Ok(())
 }
 
@@ -404,7 +418,7 @@ unsafe fn handle_device_default_memory(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Device_DefaultMemory_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Device_DefaultMemory(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -426,24 +440,37 @@ unsafe fn handle_device_memory_stats(
     args: &mut crate::pjrt_types::PJRT_Device_MemoryStats_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `device` is null or a valid `PJRT_Device*`.
-    let dev_opt = unsafe { args.device.as_ref() };
-    let (used, hbm_limit) = dev_opt.map_or((0_i64, 17_179_869_184_i64), |d| {
-        (
-            256_i64,
-            i64::try_from(d.inner.description.spec.generation.hbm_capacity_bytes().0).unwrap_or(0),
-        )
-    });
+    let stats = unsafe { args.device.as_ref() }
+        .and_then(|d| d.hal.memory_stats(d.inner.description.spec.device_id).ok());
+    let used = stats.as_ref().map_or(0_i64, |s| s.bytes_in_use);
+    let peak = stats.as_ref().map_or(0_i64, |s| s.peak_bytes_in_use);
+    let num_allocs = stats.as_ref().map_or(0_i64, |s| s.num_allocs);
+    let largest_alloc = stats.as_ref().map_or(0_i64, |s| s.largest_alloc_size);
+    let hbm_limit = stats.as_ref().map_or(17_179_869_184_i64, |s| s.bytes_limit);
+    let largest_free = stats
+        .as_ref()
+        .map_or(17_179_869_184_i64, |s| s.largest_free_block_bytes);
     args.bytes_in_use = used;
-    args.peak_bytes_in_use = used;
+    args.peak_bytes_in_use = peak;
     args.peak_bytes_in_use_is_set = true;
-    args.num_allocs = i64::from(used > 0);
+    args.num_allocs = num_allocs;
     args.num_allocs_is_set = true;
-    args.largest_alloc_size = used;
+    args.largest_alloc_size = largest_alloc;
     args.largest_alloc_size_is_set = true;
     args.bytes_limit = hbm_limit;
     args.bytes_limit_is_set = true;
     args.bytes_reserved = used;
     args.bytes_reserved_is_set = true;
+    args.peak_bytes_reserved = peak;
+    args.peak_bytes_reserved_is_set = true;
+    args.bytes_reservable_limit = hbm_limit;
+    args.bytes_reservable_limit_is_set = true;
+    args.largest_free_block_bytes = largest_free;
+    args.largest_free_block_bytes_is_set = true;
+    args.pool_bytes = used;
+    args.pool_bytes_is_set = true;
+    args.peak_pool_bytes = peak;
+    args.peak_pool_bytes_is_set = true;
     Ok(())
 }
 
@@ -456,7 +483,7 @@ unsafe fn handle_device_memory_stats(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Device_MemoryStats_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Device_MemoryStats(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -491,7 +518,7 @@ unsafe fn handle_memory_id(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Memory_Id_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Memory_Id(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -531,7 +558,7 @@ unsafe fn handle_memory_kind(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Memory_Kind_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Memory_Kind(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -571,7 +598,7 @@ unsafe fn handle_memory_debug_string(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Memory_DebugString_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Memory_DebugString(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -613,7 +640,7 @@ unsafe fn handle_memory_to_string(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Memory_ToString_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Memory_ToString(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -632,9 +659,15 @@ pub unsafe extern "C" fn PJRT_Memory_ToString(raw_args: *mut std::ffi::c_void) -
 unsafe fn handle_memory_addressable_by_devices(
     args: &mut crate::pjrt_types::PJRT_Memory_AddressableByDevices_Args,
 ) -> Result<(), LibTpuError> {
-    args.devices = ptr::null();
     // SAFETY: `memory` is null or a valid `PJRT_Memory*`.
-    args.num_devices = unsafe { args.memory.as_ref() }.map_or(0, |m| m.inner.device_ids.len());
+    let (ptr, len) = unsafe { args.memory.as_ref() }.map_or((ptr::null(), 0), |m| {
+        (
+            m.addressable_by_device_ptrs.as_ptr(),
+            m.addressable_by_device_ptrs.len(),
+        )
+    });
+    args.devices = ptr;
+    args.num_devices = len;
     Ok(())
 }
 
@@ -647,7 +680,7 @@ unsafe fn handle_memory_addressable_by_devices(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Memory_AddressableByDevices_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Memory_AddressableByDevices(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -682,7 +715,7 @@ unsafe fn handle_memory_kind_id(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Memory_Kind_Id_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Memory_Kind_Id(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -702,7 +735,14 @@ unsafe fn handle_device_poison_execution(
     args: &mut crate::pjrt_types::PJRT_Device_PoisonExecution_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `device` is null or a valid `PJRT_Device*`.
-    let _ = unsafe { args.device.as_ref() }.map(|d| d.inner.description.spec.device_id.0);
+    if let Some(d) = unsafe { args.device.as_ref() } {
+        if args.launch_id < 0 {
+            let _ = d.hal.poison_device(
+                d.inner.description.spec.device_id,
+                format!("launch_id={}", args.launch_id),
+            );
+        }
+    }
     args.poisoned = true;
     Ok(())
 }
@@ -716,7 +756,7 @@ unsafe fn handle_device_poison_execution(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Device_PoisonExecution_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Device_PoisonExecution(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -754,7 +794,7 @@ unsafe fn handle_device_create_async_tracking_event(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Device_CreateAsyncTrackingEvent_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Device_CreateAsyncTrackingEvent(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -775,8 +815,12 @@ pub unsafe extern "C" fn PJRT_Device_CreateAsyncTrackingEvent(
 unsafe fn handle_async_tracking_event_destroy(
     args: &mut crate::pjrt_types::PJRT_AsyncTrackingEvent_Destroy_Args,
 ) -> Result<(), LibTpuError> {
-    // SAFETY: `event` is null or a valid `PJRT_AsyncTrackingEvent*`.
-    let _ = unsafe { args.event.as_ref() }.map(|e| e.event_id);
+    if !args.event.is_null() {
+        // SAFETY: `args.event` was allocated by `PJRT_Device_CreateAsyncTrackingEvent`.
+        unsafe {
+            drop(Box::from_raw(args.event));
+        }
+    }
     Ok(())
 }
 
@@ -789,7 +833,7 @@ unsafe fn handle_async_tracking_event_destroy(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_AsyncTrackingEvent_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AsyncTrackingEvent_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -810,8 +854,16 @@ pub unsafe extern "C" fn PJRT_AsyncTrackingEvent_Destroy(
 unsafe fn handle_device_get_attributes(
     args: &mut crate::pjrt_types::PJRT_Device_GetAttributes_Args,
 ) -> Result<(), LibTpuError> {
-    args.attributes = GLOBAL_PLUGIN_ATTRIBUTES.as_ptr();
-    args.num_attributes = GLOBAL_PLUGIN_ATTRIBUTES.len();
+    // SAFETY: `device` and `d.desc_ptr` are null or valid pointers.
+    let (ptr, len) = unsafe { args.device.as_ref().and_then(|d| d.desc_ptr.as_ref()) }.map_or(
+        (
+            GLOBAL_PLUGIN_ATTRIBUTES.as_ptr(),
+            GLOBAL_PLUGIN_ATTRIBUTES.len(),
+        ),
+        |desc| (desc.attributes.as_ptr(), desc.attributes.len()),
+    );
+    args.attributes = ptr;
+    args.num_attributes = len;
     Ok(())
 }
 
@@ -824,7 +876,7 @@ unsafe fn handle_device_get_attributes(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Device_GetAttributes_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Device_GetAttributes(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -846,7 +898,8 @@ unsafe fn handle_device_clear_memory_stats(
     args: &mut crate::pjrt_types::PJRT_Device_ClearMemoryStats_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `device` is null or a valid `PJRT_Device*`.
-    let _ = unsafe { args.device.as_ref() }.map(|d| d.inner.description.spec.device_id.0);
+    let _ = unsafe { args.device.as_ref() }
+        .map(|d| d.hal.clear_memory_stats(d.inner.description.spec.device_id));
     Ok(())
 }
 
@@ -859,7 +912,7 @@ unsafe fn handle_device_clear_memory_stats(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Device_ClearMemoryStats_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Device_ClearMemoryStats(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {

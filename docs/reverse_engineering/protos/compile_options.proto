@@ -1,0 +1,22 @@
+syntax = "proto3";
+package xla;
+
+import "xla_data.proto";
+
+message ExecutableBuildOptionsProto {
+  int64 device_ordinal = 1;
+  ShapeProto result_layout = 2;
+  int64 num_replicas = 4;
+  int64 num_partitions = 5;
+  bool use_spmd_partitioning = 6;
+  DeviceAssignmentProto device_assignment = 9;
+}
+
+message CompileOptionsProto {
+  repeated ShapeProto argument_layouts = 1;
+  bool parameter_is_tupled_arguments = 2;
+  ExecutableBuildOptionsProto executable_build_options = 3;
+  bool compile_portable_executable = 4;
+  int64 profile_version = 5;
+  bytes serialized_multi_slice_config = 6;
+}

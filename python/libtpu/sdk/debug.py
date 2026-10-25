@@ -42,6 +42,14 @@ def _get_debug_client() -> SdkClient:
     global _SHARED_CLIENT
     if _SHARED_CLIENT is None:
         _SHARED_CLIENT = SdkClient()
+        _SHARED_CLIENT._cdll.LibtpuSdk_RegisterDebugCallback.argtypes = [
+            ctypes.POINTER(_RegisterDebugCallbackArgs)
+        ]
+        _SHARED_CLIENT._cdll.LibtpuSdk_RegisterDebugCallback.restype = ctypes.c_void_p
+        _SHARED_CLIENT._cdll.LibtpuSdk_UnregisterDebugCallback.argtypes = [
+            ctypes.POINTER(_UnregisterDebugCallbackArgs)
+        ]
+        _SHARED_CLIENT._cdll.LibtpuSdk_UnregisterDebugCallback.restype = ctypes.c_void_p
         _SHARED_CLIENT._cdll.LibtpuSdk_TriggerDebugCallbacks.argtypes = [ctypes.c_void_p]
         _SHARED_CLIENT._cdll.LibtpuSdk_TriggerDebugCallbacks.restype = ctypes.c_size_t
     return _SHARED_CLIENT

@@ -428,6 +428,577 @@ typedef struct PJRT_Api {
 } PJRT_Api;
 
 /**
+ * @brief Argument structure for `PJRT_Error_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_Error_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Error handle to destroy. */
+  PJRT_Error *error;
+} PJRT_Error_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Error_Message` (`40` bytes).
+ */
+typedef struct PJRT_Error_Message_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Error handle to query. */
+  const PJRT_Error *error;
+  /** @brief Output pointer to UTF-8 message bytes. */
+  const char *message;
+  /** @brief Output byte length of `message`. */
+  size_t message_size;
+} PJRT_Error_Message_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Error_GetCode` (`32` bytes).
+ */
+typedef struct PJRT_Error_GetCode_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Error handle to query. */
+  const PJRT_Error *error;
+  /** @brief Output integer status code (`PJRT_Error_Code`). */
+  int32_t code;
+  /** @brief Explicit 4-byte alignment padding. */
+  int32_t pad;
+} PJRT_Error_GetCode_Args;
+
+/**
+ * @brief Program representation passed to `PJRT_Client_Compile` (`48` bytes).
+ */
+typedef struct PJRT_Program {
+  /** @brief Size of this struct (`48`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Pointer to program code bytes (`MLIR` or `HloModuleProto`). */
+  const char *code;
+  /** @brief Length of `code` in bytes. */
+  size_t code_size;
+  /** @brief Format string pointer (`"mlir"`, `"hlo"`, `"hlo_with_config"`). */
+  const char *format;
+  /** @brief Length of `format` string in bytes. */
+  size_t format_size;
+} PJRT_Program;
+
+/**
+ * @brief Argument structure for `PJRT_Client_Create` (`88` bytes).
+ */
+typedef struct PJRT_Client_Create_Args {
+  /** @brief Size of this struct (`88`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Optional pointer to `PJRT_NamedValue` creation options. */
+  const void *create_options;
+  /** @brief Number of creation options. */
+  size_t num_options;
+  /** @brief Optional key-value get callback. */
+  const void *kv_get_callback;
+  /** @brief User argument for `kv_get_callback`. */
+  void *kv_get_user_arg;
+  /** @brief Optional key-value put callback. */
+  const void *kv_put_callback;
+  /** @brief User argument for `kv_put_callback`. */
+  void *kv_put_user_arg;
+  /** @brief Optional non-blocking key-value try-get callback. */
+  const void *kv_try_get_callback;
+  /** @brief User argument for `kv_try_get_callback`. */
+  void *kv_try_get_user_arg;
+  /** @brief Output created `PJRT_Client*`. */
+  PJRT_Client *client;
+} PJRT_Client_Create_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Client_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_Client_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Client handle to destroy. */
+  PJRT_Client *client;
+} PJRT_Client_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Client_Devices` and
+ * `PJRT_Client_AddressableDevices` (`40` bytes).
+ */
+typedef struct PJRT_Client_Devices_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Client handle. */
+  PJRT_Client *client;
+  /** @brief Output pointer to `PJRT_Device*` array. */
+  PJRT_Device *const *devices;
+  /** @brief Output number of devices. */
+  size_t num_devices;
+} PJRT_Client_Devices_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Client_LookupDevice` (`40` bytes).
+ */
+typedef struct PJRT_Client_LookupDevice_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Client handle. */
+  PJRT_Client *client;
+  /** @brief Target global device ID. */
+  int32_t id;
+  /** @brief Explicit 4-byte alignment padding. */
+  int32_t pad;
+  /** @brief Output `PJRT_Device*`. */
+  PJRT_Device *device;
+} PJRT_Client_LookupDevice_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Client_Compile` (`56` bytes).
+ */
+typedef struct PJRT_Client_Compile_Args {
+  /** @brief Size of this struct (`56`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Client handle. */
+  PJRT_Client *client;
+  /** @brief Input `PJRT_Program*`. */
+  const PJRT_Program *program;
+  /** @brief Serialized `CompileOptionsProto` bytes pointer. */
+  const char *compile_options;
+  /** @brief Byte length of `compile_options`. */
+  size_t compile_options_size;
+  /** @brief Output compiled `PJRT_LoadedExecutable*`. */
+  PJRT_LoadedExecutable *executable;
+} PJRT_Client_Compile_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Client_BufferFromHostBuffer` (`120`
+ * bytes).
+ */
+typedef struct PJRT_Client_BufferFromHostBuffer_Args {
+  /** @brief Size of this struct (`120`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Client handle. */
+  PJRT_Client *client;
+  /** @brief Host data pointer. */
+  const void *data;
+  /** @brief Element type (`PJRT_Buffer_Type`). */
+  int32_t type;
+  /** @brief Explicit 4-byte alignment padding. */
+  int32_t pad0;
+  /** @brief Dimension sizes array pointer. */
+  const int64_t *dims;
+  /** @brief Number of dimensions. */
+  size_t num_dims;
+  /** @brief Optional byte strides array pointer. */
+  const int64_t *byte_strides;
+  /** @brief Number of byte strides. */
+  size_t num_byte_strides;
+  /** @brief Host buffer semantics. */
+  int32_t host_buffer_semantics;
+  /** @brief Explicit 4-byte alignment padding. */
+  int32_t pad1;
+  /** @brief Target `PJRT_Device*`. */
+  PJRT_Device *device;
+  /** @brief Optional target `PJRT_Memory*`. */
+  PJRT_Memory *memory;
+  /** @brief Optional device memory layout pointer. */
+  const void *device_layout;
+  /** @brief Output host buffer completion `PJRT_Event*`. */
+  PJRT_Event *done_with_host_buffer;
+  /** @brief Output created `PJRT_Buffer*`. */
+  PJRT_Buffer *buffer;
+} PJRT_Client_BufferFromHostBuffer_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Executable_GetCostAnalysis` (`40` bytes).
+ */
+typedef struct PJRT_Executable_GetCostAnalysis_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Executable handle. */
+  const PJRT_Executable *executable;
+  /** @brief Output pointer to `PJRT_NamedValue` array. */
+  const void *properties;
+  /** @brief Output number of properties. */
+  size_t num_properties;
+} PJRT_Executable_GetCostAnalysis_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Executable_OutputMemoryKinds` (`48`
+ * bytes).
+ */
+typedef struct PJRT_Executable_OutputMemoryKinds_Args {
+  /** @brief Size of this struct (`48`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Executable handle. */
+  const PJRT_Executable *executable;
+  /** @brief Output number of outputs. */
+  size_t num_outputs;
+  /** @brief Output array of memory kind C string pointers. */
+  const char *const *memory_kinds;
+  /** @brief Output array of memory kind string lengths. */
+  const size_t *memory_kind_sizes;
+} PJRT_Executable_OutputMemoryKinds_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Device_GetAttributes` (`56` bytes).
+ */
+typedef struct PJRT_Device_GetAttributes_Args {
+  /** @brief Size of this struct (`56`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Device handle. */
+  const PJRT_Device *device;
+  /** @brief Output pointer to `PJRT_NamedValue` array. */
+  const void *attributes;
+  /** @brief Output number of attributes. */
+  size_t num_attributes;
+  /** @brief Reserved word 0. */
+  size_t reserved0;
+  /** @brief Reserved word 1. */
+  size_t reserved1;
+} PJRT_Device_GetAttributes_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Event_Create` (`24` bytes).
+ */
+typedef struct PJRT_Event_Create_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Output created `PJRT_Event*`. */
+  PJRT_Event *event;
+} PJRT_Event_Create_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Event_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_Event_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Event handle to destroy. */
+  PJRT_Event *event;
+} PJRT_Event_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Event_IsReady` (`32` bytes).
+ */
+typedef struct PJRT_Event_IsReady_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Event handle. */
+  PJRT_Event *event;
+  /** @brief Output readiness flag (`bool`). */
+  bool is_ready;
+  /** @brief Explicit 7-byte alignment padding. */
+  uint8_t pad[7];
+} PJRT_Event_IsReady_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Event_Await` (`24` bytes).
+ */
+typedef struct PJRT_Event_Await_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Event handle. */
+  PJRT_Event *event;
+} PJRT_Event_Await_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Event_Set` (`48` bytes).
+ */
+typedef struct PJRT_Event_Set_Args {
+  /** @brief Size of this struct (`48`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Event handle. */
+  PJRT_Event *event;
+  /** @brief Status code (`0` = OK). */
+  int32_t error_code;
+  /** @brief Explicit 4-byte alignment padding. */
+  int32_t pad;
+  /** @brief Optional error message pointer. */
+  const char *error_message;
+  /** @brief Error message byte length. */
+  size_t error_message_size;
+} PJRT_Event_Set_Args;
+
+/**
+ * @brief Callback function pointer for `PJRT_Event_OnReady`
+ * (`PJRT_Event_OnReadyCallback`).
+ */
+typedef void (*PJRT_Event_OnReadyCallback)(PJRT_Error *error, void *user_arg);
+
+/**
+ * @brief Argument structure for `PJRT_Event_OnReady` (`40` bytes).
+ */
+typedef struct PJRT_Event_OnReady_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Event handle. */
+  PJRT_Event *event;
+  /** @brief Readiness callback function pointer. */
+  PJRT_Event_OnReadyCallback callback;
+  /** @brief Opaque user argument passed to `callback`. */
+  void *user_arg;
+} PJRT_Event_OnReady_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Executable_OptimizedProgram` (`32`
+ * bytes).
+ */
+typedef struct PJRT_Executable_OptimizedProgram_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Executable handle. */
+  const PJRT_Executable *executable;
+  /** @brief Output `PJRT_Program*` buffer. */
+  PJRT_Program *program;
+} PJRT_Executable_OptimizedProgram_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Buffer_GetMemoryLayout` (`104` bytes).
+ */
+typedef struct PJRT_Buffer_GetMemoryLayout_Args {
+  /** @brief Size of this struct (`104`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Buffer handle. */
+  const PJRT_Buffer *buffer;
+  /** @brief Inline `PJRT_Buffer_MemoryLayout` words (`10` words = `80` bytes).
+   */
+  size_t layout_words[10];
+} PJRT_Buffer_GetMemoryLayout_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Executable_Serialize` (`56` bytes).
+ */
+typedef struct PJRT_Executable_Serialize_Args {
+  /** @brief Size of this struct (`56`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Executable handle. */
+  const PJRT_Executable *executable;
+  /** @brief Output serialized bytes pointer. */
+  const char *serialized_bytes;
+  /** @brief Output serialized byte length. */
+  size_t serialized_bytes_size;
+  /** @brief Output `PJRT_SerializedExecutable*`. */
+  PJRT_SerializedExecutable *serialized_executable;
+  /** @brief Output deleter callback (`void (*)(PJRT_SerializedExecutable*)`).
+   */
+  void (*serialized_executable_deleter)(PJRT_SerializedExecutable *exec);
+} PJRT_Executable_Serialize_Args;
+
+/**
+ * @brief Argument structure for `PJRT_LoadedExecutable_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_LoadedExecutable_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Loaded executable handle to destroy. */
+  PJRT_LoadedExecutable *executable;
+} PJRT_LoadedExecutable_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_LoadedExecutable_GetExecutable` (`32`
+ * bytes).
+ */
+typedef struct PJRT_LoadedExecutable_GetExecutable_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Loaded executable handle. */
+  const PJRT_LoadedExecutable *loaded_executable;
+  /** @brief Output `PJRT_Executable*`. */
+  PJRT_Executable *executable;
+} PJRT_LoadedExecutable_GetExecutable_Args;
+
+/**
+ * @brief Argument structure for `PJRT_LoadedExecutable_Execute` (`80` bytes).
+ */
+typedef struct PJRT_LoadedExecutable_Execute_Args {
+  /** @brief Size of this struct (`80`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Loaded executable handle. */
+  PJRT_LoadedExecutable *executable;
+  /** @brief Optional `PJRT_ExecuteOptions*`. */
+  const void *options;
+  /** @brief Per-device input buffer lists (`[num_devices][num_args]`). */
+  const PJRT_Buffer *const *const *argument_lists;
+  /** @brief Number of devices to execute across. */
+  size_t num_devices;
+  /** @brief Number of input arguments per device. */
+  size_t num_args;
+  /** @brief Per-device output buffer lists (`[num_devices][num_outputs]`). */
+  PJRT_Buffer **const *output_lists;
+  /** @brief Optional per-device completion events array (`PJRT_Event**`). */
+  PJRT_Event **device_complete_events;
+  /** @brief Optional single target `PJRT_Device*` for portable execution. */
+  PJRT_Device *execute_device;
+} PJRT_LoadedExecutable_Execute_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Executable_DeserializeAndLoad` (`64`
+ * bytes).
+ */
+typedef struct PJRT_Executable_DeserializeAndLoad_Args {
+  /** @brief Size of this struct (`64`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Client handle. */
+  PJRT_Client *client;
+  /** @brief Serialized executable bytes pointer. */
+  const char *serialized_executable;
+  /** @brief Byte length of `serialized_executable`. */
+  size_t serialized_executable_size;
+  /** @brief Output loaded `PJRT_LoadedExecutable*`. */
+  PJRT_LoadedExecutable *loaded_executable;
+  /** @brief Optional overridden compile options pointer. */
+  const char *overridden_serialized_compile_options;
+  /** @brief Byte length of `overridden_serialized_compile_options`. */
+  size_t overridden_serialized_compile_options_size;
+} PJRT_Executable_DeserializeAndLoad_Args;
+
+/**
+ * @brief Argument structure for `PJRT_LoadedExecutable_Fingerprint` (`40`
+ * bytes).
+ */
+typedef struct PJRT_LoadedExecutable_Fingerprint_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Loaded executable handle. */
+  PJRT_LoadedExecutable *executable;
+  /** @brief Output fingerprint string pointer. */
+  const char *executable_fingerprint;
+  /** @brief Output fingerprint string length. */
+  size_t executable_fingerprint_size;
+} PJRT_LoadedExecutable_Fingerprint_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Buffer_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_Buffer_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Buffer handle to destroy. */
+  PJRT_Buffer *buffer;
+} PJRT_Buffer_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Buffer_ElementType` (`32` bytes).
+ */
+typedef struct PJRT_Buffer_ElementType_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Buffer handle. */
+  const PJRT_Buffer *buffer;
+  /** @brief Output element type (`PJRT_Buffer_Type`). */
+  int32_t type;
+  /** @brief Explicit 4-byte alignment padding. */
+  int32_t pad;
+} PJRT_Buffer_ElementType_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Buffer_Dimensions` (`40` bytes).
+ */
+typedef struct PJRT_Buffer_Dimensions_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Buffer handle. */
+  const PJRT_Buffer *buffer;
+  /** @brief Output dimension sizes array pointer. */
+  const int64_t *dims;
+  /** @brief Output number of dimensions. */
+  size_t num_dims;
+} PJRT_Buffer_Dimensions_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Buffer_CopyToDevice` (`40` bytes).
+ */
+typedef struct PJRT_Buffer_CopyToDevice_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Source buffer handle. */
+  PJRT_Buffer *buffer;
+  /** @brief Destination device handle. */
+  PJRT_Device *dst_device;
+  /** @brief Output copied `PJRT_Buffer*`. */
+  PJRT_Buffer *dst_buffer;
+} PJRT_Buffer_CopyToDevice_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Buffer_ToHostBuffer` (`56` bytes).
+ */
+typedef struct PJRT_Buffer_ToHostBuffer_Args {
+  /** @brief Size of this struct (`56`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Source `PJRT_Buffer*`. */
+  const PJRT_Buffer *src;
+  /** @brief Optional host layout pointer. */
+  const void *host_layout;
+  /** @brief Destination host buffer pointer (or `NULL` to query size). */
+  void *dst;
+  /** @brief Destination host buffer byte size. */
+  size_t dst_size;
+  /** @brief Output completion `PJRT_Event*`. */
+  PJRT_Event *event;
+} PJRT_Buffer_ToHostBuffer_Args;
+
+/**
  * @brief Complete 144-byte `LibtpuSdk_Api` vtable returned by
  * `GetLibtpuSdkApi()`.
  */
@@ -829,6 +1400,443 @@ int32_t
 TpuEmbeddingEngine_ExecutePartitioner(TpuEmbeddingEngine_Params *params);
 
 /**
+ * @brief TensorFlow kernel initialization hook (`TF_InitKernel`).
+ * @return `0` on success.
+ */
+int32_t TF_InitKernel(void);
+
+/**
+ * @brief Configures global TPU topology array state
+ * (`SetGlobalTPUArrayOp_DoWork`).
+ * @param topology_len Length of `topology_proto` in bytes.
+ * @param topology_proto Serialized `TpuTopologyArgsProto` bytes.
+ * @param status Optional `TpuStatus*` pointer.
+ * @return `0` on success, `-1` if `topology_proto` is null when `topology_len >
+ * 0`.
+ */
+int32_t SetGlobalTPUArrayOp_DoWork(size_t topology_len,
+                                   const char *topology_proto,
+                                   TpuStatus *status);
+
+/**
+ * @brief Allocates a `TfTpuOrdinalSelector` (`TfTpuOrdinalSelector_Create`).
+ * @param selector_out Output pointer receiving the allocated
+ * `TfTpuOrdinalSelector*`.
+ * @param num_cores Number of cores to cycle across.
+ */
+void TfTpuOrdinalSelector_Create(TfTpuOrdinalSelector **selector_out,
+                                 int32_t num_cores);
+
+/**
+ * @brief Destroys a `TfTpuOrdinalSelector` (`TfTpuOrdinalSelector_Destroy`).
+ * @param selector Pointer to `TfTpuOrdinalSelector` to free.
+ */
+void TfTpuOrdinalSelector_Destroy(TfTpuOrdinalSelector *selector);
+
+/**
+ * @brief Selects the next device ordinal (`TfTpuOrdinalSelector_GetOrdinal`).
+ * @param selector Pointer to `TfTpuOrdinalSelector`.
+ * @param seed Optional seed pointer.
+ * @param req_id Optional output request ID pointer.
+ * @return Selected device ordinal (`0` if `selector` is null).
+ */
+int64_t TfTpuOrdinalSelector_GetOrdinal(TfTpuOrdinalSelector *selector,
+                                        uint64_t *seed, int64_t *req_id);
+
+/**
+ * @brief Dequeues a reserved ordinal from the core selector
+ * (`TfTpuOrdinalSelector_DequeueFromCoreSelector`).
+ * @param selector Pointer to `TfTpuOrdinalSelector`.
+ * @param device_ordinal Device ordinal.
+ * @param req_id Request ID.
+ */
+void TfTpuOrdinalSelector_DequeueFromCoreSelector(
+    TfTpuOrdinalSelector *selector, int32_t device_ordinal, int64_t req_id);
+
+/**
+ * @brief Allocates a `TpuStatus` with explicit code and message
+ * (`TpuStatus_Create`).
+ * @param code Status code (`0` = OK).
+ * @param msg Optional null-terminated message string.
+ * @return Heap-allocated `TpuStatus*`.
+ */
+TpuStatus *TpuStatus_Create(int32_t code, const char *msg);
+
+/**
+ * @brief Mutates an existing `TpuStatus` (`TpuStatus_Set`).
+ * @param status Pointer to `TpuStatus`.
+ * @param code Status code.
+ * @param msg Message buffer pointer.
+ * @param len Length of `msg` in bytes (or negative for null-terminated).
+ */
+void TpuStatus_Set(TpuStatus *status, int32_t code, const char *msg,
+                   int32_t len);
+
+/**
+ * @brief Returns the number of logical devices per chip
+ * (`TpuTopology_LogicalDevicesPerChip`).
+ * @param topo Pointer to `TpuTopology`.
+ * @param core_type Core type discriminant.
+ * @return Number of logical devices per chip.
+ */
+int32_t TpuTopology_LogicalDevicesPerChip(const TpuTopology *topo,
+                                          int32_t core_type);
+
+/**
+ * @brief Returns the total number of hosts in the TPU slice
+ * (`TpuTopology_HostCount`).
+ * @param topo Pointer to `TpuTopology`.
+ * @return Host count.
+ */
+int32_t TpuTopology_HostCount(const TpuTopology *topo);
+
+/**
+ * @brief Returns the number of physical chips per host
+ * (`TpuTopology_ChipsPerHost`).
+ * @param topo Pointer to `TpuTopology`.
+ * @return Chips per host.
+ */
+int32_t TpuTopology_ChipsPerHost(const TpuTopology *topo);
+
+/**
+ * @brief Checks whether chip `(x, y, z)` exists in the topology
+ * (`TpuTopology_HasChip`).
+ * @param topo Pointer to `TpuTopology`.
+ * @param x X chip coordinate.
+ * @param y Y chip coordinate.
+ * @param z Z chip coordinate.
+ * @return `true` if the chip exists, `false` otherwise.
+ */
+bool TpuTopology_HasChip(const TpuTopology *topo, int32_t x, int32_t y,
+                         int32_t z);
+
+/**
+ * @brief Looks up a `TpuCoreLocation` by global core ID
+ * (`TpuTopology_CoreForId`).
+ * @param topo Pointer to `TpuTopology`.
+ * @param core_type Core type discriminant.
+ * @param id Global core ID.
+ * @return Pointer to `TpuCoreLocation` or `NULL`.
+ */
+const TpuCoreLocation *TpuTopology_CoreForId(const TpuTopology *topo,
+                                             int32_t core_type, int32_t id);
+
+/**
+ * @brief Looks up a `TpuCoreLocation` by `(core_type, x, y, z, index)`
+ * (`TpuTopology_Core`).
+ * @param topo Pointer to `TpuTopology`.
+ * @param core_type Core type discriminant.
+ * @param x X chip coordinate.
+ * @param y Y chip coordinate.
+ * @param z Z chip coordinate.
+ * @param index Core index on chip.
+ * @return Pointer to `TpuCoreLocation` or `NULL`.
+ */
+const TpuCoreLocation *TpuTopology_Core(const TpuTopology *topo,
+                                        int32_t core_type, int32_t x, int32_t y,
+                                        int32_t z, int32_t index);
+
+/**
+ * @brief Returns the total number of cores in the topology
+ * (`TpuTopology_NumCores`).
+ * @param topo Pointer to `TpuTopology`.
+ * @param core_type Core type discriminant.
+ * @return Total core count.
+ */
+int32_t TpuTopology_NumCores(const TpuTopology *topo, int32_t core_type);
+
+/**
+ * @brief Copies pointers to all `TpuCoreLocation` entries into `cores_out`
+ * (`TpuTopology_Cores`).
+ * @param topo Pointer to `TpuTopology`.
+ * @param core_type Core type discriminant.
+ * @param cores_out Caller-allocated array of `const TpuCoreLocation*`.
+ */
+void TpuTopology_Cores(const TpuTopology *topo, int32_t core_type,
+                       const TpuCoreLocation **cores_out);
+
+/**
+ * @brief Returns the host ID for host coordinates `(x, y, z)`
+ * (`TpuTopology_IdForHost`).
+ * @param topo Pointer to `TpuTopology`.
+ * @param x Host X coordinate.
+ * @param y Host Y coordinate.
+ * @param z Host Z coordinate.
+ * @return Host ID (`>= 0`) or `-1` if out of bounds.
+ */
+int32_t TpuTopology_IdForHost(const TpuTopology *topo, int32_t x, int32_t y,
+                              int32_t z);
+
+/**
+ * @brief Queries available core count (`TpuTopology_AvailableCoreCount`).
+ * @param mesh_state Pointer to `TpuMeshState`.
+ * @param core_type Core type discriminant (`0` = TensorCore, `1` = SparseCore).
+ * @return Available core count (`-1` on invalid `core_type`).
+ */
+int32_t TpuTopology_AvailableCoreCount(const TpuMeshState *mesh_state,
+                                       int32_t core_type);
+
+/**
+ * @brief Queries available cores per chip
+ * (`TpuTopology_AvailableCoresPerChip`).
+ * @param core_type Core type discriminant (`0` = TensorCore, `1` = SparseCore).
+ * @return Cores per chip (`-1` on invalid `core_type`).
+ */
+int32_t TpuTopology_AvailableCoresPerChip(int32_t core_type);
+
+/**
+ * @brief Queries SparseCore count per logical device
+ * (`TpuTopology_MaybeAvailableSparseCoresPerLogicalDevice`).
+ * @param core_type Core type discriminant (`0` = TensorCore, `1` = SparseCore).
+ * @return SparseCore count (`-1` on invalid `core_type`).
+ */
+int32_t
+TpuTopology_MaybeAvailableSparseCoresPerLogicalDevice(int32_t core_type);
+
+/**
+ * @brief Writes the `(x, y, z)` chip coordinates of `loc`
+ * (`TpuCoreLocation_ChipCoordinates`).
+ * @param loc Pointer to `TpuCoreLocation`.
+ * @param x Optional output pointer for X coordinate.
+ * @param y Optional output pointer for Y coordinate.
+ * @param z Optional output pointer for Z coordinate.
+ */
+void TpuCoreLocation_ChipCoordinates(const TpuCoreLocation *loc, int32_t *x,
+                                     int32_t *y, int32_t *z);
+
+/**
+ * @brief Writes the `(x, y, z)` host coordinates of `loc`
+ * (`TpuCoreLocation_HostCoordinates`).
+ * @param loc Pointer to `TpuCoreLocation`.
+ * @param x Optional output pointer for X coordinate.
+ * @param y Optional output pointer for Y coordinate.
+ * @param z Optional output pointer for Z coordinate.
+ */
+void TpuCoreLocation_HostCoordinates(const TpuCoreLocation *loc, int32_t *x,
+                                     int32_t *y, int32_t *z);
+
+/**
+ * @brief Returns the core index on chip (`TpuCoreLocation_Index`).
+ * @param loc Pointer to `TpuCoreLocation`.
+ * @return Core index on chip.
+ */
+int32_t TpuCoreLocation_Index(const TpuCoreLocation *loc);
+
+/**
+ * @brief Returns the global core ID (`TpuCoreLocation_Id`).
+ * @param loc Pointer to `TpuCoreLocation`.
+ * @return Global core ID.
+ */
+int32_t TpuCoreLocation_Id(const TpuCoreLocation *loc);
+
+/**
+ * @brief Returns the host ID (`TpuHostLocation_Id`).
+ * @param host Pointer to `TpuHostLocation`.
+ * @return Host ID.
+ */
+int32_t TpuHostLocation_Id(const TpuHostLocation *host);
+
+/**
+ * @brief Returns the number of cores on `host` (`TpuHostLocation_NumCores`).
+ * @param host Pointer to `TpuHostLocation`.
+ * @param core_type Core type discriminant.
+ * @return Number of cores on host.
+ */
+int32_t TpuHostLocation_NumCores(const TpuHostLocation *host,
+                                 int32_t core_type);
+
+/**
+ * @brief Copies core pointers on `host` into `cores_out`
+ * (`TpuHostLocation_Cores`).
+ * @param host Pointer to `TpuHostLocation`.
+ * @param core_type Core type discriminant.
+ * @param cores_out Caller-allocated array of `const TpuCoreLocation*`.
+ */
+void TpuHostLocation_Cores(const TpuHostLocation *host, int32_t core_type,
+                           const TpuCoreLocation **cores_out);
+
+/**
+ * @brief Allocates a `TpuMeshState` (`TpuMeshState_Create`).
+ * @return Heap-allocated `TpuMeshState*`.
+ */
+TpuMeshState *TpuMeshState_Create(void);
+
+/**
+ * @brief Frees a `TpuMeshState` (`TpuMeshState_Free`).
+ * @param state Pointer to `TpuMeshState` to free.
+ */
+void TpuMeshState_Free(TpuMeshState *state);
+
+/**
+ * @brief Returns the internal mesh common state pointer
+ * (`TpuMeshState_MeshCommonState`).
+ * @param state Pointer to `TpuMeshState`.
+ * @return Mesh common state pointer.
+ */
+const void *TpuMeshState_MeshCommonState(const TpuMeshState *state);
+
+/**
+ * @brief Creates a `TpuEmbeddingEngineState`
+ * (`TpuEmbeddingEngineState_Create`).
+ * @return Heap-allocated `TpuEmbeddingEngineState*`.
+ */
+TpuEmbeddingEngineState *TpuEmbeddingEngineState_Create(void);
+
+/**
+ * @brief Frees a `TpuEmbeddingEngineState` (`TpuEmbeddingEngineState_Free`).
+ * @param state Pointer to `TpuEmbeddingEngineState` to free.
+ */
+void TpuEmbeddingEngineState_Free(TpuEmbeddingEngineState *state);
+
+/**
+ * @brief Returns internal state pointer (`TpuEmbeddingEngineState_GetState`).
+ * @param state Pointer to `TpuEmbeddingEngineState`.
+ * @return Internal state pointer.
+ */
+const void *
+TpuEmbeddingEngineState_GetState(const TpuEmbeddingEngineState *state);
+
+/**
+ * @brief Configures HBM memory for embedding tables
+ * (`TpuEmbeddingEngine_ConfigureMemory`).
+ * @param params Pointer to `TpuEmbeddingEngine_ConfigureMemory_Params` (or
+ * generic `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_ConfigureMemory(void *params);
+
+/**
+ * @brief Collates HBM memory across hosts (`TpuEmbeddingEngine_CollateMemory`).
+ * @param params Pointer to `TpuEmbeddingEngine_CollateMemory_Params` (or
+ * generic `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_CollateMemory(void *params);
+
+/**
+ * @brief Configures host embedding communication
+ * (`TpuEmbeddingEngine_ConfigureHost`).
+ * @param params Pointer to `TpuEmbeddingEngine_ConfigureHost_Params` (or
+ * generic `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_ConfigureHost(void *params);
+
+/**
+ * @brief Connects inter-host embedding channels
+ * (`TpuEmbeddingEngine_ConnectHosts`).
+ * @param params Pointer to `TpuEmbeddingEngine_ConnectHosts_Params` (or generic
+ * `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_ConnectHosts(void *params);
+
+/**
+ * @brief Finalizes embedding engine configuration
+ * (`TpuEmbeddingEngine_Finalize`).
+ * @param params Pointer to `TpuEmbeddingEngine_Finalize_Params` (or generic
+ * `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_Finalize(void *params);
+
+/**
+ * @brief Checks whether embedding engine is initialized
+ * (`TpuEmbeddingEngine_IsInitialized`).
+ * @param params Pointer to `TpuEmbeddingEngine_IsInitialized_Params` (or
+ * generic `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_IsInitialized(void *params);
+
+/**
+ * @brief Writes embedding parameters (`TpuEmbeddingEngine_WriteParameters`).
+ * @param params Pointer to `TpuEmbeddingEngine_WriteParameters_Params` (or
+ * generic `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_WriteParameters(void *params);
+
+/**
+ * @brief Reads embedding parameters (`TpuEmbeddingEngine_ReadParameters`).
+ * @param params Pointer to `TpuEmbeddingEngine_ReadParameters_Params` (or
+ * generic `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_ReadParameters(void *params);
+
+/**
+ * @brief Creates tensor batch fixed state
+ * (`TpuEmbeddingTensorBatchFixedState_Create`).
+ * @param status Optional `TpuStatus*`.
+ * @return Heap-allocated `TpuEmbeddingEngineState*`.
+ */
+TpuEmbeddingEngineState *
+TpuEmbeddingTensorBatchFixedState_Create(TpuStatus *status);
+
+/**
+ * @brief Destroys tensor batch fixed state
+ * (`TpuEmbeddingTensorBatchFixedState_Destroy`).
+ * @param state Pointer to `TpuEmbeddingEngineState` to free.
+ */
+void TpuEmbeddingTensorBatchFixedState_Destroy(TpuEmbeddingEngineState *state);
+
+/**
+ * @brief Enqueues sparse embedding lookup batch
+ * (`TpuEmbeddingEngine_EnqueueTensorBatch`).
+ * @param params Pointer to `TpuEmbeddingEngine_EnqueueTensorBatch_Params` (or
+ * generic `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_EnqueueTensorBatch(void *params);
+
+/**
+ * @brief Builds XLA computation for receiving embedding activations
+ * (`TpuEmbeddingEngine_RecvActivationsComputation`).
+ * @param params Pointer to `TpuEmbeddingEngine_Computation_Params` (or generic
+ * `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_RecvActivationsComputation(void *params);
+
+/**
+ * @brief Builds XLA computation for receiving deduplication data
+ * (`TpuEmbeddingEngine_RecvTPUEmbeddingDeduplicationDataComputation`).
+ * @param params Pointer to `TpuEmbeddingEngine_Computation_Params` (or generic
+ * `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t
+TpuEmbeddingEngine_RecvTPUEmbeddingDeduplicationDataComputation(void *params);
+
+/**
+ * @brief Builds XLA computation for sending embedding gradients
+ * (`TpuEmbeddingEngine_SendTPUEmbeddingGradientsComputation`).
+ * @param params Pointer to `TpuEmbeddingEngine_Computation_Params` (or generic
+ * `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_SendTPUEmbeddingGradientsComputation(void *params);
+
+/**
+ * @brief Builds XLA computation for deduplication data byte size
+ * (`TpuEmbeddingEngine_DedupDataSizeComputation`).
+ * @param params Pointer to `TpuEmbeddingEngine_Computation_Params` (or generic
+ * `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_DedupDataSizeComputation(void *params);
+
+/**
+ * @brief Builds XLA computation for deduplication tuple mask
+ * (`TpuEmbeddingEngine_DedupDataTupleMaskComputation`).
+ * @param params Pointer to `TpuEmbeddingEngine_Computation_Params` (or generic
+ * `void*`).
+ * @return `0` on success, `-1` on invalid struct size.
+ */
+int32_t TpuEmbeddingEngine_DedupDataTupleMaskComputation(void *params);
+
+/**
  * @brief Frees a heap-allocated `char*` array
  * (`TpuConfigurationApi_FreeCharArray`).
  * @param ptr Pointer previously returned by a configuration or embedding API.
@@ -941,6 +1949,13 @@ typedef struct DeviceAssignment {
   /** @brief Number of computations (partitions). */
   int32_t computation_count;
 } DeviceAssignment;
+
+/**
+ * @brief Populates a `TpuDriverFn` function table (`TpuDriver_Initialize`).
+ * @param driver_fn Output pointer to `TpuDriverFn` to populate.
+ * @param initialize Whether to initialize the global TPU runtime.
+ */
+void TpuDriver_Initialize(TpuDriverFn *driver_fn, bool initialize);
 
 /**
  * @brief Opens a `TpuDriver` instance (`TpuDriver_Open`).

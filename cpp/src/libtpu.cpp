@@ -2,45 +2,78 @@
  * @file libtpu.cpp
  * @brief Implementation of the strongly-typed C++20 RAII wrapper classes for
  * `libtpu-rs` driving `GetPjrtApi()`, `GetLibtpuSdkApi()`, `TpuTopology_*()`,
- * and `TpuProfiler_*()` directly.
+ * and `TpuProfiler_*()` directly via typed `PJRT_*_Args` and
+ * `LibtpuSdk_*_Args` C structures.
  */
 
 #include "libtpu.hpp"
 
 namespace libtpu {
 
+static_assert(sizeof(PJRT_Api) == 1144, "PJRT_Api must be 1144 bytes");
+static_assert(sizeof(LibtpuSdk_Api) == 144, "LibtpuSdk_Api must be 144 bytes");
+static_assert(sizeof(PJRT_Client_Create_Args) == 88,
+              "PJRT_Client_Create_Args must be 88 bytes");
+static_assert(sizeof(PJRT_Client_BufferFromHostBuffer_Args) == 120,
+              "PJRT_Client_BufferFromHostBuffer_Args must be 120 bytes");
+static_assert(sizeof(PJRT_LoadedExecutable_Execute_Args) == 80,
+              "PJRT_LoadedExecutable_Execute_Args must be 80 bytes");
+static_assert(sizeof(PJRT_Buffer_ToHostBuffer_Args) == 56,
+              "PJRT_Buffer_ToHostBuffer_Args must be 56 bytes");
+
 /**
  * @brief Converts a `PJRT_Error*` returned by a `GetPjrtApi()` slot into a
- * `Status` and frees `err`.
+ * `Status` (querying both `PJRT_Error_GetCode` and `PJRT_Error_Message`) and
+ * frees `err`.
  * @param err Pointer to `PJRT_Error` (or `nullptr` on success).
- * @return `Status` representing success (`0`) or the queried `PJRT_Error_Code`.
+ * @return `Status` representing success (`0`) or the queried `PJRT_Error_Code`
+ * and message.
  */
 static Status pjrt_error_to_status(PJRT_Error *err) noexcept {
   if (err == nullptr) {
-    return Status(LibTpuCStatus{0, nullptr});
+    return Status(LibTpuCStatus{0, nullptr}, "");
   }
-  uintptr_t code_args[4] = {32, 0, reinterpret_cast<uintptr_t>(err), 0};
-  GetPjrtApi()->pjrt_error_get_code(code_args);
-  uintptr_t del_args[3] = {24, 0, reinterpret_cast<uintptr_t>(err)};
-  GetPjrtApi()->pjrt_error_destroy(del_args);
-  return Status(LibTpuCStatus{static_cast<int32_t>(code_args[3]), nullptr});
+  PJRT_Error_GetCode_Args code_args{sizeof(PJRT_Error_GetCode_Args), nullptr,
+                                    err, 0, 0};
+  (void)GetPjrtApi()->pjrt_error_get_code(&code_args);
+
+  PJRT_Error_Message_Args msg_args{sizeof(PJRT_Error_Message_Args), nullptr,
+                                   err, nullptr, 0};
+  GetPjrtApi()->pjrt_error_message(&msg_args);
+
+  static thread_local char last_error_buf[256];
+  for (size_t i = 0; i < msg_args.message_size; ++i) {
+    last_error_buf[i] = msg_args.message[i];
+  }
+  last_error_buf[msg_args.message_size] = '\0';
+
+  PJRT_Error_Destroy_Args del_args{sizeof(PJRT_Error_Destroy_Args), nullptr,
+                                   err};
+  GetPjrtApi()->pjrt_error_destroy(&del_args);
+  return Status(LibTpuCStatus{code_args.code, nullptr}, last_error_buf);
 }
 
-Status::Status(LibTpuCStatus raw) noexcept : raw_(raw) {}
+Status::Status(LibTpuCStatus raw, const char *msg_str) noexcept
+    : raw_(raw), msg_str_(msg_str) {}
 
 Status::~Status() noexcept { libtpu_rs_status_free(raw_); }
 
-Status::Status(Status &&other) noexcept : raw_(other.raw_) {
+Status::Status(Status &&other) noexcept
+    : raw_(other.raw_), msg_str_(other.msg_str_) {
   other.raw_.code = 0;
   other.raw_.message = nullptr;
+  other.msg_str_ = "";
 }
 
 Status &Status::operator=(Status &&other) noexcept {
   LibTpuCStatus next = other.raw_;
+  const char *next_msg = other.msg_str_;
   other.raw_.code = 0;
   other.raw_.message = nullptr;
+  other.msg_str_ = "";
   libtpu_rs_status_free(raw_);
   raw_ = next;
+  msg_str_ = next_msg;
   return *this;
 }
 
@@ -48,15 +81,14 @@ bool Status::is_ok() const noexcept { return raw_.code == 0; }
 
 int32_t Status::code() const noexcept { return raw_.code; }
 
-const char *Status::message() const noexcept {
-  return raw_.code == 0 ? "" : "PJRT error";
-}
+const char *Status::message() const noexcept { return msg_str_; }
 
 Buffer::Buffer(PJRT_Buffer *handle) noexcept : handle_(handle) {}
 
 Buffer::~Buffer() noexcept {
-  uintptr_t args[3] = {24, 0, reinterpret_cast<uintptr_t>(handle_)};
-  GetPjrtApi()->pjrt_buffer_destroy(args);
+  PJRT_Buffer_Destroy_Args args{sizeof(PJRT_Buffer_Destroy_Args), nullptr,
+                                handle_};
+  (void)GetPjrtApi()->pjrt_buffer_destroy(&args);
 }
 
 Buffer::Buffer(Buffer &&other) noexcept : handle_(other.handle_) {
@@ -66,52 +98,67 @@ Buffer::Buffer(Buffer &&other) noexcept : handle_(other.handle_) {
 Buffer &Buffer::operator=(Buffer &&other) noexcept {
   PJRT_Buffer *next = other.handle_;
   other.handle_ = nullptr;
-  uintptr_t args[3] = {24, 0, reinterpret_cast<uintptr_t>(handle_)};
-  GetPjrtApi()->pjrt_buffer_destroy(args);
+  PJRT_Buffer_Destroy_Args args{sizeof(PJRT_Buffer_Destroy_Args), nullptr,
+                                handle_};
+  (void)GetPjrtApi()->pjrt_buffer_destroy(&args);
   handle_ = next;
   return *this;
 }
 
 Status Buffer::to_host(uint8_t *host_dst, size_t len) const noexcept {
-  uintptr_t args[7] = {56,
-                       0,
-                       reinterpret_cast<uintptr_t>(handle_),
-                       0,
-                       reinterpret_cast<uintptr_t>(host_dst),
-                       len,
-                       0};
-  return pjrt_error_to_status(GetPjrtApi()->pjrt_buffer_to_host_buffer(args));
+  PJRT_Buffer_ToHostBuffer_Args args{sizeof(PJRT_Buffer_ToHostBuffer_Args),
+                                     nullptr,
+                                     handle_,
+                                     nullptr,
+                                     host_dst,
+                                     len,
+                                     nullptr};
+  return pjrt_error_to_status(GetPjrtApi()->pjrt_buffer_to_host_buffer(&args));
 }
 
 size_t Buffer::rank() const noexcept {
-  uintptr_t args[5] = {40, 0, reinterpret_cast<uintptr_t>(handle_), 0, 0};
-  GetPjrtApi()->pjrt_buffer_dimensions(args);
-  return static_cast<size_t>(args[4]);
+  PJRT_Buffer_Dimensions_Args args{sizeof(PJRT_Buffer_Dimensions_Args), nullptr,
+                                   handle_, nullptr, 0};
+  (void)GetPjrtApi()->pjrt_buffer_dimensions(&args);
+  return args.num_dims;
 }
 
 int64_t Buffer::dimension(size_t axis) const noexcept {
-  uintptr_t args[5] = {40, 0, reinterpret_cast<uintptr_t>(handle_), 0, 0};
-  GetPjrtApi()->pjrt_buffer_dimensions(args);
-  const int64_t *dims_ptr = reinterpret_cast<const int64_t *>(args[3]);
-  return dims_ptr[axis];
+  PJRT_Buffer_Dimensions_Args args{sizeof(PJRT_Buffer_Dimensions_Args), nullptr,
+                                   handle_, nullptr, 0};
+  (void)GetPjrtApi()->pjrt_buffer_dimensions(&args);
+  return args.dims[axis];
 }
 
 DataType Buffer::element_type() const noexcept {
-  uintptr_t args[4] = {32, 0, reinterpret_cast<uintptr_t>(handle_), 0};
-  GetPjrtApi()->pjrt_buffer_element_type(args);
-  return static_cast<DataType>(static_cast<int32_t>(args[3]));
+  PJRT_Buffer_ElementType_Args args{sizeof(PJRT_Buffer_ElementType_Args),
+                                    nullptr, handle_, 0, 0};
+  (void)GetPjrtApi()->pjrt_buffer_element_type(&args);
+  return static_cast<DataType>(args.type);
+}
+
+size_t Buffer::tile_count() const noexcept {
+  PJRT_Buffer_GetMemoryLayout_Args args{
+      sizeof(PJRT_Buffer_GetMemoryLayout_Args),
+      nullptr,
+      handle_,
+      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+  (void)GetPjrtApi()->pjrt_buffer_get_memory_layout(&args);
+  return args.layout_words[6];
 }
 
 Status Buffer::copy_to_device(PJRT_Client *client, uint32_t dst_device_id,
                               Buffer *out_buffer) const noexcept {
-  uintptr_t look_args[5] = {40, 0, reinterpret_cast<uintptr_t>(client),
-                            static_cast<uintptr_t>(dst_device_id), 0};
-  PJRT_Error *err = GetPjrtApi()->pjrt_client_lookup_device(look_args);
+  PJRT_Client_LookupDevice_Args look_args{
+      sizeof(PJRT_Client_LookupDevice_Args), nullptr, client,
+      static_cast<int32_t>(dst_device_id),   0,       nullptr};
+  PJRT_Error *err = GetPjrtApi()->pjrt_client_lookup_device(&look_args);
   if (err == nullptr) {
-    uintptr_t cp_args[5] = {40, 0, reinterpret_cast<uintptr_t>(handle_),
-                            look_args[4], 0};
-    GetPjrtApi()->pjrt_buffer_copy_to_device(cp_args);
-    *out_buffer = Buffer(reinterpret_cast<PJRT_Buffer *>(cp_args[4]));
+    PJRT_Buffer_CopyToDevice_Args cp_args{sizeof(PJRT_Buffer_CopyToDevice_Args),
+                                          nullptr, handle_, look_args.device,
+                                          nullptr};
+    (void)GetPjrtApi()->pjrt_buffer_copy_to_device(&cp_args);
+    *out_buffer = Buffer(cp_args.dst_buffer);
   }
   return pjrt_error_to_status(err);
 }
@@ -122,8 +169,9 @@ LoadedExecutable::LoadedExecutable(PJRT_LoadedExecutable *handle) noexcept
     : handle_(handle) {}
 
 LoadedExecutable::~LoadedExecutable() noexcept {
-  uintptr_t args[3] = {24, 0, reinterpret_cast<uintptr_t>(handle_)};
-  GetPjrtApi()->pjrt_loaded_executable_destroy(args);
+  PJRT_LoadedExecutable_Destroy_Args args{
+      sizeof(PJRT_LoadedExecutable_Destroy_Args), nullptr, handle_};
+  (void)GetPjrtApi()->pjrt_loaded_executable_destroy(&args);
 }
 
 LoadedExecutable::LoadedExecutable(LoadedExecutable &&other) noexcept
@@ -135,8 +183,9 @@ LoadedExecutable &
 LoadedExecutable::operator=(LoadedExecutable &&other) noexcept {
   PJRT_LoadedExecutable *next = other.handle_;
   other.handle_ = nullptr;
-  uintptr_t args[3] = {24, 0, reinterpret_cast<uintptr_t>(handle_)};
-  GetPjrtApi()->pjrt_loaded_executable_destroy(args);
+  PJRT_LoadedExecutable_Destroy_Args args{
+      sizeof(PJRT_LoadedExecutable_Destroy_Args), nullptr, handle_};
+  (void)GetPjrtApi()->pjrt_loaded_executable_destroy(&args);
   handle_ = next;
   return *this;
 }
@@ -145,19 +194,22 @@ Status LoadedExecutable::execute(uint32_t device_id,
                                  const PJRT_Buffer *const *inputs,
                                  size_t num_inputs, PJRT_Buffer **outputs_out,
                                  size_t num_outputs) const noexcept {
-  (void)num_inputs;
   (void)num_outputs;
   const PJRT_Buffer *const *arg_lists[1] = {inputs};
   PJRT_Buffer **out_lists[1] = {outputs_out};
-  uintptr_t ex_args[7] = {56,
-                          0,
-                          reinterpret_cast<uintptr_t>(handle_),
-                          0,
-                          reinterpret_cast<uintptr_t>(arg_lists),
-                          static_cast<uintptr_t>(device_id) + 1U,
-                          reinterpret_cast<uintptr_t>(out_lists)};
+  PJRT_LoadedExecutable_Execute_Args ex_args{
+      sizeof(PJRT_LoadedExecutable_Execute_Args),
+      nullptr,
+      handle_,
+      nullptr,
+      arg_lists,
+      static_cast<size_t>(device_id) + 1U,
+      num_inputs,
+      out_lists,
+      nullptr,
+      nullptr};
   return pjrt_error_to_status(
-      GetPjrtApi()->pjrt_loaded_executable_execute(ex_args));
+      GetPjrtApi()->pjrt_loaded_executable_execute(&ex_args));
 }
 
 Status LoadedExecutable::execute_binary(uint32_t device_id,
@@ -176,26 +228,38 @@ Status LoadedExecutable::execute_binary(uint32_t device_id,
 Status LoadedExecutable::serialize(uint8_t *out_bytes, size_t max_len,
                                    size_t *out_len) const noexcept {
   (void)max_len;
-  uintptr_t get_ex_args[4] = {32, 0, reinterpret_cast<uintptr_t>(handle_), 0};
-  GetPjrtApi()->pjrt_loaded_executable_get_executable(get_ex_args);
-  uintptr_t ser_args[6] = {48, 0, get_ex_args[3], 0, 0, 0};
-  GetPjrtApi()->pjrt_executable_serialize(ser_args);
-  const uint8_t *src = reinterpret_cast<const uint8_t *>(ser_args[3]);
-  size_t len = static_cast<size_t>(ser_args[4]);
+  PJRT_LoadedExecutable_GetExecutable_Args get_ex_args{
+      sizeof(PJRT_LoadedExecutable_GetExecutable_Args), nullptr, handle_,
+      nullptr};
+  (void)GetPjrtApi()->pjrt_loaded_executable_get_executable(&get_ex_args);
+  PJRT_Executable_Serialize_Args ser_args{
+      sizeof(PJRT_Executable_Serialize_Args),
+      nullptr,
+      get_ex_args.executable,
+      nullptr,
+      0,
+      nullptr,
+      nullptr};
+  (void)GetPjrtApi()->pjrt_executable_serialize(&ser_args);
+  const uint8_t *src =
+      reinterpret_cast<const uint8_t *>(ser_args.serialized_bytes);
+  size_t len = ser_args.serialized_bytes_size;
   *out_len = len;
   for (size_t i = 0; i < len; ++i) {
     out_bytes[i] = src[i];
   }
-  return Status(LibTpuCStatus{0, nullptr});
+  return Status(LibTpuCStatus{0, nullptr}, "");
 }
 
 size_t LoadedExecutable::fingerprint(char *out_buf,
                                      size_t buf_len) const noexcept {
   (void)buf_len;
-  uintptr_t fp_args[5] = {40, 0, reinterpret_cast<uintptr_t>(handle_), 0, 0};
-  GetPjrtApi()->pjrt_loaded_executable_fingerprint(fp_args);
-  const char *src = reinterpret_cast<const char *>(fp_args[3]);
-  size_t len = static_cast<size_t>(fp_args[4]);
+  PJRT_LoadedExecutable_Fingerprint_Args fp_args{
+      sizeof(PJRT_LoadedExecutable_Fingerprint_Args), nullptr, handle_, nullptr,
+      0};
+  (void)GetPjrtApi()->pjrt_loaded_executable_fingerprint(&fp_args);
+  const char *src = fp_args.executable_fingerprint;
+  size_t len = fp_args.executable_fingerprint_size;
   for (size_t i = 0; i < len; ++i) {
     out_buf[i] = src[i];
   }
@@ -203,22 +267,118 @@ size_t LoadedExecutable::fingerprint(char *out_buf,
 }
 
 float LoadedExecutable::flops() const noexcept {
-  uintptr_t get_ex_args[4] = {32, 0, reinterpret_cast<uintptr_t>(handle_), 0};
-  GetPjrtApi()->pjrt_loaded_executable_get_executable(get_ex_args);
-  uintptr_t cost_args[5] = {40, 0, get_ex_args[3], 0, 0};
-  GetPjrtApi()->pjrt_executable_get_cost_analysis(cost_args);
-  return static_cast<float>(cost_args[4]);
+  PJRT_LoadedExecutable_GetExecutable_Args get_ex_args{
+      sizeof(PJRT_LoadedExecutable_GetExecutable_Args), nullptr, handle_,
+      nullptr};
+  (void)GetPjrtApi()->pjrt_loaded_executable_get_executable(&get_ex_args);
+  PJRT_Executable_GetCostAnalysis_Args cost_args{
+      sizeof(PJRT_Executable_GetCostAnalysis_Args), nullptr,
+      get_ex_args.executable, nullptr, 0};
+  (void)GetPjrtApi()->pjrt_executable_get_cost_analysis(&cost_args);
+  return static_cast<float>(cost_args.num_properties);
+}
+
+size_t LoadedExecutable::num_outputs() const noexcept {
+  PJRT_LoadedExecutable_GetExecutable_Args get_ex_args{
+      sizeof(PJRT_LoadedExecutable_GetExecutable_Args), nullptr, handle_,
+      nullptr};
+  (void)GetPjrtApi()->pjrt_loaded_executable_get_executable(&get_ex_args);
+  PJRT_Executable_OutputMemoryKinds_Args omk_args{
+      sizeof(PJRT_Executable_OutputMemoryKinds_Args),
+      nullptr,
+      get_ex_args.executable,
+      0,
+      nullptr,
+      nullptr};
+  (void)GetPjrtApi()->pjrt_executable_output_memory_kinds(&omk_args);
+  return omk_args.num_outputs;
+}
+
+Status LoadedExecutable::optimized_program(uint8_t *out_bytes, size_t max_len,
+                                           size_t *out_len) const noexcept {
+  PJRT_LoadedExecutable_GetExecutable_Args get_ex_args{
+      sizeof(PJRT_LoadedExecutable_GetExecutable_Args), nullptr, handle_,
+      nullptr};
+  (void)GetPjrtApi()->pjrt_loaded_executable_get_executable(&get_ex_args);
+  PJRT_Program prog{sizeof(PJRT_Program), nullptr, nullptr, 0, nullptr, 0};
+  PJRT_Executable_OptimizedProgram_Args opt_args{
+      sizeof(PJRT_Executable_OptimizedProgram_Args), nullptr,
+      get_ex_args.executable, &prog};
+  (void)GetPjrtApi()->pjrt_executable_optimized_program(&opt_args);
+  *out_len = prog.code_size;
+  prog.code = reinterpret_cast<const char *>(out_bytes);
+  prog.code_size = max_len;
+  return pjrt_error_to_status(
+      GetPjrtApi()->pjrt_executable_optimized_program(&opt_args));
 }
 
 const PJRT_LoadedExecutable *LoadedExecutable::raw() const noexcept {
   return handle_;
 }
 
+Event::Event(PJRT_Event *handle) noexcept : handle_(handle) {}
+
+Event::~Event() noexcept {
+  PJRT_Event_Destroy_Args args{sizeof(PJRT_Event_Destroy_Args), nullptr,
+                               handle_};
+  (void)GetPjrtApi()->pjrt_event_destroy(&args);
+}
+
+Event::Event(Event &&other) noexcept : handle_(other.handle_) {
+  other.handle_ = nullptr;
+}
+
+Event &Event::operator=(Event &&other) noexcept {
+  PJRT_Event *next = other.handle_;
+  other.handle_ = nullptr;
+  PJRT_Event_Destroy_Args args{sizeof(PJRT_Event_Destroy_Args), nullptr,
+                               handle_};
+  (void)GetPjrtApi()->pjrt_event_destroy(&args);
+  handle_ = next;
+  return *this;
+}
+
+Status Event::create(Event *event_out) noexcept {
+  PJRT_Event_Create_Args args{sizeof(PJRT_Event_Create_Args), nullptr, nullptr};
+  PJRT_Error *err = GetPjrtApi()->pjrt_event_create(&args);
+  *event_out = Event(args.event);
+  return pjrt_error_to_status(err);
+}
+
+bool Event::is_ready() const noexcept {
+  PJRT_Event_IsReady_Args args{sizeof(PJRT_Event_IsReady_Args),
+                               nullptr,
+                               handle_,
+                               false,
+                               {0, 0, 0, 0, 0, 0, 0}};
+  (void)GetPjrtApi()->pjrt_event_is_ready(&args);
+  return args.is_ready;
+}
+
+Status Event::set(int32_t error_code, const char *message) noexcept {
+  PJRT_Event_Set_Args args{
+      sizeof(PJRT_Event_Set_Args), nullptr, handle_, error_code, 0, message, 0};
+  return pjrt_error_to_status(GetPjrtApi()->pjrt_event_set(&args));
+}
+
+Status Event::on_ready(PJRT_Event_OnReadyCallback callback,
+                       void *user_arg) noexcept {
+  PJRT_Event_OnReady_Args args{sizeof(PJRT_Event_OnReady_Args), nullptr,
+                               handle_, callback, user_arg};
+  return pjrt_error_to_status(GetPjrtApi()->pjrt_event_on_ready(&args));
+}
+
+Status Event::await() const noexcept {
+  PJRT_Event_Await_Args args{sizeof(PJRT_Event_Await_Args), nullptr, handle_};
+  return pjrt_error_to_status(GetPjrtApi()->pjrt_event_await(&args));
+}
+
 Client::Client(PJRT_Client *handle) noexcept : handle_(handle) {}
 
 Client::~Client() noexcept {
-  uintptr_t args[3] = {24, 0, reinterpret_cast<uintptr_t>(handle_)};
-  GetPjrtApi()->pjrt_client_destroy(args);
+  PJRT_Client_Destroy_Args args{sizeof(PJRT_Client_Destroy_Args), nullptr,
+                                handle_};
+  (void)GetPjrtApi()->pjrt_client_destroy(&args);
 }
 
 Client::Client(Client &&other) noexcept : handle_(other.handle_) {
@@ -228,16 +388,27 @@ Client::Client(Client &&other) noexcept : handle_(other.handle_) {
 Client &Client::operator=(Client &&other) noexcept {
   PJRT_Client *next = other.handle_;
   other.handle_ = nullptr;
-  uintptr_t args[3] = {24, 0, reinterpret_cast<uintptr_t>(handle_)};
-  GetPjrtApi()->pjrt_client_destroy(args);
+  PJRT_Client_Destroy_Args args{sizeof(PJRT_Client_Destroy_Args), nullptr,
+                                handle_};
+  (void)GetPjrtApi()->pjrt_client_destroy(&args);
   handle_ = next;
   return *this;
 }
 
 Status Client::create(Client *client_out) noexcept {
-  uintptr_t args[9] = {72, 0, 0, 0, 0, 0, 0, 0, 0};
-  PJRT_Error *err = GetPjrtApi()->pjrt_client_create(args);
-  *client_out = Client(reinterpret_cast<PJRT_Client *>(args[8]));
+  PJRT_Client_Create_Args args{sizeof(PJRT_Client_Create_Args),
+                               nullptr,
+                               nullptr,
+                               0,
+                               nullptr,
+                               nullptr,
+                               nullptr,
+                               nullptr,
+                               nullptr,
+                               nullptr,
+                               nullptr};
+  PJRT_Error *err = GetPjrtApi()->pjrt_client_create(&args);
+  *client_out = Client(args.client);
   return pjrt_error_to_status(err);
 }
 
@@ -245,9 +416,31 @@ int32_t Client::device_count() const noexcept {
   if (handle_ == nullptr) {
     return -1;
   }
-  uintptr_t args[5] = {40, 0, reinterpret_cast<uintptr_t>(handle_), 0, 0};
-  GetPjrtApi()->pjrt_client_addressable_devices(args);
-  return static_cast<int32_t>(args[4]);
+  PJRT_Client_Devices_Args args{sizeof(PJRT_Client_Devices_Args), nullptr,
+                                handle_, nullptr, 0};
+  (void)GetPjrtApi()->pjrt_client_addressable_devices(&args);
+  return static_cast<int32_t>(args.num_devices);
+}
+
+size_t Client::device_attribute_count(uint32_t device_id) const noexcept {
+  PJRT_Client_LookupDevice_Args look_args{
+      sizeof(PJRT_Client_LookupDevice_Args), nullptr, handle_,
+      static_cast<int32_t>(device_id),       0,       nullptr};
+  PJRT_Error *err = GetPjrtApi()->pjrt_client_lookup_device(&look_args);
+  if (err != nullptr) {
+    (void)pjrt_error_to_status(err);
+    return 0;
+  }
+  PJRT_Device_GetAttributes_Args attr_args{
+      sizeof(PJRT_Device_GetAttributes_Args),
+      nullptr,
+      look_args.device,
+      nullptr,
+      0,
+      0,
+      0};
+  (void)GetPjrtApi()->pjrt_device_get_attributes(&attr_args);
+  return attr_args.num_attributes;
 }
 
 Status Client::buffer_from_host(uint32_t device_id, DataType dtype,
@@ -255,27 +448,31 @@ Status Client::buffer_from_host(uint32_t device_id, DataType dtype,
                                 const uint8_t *host_data, size_t host_data_len,
                                 Buffer *buffer_out) noexcept {
   (void)host_data_len;
-  uintptr_t look_args[5] = {40, 0, reinterpret_cast<uintptr_t>(handle_),
-                            static_cast<uintptr_t>(device_id), 0};
-  PJRT_Error *err = GetPjrtApi()->pjrt_client_lookup_device(look_args);
+  PJRT_Client_LookupDevice_Args look_args{
+      sizeof(PJRT_Client_LookupDevice_Args), nullptr, handle_,
+      static_cast<int32_t>(device_id),       0,       nullptr};
+  PJRT_Error *err = GetPjrtApi()->pjrt_client_lookup_device(&look_args);
   if (err == nullptr) {
-    uintptr_t h2d_args[14] = {
-        112,
+    PJRT_Client_BufferFromHostBuffer_Args h2d_args{
+        sizeof(PJRT_Client_BufferFromHostBuffer_Args),
+        nullptr,
+        handle_,
+        host_data,
+        static_cast<int32_t>(dtype),
         0,
-        reinterpret_cast<uintptr_t>(handle_),
-        reinterpret_cast<uintptr_t>(host_data),
-        static_cast<uintptr_t>(static_cast<uint32_t>(dtype)),
-        reinterpret_cast<uintptr_t>(dims),
+        dims,
         num_dims,
+        nullptr,
         0,
         0,
         0,
-        look_args[4],
-        0,
-        0,
-        0};
-    GetPjrtApi()->pjrt_client_buffer_from_host_buffer(h2d_args);
-    *buffer_out = Buffer(reinterpret_cast<PJRT_Buffer *>(h2d_args[13]));
+        look_args.device,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr};
+    (void)GetPjrtApi()->pjrt_client_buffer_from_host_buffer(&h2d_args);
+    *buffer_out = Buffer(h2d_args.buffer);
   }
   return pjrt_error_to_status(err);
 }
@@ -286,41 +483,41 @@ Status Client::compile(const char *format, const uint8_t *code, size_t code_len,
   while (format[fmt_len] != '\0') {
     ++fmt_len;
   }
-  uintptr_t prog[6] = {48,
-                       0,
-                       reinterpret_cast<uintptr_t>(code),
-                       code_len,
-                       reinterpret_cast<uintptr_t>(format),
-                       fmt_len};
-  uintptr_t comp_args[7] = {56,
-                            0,
-                            reinterpret_cast<uintptr_t>(handle_),
-                            reinterpret_cast<uintptr_t>(prog),
-                            0,
-                            0,
-                            0};
-  PJRT_Error *err = GetPjrtApi()->pjrt_client_compile(comp_args);
+  PJRT_Program prog{sizeof(PJRT_Program),
+                    nullptr,
+                    reinterpret_cast<const char *>(code),
+                    code_len,
+                    format,
+                    fmt_len};
+  PJRT_Client_Compile_Args comp_args{sizeof(PJRT_Client_Compile_Args),
+                                     nullptr,
+                                     handle_,
+                                     &prog,
+                                     nullptr,
+                                     0,
+                                     nullptr};
+  PJRT_Error *err = GetPjrtApi()->pjrt_client_compile(&comp_args);
   if (err == nullptr) {
-    *exec_out = LoadedExecutable(
-        reinterpret_cast<PJRT_LoadedExecutable *>(comp_args[6]));
+    *exec_out = LoadedExecutable(comp_args.executable);
   }
   return pjrt_error_to_status(err);
 }
 
 Status Client::deserialize_executable(const uint8_t *bytes, size_t bytes_len,
                                       LoadedExecutable *exec_out) noexcept {
-  uintptr_t deser_args[7] = {56,
-                             0,
-                             reinterpret_cast<uintptr_t>(handle_),
-                             reinterpret_cast<uintptr_t>(bytes),
-                             bytes_len,
-                             0,
-                             0};
+  PJRT_Executable_DeserializeAndLoad_Args deser_args{
+      sizeof(PJRT_Executable_DeserializeAndLoad_Args),
+      nullptr,
+      handle_,
+      reinterpret_cast<const char *>(bytes),
+      bytes_len,
+      nullptr,
+      nullptr,
+      0};
   PJRT_Error *err =
-      GetPjrtApi()->pjrt_executable_deserialize_and_load(deser_args);
+      GetPjrtApi()->pjrt_executable_deserialize_and_load(&deser_args);
   if (err == nullptr) {
-    *exec_out = LoadedExecutable(
-        reinterpret_cast<PJRT_LoadedExecutable *>(deser_args[5]));
+    *exec_out = LoadedExecutable(deser_args.loaded_executable);
   }
   return pjrt_error_to_status(err);
 }

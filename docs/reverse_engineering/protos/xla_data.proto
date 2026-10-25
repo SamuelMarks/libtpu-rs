@@ -1,0 +1,87 @@
+syntax = "proto3";
+package xla;
+
+enum PrimitiveType {
+  PRIMITIVE_TYPE_INVALID = 0;
+  PRED = 1;
+  S8 = 2;
+  S16 = 3;
+  S32 = 4;
+  S64 = 5;
+  U8 = 6;
+  U16 = 7;
+  U32 = 8;
+  U64 = 9;
+  F16 = 10;
+  F32 = 11;
+  F64 = 12;
+  C64 = 15;
+  BF16 = 16;
+  C128 = 18;
+  F8E5M2 = 19;
+  F8E4M3FN = 20;
+  F8E4M3B11FNUZ = 21;
+  F8E5M2FNUZ = 22;
+  F8E4M3FNUZ = 23;
+  S4 = 24;
+  U4 = 25;
+  TOKEN = 26;
+  S2 = 27;
+  U2 = 28;
+}
+
+message TileProto {
+  repeated int64 dimensions = 1;
+}
+
+message LayoutProto {
+  repeated int64 minor_to_major = 1;
+  repeated TileProto tiles = 2;
+  int64 element_size_in_bits = 3;
+  int64 memory_space = 4;
+}
+
+message ShapeProto {
+  PrimitiveType element_type = 1;
+  repeated int64 dimensions = 2;
+  repeated ShapeProto tuple_shapes = 3;
+  LayoutProto layout = 4;
+  repeated bool is_dynamic_dimension = 5;
+}
+
+message ProgramShapeProto {
+  repeated ShapeProto parameters = 1;
+  ShapeProto result = 2;
+  repeated string parameter_names = 3;
+}
+
+message OpSharding {
+  enum Type {
+    REPLICATED = 0;
+    MAXIMAL = 1;
+    TUPLE = 2;
+    OTHER = 3;
+    MANUAL = 4;
+    UNKNOWN = 5;
+  }
+  Type type = 1;
+  ShapeProto tile_shape = 2;
+  repeated int64 tile_assignment_dimensions = 3;
+  repeated int64 tile_assignment_devices = 4;
+  repeated OpSharding tuple_shardings = 5;
+  bool replicate_on_last_tile_dim = 6;
+}
+
+message ReplicaGroup {
+  repeated int64 replica_ids = 1;
+}
+
+message ComputationDeviceProto {
+  repeated int64 replica_device_ids = 1;
+}
+
+message DeviceAssignmentProto {
+  int32 replica_count = 1;
+  int32 computation_count = 2;
+  repeated ComputationDeviceProto computation_devices = 3;
+}

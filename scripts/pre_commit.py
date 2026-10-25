@@ -10,7 +10,10 @@ Performs:
    Python (`ruff check`, `mypy --strict`), and C/C++ (`doxygen`).
 4. Unit and integration test suite execution across Rust (`cargo test`), Python (`pytest`),
    and C/C++ (`ctest`).
-5. Doc & test coverage calculation and `% doc coverage` / `% test coverage` shield updates
+5. Official Google `libtpu` (`libtpu.so` v0.0.50) binary ABI & Python wheel API compatibility
+   verification (`PJRT_Api` v0.116 1,144-byte vtable, `LibtpuSdk_Api` v0.1 144-byte vtable,
+   17-node PJRT extension linked list, 75 exported dynamic C symbols, `#[repr(C)]` struct sizes).
+6. Doc & test coverage calculation and `% doc coverage` / `% test coverage` shield updates
    in `README.md`.
 """
 
@@ -18,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import ctypes
 import json
 import os
 import re
@@ -26,6 +30,174 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
+
+GOOGLE_LIBTPU_EXPORTED_SYMBOLS: tuple[str, ...] = (
+    "GetPjrtApi",
+    "GetLibtpuSdkApi",
+    "TfTpu_Initialize",
+    "TF_InitKernel",
+    "TFNPD_InitPlugin",
+    "SetGlobalTPUArrayOp_DoWork",
+    "TfTpu_GetTpuPartitionedCallParams",
+    "TpuConfigurationApi_FreeCharArray",
+    "TpuTransferManager_GetInfeedLayout",
+    "SparseCore_GetMaxIdsAndUniques",
+    "TfTpuOrdinalSelector_Create",
+    "TfTpuOrdinalSelector_Destroy",
+    "TfTpuOrdinalSelector_GetOrdinal",
+    "TfTpuOrdinalSelector_DequeueFromCoreSelector",
+    "TpuStatus_New",
+    "TpuStatus_Create",
+    "TpuStatus_Set",
+    "TpuStatus_Free",
+    "TpuStatus_Message",
+    "TpuStatus_Code",
+    "TpuStatus_Ok",
+    "TpuUtil_GetTopologyPtr",
+    "TpuUtil_GetXlaPadSizeFromTpuTopology",
+    "TpuTopology_LogicalDevicesPerHost",
+    "TpuTopology_LogicalDevicesPerChip",
+    "TpuTopology_HostCount",
+    "TpuTopology_ChipsPerHost",
+    "TpuTopology_ChipBounds_X",
+    "TpuTopology_ChipBounds_Y",
+    "TpuTopology_ChipBounds_Z",
+    "TpuTopology_HasChip",
+    "TpuTopology_CoreForId",
+    "TpuTopology_Core",
+    "TpuTopology_NumCores",
+    "TpuTopology_Cores",
+    "TpuTopology_IdForHost",
+    "TpuTopology_Version",
+    "TpuTopology_AvailableCoreCount",
+    "TpuTopology_AvailableCoresPerChip",
+    "TpuTopology_MaybeAvailableSparseCoresPerLogicalDevice",
+    "TpuCoreLocation_ChipCoordinates",
+    "TpuCoreLocation_HostCoordinates",
+    "TpuCoreLocation_Index",
+    "TpuCoreLocation_Id",
+    "TpuHostLocation_Id",
+    "TpuHostLocation_NumCores",
+    "TpuHostLocation_Cores",
+    "TpuMeshState_Create",
+    "TpuMeshState_Free",
+    "TpuMeshState_MeshCommonState",
+    "TpuProfiler_Create",
+    "TpuProfiler_Destroy",
+    "TpuProfiler_Start",
+    "TpuProfiler_Stop",
+    "TpuProfiler_CollectData",
+    "TpuEmbeddingEngineState_Create",
+    "TpuEmbeddingEngineState_Free",
+    "TpuEmbeddingEngineState_GetState",
+    "TpuEmbeddingEngine_ExecutePartitioner",
+    "TpuEmbeddingEngine_ConfigureMemory",
+    "TpuEmbeddingEngine_CollateMemory",
+    "TpuEmbeddingEngine_ConfigureHost",
+    "TpuEmbeddingEngine_ConnectHosts",
+    "TpuEmbeddingEngine_Finalize",
+    "TpuEmbeddingEngine_IsInitialized",
+    "TpuEmbeddingEngine_WriteParameters",
+    "TpuEmbeddingEngine_ReadParameters",
+    "TpuEmbeddingTensorBatchFixedState_Create",
+    "TpuEmbeddingTensorBatchFixedState_Destroy",
+    "TpuEmbeddingEngine_EnqueueTensorBatch",
+    "TpuEmbeddingEngine_RecvActivationsComputation",
+    "TpuEmbeddingEngine_RecvTPUEmbeddingDeduplicationDataComputation",
+    "TpuEmbeddingEngine_SendTPUEmbeddingGradientsComputation",
+    "TpuEmbeddingEngine_DedupDataSizeComputation",
+    "TpuEmbeddingEngine_DedupDataTupleMaskComputation",
+    "TpuDriver_Initialize",
+    "TpuDriver_Open",
+    "TpuDriver_Close",
+)
+
+EXPECTED_PJRT_EXTENSION_CHAIN: tuple[tuple[int, int, int], ...] = (
+    (29, 56, 4),
+    (28, 32, 1),
+    (26, 64, 5),
+    (25, 96, 9),
+    (20, 120, 12),
+    (19, 40, 2),
+    (18, 248, 28),
+    (17, 96, 9),
+    (16, 272, 31),
+    (14, 40, 2),
+    (9, 64, 5),
+    (12, 56, 4),
+    (11, 40, 2),
+    (7, 40, 2),
+    (6, 80, 7),
+    (8, 80, 7),
+    (1, 40, 2),
+)
+
+EXPECTED_PYTHON_WHEEL_SYMBOLS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "python/libtpu/__init__.py",
+        ("get_library_path", "configure_library_path", "set_init_args", "get_init_args"),
+    ),
+    (
+        "python/libtpu/sdk/tpumonitoring.py",
+        (
+            "ChipCoordinates",
+            "LibtpuSdkMetric",
+            "SdkClient",
+            "list_supported_metrics",
+            "get_metric",
+            "get_chip_coordinates",
+            "get_core_state_summary",
+        ),
+    ),
+    ("python/libtpu/sdk/tpuz.py", ("get_core_state_summary",)),
+    ("python/libtpu/sdk/slice.py", ("ChipCoordinates", "get_chip_coordinates")),
+    (
+        "python/libtpu/sdk/debug.py",
+        (
+            "register_debug_callback",
+            "unregister_debug_callback",
+            "_trigger_debug_callback_for_test",
+        ),
+    ),
+)
+
+EXPECTED_REPR_C_STRUCT_SIZES: tuple[tuple[str, int], ...] = (
+    ("PJRT_Api", 1144),
+    ("PJRT_Api_Version", 24),
+    ("LibtpuSdk_Api", 144),
+    ("TpuDriverFn", 224),
+    ("TFNPD_PluginParams", 40),
+    ("TpuPartitionedCall_Params", 24),
+    ("XLA_Shape", 96),
+    ("TpuSerializedProto", 16),
+    ("TpuEmbeddingEngine_ExecutePartitioner_Params", 56),
+    ("TpuEmbeddingEngine_ConfigureMemory_Params", 64),
+    ("TpuEmbeddingEngine_CollateMemory_Params", 48),
+    ("TpuEmbeddingEngine_ConfigureHost_Params", 80),
+    ("TpuEmbeddingEngine_ConnectHosts_Params", 40),
+    ("TpuEmbeddingEngine_Finalize_Params", 64),
+    ("TpuEmbeddingEngine_IsInitialized_Params", 40),
+    ("TpuEmbeddingEngine_WriteParameters_Params", 72),
+    ("TpuEmbeddingEngine_EnqueueTensorBatch_Params", 88),
+    ("TpuEmbeddingEngine_Computation_Params", 96),
+    ("PJRT_XlaTransform_Extension", 56),
+    ("PJRT_HostMemoryAllocator_Extension", 32),
+    ("PJRT_MultiSlice_Extension", 64),
+    ("PJRT_Collectives_Extension", 96),
+    ("PJRT_AbiVersion_Extension", 120),
+    ("PJRT_Shardings_Extension", 40),
+    ("PJRT_Megascale_Extension", 248),
+    ("PJRT_TpuExecutable_Extension", 96),
+    ("PJRT_TpuTopology_Extension", 272),
+    ("PJRT_Callback_Extension", 40),
+    ("PJRT_PhaseCompile_Extension", 64),
+    ("PJRT_CrossHostTransfers_Extension", 56),
+    ("PJRT_ExecutableMetadata_Extension", 40),
+    ("PJRT_MemoryDescriptions_Extension", 40),
+    ("PJRT_Layouts_Extension", 80),
+    ("PJRT_RawBuffer_Extension", 80),
+    ("PJRT_Profiler_Extension", 40),
+)
 
 
 def get_repo_root() -> Path:
@@ -789,6 +961,200 @@ def update_readme_shields(
     return False
 
 
+def resolve_compiled_cdylib(repo_root: Path) -> Path | None:
+    """Resolves the compiled `libtpu` shared library path (`libtpu.dylib`, `libtpu.so`, `tpu.dll`).
+
+    Args:
+        repo_root: Path to the workspace root directory.
+
+    Returns:
+        Path to the compiled shared library if found, or None otherwise.
+    """
+    candidates = [
+        repo_root / "target" / "debug" / "libtpu.dylib",
+        repo_root / "target" / "debug" / "libtpu.so",
+        repo_root / "target" / "debug" / "tpu.dll",
+        repo_root / "target" / "release" / "libtpu.dylib",
+        repo_root / "target" / "release" / "libtpu.so",
+        repo_root / "target" / "release" / "tpu.dll",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def verify_rust_and_c_abi_sources(repo_root: Path) -> list[str]:
+    """Verifies Rust `#[repr(C)]` struct size assertions and `cpp/src/libtpu.h` symbol declarations.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+
+    Returns:
+        List of ABI violation diagnostic strings (empty when 100% compatible).
+    """
+    errors: list[str] = []
+    c_api_src = repo_root / "crates" / "libtpu-c-api" / "src"
+    header_path = repo_root / "cpp" / "src" / "libtpu.h"
+
+    if not c_api_src.exists() or not header_path.exists():
+        errors.append("Missing crates/libtpu-c-api/src or cpp/src/libtpu.h")
+        return errors
+
+    rs_combined = "\n".join(p.read_text(encoding="utf-8") for p in sorted(c_api_src.glob("*.rs")))
+    header_text = header_path.read_text(encoding="utf-8")
+
+    for sym in GOOGLE_LIBTPU_EXPORTED_SYMBOLS:
+        if sym not in rs_combined:
+            errors.append(f"Symbol {sym} missing from crates/libtpu-c-api/src")
+        if sym not in header_text:
+            errors.append(f"Symbol {sym} missing from cpp/src/libtpu.h")
+
+    for struct_name, expected_size in EXPECTED_REPR_C_STRUCT_SIZES:
+        size_token = f"size_of::<{struct_name}>()"
+        if size_token not in rs_combined:
+            errors.append(
+                f"Compile-time size_of assertion missing for #[repr(C)] "
+                f"struct {struct_name} ({expected_size} B)"
+            )
+
+    for rel_py, required_names in EXPECTED_PYTHON_WHEEL_SYMBOLS:
+        py_path = repo_root / rel_py
+        if not py_path.exists():
+            errors.append(f"Missing Python wheel API module {rel_py}")
+            continue
+        py_text = py_path.read_text(encoding="utf-8")
+        for req_name in required_names:
+            if req_name not in py_text:
+                errors.append(f"Python wheel API symbol {req_name} missing from {rel_py}")
+
+    return errors
+
+
+def verify_binary_vtable_abi(cdylib_path: Path) -> list[str]:
+    """Loads `cdylib_path` via `ctypes.CDLL` and verifies `libtpu.so` binary ABI invariants.
+
+    Args:
+        cdylib_path: Path to the compiled `libtpu` dynamic library.
+
+    Returns:
+        List of binary ABI violation diagnostic strings (empty when 100% compatible).
+    """
+    errors: list[str] = []
+    lib = ctypes.CDLL(str(cdylib_path))
+
+    for sym in GOOGLE_LIBTPU_EXPORTED_SYMBOLS:
+        if not hasattr(lib, sym):
+            errors.append(f"Exported symbol '{sym}' missing from dynamic symbol table")
+
+    if errors:
+        return errors
+
+    lib.GetPjrtApi.restype = ctypes.c_void_p
+    pjrt_api_addr = int(lib.GetPjrtApi() or 0)
+    lib.GetLibtpuSdkApi.restype = ctypes.c_void_p
+    sdk_api_addr = int(lib.GetLibtpuSdkApi() or 0)
+    if pjrt_api_addr == 0 or sdk_api_addr == 0:
+        errors.append("GetPjrtApi() or GetLibtpuSdkApi() returned NULL")
+        return errors
+
+    qwords = (ctypes.c_uint64 * 143).from_address(pjrt_api_addr)
+    struct_size = int(qwords[0])
+    ver_size = int(qwords[2])
+    ver_major = ctypes.c_int32.from_address(pjrt_api_addr + 0x20).value
+    ver_minor = ctypes.c_int32.from_address(pjrt_api_addr + 0x24).value
+    null_pjrt_slots = [idx for idx in range(5, 143) if int(qwords[idx]) == 0]
+    if (struct_size, ver_size, ver_major, ver_minor) != (1144, 24, 0, 116) or null_pjrt_slots:
+        errors.append(
+            f"PJRT_Api header/slots mismatch: size={struct_size}, "
+            f"ver=({ver_size},{ver_major},{ver_minor}), null_slots={null_pjrt_slots}"
+        )
+
+    ext_addr = int(qwords[1])
+    actual_chain: list[tuple[int, int, int]] = []
+    while ext_addr != 0 and len(actual_chain) < 32:
+        ext_size = int(ctypes.c_uint64.from_address(ext_addr).value)
+        ext_type = int(ctypes.c_int32.from_address(ext_addr + 8).value)
+        next_addr = int(ctypes.c_uint64.from_address(ext_addr + 16).value)
+        fn_slots = (ext_size - 24) // 8
+        actual_chain.append((ext_type, ext_size, fn_slots))
+        ext_addr = next_addr
+
+    if tuple(actual_chain) != EXPECTED_PJRT_EXTENSION_CHAIN:
+        errors.append(
+            f"PJRT_Extension_Base chain mismatch: "
+            f"expected {EXPECTED_PJRT_EXTENSION_CHAIN}, got {tuple(actual_chain)}"
+        )
+
+    sdk_qwords = (ctypes.c_uint64 * 18).from_address(sdk_api_addr)
+    sdk_major = int(ctypes.c_int32.from_address(sdk_api_addr).value)
+    sdk_minor = int(ctypes.c_int32.from_address(sdk_api_addr + 4).value)
+    null_sdk_slots = [idx for idx in range(1, 18) if int(sdk_qwords[idx]) == 0]
+    if (sdk_major, sdk_minor) != (0, 1) or null_sdk_slots:
+        errors.append(
+            f"LibtpuSdk_Api mismatch: ver=({sdk_major},{sdk_minor}), null_slots={null_sdk_slots}"
+        )
+
+    lib.TpuDriver_Open.argtypes = [ctypes.c_char_p]
+    lib.TpuDriver_Open.restype = ctypes.c_void_p
+    lib.TpuDriver_Close.argtypes = [ctypes.c_void_p]
+    lib.TpuDriver_Close.restype = None
+    drv_ptr = int(lib.TpuDriver_Open(b"local://") or 0)
+    if drv_ptr == 0:
+        errors.append("TpuDriver_Open returned NULL")
+        return errors
+
+    fn_table_addr = int(ctypes.c_uint64.from_address(drv_ptr).value)
+    drv_slots = (ctypes.c_uint64 * 28).from_address(fn_table_addr)
+    null_drv_slots = [idx for idx in range(28) if int(drv_slots[idx]) == 0]
+    lib.TpuDriver_Close(drv_ptr)
+    if null_drv_slots:
+        errors.append(f"TpuDriverFn null slots: {null_drv_slots}")
+
+    return errors
+
+
+def hook_abi(repo_root: Path, check_only: bool = False) -> int:
+    """Verifies 100% binary C ABI and Python SDK parity with official Google `libtpu` (`v0.0.50`).
+
+    Args:
+        repo_root: Path to the workspace root directory.
+        check_only: Unused flag kept for uniform stage handler signature.
+
+    Returns:
+        Zero on success, or non-zero if any ABI compatibility check fails.
+    """
+    _ = check_only
+    print("==> [abi] Verifying Google libtpu (v0.0.50) C ABI & vtable compatibility...")
+    src_errors = verify_rust_and_c_abi_sources(repo_root)
+    if src_errors:
+        for err_msg in src_errors:
+            print(f"ABI Error: {err_msg}", file=sys.stderr)
+        return 1
+
+    cdylib_path = resolve_compiled_cdylib(repo_root)
+    if cdylib_path is None:
+        run_command(["cargo", "build", "-p", "libtpu-c-api"], cwd=repo_root)
+        cdylib_path = resolve_compiled_cdylib(repo_root)
+
+    if cdylib_path is None:
+        print("ABI Error: Compiled libtpu cdylib not found", file=sys.stderr)
+        return 1
+
+    bin_errors = verify_binary_vtable_abi(cdylib_path)
+    if bin_errors:
+        for err_msg in bin_errors:
+            print(f"ABI Error: {err_msg}", file=sys.stderr)
+        return 1
+
+    print(
+        f"==> [abi] Verified {len(GOOGLE_LIBTPU_EXPORTED_SYMBOLS)} exported symbols, "
+        "PJRT_Api v0.116 (1144B, 138 slots), 17 PJRT extensions, LibtpuSdk_Api v0.1 (144B), "
+        "and TpuDriverFn (224B, 28 slots)."
+    )
+    return 0
+
+
 def hook_shields(
     repo_root: Path,
     check_only: bool = False,
@@ -831,7 +1197,7 @@ def hook_all(repo_root: Path, check_only: bool = False) -> int:
     print("========================================================")
     print(" Running libtpu-rs Pre-commit Hook Pipeline (Python)")
     print("========================================================")
-    for stage_fn in (hook_fmt, hook_build, hook_clippy, hook_test, hook_shields):
+    for stage_fn in (hook_fmt, hook_build, hook_clippy, hook_abi, hook_test, hook_shields):
         rc = stage_fn(repo_root, check_only=check_only)
         if rc != 0:
             return rc
@@ -856,7 +1222,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "stage",
         nargs="?",
-        choices=["fmt", "build", "clippy", "lint", "test", "shields", "all"],
+        choices=["fmt", "build", "clippy", "lint", "abi", "test", "shields", "all"],
         default="all",
         help="Pipeline stage to execute (default: all)",
     )
@@ -877,6 +1243,8 @@ def main(argv: list[str] | None = None) -> int:
             return hook_build(repo_root, check_only=check_only)
         if stage in ("clippy", "lint"):
             return hook_clippy(repo_root, check_only=check_only)
+        if stage == "abi":
+            return hook_abi(repo_root, check_only=check_only)
         if stage == "test":
             return hook_test(repo_root, check_only=check_only)
         if stage == "shields":

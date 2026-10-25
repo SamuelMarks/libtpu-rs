@@ -25,7 +25,7 @@ unsafe fn handle_error_destroy(args: &mut PJRT_Error_Destroy_Args) {
 /// # Safety
 ///
 /// `raw_args` must be either null or a valid pointer to [`PJRT_Error_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Error_Destroy(raw_args: *mut std::ffi::c_void) {
     // SAFETY: Validated by `dispatch_typed_pjrt_void_args`.
     unsafe {
@@ -56,7 +56,7 @@ unsafe fn handle_error_message(args: &mut PJRT_Error_Message_Args) {
 /// # Safety
 ///
 /// `raw_args` must be either null or a valid pointer to [`PJRT_Error_Message_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Error_Message(raw_args: *mut std::ffi::c_void) {
     // SAFETY: Validated by `dispatch_typed_pjrt_void_args`.
     unsafe {
@@ -86,7 +86,7 @@ unsafe fn handle_error_get_code(args: &mut PJRT_Error_GetCode_Args) -> Result<()
 /// # Safety
 ///
 /// `raw_args` must be either null or a valid pointer to [`PJRT_Error_GetCode_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Error_GetCode(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe { dispatch_typed_pjrt_args::<PJRT_Error_GetCode_Args>(raw_args, handle_error_get_code) }
@@ -112,7 +112,7 @@ unsafe fn handle_plugin_initialize(
 /// # Safety
 ///
 /// `raw_args` must be either null or a valid pointer to [`PJRT_Plugin_Initialize_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Plugin_Initialize(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -144,7 +144,7 @@ unsafe fn handle_plugin_attributes(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Plugin_Attributes_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Plugin_Attributes(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -183,7 +183,7 @@ unsafe fn handle_event_destroy(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Event_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Event_Destroy(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -217,7 +217,7 @@ unsafe fn handle_event_is_ready(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Event_IsReady_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Event_IsReady(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -254,7 +254,7 @@ unsafe fn handle_event_error(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Event_Error_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Event_Error(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -289,7 +289,7 @@ unsafe fn handle_event_await(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Event_Await_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Event_Await(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -309,9 +309,21 @@ unsafe fn handle_event_on_ready(
     args: &mut crate::pjrt_types::PJRT_Event_OnReady_Args,
 ) -> Result<(), LibTpuError> {
     if let Some(cb_fn) = args.callback {
-        // SAFETY: Invoking registered readiness callback.
-        unsafe {
-            cb_fn(ptr::null_mut(), args.user_arg);
+        let user_arg_addr = args.user_arg as usize;
+        // SAFETY: `args.event` is null or a valid `PJRT_Event*`.
+        if let Some(ev) = unsafe { args.event.as_ref() } {
+            ev.inner.on_ready(move |status| {
+                let err_ptr = status.map_or(ptr::null_mut(), crate::box_pjrt_error);
+                // SAFETY: Invoking caller's registered readiness callback with `user_arg`.
+                unsafe {
+                    cb_fn(err_ptr, user_arg_addr as *mut std::ffi::c_void);
+                }
+            });
+        } else {
+            // SAFETY: Invoking registered readiness callback when `args.event` is null.
+            unsafe {
+                cb_fn(ptr::null_mut(), args.user_arg);
+            }
         }
     }
     Ok(())
@@ -326,7 +338,7 @@ unsafe fn handle_event_on_ready(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Event_OnReady_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Event_OnReady(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -360,7 +372,7 @@ unsafe fn handle_event_create(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Event_Create_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Event_Create(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -411,7 +423,7 @@ unsafe fn handle_event_set(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Event_Set_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Event_Set(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -458,7 +470,7 @@ unsafe fn handle_error_for_each_payload(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Error_ForEachPayload_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Error_ForEachPayload(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {

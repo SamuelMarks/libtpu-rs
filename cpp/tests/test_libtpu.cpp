@@ -19,6 +19,18 @@ extern "C" void test_debug_callback(void *user_data) {
 }
 
 /**
+ * @brief C PJRT event readiness callback incrementing an `int32_t` counter at
+ * `user_arg`.
+ * @param error Optional `PJRT_Error*` status (`nullptr` on success).
+ * @param user_arg Pointer to `int32_t` counter.
+ */
+extern "C" void test_event_ready_callback(PJRT_Error *error, void *user_arg) {
+  (void)error;
+  int32_t *counter = static_cast<int32_t *>(user_arg);
+  *counter += 1;
+}
+
+/**
  * @brief Main test entrypoint exercising all C and C++20 RAII methods and error
  * branches.
  * @return `0` on success, non-zero if any assertion fails.
@@ -58,8 +70,26 @@ int main() {
   }
   libtpu::Client moved_client(static_cast<libtpu::Client &&>(client));
   client = static_cast<libtpu::Client &&>(moved_client);
-  if (client.device_count() != 4) {
+  if (client.device_count() != 4 || client.device_attribute_count(0) != 3 ||
+      client.device_attribute_count(99) != 0) {
     return 6;
+  }
+
+  // 3b. Verify Event lifecycle, move semantics, deferred on_ready, set, and
+  // await
+  libtpu::Event ev;
+  libtpu::Status ev_st = libtpu::Event::create(&ev);
+  libtpu::Event ev_moved(static_cast<libtpu::Event &&>(ev));
+  ev = static_cast<libtpu::Event &&>(ev_moved);
+  int32_t ev_cb_hits = 0;
+  if (!ev_st.is_ok() || ev.is_ready() ||
+      !ev.on_ready(&test_event_ready_callback, &ev_cb_hits).is_ok() ||
+      ev_cb_hits != 0) {
+    return 60;
+  }
+  if (!ev.set(0, nullptr).is_ok() || !ev.is_ready() || ev_cb_hits != 1 ||
+      !ev.await().is_ok()) {
+    return 61;
   }
 
   // 4. Verify Buffer lifecycle, move semantics, and error branches
@@ -91,7 +121,7 @@ int main() {
   libtpu::Buffer b0_moved(static_cast<libtpu::Buffer &&>(b0));
   b0 = static_cast<libtpu::Buffer &&>(b0_moved);
   if (b0.rank() != 1 || b0.dimension(0) != 4 ||
-      b0.element_type() != libtpu::DataType::F32) {
+      b0.element_type() != libtpu::DataType::F32 || b0.tile_count() != 1) {
     return 80;
   }
   libtpu::Buffer b_copied;
@@ -125,7 +155,8 @@ int main() {
       static_cast<libtpu::LoadedExecutable &&>(exec));
   exec = static_cast<libtpu::LoadedExecutable &&>(exec_moved);
   char fp_buf[40] = {};
-  if (exec.fingerprint(fp_buf, sizeof(fp_buf)) != 32 || exec.flops() <= 0.0F) {
+  if (exec.fingerprint(fp_buf, sizeof(fp_buf)) != 32 || exec.flops() <= 0.0F ||
+      exec.num_outputs() != 1) {
     return 100;
   }
   size_t ser_len = 0;
@@ -133,6 +164,12 @@ int main() {
   if (!exec.serialize(ser_buf, sizeof(ser_buf), &ser_len).is_ok() ||
       ser_len == 0) {
     return 101;
+  }
+  size_t opt_len = 0;
+  uint8_t opt_buf[256] = {};
+  if (!exec.optimized_program(opt_buf, sizeof(opt_buf), &opt_len).is_ok() ||
+      opt_len == 0 || exec.optimized_program(opt_buf, 1, &opt_len).is_ok()) {
+    return 103;
   }
   libtpu::LoadedExecutable deser_exec;
   libtpu::Status deser_ok =
@@ -278,6 +315,12 @@ int main() {
     return 23;
   }
   TpuConfigurationApi_FreeCharArray(emb_out);
+
+  TpuDriverFn drv_fn{};
+  TpuDriver_Initialize(&drv_fn, true);
+  if (drv_fn.open == nullptr || drv_fn.version == nullptr) {
+    return 24;
+  }
 
   return 0;
 }

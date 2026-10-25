@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 members = [
     "crates/libtpu-core",
     "crates/libtpu-c-api",
@@ -8,35 +8,55 @@ members = [
 
 [workspace.package]
 version = "0.0.50"
-edition = "2021"
-license = "Apache-2.0"
-repository = "https://github.com/google/libtpu-rs"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/SamuelMarks/libtpu-rs"
+readme = "../../README.md"
 description = "Clean-room Rust implementation of Google Cloud TPU runtime library (libtpu) with C, C++, and Python FFI."
+keywords = ["tpu", "pjrt", "xla", "jax", "machine-learning"]
+categories = ["science", "api-bindings", "hardware-support"]
 
 [workspace.dependencies]
-derive_more = { version = "2.1", default-features = false, features = ["add", "display", "error", "from", "into"] }
+bitflags = { version = "2.8", default-features = false, features = ["std"] }
+bytemuck = { version = "1.21", default-features = false, features = ["derive", "extern_crate_alloc"] }
+derive_more = { version = "2.1", default-features = false, features = ["add", "as_ref", "deref", "display", "error", "from", "into", "mul", "try_into"] }
+half = { version = "2.4", default-features = false, features = ["alloc", "bytemuck", "std"] }
+libc = { version = "0.2", default-features = false, features = ["std"] }
 libtpu-core = { version = "0.0", path = "crates/libtpu-core" }
+parking_lot = { version = "0.12", default-features = false }
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
+smallvec = { version = "1.13", default-features = false }
 
 [workspace.lints.rust]
 missing_docs = "forbid"
 missing_debug_implementations = "deny"
 unsafe_op_in_unsafe_fn = "forbid"
 unreachable_pub = "deny"
+unused_qualifications = "deny"
+variant_size_differences = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "forbid"
 missing_crate_level_docs = "forbid"
+private_intra_doc_links = "deny"
+bare_urls = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+literal_string_with_formatting_args = "allow"
 unwrap_used = "forbid"
 expect_used = "forbid"
 panic = "forbid"
 todo = "forbid"
 unimplemented = "forbid"
 unreachable = "forbid"
-indexing_slicing = "forbid"
+indexing_slicing = "deny"
+multiple_crate_versions = "allow"
 dbg_macro = "forbid"
 missing_docs_in_private_items = "forbid"
 missing_errors_doc = "forbid"
@@ -49,3 +69,15 @@ cast_sign_loss = "deny"
 cast_precision_loss = "deny"
 ptr_as_ptr = "deny"
 borrow_as_ptr = "deny"
+clone_on_ref_ptr = "deny"
+lossy_float_literal = "deny"
+rest_pat_in_fully_bound_structs = "deny"
+return_self_not_must_use = "deny"
+semicolon_if_nothing_returned = "deny"
+str_to_string = "deny"
+implicit_clone = "deny"
+try_err = "deny"
+unnecessary_safety_comment = "deny"
+unnecessary_safety_doc = "deny"
+unneeded_field_pattern = "deny"
+verbose_file_reads = "deny"

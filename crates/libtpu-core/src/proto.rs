@@ -58,11 +58,13 @@ pub struct ProtoWriter {
 
 impl ProtoWriter {
     /// Creates an empty [`ProtoWriter`].
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self { buf: Vec::new() }
     }
 
     /// Consumes the writer and returns the encoded byte vector.
+    #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
         self.buf
     }
@@ -235,7 +237,8 @@ impl<'a> ProtoReader<'a> {
     ///
     /// * `data` - Input binary protobuf slice.
     /// * `message_type` - Message type name for error diagnostics.
-    pub fn new(data: &'a [u8], message_type: &'static str) -> Self {
+    #[must_use]
+    pub const fn new(data: &'a [u8], message_type: &'static str) -> Self {
         Self {
             data,
             pos: 0,
@@ -244,7 +247,8 @@ impl<'a> ProtoReader<'a> {
     }
 
     /// Returns `true` if all bytes in the slice have been consumed.
-    pub fn is_eof(&self) -> bool {
+    #[must_use]
+    pub const fn is_eof(&self) -> bool {
         self.pos >= self.data.len()
     }
 
@@ -489,6 +493,7 @@ pub struct TileProto {
 
 impl TileProto {
     /// Encodes this [`TileProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_packed_int64(1, &self.dimensions);
@@ -534,6 +539,7 @@ pub struct LayoutProto {
 
 impl LayoutProto {
     /// Encodes this [`LayoutProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_packed_int64(1, &self.minor_to_major);
@@ -591,6 +597,7 @@ pub struct ShapeProto {
 
 impl ShapeProto {
     /// Encodes this [`ShapeProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int32(2, self.element_type);
@@ -654,6 +661,7 @@ pub struct OpShardingProto {
 
 impl OpShardingProto {
     /// Encodes this [`OpShardingProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int32(1, self.sharding_type);
@@ -708,6 +716,7 @@ pub struct HloInstructionProto {
 
 impl HloInstructionProto {
     /// Encodes this [`HloInstructionProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_string(1, &self.name);
@@ -769,6 +778,7 @@ pub struct HloComputationProto {
 
 impl HloComputationProto {
     /// Encodes this [`HloComputationProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_string(1, &self.name);
@@ -826,6 +836,7 @@ pub struct HloModuleProto {
 
 impl HloModuleProto {
     /// Encodes this [`HloModuleProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_string(1, &self.name);
@@ -885,6 +896,7 @@ pub struct ExecutableBuildOptionsProto {
 
 impl ExecutableBuildOptionsProto {
     /// Encodes this [`ExecutableBuildOptionsProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int64(1, self.device_ordinal);
@@ -944,6 +956,7 @@ pub struct CompileOptionsProto {
 
 impl CompileOptionsProto {
     /// Encodes this [`CompileOptionsProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         for layout in &self.argument_layouts {
@@ -1000,6 +1013,7 @@ pub struct ComputationDeviceProto {
 
 impl ComputationDeviceProto {
     /// Encodes this [`ComputationDeviceProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_packed_int64(1, &self.replica_device_ids);
@@ -1043,6 +1057,7 @@ pub struct DeviceAssignmentProto {
 
 impl DeviceAssignmentProto {
     /// Encodes this [`DeviceAssignmentProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int32(1, self.replica_count);
@@ -1097,6 +1112,7 @@ pub struct TpuCompilationEnvironmentProto {
 
 impl TpuCompilationEnvironmentProto {
     /// Encodes this [`TpuCompilationEnvironmentProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_bool(1, self.xla_tpu_enable_megacore_fusion);
@@ -1149,6 +1165,7 @@ pub struct XStatMetadataProto {
 
 impl XStatMetadataProto {
     /// Encodes this [`XStatMetadataProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int64(1, self.id);
@@ -1195,6 +1212,7 @@ pub struct XEventMetadataProto {
 
 impl XEventMetadataProto {
     /// Encodes this [`XEventMetadataProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int64(1, self.id);
@@ -1247,6 +1265,7 @@ pub struct TpuTopologyArgsProto {
 
 impl TpuTopologyArgsProto {
     /// Encodes this [`TpuTopologyArgsProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int32(1, self.version);
@@ -1312,6 +1331,7 @@ pub type TpuExecutableSerializedProto = TpuSerializedExecutableProto;
 
 impl TpuSerializedExecutableProto {
     /// Encodes this [`TpuSerializedExecutableProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_string(1, &self.name);
@@ -1377,6 +1397,7 @@ pub struct XStatProto {
 
 impl XStatProto {
     /// Encodes this [`XStatProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int64(1, self.metadata_id);
@@ -1425,6 +1446,7 @@ pub struct XEventProto {
 
 impl XEventProto {
     /// Encodes this [`XEventProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int64(1, self.metadata_id);
@@ -1480,6 +1502,7 @@ pub struct XLineProto {
 
 impl XLineProto {
     /// Encodes this [`XLineProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int64(1, self.id);
@@ -1535,6 +1558,7 @@ pub struct XPlaneProto {
 
 impl XPlaneProto {
     /// Encodes this [`XPlaneProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int64(1, self.id);
@@ -1591,6 +1615,7 @@ pub struct XSpaceProto {
 
 impl XSpaceProto {
     /// Encodes this [`XSpaceProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         for plane in &self.planes {
@@ -1644,6 +1669,7 @@ pub struct EmbeddingTableDescriptorProto {
 
 impl EmbeddingTableDescriptorProto {
     /// Encodes this [`EmbeddingTableDescriptorProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_string(1, &self.name);
@@ -1696,6 +1722,7 @@ pub struct TpuEmbeddingConfigurationProto {
 
 impl TpuEmbeddingConfigurationProto {
     /// Encodes this [`TpuEmbeddingConfigurationProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         for tbl in &self.table_descriptor {
@@ -1750,6 +1777,7 @@ pub struct HloModuleProtoWithConfig {
 
 impl HloModuleProtoWithConfig {
     /// Encodes this [`HloModuleProtoWithConfig`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         if let Some(m) = &self.hlo_module {
@@ -1804,6 +1832,7 @@ pub struct RuntimeAbiVersionProto {
 
 impl RuntimeAbiVersionProto {
     /// Encodes this [`RuntimeAbiVersionProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_uint64(1, self.platform_id);
@@ -1850,6 +1879,7 @@ pub struct ExecutableAbiVersionProto {
 
 impl ExecutableAbiVersionProto {
     /// Encodes this [`ExecutableAbiVersionProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_uint64(1, self.platform_id);
@@ -1886,7 +1916,7 @@ impl ExecutableAbiVersionProto {
 /// Wire-compatible `tpu.TpuEmbeddingPartitionedConfigProto` produced by `TpuEmbeddingEngine_ExecutePartitioner`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TpuEmbeddingPartitionedConfigProto {
-    /// Number of SparseCore partitions across the slice (field `1`).
+    /// Number of `SparseCore` partitions across the slice (field `1`).
     pub num_partitions: i32,
     /// Partitioned table names (field `2`).
     pub table_names: Vec<String>,
@@ -1896,6 +1926,7 @@ pub struct TpuEmbeddingPartitionedConfigProto {
 
 impl TpuEmbeddingPartitionedConfigProto {
     /// Encodes this [`TpuEmbeddingPartitionedConfigProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int32(1, self.num_partitions);
@@ -1935,7 +1966,7 @@ impl TpuEmbeddingPartitionedConfigProto {
 /// and `TpuEmbeddingEngine_CollateMemory`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TpuEmbeddingMemoryConfigProto {
-    /// Total HBM bytes reserved for SparseCore lookup tables (field `1`).
+    /// Total HBM bytes reserved for `SparseCore` lookup tables (field `1`).
     pub hbm_buffers_bytes: u64,
     /// Number of collated host memory segments (field `2`).
     pub num_segments: i32,
@@ -1945,6 +1976,7 @@ pub struct TpuEmbeddingMemoryConfigProto {
 
 impl TpuEmbeddingMemoryConfigProto {
     /// Encodes this [`TpuEmbeddingMemoryConfigProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_uint64(1, self.hbm_buffers_bytes);
@@ -1995,6 +2027,7 @@ pub struct TpuEmbeddingHostNetworkConfigProto {
 
 impl TpuEmbeddingHostNetworkConfigProto {
     /// Encodes this [`TpuEmbeddingHostNetworkConfigProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int32(1, self.host_id);
@@ -2043,6 +2076,7 @@ pub struct MegascaleMultiSliceConfigProto {
 
 impl MegascaleMultiSliceConfigProto {
     /// Encodes this [`MegascaleMultiSliceConfigProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int32(1, self.num_slices);
@@ -2085,12 +2119,13 @@ pub struct MegascaleDcnTopologyProto {
     pub num_slices: i32,
     /// Number of hosts per slice (field `2`).
     pub num_hosts_per_slice: i32,
-    /// Transport type (`0` = Default/TCP, `1` = RoCEv2, `2` = ICI, field `3`).
+    /// Transport type (`0` = Default/TCP, `1` = `RoCEv2`, `2` = ICI, field `3`).
     pub transport_type: i32,
 }
 
 impl MegascaleDcnTopologyProto {
     /// Encodes this [`MegascaleDcnTopologyProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_int32(1, self.num_slices);
@@ -2137,6 +2172,7 @@ pub struct MegascaleRuntimeMetricsProto {
 
 impl MegascaleRuntimeMetricsProto {
     /// Encodes this [`MegascaleRuntimeMetricsProto`] to protobuf wire bytes.
+    #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut w = ProtoWriter::new();
         w.write_uint64(1, self.completed_barriers);
@@ -2171,6 +2207,7 @@ impl MegascaleRuntimeMetricsProto {
 }
 
 #[cfg(test)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -2231,8 +2268,8 @@ mod tests {
         assert!(r_zero.read_tag().is_err());
 
         let field_overflow = [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F];
-        let mut r_fover = ProtoReader::new(&field_overflow, "Err");
-        assert!(r_fover.read_tag().is_err());
+        let mut r_tag_overflow = ProtoReader::new(&field_overflow, "Err");
+        assert!(r_tag_overflow.read_tag().is_err());
         let mut r_i32_over = ProtoReader::new(&field_overflow, "Err");
         assert!(r_i32_over.read_int32().is_err());
 
@@ -2273,12 +2310,16 @@ mod tests {
         assert!(r_eof.read_bytes().is_err());
         assert!(r_eof.read_string().is_err());
         let mut dummy_vec = Vec::new();
-        assert!(r_eof
-            .read_repeated_int64(WireType::Varint, &mut dummy_vec)
-            .is_err());
-        assert!(r_eof
-            .read_repeated_int64(WireType::LengthDelimited, &mut dummy_vec)
-            .is_err());
+        assert!(
+            r_eof
+                .read_repeated_int64(WireType::Varint, &mut dummy_vec)
+                .is_err()
+        );
+        assert!(
+            r_eof
+                .read_repeated_int64(WireType::LengthDelimited, &mut dummy_vec)
+                .is_err()
+        );
         assert!(r_eof.skip_field(WireType::Varint).is_err());
         assert!(r_eof.skip_field(WireType::Fixed64).is_err());
         assert!(r_eof.skip_field(WireType::LengthDelimited).is_err());
@@ -2289,9 +2330,10 @@ mod tests {
         let trunc_packed_bytes = w_trunc_packed.into_bytes();
         let mut r_tp = ProtoReader::new(&trunc_packed_bytes, "Err");
         let _ = r_tp.read_tag();
-        assert!(r_tp
-            .read_repeated_int64(WireType::LengthDelimited, &mut dummy_vec)
-            .is_err());
+        assert!(
+            r_tp.read_repeated_int64(WireType::LengthDelimited, &mut dummy_vec)
+                .is_err()
+        );
     }
 
     #[test]
@@ -2521,10 +2563,10 @@ mod tests {
             num_hosts: 1,
             num_tensor_cores: 4,
         };
-        let mut emb_bytes = emb_cfg.encode();
-        emb_bytes.extend_from_slice(&extra.clone().into_bytes());
+        let mut emb_cfg_bytes = emb_cfg.encode();
+        emb_cfg_bytes.extend_from_slice(&extra.clone().into_bytes());
         assert_eq!(
-            TpuEmbeddingConfigurationProto::decode(&emb_bytes).ok(),
+            TpuEmbeddingConfigurationProto::decode(&emb_cfg_bytes).ok(),
             Some(emb_cfg)
         );
 
@@ -2556,10 +2598,10 @@ mod tests {
             xla_tpu_scoped_vmem_limit_kib: 16384,
             custom_flags: String::from("--xla_tpu_flag=true"),
         };
-        let mut ce_bytes = comp_env.encode();
-        ce_bytes.extend_from_slice(&extra.clone().into_bytes());
+        let mut comp_env_bytes = comp_env.encode();
+        comp_env_bytes.extend_from_slice(&extra.clone().into_bytes());
         assert_eq!(
-            TpuCompilationEnvironmentProto::decode(&ce_bytes).ok(),
+            TpuCompilationEnvironmentProto::decode(&comp_env_bytes).ok(),
             Some(comp_env)
         );
 
@@ -2568,18 +2610,24 @@ mod tests {
             name: String::from("flops"),
             description: String::from("FLOP count"),
         };
-        let mut sm_bytes = stat_meta.encode();
-        sm_bytes.extend_from_slice(&extra.clone().into_bytes());
-        assert_eq!(XStatMetadataProto::decode(&sm_bytes).ok(), Some(stat_meta));
+        let mut stat_meta_bytes = stat_meta.encode();
+        stat_meta_bytes.extend_from_slice(&extra.clone().into_bytes());
+        assert_eq!(
+            XStatMetadataProto::decode(&stat_meta_bytes).ok(),
+            Some(stat_meta)
+        );
 
         let ev_meta = XEventMetadataProto {
             id: 2,
             name: String::from("execute"),
             display_name: String::from("TPU Execute"),
         };
-        let mut em_bytes = ev_meta.encode();
-        em_bytes.extend_from_slice(&extra.clone().into_bytes());
-        assert_eq!(XEventMetadataProto::decode(&em_bytes).ok(), Some(ev_meta));
+        let mut ev_meta_bytes = ev_meta.encode();
+        ev_meta_bytes.extend_from_slice(&extra.clone().into_bytes());
+        assert_eq!(
+            XEventMetadataProto::decode(&ev_meta_bytes).ok(),
+            Some(ev_meta)
+        );
 
         let empty_hmc = HloModuleProtoWithConfig::default();
         assert_eq!(
@@ -2728,14 +2776,14 @@ mod tests {
         for i in 0..da_bytes.len() {
             let _ = DeviceAssignmentProto::decode(da_bytes.get(..i).unwrap_or(&[]));
         }
-        for i in 0..ce_bytes.len() {
-            let _ = TpuCompilationEnvironmentProto::decode(ce_bytes.get(..i).unwrap_or(&[]));
+        for i in 0..comp_env_bytes.len() {
+            let _ = TpuCompilationEnvironmentProto::decode(comp_env_bytes.get(..i).unwrap_or(&[]));
         }
-        for i in 0..sm_bytes.len() {
-            let _ = XStatMetadataProto::decode(sm_bytes.get(..i).unwrap_or(&[]));
+        for i in 0..stat_meta_bytes.len() {
+            let _ = XStatMetadataProto::decode(stat_meta_bytes.get(..i).unwrap_or(&[]));
         }
-        for i in 0..em_bytes.len() {
-            let _ = XEventMetadataProto::decode(em_bytes.get(..i).unwrap_or(&[]));
+        for i in 0..ev_meta_bytes.len() {
+            let _ = XEventMetadataProto::decode(ev_meta_bytes.get(..i).unwrap_or(&[]));
         }
 
         // Prefix truncation sweep across every message decoder to cover all `?` error paths
@@ -2790,8 +2838,8 @@ mod tests {
         for i in 0..tbl_bytes.len() {
             let _ = EmbeddingTableDescriptorProto::decode(tbl_bytes.get(..i).unwrap_or(&[]));
         }
-        for i in 0..emb_bytes.len() {
-            let _ = TpuEmbeddingConfigurationProto::decode(emb_bytes.get(..i).unwrap_or(&[]));
+        for i in 0..emb_cfg_bytes.len() {
+            let _ = TpuEmbeddingConfigurationProto::decode(emb_cfg_bytes.get(..i).unwrap_or(&[]));
         }
 
         // Corrupt nested sub-message payloads (length=1, byte=0x80) to trigger nested `decode(sub)?` errors

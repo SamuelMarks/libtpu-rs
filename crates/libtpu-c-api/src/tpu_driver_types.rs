@@ -148,7 +148,7 @@ pub struct TpuDriverFn {
     pub version: *const std::ffi::c_void,
 }
 
-const _: () = assert!(std::mem::size_of::<TpuDriverFn>() == 224);
+const _: () = assert!(size_of::<TpuDriverFn>() == 224);
 
 // SAFETY: `TpuDriverFn` contains immutable static function pointers.
 unsafe impl Sync for TpuDriverFn {}
@@ -199,7 +199,7 @@ pub struct TpuEvent {
 pub struct TpuSystemInfo {
     /// Number of physical TPU chips.
     pub num_chips: i32,
-    /// Number of TensorCores across all chips.
+    /// Number of `TensorCores` across all chips.
     pub num_cores: i32,
     /// Owned summary string C buffer.
     pub info_str: CString,
@@ -255,7 +255,7 @@ pub struct LibtpuSdk_ChipLocationToCoordinates {
     pub coordinates: [i64; 3],
 }
 
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_ChipLocationToCoordinates>() == 48);
+const _: () = assert!(size_of::<LibtpuSdk_ChipLocationToCoordinates>() == 48);
 
 /// Opaque C handle wrapping [`LibtpuSdkCoreClient`].
 #[derive(Debug)]
@@ -528,24 +528,23 @@ pub struct LibtpuSdk_Api {
 // SAFETY: `LibtpuSdk_Api` contains only static function pointers and version constant.
 unsafe impl Sync for LibtpuSdk_Api {}
 
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_Api>() == LIBTPU_SDK_API_STRUCT_SIZE);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_Error_GetMessage_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_Error_Destroy_Args>() == 8);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_Error_GetCode_Args>() == 16);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_Client_Args>() == 8);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_GetChipCoordinates_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_GetHostName_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_GetChipIndex_Args>() == 16);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_GetCartesianCoordinates_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_GetMetric_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_GetMetricDescription_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_GetMetricValues_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_GetRuntimeStatus_Args>() == 24);
-const _: () =
-    assert!(std::mem::size_of::<LibtpuSdk_RuntimeStatus_GetCoreStateSummary_Args>() == 24);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_RuntimeStatus_Destroy_Args>() == 8);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_RegisterDebugCallback_Args>() == 32);
-const _: () = assert!(std::mem::size_of::<LibtpuSdk_UnregisterDebugCallback_Args>() == 16);
+const _: () = assert!(size_of::<LibtpuSdk_Api>() == LIBTPU_SDK_API_STRUCT_SIZE);
+const _: () = assert!(size_of::<LibtpuSdk_Error_GetMessage_Args>() == 24);
+const _: () = assert!(size_of::<LibtpuSdk_Error_Destroy_Args>() == 8);
+const _: () = assert!(size_of::<LibtpuSdk_Error_GetCode_Args>() == 16);
+const _: () = assert!(size_of::<LibtpuSdk_Client_Args>() == 8);
+const _: () = assert!(size_of::<LibtpuSdk_GetChipCoordinates_Args>() == 24);
+const _: () = assert!(size_of::<LibtpuSdk_GetHostName_Args>() == 24);
+const _: () = assert!(size_of::<LibtpuSdk_GetChipIndex_Args>() == 16);
+const _: () = assert!(size_of::<LibtpuSdk_GetCartesianCoordinates_Args>() == 24);
+const _: () = assert!(size_of::<LibtpuSdk_GetMetric_Args>() == 24);
+const _: () = assert!(size_of::<LibtpuSdk_GetMetricDescription_Args>() == 24);
+const _: () = assert!(size_of::<LibtpuSdk_GetMetricValues_Args>() == 24);
+const _: () = assert!(size_of::<LibtpuSdk_GetRuntimeStatus_Args>() == 24);
+const _: () = assert!(size_of::<LibtpuSdk_RuntimeStatus_GetCoreStateSummary_Args>() == 24);
+const _: () = assert!(size_of::<LibtpuSdk_RuntimeStatus_Destroy_Args>() == 8);
+const _: () = assert!(size_of::<LibtpuSdk_RegisterDebugCallback_Args>() == 32);
+const _: () = assert!(size_of::<LibtpuSdk_UnregisterDebugCallback_Args>() == 16);
 
 /// Clean C ABI status structure returned by `libtpu_rs_*` functions for C and C++20 consumers.
 #[repr(C)]
@@ -863,17 +862,17 @@ pub struct TpuEmbeddingEngine_Computation_Params {
     pub status: *mut TpuStatus,
 }
 
-const _: () = assert!(std::mem::size_of::<TFNPD_PluginParams>() == 40);
-const _: () = assert!(std::mem::size_of::<TpuPartitionedCall_Params>() == 24);
-const _: () = assert!(std::mem::size_of::<XLA_Shape>() == 96);
-const _: () = assert!(std::mem::size_of::<TpuSerializedProto>() == 16);
-const _: () = assert!(std::mem::size_of::<TpuEmbeddingEngine_ExecutePartitioner_Params>() == 56);
-const _: () = assert!(std::mem::size_of::<TpuEmbeddingEngine_ConfigureMemory_Params>() == 64);
-const _: () = assert!(std::mem::size_of::<TpuEmbeddingEngine_CollateMemory_Params>() == 48);
-const _: () = assert!(std::mem::size_of::<TpuEmbeddingEngine_ConfigureHost_Params>() == 80);
-const _: () = assert!(std::mem::size_of::<TpuEmbeddingEngine_ConnectHosts_Params>() == 40);
-const _: () = assert!(std::mem::size_of::<TpuEmbeddingEngine_Finalize_Params>() == 64);
-const _: () = assert!(std::mem::size_of::<TpuEmbeddingEngine_IsInitialized_Params>() == 40);
-const _: () = assert!(std::mem::size_of::<TpuEmbeddingEngine_WriteParameters_Params>() == 72);
-const _: () = assert!(std::mem::size_of::<TpuEmbeddingEngine_EnqueueTensorBatch_Params>() == 88);
-const _: () = assert!(std::mem::size_of::<TpuEmbeddingEngine_Computation_Params>() == 96);
+const _: () = assert!(size_of::<TFNPD_PluginParams>() == 40);
+const _: () = assert!(size_of::<TpuPartitionedCall_Params>() == 24);
+const _: () = assert!(size_of::<XLA_Shape>() == 96);
+const _: () = assert!(size_of::<TpuSerializedProto>() == 16);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_ExecutePartitioner_Params>() == 56);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_ConfigureMemory_Params>() == 64);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_CollateMemory_Params>() == 48);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_ConfigureHost_Params>() == 80);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_ConnectHosts_Params>() == 40);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_Finalize_Params>() == 64);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_IsInitialized_Params>() == 40);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_WriteParameters_Params>() == 72);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_EnqueueTensorBatch_Params>() == 88);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_Computation_Params>() == 96);

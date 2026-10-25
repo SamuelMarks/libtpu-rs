@@ -1,9 +1,9 @@
-//! HLO and `StableHLO` compiler, recursive-descent parser, DAG lowerer, fingerprint generator,
-//! cost analyzer, VLIW bundle emitter, phased compiler, and wire-compatible
-//! `TpuSerializedExecutableProto` serializer.
+//! HLO and `StableHLO` compiler, recursive-descent parser, and VLIW bundle emitter.
 //!
-//! Lowering pipeline for `PJRT_Client_Compile`, `PJRT_Compile`, `PJRT_Executable_Serialize`,
-//! `PJRT_Executable_DeserializeAndLoad`, and `PJRT_PhaseCompile_Extension`.
+//! Provides the DAG lowerer, fingerprint generator, cost analyzer, phased compiler, and
+//! wire-compatible `TpuSerializedExecutableProto` serializer for `PJRT_Client_Compile`,
+//! `PJRT_Compile`, `PJRT_Executable_Serialize`, `PJRT_Executable_DeserializeAndLoad`, and
+//! `PJRT_PhaseCompile_Extension`.
 
 use crate::error::{LibTpuError, LibTpuResult, Utf8ErrorWrapper};
 use crate::proto::{
@@ -190,10 +190,11 @@ impl TpuOpCode {
     }
 
     /// Returns the number of input operands consumed by this opcode.
-    pub fn arity(self) -> usize {
-        if self == Self::Select {
+    #[must_use]
+    pub const fn arity(self) -> usize {
+        if matches!(self, Self::Select) {
             3
-        } else if self == Self::Constant {
+        } else if matches!(self, Self::Constant) {
             0
         } else if self.is_binary() {
             2
@@ -203,7 +204,8 @@ impl TpuOpCode {
     }
 
     /// Returns `true` if this opcode is a binary operation requiring at least 2 input buffers.
-    pub fn is_binary(self) -> bool {
+    #[must_use]
+    pub const fn is_binary(self) -> bool {
         matches!(
             self,
             Self::AddF32
@@ -226,7 +228,8 @@ impl TpuOpCode {
     }
 
     /// Returns `true` if this opcode invokes the VPU transcendental unit.
-    pub fn is_transcendental(self) -> bool {
+    #[must_use]
+    pub const fn is_transcendental(self) -> bool {
         matches!(
             self,
             Self::ExpF32
@@ -290,6 +293,51 @@ pub struct TpuInstructionBundle {
     pub sync_flag_id: u32,
     /// Parsed operation attributes and shape metadata.
     pub attrs: InstructionAttrs,
+}
+
+/// Binary 16-byte VLIW instruction word emitted by [`TpuInstructionBundle::encode_vliw_word`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct VliwInstructionWord {
+    /// Hardware [`TpuOpCode`] discriminant (`u16`).
+    pub opcode: u16,
+    /// Execution unit and transcendental/collective flags (`u16`).
+    pub unit_flags: u16,
+    /// Destination VMEM/HBM register slot index (`u32`).
+    pub dst_reg: u32,
+    /// First source operand register slot index (`u32`).
+    pub src0_reg: u32,
+    /// Second source operand register slot index or `SyncFlag` ID (`u32`).
+    pub src1_reg: u32,
+}
+
+const _: () = assert!(size_of::<VliwInstructionWord>() == 16);
+
+impl TpuInstructionBundle {
+    /// Encodes this [`TpuInstructionBundle`] into a 16-byte binary [`VliwInstructionWord`].
+    #[must_use]
+    pub fn encode_vliw_word(&self) -> VliwInstructionWord {
+        let mut flags: u16 = 0;
+        if self.opcode.is_binary() {
+            flags |= 1 << 0;
+        }
+        if self.opcode.is_transcendental() {
+            flags |= 1 << 1;
+        }
+        let s0 = self.operand_slots.first().copied().unwrap_or(0);
+        let s1 = self
+            .operand_slots
+            .get(1)
+            .copied()
+            .unwrap_or(self.sync_flag_id as usize);
+        VliwInstructionWord {
+            opcode: u16::from(self.opcode as u8),
+            unit_flags: flags,
+            dst_reg: u32::try_from(self.output_slot).unwrap_or(0),
+            src0_reg: u32::try_from(s0).unwrap_or(0),
+            src1_reg: u32::try_from(s1).unwrap_or(0),
+        }
+    }
 }
 
 /// Static cost analysis metrics for a compiled TPU executable (`PJRT_Executable_GetCostAnalysis`).
@@ -367,7 +415,7 @@ type LoweredModuleTuple = (
     Vec<usize>,
 );
 
-/// Token produced by [`HloLexer`] when lexing StableHLO MLIR or XLA HLO text.
+/// Token produced by [`HloLexer`] when lexing `StableHLO` MLIR or XLA HLO text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HloToken {
     /// Identifier, keyword, or dotted mnemonic (e.g., `module`, `func.func`, `stablehlo.add`).
@@ -384,16 +432,17 @@ pub enum HloToken {
     Arrow,
 }
 
-/// Lexer for StableHLO MLIR and XLA HLO textual modules.
+/// Lexer for `StableHLO` MLIR and XLA HLO textual modules.
 #[derive(Debug, Clone, Default)]
 pub struct HloLexer;
 
 impl HloLexer {
-    /// Tokenizes a StableHLO MLIR or XLA HLO source string into a sequence of [`HloToken`]s.
+    /// Tokenizes a `StableHLO` MLIR or XLA HLO source string into a sequence of [`HloToken`]s.
     ///
     /// # Arguments
     ///
     /// * `src` - Source text to tokenize.
+    #[must_use]
     pub fn tokenize(src: &str) -> Vec<HloToken> {
         let mut tokens = Vec::new();
         let mut chars = src.chars().peekable();
@@ -465,7 +514,7 @@ impl HloLexer {
     }
 }
 
-/// Recursive-descent parser for StableHLO MLIR and XLA HLO modules.
+/// Recursive-descent parser for `StableHLO` MLIR and XLA HLO modules.
 #[derive(Debug, Clone, Default)]
 pub struct HloParser;
 
@@ -475,6 +524,7 @@ impl HloParser {
     /// # Arguments
     ///
     /// * `tokens` - Tokenized module slice.
+    #[must_use]
     pub fn parse_module_name(tokens: &[HloToken]) -> String {
         for (idx, tok) in tokens.iter().enumerate() {
             if let HloToken::Symbol(sym) = tok {
@@ -500,6 +550,7 @@ impl CompiledProgram {
     /// # Arguments
     ///
     /// * `token` - Tensor type specification substring.
+    #[must_use]
     pub fn parse_tensor_type(token: &str) -> Option<Shape> {
         let after_prefix = token.trim().strip_prefix("tensor<")?;
         let (inner, _) = after_prefix.split_once('>')?;
@@ -588,6 +639,7 @@ impl CompiledProgram {
     ///
     /// Returns [`LibTpuError::CompilationFailed`] if `code` is empty, `format` is unsupported,
     /// `compile_options` is malformed, or an explicit syntax error marker is present.
+    #[allow(clippy::too_many_lines)]
     pub fn compile(format: &str, code: &[u8], compile_options: &[u8]) -> LibTpuResult<Self> {
         let fmt_lower = format.trim().to_ascii_lowercase();
         if fmt_lower != "mlir" && fmt_lower != "hlo" && fmt_lower != "hlo_with_config" {
@@ -714,6 +766,7 @@ impl CompiledProgram {
     }
 
     /// Pass 1: HLO verification and shape inference across parameter, bundle, and output shapes.
+    #[allow(clippy::or_fun_call)]
     pub fn pass_hlo_verification_and_shape_inference(&mut self) {
         self.memory_stats.generated_code_size_in_bytes =
             self.memory_stats.generated_code_size_in_bytes.max(256);
@@ -840,6 +893,7 @@ impl CompiledProgram {
     /// # Errors
     ///
     /// Returns [`LibTpuError`] if an instruction shape specifies an unsupported [`ElementType`].
+    #[allow(clippy::too_many_lines)]
     fn lower_from_hlo_proto(proto: &HloModuleProto) -> LibTpuResult<LoweredModuleTuple> {
         let mut param_shapes = Vec::new();
         let mut slot_shapes = Vec::new();
@@ -968,6 +1022,7 @@ impl CompiledProgram {
     ///
     /// * `line` - Instruction source line.
     /// * `key` - Attribute key substring to search for.
+    #[must_use]
     pub fn parse_usize_list_attr(line: &str, key: &str) -> Vec<usize> {
         let tokens = HloLexer::tokenize(line);
         let Some(key_pos) = tokens
@@ -1009,6 +1064,7 @@ impl CompiledProgram {
     ///
     /// * `line` - Instruction source line.
     /// * `key` - Attribute key substring to search for.
+    #[must_use]
     pub fn parse_single_usize_attr(line: &str, key: &str) -> Option<usize> {
         let tokens = HloLexer::tokenize(line);
         let key_pos = tokens
@@ -1028,6 +1084,7 @@ impl CompiledProgram {
     /// # Arguments
     ///
     /// * `token` - HLO shape token.
+    #[must_use]
     pub fn parse_hlo_shape_token(token: &str) -> Option<Shape> {
         let trimmed = token.trim();
         let (dtype_str, after_open) = trimmed.split_once('[')?;
@@ -1065,6 +1122,7 @@ impl CompiledProgram {
     /// * `line` - Instruction source line.
     /// * `input_shapes` - Shapes of the resolved input operands.
     /// * `default_elem_type` - Fallback element type for constant packing.
+    #[must_use]
     pub fn parse_instruction_attrs(
         line: &str,
         input_shapes: &[Shape],
@@ -1142,6 +1200,7 @@ impl CompiledProgram {
     /// # Arguments
     ///
     /// * `token` - Instruction line or operation mnemonic.
+    #[allow(clippy::too_many_lines)]
     fn parse_opcode_mnemonic(token: &str) -> (TpuOpCode, ElementType, usize, Vec<i64>) {
         let lower = token.to_ascii_lowercase();
         let table: &[(&str, TpuOpCode, ElementType, usize, &[i64])] = &[
@@ -1310,7 +1369,11 @@ impl CompiledProgram {
     /// # Arguments
     ///
     /// * `text` - UTF-8 lossy program text or HLO instruction opcode.
-    #[allow(for_loops_over_fallibles)]
+    #[allow(
+        for_loops_over_fallibles,
+        clippy::cognitive_complexity,
+        clippy::too_many_lines
+    )]
     fn parse_textual_program(
         text: &str,
     ) -> (
@@ -1338,7 +1401,7 @@ impl CompiledProgram {
                             for sh in Self::parse_tensor_type(type_part.trim()) {
                                 elem_type = sh.element_type;
                                 dims.clone_from(&sh.dims);
-                                ssa_slots.insert(var_part.trim().to_string(), next_slot);
+                                ssa_slots.insert(String::from(var_part.trim()), next_slot);
                                 next_slot += 1;
                                 slot_shapes.push(sh.clone());
                                 explicit_param_shapes.push(sh);
@@ -1386,12 +1449,7 @@ impl CompiledProgram {
                 continue;
             }
             let (lhs, rhs) = trimmed_line.split_once('=').unwrap_or(("", trimmed_line));
-            let lhs_var = lhs
-                .split_whitespace()
-                .last()
-                .unwrap_or("")
-                .trim()
-                .to_string();
+            let lhs_var = String::from(lhs.split_whitespace().last().unwrap_or("").trim());
             if rhs.contains("parameter(") {
                 for tok in rhs.split_whitespace() {
                     if let Some(sh) = Self::parse_hlo_shape_token(tok) {
@@ -1505,27 +1563,33 @@ impl CompiledProgram {
         )
     }
 
-    /// Computes a deterministic 128-bit FNV-1a hex fingerprint over format, code, and options.
+    /// Computes a deterministic 128-bit truncated SHA-256 hex fingerprint over format, code, and options.
     ///
     /// # Arguments
     ///
     /// * `format` - Normalized format string.
     /// * `code` - Raw program bytes.
     /// * `options` - Raw compile options bytes.
+    #[must_use]
     pub fn compute_fingerprint(format: &str, code: &[u8], options: &[u8]) -> String {
-        let mut h1: u64 = 0xcbf2_9ce4_8422_2325;
-        let mut h2: u64 = 0x8422_2325_cbf2_9ce4;
-        for &b in format.as_bytes().iter().chain(code).chain(options) {
-            h1 ^= u64::from(b);
-            h1 = h1.wrapping_mul(0x0000_0100_0000_01b3);
-            h2 = h2
-                .wrapping_add(u64::from(b))
-                .wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(format.as_bytes());
+        hasher.update(b":");
+        hasher.update(code);
+        hasher.update(b":");
+        hasher.update(options);
+        let digest = hasher.finalize();
+        let mut hex = String::with_capacity(32);
+        for &b in digest.iter().take(16) {
+            use std::fmt::Write;
+            let _ = write!(hex, "{b:02x}");
         }
-        format!("{h1:016x}{h2:016x}")
+        hex
     }
 
     /// Converts this [`CompiledProgram`] into a wire-compatible [`TpuSerializedExecutableProto`].
+    #[must_use]
     pub fn to_executable_proto(&self) -> TpuSerializedExecutableProto {
         let output_shapes = self
             .output_shapes
@@ -1566,6 +1630,7 @@ impl CompiledProgram {
     }
 
     /// Serializes this [`CompiledProgram`] into a self-contained binary payload with magic header.
+    #[must_use]
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(EXECUTABLE_MAGIC);
@@ -1677,9 +1742,9 @@ impl CompiledProgram {
         let opcode = TpuOpCode::from_byte(opcode_byte)?;
 
         let fmt_bytes = Self::read_bytes(&mut cursor, "format")?;
-        let format = std::str::from_utf8(fmt_bytes)
-            .map_err(|e| LibTpuError::from(Utf8ErrorWrapper(e)))?
-            .to_string();
+        let format = String::from(
+            std::str::from_utf8(fmt_bytes).map_err(|e| LibTpuError::from(Utf8ErrorWrapper(e)))?,
+        );
 
         let source_bytes = Self::read_bytes(&mut cursor, "source_bytes")?;
         let compile_options = Self::read_bytes(&mut cursor, "compile_options")?;
@@ -1690,13 +1755,19 @@ impl CompiledProgram {
     }
 
     /// Returns the generated machine code size as a strongly-typed [`ByteSize`].
+    #[must_use]
     pub fn generated_code_size(&self) -> ByteSize {
         ByteSize(usize::try_from(self.memory_stats.generated_code_size_in_bytes).unwrap_or(256))
     }
 }
 
 #[cfg(test)]
-#[allow(for_loops_over_fallibles)]
+#[allow(
+    for_loops_over_fallibles,
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args
+)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -1741,9 +1812,9 @@ mod tests {
             CompiledProgram::parse_usize_list_attr("permutation = [1, 0]", "permutation"),
             vec![1, 0]
         );
-        assert!(
-            CompiledProgram::parse_usize_list_attr("permutation = ]1, 0[", "permutation")
-                .is_empty()
+        assert_eq!(
+            CompiledProgram::parse_usize_list_attr("permutation = ]1, 0[", "permutation"),
+            [] as [usize; 0]
         );
         assert_eq!(
             CompiledProgram::parse_single_usize_attr(
@@ -1762,7 +1833,7 @@ mod tests {
             vec![1, 0]
         );
         let lex_tokens = HloLexer::tokenize("module @m -> -1.5 %a0 _x");
-        assert!(!format!("{:?}{:?}{lex_tokens:?}", HloLexer, HloParser).is_empty());
+        assert_ne!(format!("{:?}{:?}{lex_tokens:?}", HloLexer, HloParser), "");
         assert_eq!(lex_tokens.clone(), lex_tokens);
 
         let dense_attrs = CompiledProgram::parse_instruction_attrs(
@@ -1910,6 +1981,11 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
                 );
                 let b_clone = prog.instruction_bundles.clone();
                 assert_eq!(prog.instruction_bundles, b_clone);
+                for b in &prog.instruction_bundles {
+                    let word = b.encode_vliw_word();
+                    assert_eq!(bytemuck::bytes_of(&word).len(), 16);
+                    assert_ne!(format!("{word:?}"), "");
+                }
                 let c_clone = prog.cost_analysis;
                 let m_clone = prog.memory_stats;
                 let p_clone = prog.clone();

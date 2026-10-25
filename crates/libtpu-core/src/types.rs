@@ -331,7 +331,8 @@ impl CollectiveReductionOp {
     }
 
     /// Returns the raw integer discriminant of this [`CollectiveReductionOp`].
-    pub fn as_raw(self) -> i32 {
+    #[must_use]
+    pub const fn as_raw(self) -> i32 {
         self as i32
     }
 }
@@ -400,7 +401,8 @@ impl TpuCoreTypeEnum {
     }
 
     /// Returns the raw 32-bit integer discriminant of this [`TpuCoreTypeEnum`].
-    pub fn as_raw(self) -> i32 {
+    #[must_use]
+    pub const fn as_raw(self) -> i32 {
         self as i32
     }
 }
@@ -426,7 +428,8 @@ impl ChipCoordinates {
     /// * `x` - The X mesh coordinate.
     /// * `y` - The Y mesh coordinate.
     /// * `z` - The Z mesh coordinate.
-    pub fn new(x: u32, y: u32, z: u32) -> Self {
+    #[must_use]
+    pub const fn new(x: u32, y: u32, z: u32) -> Self {
         Self { x, y, z }
     }
 
@@ -435,8 +438,9 @@ impl ChipCoordinates {
     /// # Arguments
     ///
     /// * `other` - The other coordinates to compare against.
-    pub fn matches(self, other: Self) -> bool {
-        self == other
+    #[must_use]
+    pub const fn matches(self, other: Self) -> bool {
+        self.x == other.x && self.y == other.y && self.z == other.z
     }
 }
 
@@ -444,10 +448,10 @@ impl ChipCoordinates {
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
 pub enum TpuGeneration {
-    /// Cloud TPU v2 (`Jellyfish`, 2 TensorCores/chip, 8 GiB HBM/core).
+    /// Cloud TPU v2 (`Jellyfish`, 2 `TensorCores`/chip, 8 GiB HBM/core).
     #[display("TPU v2")]
     V2 = 2,
-    /// Cloud TPU v3 (`Dragonfish`, 2 TensorCores/chip, 16 GiB HBM/core).
+    /// Cloud TPU v3 (`Dragonfish`, 2 `TensorCores`/chip, 16 GiB HBM/core).
     #[display("TPU v3")]
     V3 = 3,
     /// Cloud TPU v4 (`Pufferfish`, Megacore, 32 GiB HBM/chip, `SparseCore` v1).
@@ -462,7 +466,7 @@ pub enum TpuGeneration {
     /// Cloud TPU v6e / Trillium (`Ghostfish`, 1 `TensorCore`/chip, 32 GiB HBM/chip, 256x256 MXU).
     #[display("TPU v6 lite")]
     V6e = 7,
-    /// Cloud TPU7x / Ironwood (`Ironwood`, 2 `TensorCores`/chip, 192 GiB HBM3e/chip, 256x256 MXU).
+    /// Cloud `TPU7x` / Ironwood (`Ironwood`, 2 `TensorCores`/chip, 192 GiB HBM3e/chip, 256x256 MXU).
     #[display("TPU7x")]
     V7x = 8,
 }
@@ -498,13 +502,15 @@ impl TpuGeneration {
     }
 
     /// Returns the Google LLC `PCIe` Vendor ID (`0x1ae0`).
-    pub fn pcie_vendor_id(self) -> PciVendorId {
+    #[must_use]
+    pub const fn pcie_vendor_id(self) -> PciVendorId {
         let _ = self;
         PciVendorId(0x1ae0)
     }
 
     /// Returns the `PCIe` Device ID associated with this TPU generation under Google Vendor ID `0x1ae0`.
-    pub fn pcie_device_id(self) -> u16 {
+    #[must_use]
+    pub const fn pcie_device_id(self) -> u16 {
         match self {
             Self::V2 | Self::V3 => 0x0027,
             Self::V4 => 0x0056,
@@ -516,12 +522,14 @@ impl TpuGeneration {
     }
 
     /// Returns the strongly-typed [`PciDeviceId`] for this TPU generation.
-    pub fn typed_pcie_device_id(self) -> PciDeviceId {
+    #[must_use]
+    pub const fn typed_pcie_device_id(self) -> PciDeviceId {
         PciDeviceId(self.pcie_device_id())
     }
 
     /// Returns the HBM capacity per logical device in bytes for this TPU generation.
-    pub fn hbm_capacity_bytes(self) -> ByteSize {
+    #[must_use]
+    pub const fn hbm_capacity_bytes(self) -> ByteSize {
         match self {
             Self::V2 => ByteSize(8 * 1024 * 1024 * 1024),
             Self::V3 | Self::V5e => ByteSize(16 * 1024 * 1024 * 1024),
@@ -532,7 +540,8 @@ impl TpuGeneration {
     }
 
     /// Returns the on-chip Vector Memory (VMEM) capacity per `TensorCore` in bytes.
-    pub fn vmem_capacity_bytes(self) -> ByteSize {
+    #[must_use]
+    pub const fn vmem_capacity_bytes(self) -> ByteSize {
         match self {
             Self::V2 | Self::V3 => ByteSize(16 * 1024 * 1024),
             Self::V4 | Self::V5e => ByteSize(32 * 1024 * 1024),
@@ -541,7 +550,8 @@ impl TpuGeneration {
     }
 
     /// Returns the on-chip Scalar Memory (SMEM) capacity per `TensorCore` in bytes.
-    pub fn smem_capacity_bytes(self) -> ByteSize {
+    #[must_use]
+    pub const fn smem_capacity_bytes(self) -> ByteSize {
         match self {
             Self::V2 | Self::V3 | Self::V4 | Self::V5e => ByteSize(1024 * 1024),
             Self::V5p | Self::V6e | Self::V7x => ByteSize(2 * 1024 * 1024),
@@ -549,7 +559,8 @@ impl TpuGeneration {
     }
 
     /// Returns the Matrix Multiply Unit (MXU) systolic array dimension (`128` or `256`).
-    pub fn mxu_dimension(self) -> u32 {
+    #[must_use]
+    pub const fn mxu_dimension(self) -> u32 {
         match self {
             Self::V2 | Self::V3 | Self::V4 | Self::V5e | Self::V5p => 128,
             Self::V6e | Self::V7x => 256,
@@ -557,7 +568,8 @@ impl TpuGeneration {
     }
 
     /// Returns the HBM memory bandwidth in gigabytes per second (GB/s) per chip.
-    pub fn hbm_bandwidth_gbps(self) -> u32 {
+    #[must_use]
+    pub const fn hbm_bandwidth_gbps(self) -> u32 {
         match self {
             Self::V2 => 600,
             Self::V3 => 900,
@@ -570,7 +582,8 @@ impl TpuGeneration {
     }
 
     /// Returns the peak `BF16` compute throughput in TFLOPs per chip.
-    pub fn peak_bf16_tflops(self) -> u32 {
+    #[must_use]
+    pub const fn peak_bf16_tflops(self) -> u32 {
         match self {
             Self::V2 => 45,
             Self::V3 => 123,
@@ -583,7 +596,8 @@ impl TpuGeneration {
     }
 
     /// Returns the number of Inter-Chip Interconnect (ICI) links per chip.
-    pub fn ici_link_count(self) -> u32 {
+    #[must_use]
+    pub const fn ici_link_count(self) -> u32 {
         match self {
             Self::V2 | Self::V3 | Self::V5e | Self::V6e => 4,
             Self::V4 | Self::V5p | Self::V7x => 6,
@@ -591,7 +605,8 @@ impl TpuGeneration {
     }
 
     /// Returns the number of logical `TensorCore` devices per physical TPU chip.
-    pub fn logical_devices_per_chip(self) -> u32 {
+    #[must_use]
+    pub const fn logical_devices_per_chip(self) -> u32 {
         match self {
             Self::V2 | Self::V3 => 2,
             Self::V4 | Self::V5e | Self::V5p | Self::V6e | Self::V7x => 1,
@@ -599,7 +614,8 @@ impl TpuGeneration {
     }
 
     /// Returns the number of `SparseCores` per logical device.
-    pub fn sparse_cores_per_device(self) -> u32 {
+    #[must_use]
+    pub const fn sparse_cores_per_device(self) -> u32 {
         match self {
             Self::V2 | Self::V3 => 0,
             Self::V5e | Self::V6e => 2,
@@ -608,7 +624,8 @@ impl TpuGeneration {
     }
 
     /// Returns the XLA minor-dimension alignment pad size (128 or 256 elements).
-    pub fn xla_pad_size(self) -> i32 {
+    #[must_use]
+    pub const fn xla_pad_size(self) -> i32 {
         match self {
             Self::V2 | Self::V3 | Self::V4 | Self::V5e | Self::V5p => 128,
             Self::V6e | Self::V7x => 256,
@@ -716,7 +733,7 @@ impl ElementType {
     /// # Errors
     ///
     /// Returns [`LibTpuError::UnsupportedElementType`] if `raw` is outside `0..=27`.
-    pub fn from_raw(raw: i32) -> LibTpuResult<Self> {
+    pub const fn from_raw(raw: i32) -> LibTpuResult<Self> {
         match raw {
             0 => Ok(Self::Invalid),
             1 => Ok(Self::Pred),
@@ -751,12 +768,14 @@ impl ElementType {
     }
 
     /// Returns the raw integer code matching `PJRT_Buffer_Type`.
-    pub fn as_raw(self) -> i32 {
+    #[must_use]
+    pub const fn as_raw(self) -> i32 {
         self as i32
     }
 
     /// Returns the size in bits of a single element of this type.
-    pub fn bit_size(self) -> usize {
+    #[must_use]
+    pub const fn bit_size(self) -> usize {
         match self {
             Self::Invalid | Self::Token => 0,
             Self::S2 | Self::U2 => 2,
@@ -778,65 +797,49 @@ impl ElementType {
     }
 
     /// Returns the size in bytes of a single element (rounded up to at least 1 byte for non-empty types).
-    pub fn byte_size(self) -> usize {
+    #[must_use]
+    pub const fn byte_size(self) -> usize {
         self.bit_size().div_ceil(8)
     }
 
-    /// Converts an IEEE-754 `f32` to 16-bit `bf16` bits.
+    /// Converts an IEEE-754 `f32` to 16-bit `bf16` bits using `half::bf16` round-to-nearest-even.
     ///
     /// # Arguments
     ///
     /// * `val` - 32-bit float value.
+    #[must_use]
     pub fn f32_to_bf16_bits(val: f32) -> u16 {
-        u16::try_from(val.to_bits() >> 16).unwrap_or(0)
+        half::bf16::from_f32(val).to_bits()
     }
 
-    /// Converts 16-bit `bf16` bits to an IEEE-754 `f32`.
+    /// Converts 16-bit `bf16` bits to an IEEE-754 `f32` using `half::bf16`.
     ///
     /// # Arguments
     ///
     /// * `bits` - 16-bit `bf16` bit pattern.
+    #[must_use]
     pub fn bf16_bits_to_f32(bits: u16) -> f32 {
-        f32::from_bits(u32::from(bits) << 16)
+        half::bf16::from_bits(bits).to_f32()
     }
 
-    /// Converts an IEEE-754 `f32` to 16-bit `f16` bits.
+    /// Converts an IEEE-754 `f32` to 16-bit `f16` bits using `half::f16` round-to-nearest-even.
     ///
     /// # Arguments
     ///
     /// * `val` - 32-bit float value.
+    #[must_use]
     pub fn f32_to_f16_bits(val: f32) -> u16 {
-        let bits = val.to_bits();
-        let sign = u16::try_from((bits >> 16) & 0x8000).unwrap_or(0);
-        let exp = i32::try_from((bits >> 23) & 0xff).unwrap_or(0) - 127 + 15;
-        let mant = u16::try_from((bits >> 13) & 0x03ff).unwrap_or(0);
-        if exp <= 0 {
-            sign
-        } else if exp >= 31 {
-            sign | 0x7c00
-        } else {
-            let exp_u16 = u16::try_from(exp).unwrap_or(0);
-            sign | (exp_u16 << 10) | mant
-        }
+        half::f16::from_f32(val).to_bits()
     }
 
-    /// Converts 16-bit `f16` bits to an IEEE-754 `f32`.
+    /// Converts 16-bit `f16` bits to an IEEE-754 `f32` using `half::f16`.
     ///
     /// # Arguments
     ///
     /// * `bits` - 16-bit `f16` bit pattern.
+    #[must_use]
     pub fn f16_bits_to_f32(bits: u16) -> f32 {
-        let sign = u32::from(bits & 0x8000) << 16;
-        let exp = u32::from((bits >> 10) & 0x1f);
-        let mant = u32::from(bits & 0x03ff);
-        if exp == 0 {
-            f32::from_bits(sign)
-        } else if exp == 31 {
-            f32::from_bits(sign | 0x7f80_0000 | (mant << 13))
-        } else {
-            let f32_exp = (exp + 127 - 15) << 23;
-            f32::from_bits(sign | f32_exp | (mant << 13))
-        }
+        half::f16::from_bits(bits).to_f32()
     }
 
     /// Unpacks a raw little-endian byte buffer of this [`ElementType`] into `f64` scalar values
@@ -845,18 +848,15 @@ impl ElementType {
     /// # Arguments
     ///
     /// * `bytes` - Raw little-endian tensor payload.
-    #[allow(clippy::cast_precision_loss)]
+    #[must_use]
+    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     pub fn unpack_to_f64_vec(self, bytes: &[u8]) -> Vec<f64> {
         match self {
             Self::Pred | Self::U8 => bytes
                 .iter()
                 .map(|&b| {
                     if self == Self::Pred {
-                        if b != 0 {
-                            1.0
-                        } else {
-                            0.0
-                        }
+                        if b != 0 { 1.0 } else { 0.0 }
                     } else {
                         f64::from(b)
                     }
@@ -955,6 +955,7 @@ impl ElementType {
     /// # Arguments
     ///
     /// * `values` - Scalar values to pack.
+    #[must_use]
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -971,11 +972,6 @@ impl ElementType {
             Self::S8 => {
                 for &v in values {
                     out.extend_from_slice(&(v as i8).to_le_bytes());
-                }
-            }
-            Self::U8 => {
-                for &v in values {
-                    out.push(v as u8);
                 }
             }
             Self::S16 => {
@@ -1295,7 +1291,8 @@ pub enum MemoryKind {
 
 impl MemoryKind {
     /// Returns the static string identifier expected by PJRT (`PJRT_Memory_Kind`).
-    pub fn as_str(self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::DeviceHbm => "device",
             Self::PinnedHost => "pinned_host",
@@ -1305,7 +1302,8 @@ impl MemoryKind {
     }
 
     /// Returns the numeric kind ID (`PJRT_Memory_Kind_Id`).
-    pub fn kind_id(self) -> i32 {
+    #[must_use]
+    pub const fn kind_id(self) -> i32 {
         self as i32
     }
 }
@@ -1335,6 +1333,7 @@ impl MemoryLayout {
     /// # Arguments
     ///
     /// * `rank` - Number of dimensions in the tensor.
+    #[must_use]
     pub fn default_tpu_tiled(rank: usize) -> Self {
         let minor_to_major: Vec<i64> = (0..rank)
             .rev()
@@ -1451,6 +1450,7 @@ impl Shape {
     }
 
     /// Computes the unpadded host byte size of a tensor with this validated [`Shape`].
+    #[must_use]
     pub fn unpadded_byte_size(&self) -> ByteSize {
         let bits = self.element_type.bit_size();
         if bits == 0 {
@@ -1466,6 +1466,7 @@ impl Shape {
     }
 
     /// Computes the on-device HBM byte size aligned to 256-byte TPU DMA granule boundaries.
+    #[must_use]
     pub fn on_device_byte_size(&self) -> ByteSize {
         let unpadded = self.unpadded_byte_size().0;
         if unpadded == 0 {
@@ -1476,6 +1477,7 @@ impl Shape {
     }
 
     /// Returns the indices of all dynamic dimensions in this shape.
+    #[must_use]
     pub fn dynamic_dimension_indices(&self) -> Vec<usize> {
         self.dynamic_dims
             .iter()
@@ -1485,11 +1487,13 @@ impl Shape {
     }
 
     /// Returns the number of dimensions (rank) of this shape.
+    #[must_use]
     pub fn rank(&self) -> usize {
         self.dims.len()
     }
 
     /// Computes the total number of scalar elements in this shape.
+    #[must_use]
     pub fn element_count(&self) -> usize {
         let mut count: usize = 1;
         for &d in &self.dims {
@@ -1504,6 +1508,7 @@ impl Shape {
     /// # Arguments
     ///
     /// * `linear_idx` - Flat row-major element index.
+    #[must_use]
     pub fn linear_to_coords(&self, linear_idx: usize) -> Vec<usize> {
         let mut coords = Vec::with_capacity(self.dims.len());
         let mut rem = linear_idx;
@@ -1593,7 +1598,8 @@ impl Shape {
     /// - 16-bit elements (`F16`, `Bf16`, `S16`, `U16`): 3D `(2, 4, 128)` sub-tile packing
     /// - 8-bit elements (`S8`, `U8`, `Pred`, `F8*`): 3D `(4, 4, 128)` sub-tile packing
     /// - Sub-byte elements (`S4`, `U4`, `F4E2M1Fn`, `S2`, `U2`): 3D `(8, 4, 128)` sub-tile packing
-    pub fn tpu_tile_geometry(&self) -> (usize, usize, usize) {
+    #[must_use]
+    pub const fn tpu_tile_geometry(&self) -> (usize, usize, usize) {
         let bits = self.element_type.bit_size();
         if bits == 16 {
             (2, 4, 128)
@@ -1608,6 +1614,7 @@ impl Shape {
 
     /// Computes the bijective element index mapping from TPU tiled order (`(tr, tc, sr, sc, pack)`)
     /// to row-major linear element indices `0..self.element_count()`.
+    #[must_use]
     pub fn tile_permutation_indices(&self) -> Vec<usize> {
         let total = self.element_count();
         if self.dims.len() < 2 {
@@ -1769,6 +1776,32 @@ impl Shape {
     pub fn delinearize_bytes(&self, tiled_bytes: &[u8]) -> LibTpuResult<Vec<u8>> {
         self.delinearize_from_tpu_tiles(tiled_bytes)
     }
+
+    /// Converts linear host row-major bytes into hardware TPU tiled layout (`linear_to_tpu_tiled`).
+    ///
+    /// # Arguments
+    ///
+    /// * `linear_bytes` - Source row-major linear byte slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `linear_bytes.len() > self.on_device_byte_size().0`.
+    pub fn linear_to_tpu_tiled(&self, linear_bytes: &[u8]) -> LibTpuResult<Vec<u8>> {
+        self.linearize_to_tpu_tiles(linear_bytes)
+    }
+
+    /// Converts hardware TPU tiled bytes back into linear host row-major layout (`tpu_tiled_to_linear`).
+    ///
+    /// # Arguments
+    ///
+    /// * `tiled_bytes` - Source TPU tiled byte slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `tiled_bytes.len() < self.unpadded_byte_size().0`.
+    pub fn tpu_tiled_to_linear(&self, tiled_bytes: &[u8]) -> LibTpuResult<Vec<u8>> {
+        self.delinearize_from_tpu_tiles(tiled_bytes)
+    }
 }
 
 /// Type alias for [`Shape`] (`TensorShape`).
@@ -1805,7 +1838,8 @@ impl TypedDeviceBuffer<Unallocated> {
     /// * `id` - Unique buffer identifier.
     /// * `device_id` - Target TPU device identifier.
     /// * `shape` - Validated tensor shape.
-    pub fn new_unallocated(id: BufferId, device_id: DeviceId, shape: Shape) -> Self {
+    #[must_use]
+    pub const fn new_unallocated(id: BufferId, device_id: DeviceId, shape: Shape) -> Self {
         Self {
             id,
             device_id,
@@ -1820,6 +1854,7 @@ impl TypedDeviceBuffer<Unallocated> {
     /// # Arguments
     ///
     /// * `address` - Allocated HBM device address.
+    #[must_use]
     pub fn bind_allocation(self, address: DeviceAddress) -> TypedDeviceBuffer<Allocated> {
         TypedDeviceBuffer {
             id: self.id,
@@ -1833,13 +1868,20 @@ impl TypedDeviceBuffer<Unallocated> {
 
 impl TypedDeviceBuffer<Allocated> {
     /// Returns the guaranteed [`DeviceAddress`] for this allocated buffer.
+    #[must_use]
+    #[allow(clippy::missing_const_for_fn)]
     pub fn device_address(&self) -> DeviceAddress {
         self.address.unwrap_or(DeviceAddress(0))
     }
 }
 
 #[cfg(test)]
-#[allow(for_loops_over_fallibles)]
+#[allow(
+    for_loops_over_fallibles,
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::float_cmp
+)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -1914,13 +1956,13 @@ mod tests {
         assert_eq!(u64::from(cb_id), 16);
         assert_eq!(cb_id.to_string(), "16");
 
-        let comm_id = CommunicatorId::from(17_u64) + CommunicatorId(1) - CommunicatorId(1);
-        assert_eq!(u64::from(comm_id), 17);
-        assert_eq!(comm_id.to_string(), "17");
+        let communicator_id = CommunicatorId::from(17_u64) + CommunicatorId(1) - CommunicatorId(1);
+        assert_eq!(u64::from(communicator_id), 17);
+        assert_eq!(communicator_id.to_string(), "17");
 
-        let comp_id = CompilerId::from(18_u64) + CompilerId(1) - CompilerId(1);
-        assert_eq!(u64::from(comp_id), 18);
-        assert_eq!(comp_id.to_string(), "18");
+        let compiler_id = CompilerId::from(18_u64) + CompilerId(1) - CompilerId(1);
+        assert_eq!(u64::from(compiler_id), 18);
+        assert_eq!(compiler_id.to_string(), "18");
 
         let xform_id = TransformId::from(19_u64) + TransformId(1) - TransformId(1);
         assert_eq!(u64::from(xform_id), 19);
@@ -1965,8 +2007,8 @@ mod tests {
         ] {
             let tk_copy = tk;
             assert_eq!(tk, tk_copy);
-            assert!(!tk.to_string().is_empty());
-            assert!(!format!("{tk:?}").is_empty());
+            assert_ne!(tk.to_string(), "");
+            assert_ne!(format!("{tk:?}"), "");
         }
 
         for raw in 0..=3 {
@@ -1974,8 +2016,8 @@ mod tests {
             assert!(op.is_ok());
             for o in op {
                 assert_eq!(o.as_raw(), raw);
-                assert!(!o.to_string().is_empty());
-                assert!(!format!("{o:?}").is_empty());
+                assert_ne!(o.to_string(), "");
+                assert_ne!(format!("{o:?}"), "");
             }
         }
         assert!(CollectiveReductionOp::from_raw(9).is_err());
@@ -2033,13 +2075,13 @@ mod tests {
         assert_eq!(u64::from(ioctl_cmd), 0x4020_dc08);
         assert_eq!(ioctl_cmd.to_string(), "0x4020dc08");
 
-        let vid = PciVendorId::from(0x1ae0_u16);
-        assert_eq!(u16::from(vid), 0x1ae0);
-        assert_eq!(vid.to_string(), "0x1ae0");
+        let vendor_id = PciVendorId::from(0x1ae0_u16);
+        assert_eq!(u16::from(vendor_id), 0x1ae0);
+        assert_eq!(vendor_id.to_string(), "0x1ae0");
 
-        let did = PciDeviceId::from(0x006f_u16);
-        assert_eq!(u16::from(did), 0x006f);
-        assert_eq!(did.to_string(), "0x006f");
+        let pci_dev_id = PciDeviceId::from(0x006f_u16);
+        assert_eq!(u16::from(pci_dev_id), 0x006f);
+        assert_eq!(pci_dev_id.to_string(), "0x006f");
 
         let iommu = IommuGroupId::from(12_u32);
         assert_eq!(u32::from(iommu), 12);
@@ -2058,7 +2100,7 @@ mod tests {
         assert_eq!(TpuCoreTypeEnum::SparseCore.as_raw(), 1);
         assert_eq!(TpuCoreTypeEnum::TensorCore.to_string(), "TensorCore");
         assert_eq!(TpuCoreTypeEnum::SparseCore.to_string(), "SparseCore");
-        assert!(!format!("{:?}", TpuCoreTypeEnum::TensorCore).is_empty());
+        assert_ne!(format!("{:?}", TpuCoreTypeEnum::TensorCore), "");
 
         let c1 = ChipCoordinates::new(1, 2, 3);
         let c2 = ChipCoordinates::new(1, 2, 3);
@@ -2070,7 +2112,7 @@ mod tests {
         assert!(!c1.matches(c4));
         assert!(!c1.matches(c5));
         assert_eq!(c1.to_string(), "(1, 2, 3)");
-        assert!(!format!("{c1:?}").is_empty());
+        assert_ne!(format!("{c1:?}"), "");
     }
 
     #[test]
@@ -2202,8 +2244,8 @@ mod tests {
                 assert_eq!(g.logical_devices_per_chip(), devs);
                 assert_eq!(g.sparse_cores_per_device(), sc);
                 assert_eq!(g.xla_pad_size(), pad);
-                assert!(!g.to_string().is_empty());
-                assert!(!format!("{g:?}").is_empty());
+                assert_ne!(g.to_string(), "");
+                assert_ne!(format!("{g:?}"), "");
             }
         }
         assert!(TpuGeneration::from_name("unknown_tpu").is_err());
@@ -2217,8 +2259,8 @@ mod tests {
             for t in et {
                 assert_eq!(t.as_raw(), raw);
                 let _ = t.bit_size();
-                assert!(!t.to_string().is_empty());
-                assert!(!format!("{t:?}").is_empty());
+                assert_ne!(t.to_string(), "");
+                assert_ne!(format!("{t:?}"), "");
             }
         }
         assert!(ElementType::from_raw(99).is_err());
@@ -2233,7 +2275,7 @@ mod tests {
             assert_eq!(k.as_str(), s);
             assert_eq!(k.kind_id(), id);
             assert_eq!(k.to_string(), s);
-            assert!(!format!("{k:?}").is_empty());
+            assert_ne!(format!("{k:?}"), "");
         }
 
         assert_eq!(ElementType::f16_bits_to_f32(0), 0.0);
@@ -2295,7 +2337,7 @@ mod tests {
             ExecutableState::Deleted,
             ProfilerState::Recording,
         );
-        assert!(!misc_enums.is_empty());
+        assert_ne!(misc_enums, "");
     }
 
     #[test]
@@ -2324,7 +2366,7 @@ mod tests {
             assert_eq!(s.unpadded_byte_size(), ByteSize(40));
             assert_eq!(s.on_device_byte_size(), ByteSize(256));
             assert_eq!(s.dynamic_dimension_indices(), vec![0]);
-            assert!(!format!("{s:?}").is_empty());
+            assert_ne!(format!("{s:?}"), "");
         }
 
         let rank1_default = Shape::new(ElementType::S4, vec![3], None, None);
@@ -2347,15 +2389,15 @@ mod tests {
 
             let unalloc = TypedDeviceBuffer::new_unallocated(BufferId(1), DeviceId(0), s);
             let unalloc_cloned = unalloc.clone();
-            assert!(!format!("{unalloc_cloned:?}").is_empty());
+            assert_ne!(format!("{unalloc_cloned:?}"), "");
             let alloc = unalloc.bind_allocation(DeviceAddress(0x4000));
             let alloc_cloned = alloc.clone();
             assert_eq!(alloc.device_address(), DeviceAddress(0x4000));
             drop(alloc);
             assert_eq!(alloc_cloned.device_address(), DeviceAddress(0x4000));
-            assert!(!format!("{alloc_cloned:?}").is_empty());
-            assert!(!format!("{Unallocated:?}").is_empty());
-            assert!(!format!("{Allocated:?}").is_empty());
+            assert_ne!(format!("{alloc_cloned:?}"), "");
+            assert_ne!(format!("{Unallocated:?}"), "");
+            assert_ne!(format!("{Allocated:?}"), "");
         }
 
         assert!(Shape::new(ElementType::F32, vec![i64::MAX, i64::MAX], None, None).is_err());
@@ -2405,6 +2447,9 @@ mod tests {
                 let raw: Vec<u8> = (0..sh.unpadded_byte_size().0)
                     .map(|i| u8::try_from(i % 251).unwrap_or(0))
                     .collect();
+                for tb in sh.linear_to_tpu_tiled(&raw) {
+                    assert_eq!(sh.tpu_tiled_to_linear(&tb).ok(), Some(raw.clone()));
+                }
                 for tb in sh.linearize_bytes(&raw) {
                     assert_eq!(sh.delinearize_bytes(&tb).ok(), Some(raw.clone()));
                 }

@@ -36,7 +36,7 @@ unsafe fn handle_buffer_to_host_buffer(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_ToHostBuffer_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_ToHostBuffer(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -74,7 +74,7 @@ unsafe fn handle_buffer_dimensions(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_Dimensions_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_Dimensions(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -111,7 +111,7 @@ unsafe fn handle_buffer_element_type(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_ElementType_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_ElementType(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -148,7 +148,7 @@ unsafe fn handle_buffer_on_device_size_in_bytes(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_OnDeviceSizeInBytes_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_OnDeviceSizeInBytes(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -185,7 +185,7 @@ unsafe fn handle_buffer_destroy(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_Destroy(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -222,7 +222,7 @@ unsafe fn handle_buffer_unpadded_dimensions(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_UnpaddedDimensions_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_UnpaddedDimensions(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -243,8 +243,12 @@ pub unsafe extern "C" fn PJRT_Buffer_UnpaddedDimensions(
 unsafe fn handle_buffer_dynamic_dimension_indices(
     args: &mut crate::pjrt_types::PJRT_Buffer_DynamicDimensionIndices_Args,
 ) -> Result<(), LibTpuError> {
-    args.dynamic_dimension_indices = ptr::null();
-    args.num_dynamic_dimensions = 0;
+    // SAFETY: `args.buffer` is null or a valid `PJRT_Buffer*`.
+    let (ptr, len) = unsafe { args.buffer.as_ref() }.map_or((ptr::null(), 0), |b| {
+        (b.dynamic_dim_indices.as_ptr(), b.dynamic_dim_indices.len())
+    });
+    args.dynamic_dimension_indices = ptr;
+    args.num_dynamic_dimensions = len;
     Ok(())
 }
 
@@ -257,7 +261,7 @@ unsafe fn handle_buffer_dynamic_dimension_indices(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_DynamicDimensionIndices_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_DynamicDimensionIndices(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -270,6 +274,12 @@ pub unsafe extern "C" fn PJRT_Buffer_DynamicDimensionIndices(
     }
 }
 
+/// Default static tile dimensions (`[8, 128]`) for `PJRT_Buffer_GetMemoryLayout`.
+static DEFAULT_TILE_DIMS: [i64; 2] = [8, 128];
+
+/// Default static tile dimension count (`[2]`) for `PJRT_Buffer_GetMemoryLayout`.
+static DEFAULT_TILE_DIM_SIZES: [usize; 1] = [2];
+
 /// Populates [`crate::pjrt_types::PJRT_Buffer_GetMemoryLayout_Args`].
 ///
 /// # Safety
@@ -279,8 +289,44 @@ unsafe fn handle_buffer_get_memory_layout(
     args: &mut crate::pjrt_types::PJRT_Buffer_GetMemoryLayout_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `buffer` is null or a valid `PJRT_Buffer*`.
-    let _ = unsafe { args.buffer.as_ref() }.map(|b| b.inner.shape.dims.len());
-    args.layout_words = [48, 0, 0, 0, 0];
+    let (m2m_ptr, m2m_len, tile_dims_ptr, tile_sizes_ptr, num_tiles) =
+        unsafe { args.buffer.as_ref() }.map_or(
+            (
+                ptr::null(),
+                0,
+                DEFAULT_TILE_DIMS.as_ptr(),
+                DEFAULT_TILE_DIM_SIZES.as_ptr(),
+                1_usize,
+            ),
+            |b| match &b.inner.shape.layout {
+                libtpu_core::types::MemoryLayout::Tiled { minor_to_major, .. } => (
+                    minor_to_major.as_ptr(),
+                    minor_to_major.len(),
+                    b.tile_dims_flat.as_ptr(),
+                    b.tile_dim_sizes.as_ptr(),
+                    b.tile_dim_sizes.len(),
+                ),
+                libtpu_core::types::MemoryLayout::Strides { byte_strides } => (
+                    byte_strides.as_ptr(),
+                    byte_strides.len(),
+                    b.tile_dims_flat.as_ptr(),
+                    b.tile_dim_sizes.as_ptr(),
+                    b.tile_dim_sizes.len(),
+                ),
+            },
+        );
+    args.layout_words = [
+        80,
+        0,
+        m2m_ptr as usize,
+        m2m_len,
+        tile_dims_ptr as usize,
+        tile_sizes_ptr as usize,
+        num_tiles,
+        0,
+        0,
+        0,
+    ];
     Ok(())
 }
 
@@ -293,7 +339,7 @@ unsafe fn handle_buffer_get_memory_layout(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_GetMemoryLayout_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_GetMemoryLayout(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -328,7 +374,7 @@ unsafe fn handle_buffer_device(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_Device_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_Device(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -361,7 +407,7 @@ unsafe fn handle_buffer_memory(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_Memory_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_Memory(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -396,7 +442,7 @@ unsafe fn handle_buffer_delete(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_Delete_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_Delete(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -430,7 +476,7 @@ unsafe fn handle_buffer_is_deleted(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_IsDeleted_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_IsDeleted(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -456,11 +502,11 @@ unsafe fn handle_buffer_copy_to_device(
             .inner
             .copy_to_device(d.inner.description.spec.device_id, b.inner.memory_id)
             .map_or(ptr::null_mut(), |copied| {
-                Box::into_raw(Box::new(PJRT_Buffer {
-                    inner: copied,
-                    device_ptr: args.dst_device,
-                    memory_ptr: b.memory_ptr,
-                }))
+                Box::into_raw(Box::new(PJRT_Buffer::new(
+                    copied,
+                    args.dst_device,
+                    b.memory_ptr,
+                )))
             }),
         _ => ptr::null_mut(),
     };
@@ -476,7 +522,7 @@ unsafe fn handle_buffer_copy_to_device(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_CopyToDevice_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_CopyToDevice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -498,8 +544,7 @@ unsafe fn handle_buffer_is_on_cpu(
     args: &mut crate::pjrt_types::PJRT_Buffer_IsOnCpu_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `buffer` is null or a valid `PJRT_Buffer*`.
-    let _ = unsafe { args.buffer.as_ref() }.map(|b| b.inner.id.0);
-    args.is_on_cpu = false;
+    args.is_on_cpu = unsafe { args.buffer.as_ref() }.is_some_and(|b| b.inner.memory_id.0 % 3 == 2);
     Ok(())
 }
 
@@ -512,7 +557,7 @@ unsafe fn handle_buffer_is_on_cpu(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_IsOnCpu_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_IsOnCpu(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -532,9 +577,12 @@ unsafe fn handle_buffer_ready_event(
     args: &mut crate::pjrt_types::PJRT_Buffer_ReadyEvent_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `buffer` is null or a valid `PJRT_Buffer*`.
-    let _ = unsafe { args.buffer.as_ref() }.map(|b| b.inner.id.0);
+    let inner_event = unsafe { args.buffer.as_ref() }
+        .map_or_else(libtpu_core::pjrt::PjrtCoreEvent::ready_ok, |b| {
+            b.inner.ready_event()
+        });
     args.event = Box::into_raw(Box::new(crate::pjrt_types::PJRT_Event {
-        inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
+        inner: inner_event,
     }));
     Ok(())
 }
@@ -548,7 +596,7 @@ unsafe fn handle_buffer_ready_event(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_ReadyEvent_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_ReadyEvent(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -585,7 +633,7 @@ unsafe fn handle_buffer_unsafe_pointer(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_UnsafePointer_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_UnsafePointer(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -620,7 +668,7 @@ unsafe fn handle_buffer_inc_ref(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_IncreaseExternalReferenceCount_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_IncreaseExternalReferenceCount(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -655,7 +703,7 @@ unsafe fn handle_buffer_dec_ref(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_DecreaseExternalReferenceCount_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_DecreaseExternalReferenceCount(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -693,7 +741,7 @@ unsafe fn handle_buffer_opaque_ptr(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -714,8 +762,12 @@ pub unsafe extern "C" fn PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
 unsafe fn handle_stream_destroy(
     args: &mut crate::pjrt_types::PJRT_CopyToDeviceStream_Destroy_Args,
 ) -> Result<(), LibTpuError> {
-    // SAFETY: `stream` is null or a valid `PJRT_CopyToDeviceStream*`.
-    let _ = unsafe { args.stream.as_ref() }.map(|s| s.inner.total_bytes);
+    if !args.stream.is_null() {
+        // SAFETY: `args.stream` is a valid heap-allocated `PJRT_CopyToDeviceStream*`.
+        unsafe {
+            drop(Box::from_raw(args.stream));
+        }
+    }
     Ok(())
 }
 
@@ -728,7 +780,7 @@ unsafe fn handle_stream_destroy(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_CopyToDeviceStream_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_CopyToDeviceStream_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -749,18 +801,28 @@ pub unsafe extern "C" fn PJRT_CopyToDeviceStream_Destroy(
 unsafe fn handle_stream_add_chunk(
     args: &mut crate::pjrt_types::PJRT_CopyToDeviceStream_AddChunk_Args,
 ) -> Result<(), LibTpuError> {
-    // SAFETY: `chunk` is null or a valid `PJRT_Chunk*`.
-    let chunk_bytes = unsafe { args.chunk.as_ref() }.map_or(128_i64, |c| {
+    // SAFETY: `stream` and `chunk` are null or valid pointers.
+    let (stream_opt, chunk_opt) = unsafe { (args.stream.as_ref(), args.chunk.as_ref()) };
+    if let Some(c) = chunk_opt {
+        let len = c.size.max(1);
+        if let Some(s) = stream_opt {
+            if !c.data.is_null() {
+                // SAFETY: `c.data` points to `c.size` bytes.
+                let slice = unsafe { std::slice::from_raw_parts(c.data.cast::<u8>(), c.size) };
+                let _ = s.inner.add_chunk_data(slice);
+            } else {
+                let _ = s.inner.add_chunk(i64::try_from(len).unwrap_or(128));
+            }
+        }
         if let Some(del) = c.deleter {
             // SAFETY: Invoking chunk deleter with caller's data and deleter_arg.
             unsafe {
                 del(c.data, c.deleter_arg);
             }
         }
-        i64::try_from(c.size).unwrap_or(128).max(1)
-    });
-    // SAFETY: `stream` is null or a valid `PJRT_CopyToDeviceStream*`.
-    let _ = unsafe { args.stream.as_ref() }.map(|s| s.inner.add_chunk(chunk_bytes));
+    } else if let Some(s) = stream_opt {
+        let _ = s.inner.add_chunk(128);
+    }
     args.transfer_complete = Box::into_raw(Box::new(crate::pjrt_types::PJRT_Event {
         inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
     }));
@@ -776,7 +838,7 @@ unsafe fn handle_stream_add_chunk(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_CopyToDeviceStream_AddChunk_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_CopyToDeviceStream_AddChunk(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -811,7 +873,7 @@ unsafe fn handle_stream_total_bytes(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_CopyToDeviceStream_TotalBytes_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_CopyToDeviceStream_TotalBytes(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -847,7 +909,7 @@ unsafe fn handle_stream_granule_size(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_CopyToDeviceStream_GranuleSize_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_CopyToDeviceStream_GranuleSize(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -883,7 +945,7 @@ unsafe fn handle_stream_current_bytes(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_CopyToDeviceStream_CurrentBytes_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_CopyToDeviceStream_CurrentBytes(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -911,11 +973,11 @@ unsafe fn handle_buffer_copy_to_memory(
             .inner
             .copy_to_device(b.inner.device_id, m.inner.id)
             .map_or(ptr::null_mut(), |copied| {
-                Box::into_raw(Box::new(PJRT_Buffer {
-                    inner: copied,
-                    device_ptr: b.device_ptr,
-                    memory_ptr: args.dst_memory,
-                }))
+                Box::into_raw(Box::new(PJRT_Buffer::new(
+                    copied,
+                    b.device_ptr,
+                    args.dst_memory,
+                )))
             }),
         _ => ptr::null_mut(),
     };
@@ -931,7 +993,7 @@ unsafe fn handle_buffer_copy_to_memory(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_CopyToMemory_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_CopyToMemory(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -980,7 +1042,7 @@ unsafe fn handle_buffer_copy_raw_to_host(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_CopyRawToHost_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_CopyRawToHost(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1001,8 +1063,12 @@ pub unsafe extern "C" fn PJRT_Buffer_CopyRawToHost(
 unsafe fn handle_async_transfer_manager_destroy(
     args: &mut crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_Destroy_Args,
 ) -> Result<(), LibTpuError> {
-    // SAFETY: `transfer_manager` is null or a valid `PJRT_AsyncHostToDeviceTransferManager*`.
-    let _ = unsafe { args.transfer_manager.as_ref() }.map(|tm| tm.inner.buffers.len());
+    if !args.transfer_manager.is_null() {
+        // SAFETY: `args.transfer_manager` was allocated by `PJRT_Client_CreateBuffersForAsyncHostToDevice`.
+        unsafe {
+            drop(Box::from_raw(args.transfer_manager));
+        }
+    }
     Ok(())
 }
 
@@ -1015,7 +1081,7 @@ unsafe fn handle_async_transfer_manager_destroy(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1036,7 +1102,15 @@ unsafe fn handle_async_transfer_manager_transfer_data(
     args: &mut crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_TransferData_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `transfer_manager` is null or a valid `PJRT_AsyncHostToDeviceTransferManager*`.
-    let _ = unsafe { args.transfer_manager.as_ref() }.map(|tm| tm.inner.buffers.len());
+    if let Some(tm) = unsafe { args.transfer_manager.as_ref() } {
+        let idx = usize::try_from(args.buffer_index.max(0)).unwrap_or(0);
+        let len = usize::try_from(args.transfer_size.max(0)).unwrap_or(0);
+        if !args.data.is_null() {
+            // SAFETY: `args.data` points to `len` host bytes.
+            let slice = unsafe { std::slice::from_raw_parts(args.data.cast::<u8>(), len) };
+            let _ = tm.inner.transfer_data(idx, slice);
+        }
+    }
     args.done_with_h2d_transfer = Box::into_raw(Box::new(crate::pjrt_types::PJRT_Event {
         inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
     }));
@@ -1052,7 +1126,7 @@ unsafe fn handle_async_transfer_manager_transfer_data(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_TransferData_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_TransferData(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1073,7 +1147,24 @@ unsafe fn handle_async_transfer_manager_retrieve_buffer(
     args: &mut crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `transfer_manager` is null or a valid `PJRT_AsyncHostToDeviceTransferManager*`.
-    let _ = unsafe { args.transfer_manager.as_ref() }.map(|tm| tm.inner.buffers.len());
+    if let Some(tm) = unsafe { args.transfer_manager.as_ref() } {
+        let idx = usize::try_from(args.buffer_index.max(0)).unwrap_or(0);
+        if let Ok(arc_buf) = tm.inner.retrieve_buffer(idx) {
+            let cloned_core = libtpu_core::pjrt::PjrtCoreBuffer::new(
+                arc_buf.device_id,
+                arc_buf.memory_id,
+                arc_buf.shape.clone(),
+                arc_buf.address,
+                std::sync::Arc::clone(&arc_buf.hal),
+            );
+            args.buffer_out = Box::into_raw(Box::new(PJRT_Buffer::new(
+                cloned_core,
+                tm.device_ptr,
+                tm.memory_ptr,
+            )));
+            return Ok(());
+        }
+    }
     args.buffer_out = alloc_default_pjrt_buffer(ptr::null_mut(), ptr::null_mut());
     Ok(())
 }
@@ -1087,7 +1178,7 @@ unsafe fn handle_async_transfer_manager_retrieve_buffer(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1108,8 +1199,8 @@ unsafe fn handle_async_transfer_manager_device(
     args: &mut crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_Device_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `transfer_manager` is null or a valid `PJRT_AsyncHostToDeviceTransferManager*`.
-    let _ = unsafe { args.transfer_manager.as_ref() }.map(|tm| tm.inner.device_id.0);
-    args.device_out = ptr::null_mut();
+    args.device_out =
+        unsafe { args.transfer_manager.as_ref() }.map_or(ptr::null_mut(), |tm| tm.device_ptr);
     Ok(())
 }
 
@@ -1122,7 +1213,7 @@ unsafe fn handle_async_transfer_manager_device(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_Device_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_Device(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1157,7 +1248,7 @@ unsafe fn handle_async_transfer_manager_buffer_count(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_BufferCount_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_BufferCount(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1179,7 +1270,15 @@ unsafe fn handle_async_transfer_manager_buffer_size(
 ) -> Result<(), LibTpuError> {
     // SAFETY: `transfer_manager` is null or a valid `PJRT_AsyncHostToDeviceTransferManager*`.
     let tm_opt = unsafe { args.transfer_manager.as_ref() };
-    args.buffer_size = tm_opt.map_or(256, |tm| tm.inner.buffers.len() * 16);
+    let idx = usize::try_from(args.buffer_index.max(0)).unwrap_or(0);
+    args.buffer_size = tm_opt.map_or(256, |tm| {
+        tm.inner
+            .buffer_sizes
+            .get(idx)
+            .copied()
+            .and_then(|sz| usize::try_from(sz).ok())
+            .unwrap_or(tm.inner.buffers.len() * 16)
+    });
     Ok(())
 }
 
@@ -1192,7 +1291,7 @@ unsafe fn handle_async_transfer_manager_buffer_size(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_BufferSize(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1213,7 +1312,16 @@ unsafe fn handle_async_transfer_manager_set_buffer_error(
     args: &mut crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `transfer_manager` is null or a valid `PJRT_AsyncHostToDeviceTransferManager*`.
-    let _ = unsafe { args.transfer_manager.as_ref() }.map(|tm| tm.inner.buffers.len());
+    if let Some(tm) = unsafe { args.transfer_manager.as_ref() } {
+        let idx = usize::try_from(args.buffer_index.max(0)).unwrap_or(0);
+        tm.inner.set_buffer_error(
+            idx,
+            LibTpuError::TransferFailed {
+                direction: "AsyncH2D",
+                reason: format!("buffer error code {}", args.error_code),
+            },
+        );
+    }
     Ok(())
 }
 
@@ -1226,7 +1334,7 @@ unsafe fn handle_async_transfer_manager_set_buffer_error(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_SetBufferError(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1247,7 +1355,20 @@ unsafe fn handle_async_transfer_manager_add_metadata(
     args: &mut crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_AddMetadata_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `transfer_manager` is null or a valid `PJRT_AsyncHostToDeviceTransferManager*`.
-    let _ = unsafe { args.transfer_manager.as_ref() }.map(|tm| tm.inner.buffers.len());
+    if let Some(tm) = unsafe { args.transfer_manager.as_ref() } {
+        let mut entries = Vec::with_capacity(args.num_metadata.max(1));
+        if !args.transfer_metadata.is_null() {
+            // SAFETY: `args.transfer_metadata` points to `args.num_metadata` entries.
+            let meta_slice =
+                unsafe { std::slice::from_raw_parts(args.transfer_metadata, args.num_metadata) };
+            for (idx, item) in meta_slice.iter().enumerate() {
+                entries.push((format!("meta_{idx}"), item.flags.to_string()));
+            }
+        } else {
+            entries.push((String::from("num_metadata"), args.num_metadata.to_string()));
+        }
+        tm.inner.add_metadata(entries);
+    }
     Ok(())
 }
 
@@ -1260,7 +1381,7 @@ unsafe fn handle_async_transfer_manager_add_metadata(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_AddMetadata_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_AddMetadata(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1281,7 +1402,28 @@ unsafe fn handle_async_transfer_manager_transfer_literal(
     args: &mut crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_TransferLiteral_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `transfer_manager` is null or a valid `PJRT_AsyncHostToDeviceTransferManager*`.
-    let _ = unsafe { args.transfer_manager.as_ref() }.map(|tm| tm.inner.buffers.len());
+    if let Some(tm) = unsafe { args.transfer_manager.as_ref() } {
+        let idx = usize::try_from(args.buffer_index.max(0)).unwrap_or(0);
+        if !args.data.is_null() {
+            let elem_bytes = ElementType::from_raw(args.shape_element_type)
+                .unwrap_or(ElementType::F32)
+                .byte_size();
+            let num_elems: usize = if !args.shape_dims.is_null() {
+                // SAFETY: `args.shape_dims` has `args.shape_num_dims` elements.
+                unsafe { std::slice::from_raw_parts(args.shape_dims, args.shape_num_dims) }
+                    .iter()
+                    .map(|&d| usize::try_from(d.max(1)).unwrap_or(1))
+                    .product()
+            } else {
+                1
+            };
+            let byte_len = elem_bytes.saturating_mul(num_elems);
+            // SAFETY: `args.data` points to at least `byte_len` host bytes.
+            let literal_slice =
+                unsafe { std::slice::from_raw_parts(args.data.cast::<u8>(), byte_len) };
+            let _ = tm.inner.transfer_literal(idx, literal_slice);
+        }
+    }
     args.done_with_h2d_transfer = Box::into_raw(Box::new(crate::pjrt_types::PJRT_Event {
         inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
     }));
@@ -1297,7 +1439,7 @@ unsafe fn handle_async_transfer_manager_transfer_literal(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_TransferLiteral_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_TransferLiteral(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1334,7 +1476,7 @@ unsafe fn handle_buffer_copy_raw_to_host_future(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_CopyRawToHostFuture_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_CopyRawToHostFuture(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1368,7 +1510,7 @@ unsafe fn handle_buffer_donate_with_control_dependency(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_DonateWithControlDependency_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_DonateWithControlDependency(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1400,11 +1542,11 @@ unsafe fn handle_buffer_bitcast(
             buf_ref.inner.shape.dims.clone()
         };
         if let Ok(bitcast_core) = buf_ref.inner.bitcast(elem_type, dims) {
-            args.out_buffer = Box::into_raw(Box::new(PJRT_Buffer {
-                inner: bitcast_core,
-                device_ptr: buf_ref.device_ptr,
-                memory_ptr: buf_ref.memory_ptr,
-            }));
+            args.out_buffer = Box::into_raw(Box::new(PJRT_Buffer::new(
+                bitcast_core,
+                buf_ref.device_ptr,
+                buf_ref.memory_ptr,
+            )));
         }
     }
     Ok(())
@@ -1419,7 +1561,7 @@ unsafe fn handle_buffer_bitcast(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Buffer_Bitcast_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Buffer_Bitcast(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {

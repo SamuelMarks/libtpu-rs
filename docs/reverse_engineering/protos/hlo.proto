@@ -1,0 +1,51 @@
+syntax = "proto3";
+package xla;
+
+import "xla_data.proto";
+
+message HloInstructionProto {
+  string name = 1;
+  string opcode = 2;
+  ShapeProto shape = 3;
+  repeated int64 operand_ids = 4;
+  bytes literal_bytes = 5;
+  repeated int64 dimensions = 6;
+  OpSharding sharding = 7;
+  repeated int64 dot_lhs_contracting_dimensions = 8;
+  repeated int64 dot_rhs_contracting_dimensions = 9;
+  repeated int64 dot_lhs_batch_dimensions = 10;
+  repeated int64 dot_rhs_batch_dimensions = 11;
+  repeated int64 slice_starts = 12;
+  repeated int64 slice_limits = 13;
+  repeated int64 slice_strides = 14;
+  int64 id = 35;
+}
+
+message HloComputationProto {
+  string name = 1;
+  repeated HloInstructionProto instructions = 2;
+  ProgramShapeProto program_shape = 3;
+  int64 id = 4;
+  int64 root_id = 5;
+}
+
+message HloModuleProto {
+  string name = 1;
+  string entry_computation_name = 2;
+  repeated HloComputationProto computations = 3;
+  ProgramShapeProto host_program_shape = 4;
+  int64 id = 5;
+}
+
+message HloModuleConfigProto {
+  ProgramShapeProto entry_computation_layout = 1;
+  uint64 seed = 2;
+  int64 replica_count = 3;
+  int64 num_partitions = 4;
+  bool use_spmd_partitioning = 5;
+}
+
+message HloModuleProtoWithConfig {
+  HloModuleProto hlo_module = 1;
+  HloModuleConfigProto config = 2;
+}

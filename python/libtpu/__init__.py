@@ -140,6 +140,317 @@ def initialize(args: Sequence[str] | None = None) -> str:
     return configure_library_path()
 
 
+class _PjrtErrorDestroyArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Error_Destroy_Args` (`24` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("error", ctypes.c_void_p),
+    ]
+
+
+class _PjrtErrorMessageArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Error_Message_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("error", ctypes.c_void_p),
+        ("message", ctypes.c_void_p),
+        ("message_size", ctypes.c_size_t),
+    ]
+
+
+class _PjrtErrorGetCodeArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Error_GetCode_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("error", ctypes.c_void_p),
+        ("code", ctypes.c_int32),
+        ("pad", ctypes.c_int32),
+    ]
+
+
+class _PjrtClientCreateArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Client_Create_Args` (`88` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("create_options", ctypes.c_void_p),
+        ("num_options", ctypes.c_size_t),
+        ("kv_get_callback", ctypes.c_void_p),
+        ("kv_get_user_arg", ctypes.c_void_p),
+        ("kv_put_callback", ctypes.c_void_p),
+        ("kv_put_user_arg", ctypes.c_void_p),
+        ("kv_try_get_callback", ctypes.c_void_p),
+        ("kv_try_get_user_arg", ctypes.c_void_p),
+        ("client", ctypes.c_void_p),
+    ]
+
+
+class _PjrtClientDestroyArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Client_Destroy_Args` (`24` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("client", ctypes.c_void_p),
+    ]
+
+
+class _PjrtClientDevicesArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Client_Devices_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("client", ctypes.c_void_p),
+        ("devices", ctypes.c_void_p),
+        ("num_devices", ctypes.c_size_t),
+    ]
+
+
+class _PjrtClientLookupDeviceArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Client_LookupDevice_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("client", ctypes.c_void_p),
+        ("id", ctypes.c_int32),
+        ("pad", ctypes.c_int32),
+        ("device", ctypes.c_void_p),
+    ]
+
+
+class _PjrtProgram(ctypes.Structure):
+    """C ABI structure matching `PJRT_Program` (`48` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("code", ctypes.c_void_p),
+        ("code_size", ctypes.c_size_t),
+        ("format", ctypes.c_void_p),
+        ("format_size", ctypes.c_size_t),
+    ]
+
+
+class _PjrtClientCompileArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Client_Compile_Args` (`56` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("client", ctypes.c_void_p),
+        ("program", ctypes.POINTER(_PjrtProgram)),
+        ("compile_options", ctypes.c_void_p),
+        ("compile_options_size", ctypes.c_size_t),
+        ("executable", ctypes.c_void_p),
+    ]
+
+
+class _PjrtClientBufferFromHostBufferArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Client_BufferFromHostBuffer_Args` (`120` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("client", ctypes.c_void_p),
+        ("data", ctypes.c_void_p),
+        ("element_type", ctypes.c_int32),
+        ("pad0", ctypes.c_int32),
+        ("dims", ctypes.c_void_p),
+        ("num_dims", ctypes.c_size_t),
+        ("byte_strides", ctypes.c_void_p),
+        ("num_byte_strides", ctypes.c_size_t),
+        ("host_buffer_semantics", ctypes.c_int32),
+        ("pad1", ctypes.c_int32),
+        ("device", ctypes.c_void_p),
+        ("memory", ctypes.c_void_p),
+        ("device_layout", ctypes.c_void_p),
+        ("done_with_host_buffer", ctypes.c_void_p),
+        ("out_buffer", ctypes.c_void_p),
+    ]
+
+
+class _PjrtBufferDimensionsArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Buffer_Dimensions_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("buffer", ctypes.c_void_p),
+        ("dims", ctypes.c_void_p),
+        ("num_dims", ctypes.c_size_t),
+    ]
+
+
+class _PjrtBufferElementTypeArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Buffer_ElementType_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("buffer", ctypes.c_void_p),
+        ("element_type", ctypes.c_int32),
+        ("pad", ctypes.c_int32),
+    ]
+
+
+class _PjrtBufferCopyToDeviceArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Buffer_CopyToDevice_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("buffer", ctypes.c_void_p),
+        ("dst_device", ctypes.c_void_p),
+        ("dst_buffer", ctypes.c_void_p),
+    ]
+
+
+class _PjrtBufferToHostBufferArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Buffer_ToHostBuffer_Args` (`56` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("src", ctypes.c_void_p),
+        ("host_layout", ctypes.c_void_p),
+        ("dst", ctypes.c_void_p),
+        ("dst_size", ctypes.c_size_t),
+        ("event", ctypes.c_void_p),
+    ]
+
+
+class _PjrtBufferDestroyArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Buffer_Destroy_Args` (`24` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("buffer", ctypes.c_void_p),
+    ]
+
+
+class _PjrtExecutableGetCostAnalysisArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Executable_GetCostAnalysis_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("executable", ctypes.c_void_p),
+        ("properties", ctypes.c_void_p),
+        ("num_properties", ctypes.c_size_t),
+    ]
+
+
+class _PjrtExecutableOptimizedProgramArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Executable_OptimizedProgram_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("executable", ctypes.c_void_p),
+        ("program", ctypes.POINTER(_PjrtProgram)),
+    ]
+
+
+class _PjrtBufferGetMemoryLayoutArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Buffer_GetMemoryLayout_Args` (`104` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("buffer", ctypes.c_void_p),
+        ("layout_words", ctypes.c_size_t * 10),
+    ]
+
+
+class _PjrtExecutableSerializeArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Executable_Serialize_Args` (`56` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("executable", ctypes.c_void_p),
+        ("serialized_bytes", ctypes.c_void_p),
+        ("serialized_bytes_size", ctypes.c_size_t),
+        ("serialized_executable", ctypes.c_void_p),
+        ("serialized_executable_deleter", ctypes.c_void_p),
+    ]
+
+
+class _PjrtLoadedExecutableDestroyArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_LoadedExecutable_Destroy_Args` (`24` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("executable", ctypes.c_void_p),
+    ]
+
+
+class _PjrtLoadedExecutableGetExecutableArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_LoadedExecutable_GetExecutable_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("loaded_executable", ctypes.c_void_p),
+        ("executable", ctypes.c_void_p),
+    ]
+
+
+class _PjrtLoadedExecutableExecuteArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_LoadedExecutable_Execute_Args` (`80` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("executable", ctypes.c_void_p),
+        ("options", ctypes.c_void_p),
+        ("argument_lists", ctypes.c_void_p),
+        ("num_devices", ctypes.c_size_t),
+        ("num_args", ctypes.c_size_t),
+        ("output_lists", ctypes.c_void_p),
+        ("device_complete_events", ctypes.c_void_p),
+        ("execute_device", ctypes.c_void_p),
+    ]
+
+
+class _PjrtExecutableDeserializeAndLoadArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Executable_DeserializeAndLoad_Args` (`64` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("client", ctypes.c_void_p),
+        ("serialized_executable", ctypes.c_void_p),
+        ("serialized_executable_size", ctypes.c_size_t),
+        ("loaded_executable", ctypes.c_void_p),
+        ("overridden_serialized_compile_options", ctypes.c_void_p),
+        ("overridden_serialized_compile_options_size", ctypes.c_size_t),
+    ]
+
+
+class _PjrtLoadedExecutableFingerprintArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_LoadedExecutable_Fingerprint_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("executable", ctypes.c_void_p),
+        ("executable_fingerprint", ctypes.c_void_p),
+        ("executable_fingerprint_size", ctypes.c_size_t),
+    ]
+
+
 def _load_cdll() -> ctypes.CDLL:
     """Loads the `libtpu` shared library and configures C function prototypes.
 
@@ -148,32 +459,86 @@ def _load_cdll() -> ctypes.CDLL:
     """
     lib = ctypes.CDLL(get_library_path())
 
-    for pjrt_fn_name in (
-        "PJRT_Error_Destroy",
-        "PJRT_Error_Message",
-        "PJRT_Error_GetCode",
-        "PJRT_Client_Create",
-        "PJRT_Client_Destroy",
-        "PJRT_Client_AddressableDevices",
-        "PJRT_Client_LookupDevice",
-        "PJRT_Client_Compile",
-        "PJRT_Client_BufferFromHostBuffer",
-        "PJRT_Buffer_Dimensions",
-        "PJRT_Buffer_ElementType",
-        "PJRT_Buffer_CopyToDevice",
-        "PJRT_Buffer_ToHostBuffer",
-        "PJRT_Buffer_Destroy",
-        "PJRT_Executable_GetCostAnalysis",
-        "PJRT_Executable_Serialize",
-        "PJRT_LoadedExecutable_Destroy",
-        "PJRT_LoadedExecutable_GetExecutable",
-        "PJRT_LoadedExecutable_Execute",
-        "PJRT_Executable_DeserializeAndLoad",
-        "PJRT_LoadedExecutable_Fingerprint",
-    ):
-        fn = getattr(lib, pjrt_fn_name)
-        fn.argtypes = [ctypes.c_void_p]
-        fn.restype = ctypes.c_void_p
+    lib.PJRT_Error_Destroy.argtypes = [ctypes.POINTER(_PjrtErrorDestroyArgs)]
+    lib.PJRT_Error_Destroy.restype = None
+
+    lib.PJRT_Error_Message.argtypes = [ctypes.POINTER(_PjrtErrorMessageArgs)]
+    lib.PJRT_Error_Message.restype = None
+
+    lib.PJRT_Error_GetCode.argtypes = [ctypes.POINTER(_PjrtErrorGetCodeArgs)]
+    lib.PJRT_Error_GetCode.restype = ctypes.c_void_p
+
+    lib.PJRT_Client_Create.argtypes = [ctypes.POINTER(_PjrtClientCreateArgs)]
+    lib.PJRT_Client_Create.restype = ctypes.c_void_p
+
+    lib.PJRT_Client_Destroy.argtypes = [ctypes.POINTER(_PjrtClientDestroyArgs)]
+    lib.PJRT_Client_Destroy.restype = ctypes.c_void_p
+
+    lib.PJRT_Client_AddressableDevices.argtypes = [ctypes.POINTER(_PjrtClientDevicesArgs)]
+    lib.PJRT_Client_AddressableDevices.restype = ctypes.c_void_p
+
+    lib.PJRT_Client_LookupDevice.argtypes = [ctypes.POINTER(_PjrtClientLookupDeviceArgs)]
+    lib.PJRT_Client_LookupDevice.restype = ctypes.c_void_p
+
+    lib.PJRT_Client_Compile.argtypes = [ctypes.POINTER(_PjrtClientCompileArgs)]
+    lib.PJRT_Client_Compile.restype = ctypes.c_void_p
+
+    lib.PJRT_Client_BufferFromHostBuffer.argtypes = [
+        ctypes.POINTER(_PjrtClientBufferFromHostBufferArgs)
+    ]
+    lib.PJRT_Client_BufferFromHostBuffer.restype = ctypes.c_void_p
+
+    lib.PJRT_Buffer_Dimensions.argtypes = [ctypes.POINTER(_PjrtBufferDimensionsArgs)]
+    lib.PJRT_Buffer_Dimensions.restype = ctypes.c_void_p
+
+    lib.PJRT_Buffer_ElementType.argtypes = [ctypes.POINTER(_PjrtBufferElementTypeArgs)]
+    lib.PJRT_Buffer_ElementType.restype = ctypes.c_void_p
+
+    lib.PJRT_Buffer_CopyToDevice.argtypes = [ctypes.POINTER(_PjrtBufferCopyToDeviceArgs)]
+    lib.PJRT_Buffer_CopyToDevice.restype = ctypes.c_void_p
+
+    lib.PJRT_Buffer_ToHostBuffer.argtypes = [ctypes.POINTER(_PjrtBufferToHostBufferArgs)]
+    lib.PJRT_Buffer_ToHostBuffer.restype = ctypes.c_void_p
+
+    lib.PJRT_Buffer_Destroy.argtypes = [ctypes.POINTER(_PjrtBufferDestroyArgs)]
+    lib.PJRT_Buffer_Destroy.restype = ctypes.c_void_p
+
+    lib.PJRT_Buffer_GetMemoryLayout.argtypes = [ctypes.POINTER(_PjrtBufferGetMemoryLayoutArgs)]
+    lib.PJRT_Buffer_GetMemoryLayout.restype = ctypes.c_void_p
+
+    lib.PJRT_Executable_GetCostAnalysis.argtypes = [
+        ctypes.POINTER(_PjrtExecutableGetCostAnalysisArgs)
+    ]
+    lib.PJRT_Executable_GetCostAnalysis.restype = ctypes.c_void_p
+
+    lib.PJRT_Executable_OptimizedProgram.argtypes = [
+        ctypes.POINTER(_PjrtExecutableOptimizedProgramArgs)
+    ]
+    lib.PJRT_Executable_OptimizedProgram.restype = ctypes.c_void_p
+
+    lib.PJRT_Executable_Serialize.argtypes = [ctypes.POINTER(_PjrtExecutableSerializeArgs)]
+    lib.PJRT_Executable_Serialize.restype = ctypes.c_void_p
+
+    lib.PJRT_LoadedExecutable_Destroy.argtypes = [ctypes.POINTER(_PjrtLoadedExecutableDestroyArgs)]
+    lib.PJRT_LoadedExecutable_Destroy.restype = ctypes.c_void_p
+
+    lib.PJRT_LoadedExecutable_GetExecutable.argtypes = [
+        ctypes.POINTER(_PjrtLoadedExecutableGetExecutableArgs)
+    ]
+    lib.PJRT_LoadedExecutable_GetExecutable.restype = ctypes.c_void_p
+
+    lib.PJRT_LoadedExecutable_Execute.argtypes = [ctypes.POINTER(_PjrtLoadedExecutableExecuteArgs)]
+    lib.PJRT_LoadedExecutable_Execute.restype = ctypes.c_void_p
+
+    lib.PJRT_Executable_DeserializeAndLoad.argtypes = [
+        ctypes.POINTER(_PjrtExecutableDeserializeAndLoadArgs)
+    ]
+    lib.PJRT_Executable_DeserializeAndLoad.restype = ctypes.c_void_p
+
+    lib.PJRT_LoadedExecutable_Fingerprint.argtypes = [
+        ctypes.POINTER(_PjrtLoadedExecutableFingerprintArgs)
+    ]
+    lib.PJRT_LoadedExecutable_Fingerprint.restype = ctypes.c_void_p
 
     lib.TpuStatus_New.argtypes = []
     lib.TpuStatus_New.restype = ctypes.c_void_p
@@ -221,16 +586,16 @@ def _check_pjrt_error(lib: ctypes.CDLL, err_ptr: int | None) -> None:
         TpuError: If `err_ptr` is non-zero.
     """
     if err_ptr:
-        code_words = (ctypes.c_uint64 * 4)(32, 0, err_ptr, 0)
-        lib.PJRT_Error_GetCode(ctypes.byref(code_words))
-        msg_words = (ctypes.c_uint64 * 5)(40, 0, err_ptr, 0, 0)
-        lib.PJRT_Error_Message(ctypes.byref(msg_words))
-        text = ctypes.string_at(int(msg_words[3]), int(msg_words[4])).decode(
+        code_args = _PjrtErrorGetCodeArgs(ctypes.sizeof(_PjrtErrorGetCodeArgs), 0, err_ptr, 0, 0)
+        lib.PJRT_Error_GetCode(ctypes.byref(code_args))
+        msg_args = _PjrtErrorMessageArgs(ctypes.sizeof(_PjrtErrorMessageArgs), 0, err_ptr, 0, 0)
+        lib.PJRT_Error_Message(ctypes.byref(msg_args))
+        text = ctypes.string_at(int(msg_args.message or 0), int(msg_args.message_size)).decode(
             "utf-8", errors="replace"
         )
-        code = int(code_words[3])
-        del_words = (ctypes.c_uint64 * 3)(24, 0, err_ptr)
-        lib.PJRT_Error_Destroy(ctypes.byref(del_words))
+        code = int(code_args.code)
+        del_args = _PjrtErrorDestroyArgs(ctypes.sizeof(_PjrtErrorDestroyArgs), 0, err_ptr)
+        lib.PJRT_Error_Destroy(ctypes.byref(del_args))
         raise TpuError(code, text)
 
 
@@ -255,10 +620,12 @@ class TpuBuffer:
         Returns:
             Tuple of dimension extents.
         """
-        dim_words = (ctypes.c_uint64 * 5)(40, 0, self._handle.value or 0, 0, 0)
-        self._lib.PJRT_Buffer_Dimensions(ctypes.byref(dim_words))
-        dims_ptr = int(dim_words[3])
-        num_dims = int(dim_words[4])
+        dim_args = _PjrtBufferDimensionsArgs(
+            ctypes.sizeof(_PjrtBufferDimensionsArgs), 0, self._handle.value or 0, 0, 0
+        )
+        self._lib.PJRT_Buffer_Dimensions(ctypes.byref(dim_args))
+        dims_ptr = int(dim_args.dims or 0)
+        num_dims = int(dim_args.num_dims)
         dims_arr = (ctypes.c_int64 * num_dims).from_address(dims_ptr)
         return tuple(int(dims_arr[i]) for i in range(num_dims))
 
@@ -268,9 +635,26 @@ class TpuBuffer:
         Returns:
             `DataType` enum value of this buffer.
         """
-        et_words = (ctypes.c_uint64 * 4)(32, 0, self._handle.value or 0, 0)
-        self._lib.PJRT_Buffer_ElementType(ctypes.byref(et_words))
-        return DataType(int(et_words[3]))
+        et_args = _PjrtBufferElementTypeArgs(
+            ctypes.sizeof(_PjrtBufferElementTypeArgs), 0, self._handle.value or 0, 0, 0
+        )
+        self._lib.PJRT_Buffer_ElementType(ctypes.byref(et_args))
+        return DataType(int(et_args.element_type))
+
+    def tile_count(self) -> int:
+        """Returns the number of hardware layout tiles via `PJRT_Buffer_GetMemoryLayout`.
+
+        Returns:
+            Number of hardware layout tiles on this buffer.
+        """
+        ml_args = _PjrtBufferGetMemoryLayoutArgs(
+            ctypes.sizeof(_PjrtBufferGetMemoryLayoutArgs),
+            0,
+            self._handle.value or 0,
+            (ctypes.c_size_t * 10)(),
+        )
+        self._lib.PJRT_Buffer_GetMemoryLayout(ctypes.byref(ml_args))
+        return int(ml_args.layout_words[6])
 
     def to_bytes(self) -> bytes:
         """Reads the buffer from device HBM as raw bytes via `PJRT_Buffer_ToHostBuffer`.
@@ -280,8 +664,8 @@ class TpuBuffer:
         """
         byte_len = self._num_elements * 4
         raw = ctypes.create_string_buffer(byte_len)
-        d2h_words = (ctypes.c_uint64 * 7)(
-            56,
+        d2h_args = _PjrtBufferToHostBufferArgs(
+            ctypes.sizeof(_PjrtBufferToHostBufferArgs),
             0,
             self._handle.value or 0,
             0,
@@ -289,7 +673,7 @@ class TpuBuffer:
             byte_len,
             0,
         )
-        err = self._lib.PJRT_Buffer_ToHostBuffer(ctypes.byref(d2h_words))
+        err = self._lib.PJRT_Buffer_ToHostBuffer(ctypes.byref(d2h_args))
         _check_pjrt_error(self._lib, err)
         return raw.raw
 
@@ -314,8 +698,10 @@ class TpuBuffer:
     def close(self) -> None:
         """Deletes and frees the underlying `PJRT_Buffer*` via `PJRT_Buffer_Destroy`."""
         if self._handle.value:
-            del_words = (ctypes.c_uint64 * 3)(24, 0, self._handle.value)
-            self._lib.PJRT_Buffer_Destroy(ctypes.byref(del_words))
+            del_args = _PjrtBufferDestroyArgs(
+                ctypes.sizeof(_PjrtBufferDestroyArgs), 0, self._handle.value
+            )
+            self._lib.PJRT_Buffer_Destroy(ctypes.byref(del_args))
             self._handle = ctypes.c_void_p(0)
 
 
@@ -348,26 +734,29 @@ class TpuExecutable:
         Returns:
             List of output `TpuBuffer` objects.
         """
-        in_arr_type = ctypes.c_uint64 * len(inputs)
+        in_arr_type = ctypes.c_void_p * len(inputs)
         in_ptrs = in_arr_type(*(b._handle.value or 0 for b in inputs))
-        in_lists = (ctypes.c_uint64 * 1)(ctypes.addressof(in_ptrs))
-        out_arr_type = ctypes.c_uint64 * num_outputs
+        in_lists = (ctypes.c_void_p * 1)(ctypes.addressof(in_ptrs))
+        out_arr_type = ctypes.c_void_p * num_outputs
         out_ptrs = out_arr_type()
-        out_lists = (ctypes.c_uint64 * 1)(ctypes.addressof(out_ptrs))
-        ex_words = (ctypes.c_uint64 * 7)(
-            56,
+        out_lists = (ctypes.c_void_p * 1)(ctypes.addressof(out_ptrs))
+        ex_args = _PjrtLoadedExecutableExecuteArgs(
+            ctypes.sizeof(_PjrtLoadedExecutableExecuteArgs),
             0,
             self._handle.value or 0,
             0,
             ctypes.addressof(in_lists),
             device_id + 1,
+            len(inputs),
             ctypes.addressof(out_lists),
+            0,
+            0,
         )
-        err = self._lib.PJRT_LoadedExecutable_Execute(ctypes.byref(ex_words))
+        err = self._lib.PJRT_LoadedExecutable_Execute(ctypes.byref(ex_args))
         _check_pjrt_error(self._lib, err)
         results: list[TpuBuffer] = []
         for idx in range(num_outputs):
-            handle = ctypes.c_void_p(int(out_ptrs[idx]))
+            handle = ctypes.c_void_p(int(out_ptrs[idx] or 0))
             buf = TpuBuffer(self._lib, handle, 1)
             elem_count = 1
             for dim in buf.shape():
@@ -394,11 +783,26 @@ class TpuExecutable:
         Returns:
             Serialized executable byte payload.
         """
-        get_ex = (ctypes.c_uint64 * 4)(32, 0, self._handle.value or 0, 0)
+        get_ex = _PjrtLoadedExecutableGetExecutableArgs(
+            ctypes.sizeof(_PjrtLoadedExecutableGetExecutableArgs),
+            0,
+            self._handle.value or 0,
+            0,
+        )
         self._lib.PJRT_LoadedExecutable_GetExecutable(ctypes.byref(get_ex))
-        ser_words = (ctypes.c_uint64 * 6)(48, 0, int(get_ex[3]), 0, 0, 0)
-        self._lib.PJRT_Executable_Serialize(ctypes.byref(ser_words))
-        return ctypes.string_at(int(ser_words[3]), int(ser_words[4]))
+        ser_args = _PjrtExecutableSerializeArgs(
+            ctypes.sizeof(_PjrtExecutableSerializeArgs),
+            0,
+            int(get_ex.executable or 0),
+            0,
+            0,
+            0,
+            0,
+        )
+        self._lib.PJRT_Executable_Serialize(ctypes.byref(ser_args))
+        return ctypes.string_at(
+            int(ser_args.serialized_bytes or 0), int(ser_args.serialized_bytes_size)
+        )
 
     def fingerprint(self) -> str:
         """Returns the 32-character hexadecimal fingerprint via `PJRT_LoadedExecutable_Fingerprint`.
@@ -406,9 +810,17 @@ class TpuExecutable:
         Returns:
             Hexadecimal fingerprint string.
         """
-        fp_words = (ctypes.c_uint64 * 5)(40, 0, self._handle.value or 0, 0, 0)
-        self._lib.PJRT_LoadedExecutable_Fingerprint(ctypes.byref(fp_words))
-        return ctypes.string_at(int(fp_words[3]), int(fp_words[4])).decode("utf-8")
+        fp_args = _PjrtLoadedExecutableFingerprintArgs(
+            ctypes.sizeof(_PjrtLoadedExecutableFingerprintArgs),
+            0,
+            self._handle.value or 0,
+            0,
+            0,
+        )
+        self._lib.PJRT_LoadedExecutable_Fingerprint(ctypes.byref(fp_args))
+        return ctypes.string_at(
+            int(fp_args.executable_fingerprint or 0), int(fp_args.executable_fingerprint_size)
+        ).decode("utf-8")
 
     def flops(self) -> float:
         """Returns the estimated FLOPs per execution via `PJRT_Executable_GetCostAnalysis`.
@@ -416,17 +828,57 @@ class TpuExecutable:
         Returns:
             Estimated floating-point operation count.
         """
-        get_ex = (ctypes.c_uint64 * 4)(32, 0, self._handle.value or 0, 0)
+        get_ex = _PjrtLoadedExecutableGetExecutableArgs(
+            ctypes.sizeof(_PjrtLoadedExecutableGetExecutableArgs),
+            0,
+            self._handle.value or 0,
+            0,
+        )
         self._lib.PJRT_LoadedExecutable_GetExecutable(ctypes.byref(get_ex))
-        cost_words = (ctypes.c_uint64 * 5)(40, 0, int(get_ex[3]), 0, 0)
-        self._lib.PJRT_Executable_GetCostAnalysis(ctypes.byref(cost_words))
-        return float(cost_words[4])
+        cost_args = _PjrtExecutableGetCostAnalysisArgs(
+            ctypes.sizeof(_PjrtExecutableGetCostAnalysisArgs),
+            0,
+            int(get_ex.executable or 0),
+            0,
+            0,
+        )
+        self._lib.PJRT_Executable_GetCostAnalysis(ctypes.byref(cost_args))
+        return float(cost_args.num_properties)
+
+    def optimized_program_bytes(self) -> bytes:
+        """Returns the optimized HLO program bytes via `PJRT_Executable_OptimizedProgram`.
+
+        Returns:
+            Optimized HLO program byte payload.
+        """
+        get_ex = _PjrtLoadedExecutableGetExecutableArgs(
+            ctypes.sizeof(_PjrtLoadedExecutableGetExecutableArgs),
+            0,
+            self._handle.value or 0,
+            0,
+        )
+        self._lib.PJRT_LoadedExecutable_GetExecutable(ctypes.byref(get_ex))
+        prog = _PjrtProgram(ctypes.sizeof(_PjrtProgram), 0, 0, 0, 0, 0)
+        opt_args = _PjrtExecutableOptimizedProgramArgs(
+            ctypes.sizeof(_PjrtExecutableOptimizedProgramArgs),
+            0,
+            int(get_ex.executable or 0),
+            ctypes.pointer(prog),
+        )
+        self._lib.PJRT_Executable_OptimizedProgram(ctypes.byref(opt_args))
+        raw = ctypes.create_string_buffer(int(prog.code_size))
+        prog.code = ctypes.addressof(raw)
+        err = self._lib.PJRT_Executable_OptimizedProgram(ctypes.byref(opt_args))
+        _check_pjrt_error(self._lib, err)
+        return raw.raw
 
     def close(self) -> None:
         """Frees the underlying `PJRT_LoadedExecutable*` via `PJRT_LoadedExecutable_Destroy`."""
         if self._handle.value:
-            del_words = (ctypes.c_uint64 * 3)(24, 0, self._handle.value)
-            self._lib.PJRT_LoadedExecutable_Destroy(ctypes.byref(del_words))
+            del_args = _PjrtLoadedExecutableDestroyArgs(
+                ctypes.sizeof(_PjrtLoadedExecutableDestroyArgs), 0, self._handle.value
+            )
+            self._lib.PJRT_LoadedExecutable_Destroy(ctypes.byref(del_args))
             self._handle = ctypes.c_void_p(0)
 
 
@@ -496,10 +948,12 @@ class TpuClient:
     def __init__(self) -> None:
         """Creates and initializes a `TpuClient` via `PJRT_Client_Create`."""
         self._lib: ctypes.CDLL = _load_cdll()
-        create_words = (ctypes.c_uint64 * 9)(72, 0, 0, 0, 0, 0, 0, 0, 0)
-        err = self._lib.PJRT_Client_Create(ctypes.byref(create_words))
+        create_args = _PjrtClientCreateArgs(
+            ctypes.sizeof(_PjrtClientCreateArgs), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        )
+        err = self._lib.PJRT_Client_Create(ctypes.byref(create_args))
         _check_pjrt_error(self._lib, err)
-        self._handle: ctypes.c_void_p = ctypes.c_void_p(int(create_words[8]))
+        self._handle: ctypes.c_void_p = ctypes.c_void_p(int(create_args.client or 0))
 
     def device_count(self) -> int:
         """Returns the number of addressable TPU devices via `PJRT_Client_AddressableDevices`.
@@ -507,9 +961,11 @@ class TpuClient:
         Returns:
             Addressable TPU device count.
         """
-        dev_words = (ctypes.c_uint64 * 5)(40, 0, self._handle.value or 0, 0, 0)
-        self._lib.PJRT_Client_AddressableDevices(ctypes.byref(dev_words))
-        return int(dev_words[4])
+        dev_args = _PjrtClientDevicesArgs(
+            ctypes.sizeof(_PjrtClientDevicesArgs), 0, self._handle.value or 0, 0, 0
+        )
+        self._lib.PJRT_Client_AddressableDevices(ctypes.byref(dev_args))
+        return int(dev_args.num_devices)
 
     def _buffer_from_packed(
         self,
@@ -531,31 +987,36 @@ class TpuClient:
         Returns:
             Allocated `TpuBuffer` instance.
         """
-        look_words = (ctypes.c_uint64 * 5)(40, 0, self._handle.value or 0, device_id, 0)
-        err_look = self._lib.PJRT_Client_LookupDevice(ctypes.byref(look_words))
+        look_args = _PjrtClientLookupDeviceArgs(
+            ctypes.sizeof(_PjrtClientLookupDeviceArgs), 0, self._handle.value or 0, device_id, 0, 0
+        )
+        err_look = self._lib.PJRT_Client_LookupDevice(ctypes.byref(look_args))
         _check_pjrt_error(self._lib, err_look)
         shape_seq = list(dims) if dims is not None else [num_elements]
         c_dims = (ctypes.c_int64 * len(shape_seq))(*shape_seq)
         c_buf = ctypes.create_string_buffer(packed, len(packed))
-        h2d_words = (ctypes.c_uint64 * 14)(
-            112,
+        h2d_args = _PjrtClientBufferFromHostBufferArgs(
+            ctypes.sizeof(_PjrtClientBufferFromHostBufferArgs),
             0,
             self._handle.value or 0,
             ctypes.addressof(c_buf),
             elem_type,
+            0,
             ctypes.addressof(c_dims),
             len(shape_seq),
             0,
             0,
             0,
-            int(look_words[4]),
+            0,
+            int(look_args.device or 0),
+            0,
             0,
             0,
             0,
         )
-        err_h2d = self._lib.PJRT_Client_BufferFromHostBuffer(ctypes.byref(h2d_words))
+        err_h2d = self._lib.PJRT_Client_BufferFromHostBuffer(ctypes.byref(h2d_args))
         _check_pjrt_error(self._lib, err_h2d)
-        return TpuBuffer(self._lib, ctypes.c_void_p(int(h2d_words[13])), num_elements)
+        return TpuBuffer(self._lib, ctypes.c_void_p(int(h2d_args.out_buffer or 0)), num_elements)
 
     def buffer_from_floats(
         self,
@@ -605,13 +1066,28 @@ class TpuClient:
         Returns:
             Copied `TpuBuffer` on `dst_device_id`.
         """
-        look_words = (ctypes.c_uint64 * 5)(40, 0, self._handle.value or 0, dst_device_id, 0)
-        err_look = self._lib.PJRT_Client_LookupDevice(ctypes.byref(look_words))
+        look_args = _PjrtClientLookupDeviceArgs(
+            ctypes.sizeof(_PjrtClientLookupDeviceArgs),
+            0,
+            self._handle.value or 0,
+            dst_device_id,
+            0,
+            0,
+        )
+        err_look = self._lib.PJRT_Client_LookupDevice(ctypes.byref(look_args))
         _check_pjrt_error(self._lib, err_look)
-        cp_words = (ctypes.c_uint64 * 5)(40, 0, buffer._handle.value or 0, int(look_words[4]), 0)
-        err_cp = self._lib.PJRT_Buffer_CopyToDevice(ctypes.byref(cp_words))
+        cp_args = _PjrtBufferCopyToDeviceArgs(
+            ctypes.sizeof(_PjrtBufferCopyToDeviceArgs),
+            0,
+            buffer._handle.value or 0,
+            int(look_args.device or 0),
+            0,
+        )
+        err_cp = self._lib.PJRT_Buffer_CopyToDevice(ctypes.byref(cp_args))
         _check_pjrt_error(self._lib, err_cp)
-        return TpuBuffer(self._lib, ctypes.c_void_p(int(cp_words[4])), buffer._num_elements)
+        return TpuBuffer(
+            self._lib, ctypes.c_void_p(int(cp_args.dst_buffer or 0)), buffer._num_elements
+        )
 
     def compile(self, code: str, fmt: str = "mlir") -> TpuExecutable:
         """Compiles and loads an HLO or `StableHLO` program via `PJRT_Client_Compile`.
@@ -627,26 +1103,26 @@ class TpuClient:
         fmt_bytes = fmt.encode("utf-8")
         c_code = ctypes.create_string_buffer(code_bytes, len(code_bytes))
         c_fmt = ctypes.create_string_buffer(fmt_bytes, len(fmt_bytes))
-        prog_words = (ctypes.c_uint64 * 6)(
-            48,
+        prog = _PjrtProgram(
+            ctypes.sizeof(_PjrtProgram),
             0,
             ctypes.addressof(c_code),
             len(code_bytes),
             ctypes.addressof(c_fmt),
             len(fmt_bytes),
         )
-        comp_words = (ctypes.c_uint64 * 7)(
-            56,
+        comp_args = _PjrtClientCompileArgs(
+            ctypes.sizeof(_PjrtClientCompileArgs),
             0,
             self._handle.value or 0,
-            ctypes.addressof(prog_words),
+            ctypes.pointer(prog),
             0,
             0,
             0,
         )
-        err = self._lib.PJRT_Client_Compile(ctypes.byref(comp_words))
+        err = self._lib.PJRT_Client_Compile(ctypes.byref(comp_args))
         _check_pjrt_error(self._lib, err)
-        return TpuExecutable(self._lib, ctypes.c_void_p(int(comp_words[6])))
+        return TpuExecutable(self._lib, ctypes.c_void_p(int(comp_args.executable or 0)))
 
     def deserialize_executable(self, serialized: bytes) -> TpuExecutable:
         """Deserializes and loads a `TpuExecutable` via `PJRT_Executable_DeserializeAndLoad`.
@@ -658,24 +1134,27 @@ class TpuClient:
             Deserialized `TpuExecutable` ready for execution.
         """
         c_ser = ctypes.create_string_buffer(serialized, len(serialized))
-        deser_words = (ctypes.c_uint64 * 7)(
-            56,
+        deser_args = _PjrtExecutableDeserializeAndLoadArgs(
+            ctypes.sizeof(_PjrtExecutableDeserializeAndLoadArgs),
             0,
             self._handle.value or 0,
             ctypes.addressof(c_ser),
             len(serialized),
             0,
             0,
+            0,
         )
-        err = self._lib.PJRT_Executable_DeserializeAndLoad(ctypes.byref(deser_words))
+        err = self._lib.PJRT_Executable_DeserializeAndLoad(ctypes.byref(deser_args))
         _check_pjrt_error(self._lib, err)
-        return TpuExecutable(self._lib, ctypes.c_void_p(int(deser_words[5])))
+        return TpuExecutable(self._lib, ctypes.c_void_p(int(deser_args.loaded_executable or 0)))
 
     def close(self) -> None:
         """Destroys the `PJRT_Client*` handle via `PJRT_Client_Destroy`."""
         if self._handle.value:
-            del_words = (ctypes.c_uint64 * 3)(24, 0, self._handle.value)
-            self._lib.PJRT_Client_Destroy(ctypes.byref(del_words))
+            del_args = _PjrtClientDestroyArgs(
+                ctypes.sizeof(_PjrtClientDestroyArgs), 0, self._handle.value
+            )
+            self._lib.PJRT_Client_Destroy(ctypes.byref(del_args))
             self._handle = ctypes.c_void_p(0)
 
 

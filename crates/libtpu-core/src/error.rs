@@ -69,7 +69,8 @@ impl PjrtErrorCode {
     /// # Arguments
     ///
     /// * `raw` - The raw 32-bit signed integer status code from C FFI.
-    pub fn from_raw(raw: i32) -> Self {
+    #[must_use]
+    pub const fn from_raw(raw: i32) -> Self {
         match raw {
             0 => Self::Ok,
             1 => Self::Cancelled,
@@ -92,7 +93,8 @@ impl PjrtErrorCode {
     }
 
     /// Returns the raw 32-bit signed integer representation of this [`PjrtErrorCode`].
-    pub fn as_raw(self) -> i32 {
+    #[must_use]
+    pub const fn as_raw(self) -> i32 {
         self as i32
     }
 }
@@ -130,7 +132,8 @@ impl LibtpuSdkErrorCode {
     /// # Arguments
     ///
     /// * `code` - The [`PjrtErrorCode`] to convert.
-    pub fn from_pjrt_code(code: PjrtErrorCode) -> Self {
+    #[must_use]
+    pub const fn from_pjrt_code(code: PjrtErrorCode) -> Self {
         match code {
             PjrtErrorCode::Ok => Self::Ok,
             PjrtErrorCode::InvalidArgument | PjrtErrorCode::OutOfRange => Self::InvalidArgument,
@@ -144,7 +147,8 @@ impl LibtpuSdkErrorCode {
     }
 
     /// Returns the raw 32-bit integer discriminant for `LibtpuSdk_Error_GetCode`.
-    pub fn as_raw(self) -> i32 {
+    #[must_use]
+    pub const fn as_raw(self) -> i32 {
         self as i32
     }
 }
@@ -170,7 +174,8 @@ impl ErrorPayload {
     ///
     /// * `key` - Diagnostic payload key string.
     /// * `value` - Serialized payload byte vector.
-    pub fn new(key: String, value: Vec<u8>) -> Self {
+    #[must_use]
+    pub const fn new(key: String, value: Vec<u8>) -> Self {
         Self { key, value }
     }
 }
@@ -351,7 +356,9 @@ pub enum LibTpuError {
     },
 
     /// The requested PJRT API version is incompatible with the runtime.
-    #[display("Unsupported API version {requested_major}.{requested_minor} (supported: {supported_major}.{supported_minor})")]
+    #[display(
+        "Unsupported API version {requested_major}.{requested_minor} (supported: {supported_major}.{supported_minor})"
+    )]
     #[from(ignore)]
     UnsupportedApiVersion {
         /// Requested major version.
@@ -569,7 +576,9 @@ pub enum LibTpuError {
     },
 
     /// A `CopyToDeviceStream` chunk exceeded the total stream byte size.
-    #[display("CopyToDeviceStream overflow: attempted {attempted_bytes} bytes with {remaining_bytes} bytes remaining")]
+    #[display(
+        "CopyToDeviceStream overflow: attempted {attempted_bytes} bytes with {remaining_bytes} bytes remaining"
+    )]
     #[from(ignore)]
     StreamOverflow {
         /// Number of bytes in the chunk being added.
@@ -736,7 +745,8 @@ pub enum LibTpuError {
 
 impl LibTpuError {
     /// Maps this [`LibTpuError`] to its corresponding [`PjrtErrorCode`].
-    pub fn error_code(&self) -> PjrtErrorCode {
+    #[must_use]
+    pub const fn error_code(&self) -> PjrtErrorCode {
         match self {
             Self::NullPointer { .. }
             | Self::InvalidStructSize { .. }
@@ -804,11 +814,13 @@ impl LibTpuError {
     }
 
     /// Maps this [`LibTpuError`] to its corresponding [`LibtpuSdkErrorCode`].
-    pub fn sdk_error_code(&self) -> LibtpuSdkErrorCode {
+    #[must_use]
+    pub const fn sdk_error_code(&self) -> LibtpuSdkErrorCode {
         LibtpuSdkErrorCode::from_pjrt_code(self.error_code())
     }
 
     /// Returns structured diagnostic [`ErrorPayload`] entries for `PJRT_Error_ForEachPayload`.
+    #[must_use]
     pub fn payloads(&self) -> Vec<ErrorPayload> {
         vec![
             ErrorPayload::new(
@@ -824,7 +836,8 @@ impl LibTpuError {
 
     /// Returns `true` if this error represents a predetermined device execution error
     /// (`PJRT_TpuExecutable_IsPredeterminedError`).
-    pub fn is_predetermined_error(&self) -> bool {
+    #[must_use]
+    pub const fn is_predetermined_error(&self) -> bool {
         matches!(
             self,
             Self::DevicePoisoned { .. }
@@ -835,7 +848,8 @@ impl LibTpuError {
 
     /// Returns `true` if this error represents a collective or transfer cancellation placeholder
     /// (`PJRT_TpuExecutable_IsCancellationPlaceholderError`).
-    pub fn is_cancellation_placeholder_error(&self) -> bool {
+    #[must_use]
+    pub const fn is_cancellation_placeholder_error(&self) -> bool {
         matches!(
             self,
             Self::AsyncTransferError { .. } | Self::EventError { .. } | Self::EventFailed { .. }
@@ -847,7 +861,7 @@ impl LibTpuError {
 pub type LibTpuResult<T> = Result<T, LibTpuError>;
 
 #[cfg(test)]
-#[allow(for_loops_over_fallibles)]
+#[allow(for_loops_over_fallibles, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -959,12 +973,12 @@ mod tests {
             assert_eq!(code, expected);
             assert_eq!(code.as_raw(), raw);
             assert_eq!(code.to_string(), text);
-            assert!(!format!("{code:?}").is_empty());
+            assert_ne!(format!("{code:?}"), "");
             let sdk = LibtpuSdkErrorCode::from_pjrt_code(code);
             assert_eq!(sdk, expected_sdk);
             assert_eq!(sdk.as_raw(), expected_sdk as i32);
-            assert!(!sdk.to_string().is_empty());
-            assert!(!format!("{sdk:?}").is_empty());
+            assert_ne!(sdk.to_string(), "");
+            assert_ne!(format!("{sdk:?}"), "");
         }
         assert_eq!(PjrtErrorCode::from_raw(999), PjrtErrorCode::Unknown);
     }
@@ -976,7 +990,7 @@ mod tests {
             let wrapper = Utf8ErrorWrapper::from(utf8_err);
             assert!(wrapper.source().is_none());
             let cloned_wrapper = wrapper.clone();
-            assert!(!format!("{cloned_wrapper:?}").is_empty());
+            assert_ne!(format!("{cloned_wrapper:?}"), "");
             let err_from_utf8 = LibTpuError::from(wrapper);
             assert_eq!(err_from_utf8.error_code(), PjrtErrorCode::InvalidArgument);
         }
@@ -1354,9 +1368,9 @@ mod tests {
             let _ = cloned.is_cancellation_placeholder_error();
             let cloned_payload = payloads.clone();
             assert_eq!(payloads, cloned_payload);
-            assert!(!format!("{payloads:?}").is_empty());
-            assert!(!cloned.to_string().is_empty());
-            assert!(!format!("{cloned:?}").is_empty());
+            assert_ne!(format!("{payloads:?}"), "");
+            assert_ne!(cloned.to_string(), "");
+            assert_ne!(format!("{cloned:?}"), "");
             assert!(cloned.source().is_none());
         }
     }

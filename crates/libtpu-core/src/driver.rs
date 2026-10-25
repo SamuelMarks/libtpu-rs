@@ -15,9 +15,10 @@ use crate::proto::{
 use crate::types::{
     ByteSize, CallbackId, ChipCoordinates, DeviceAddress, DeviceId, MemoryKind, TpuGeneration,
 };
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 
 /// Core backing state for `TpuStatus` (`TpuStatus_New`, `TpuStatus_Create`, `TpuStatus_Set`).
 #[derive(Debug, Clone)]
@@ -30,7 +31,8 @@ pub struct TpuCoreStatus {
 
 impl TpuCoreStatus {
     /// Creates an OK [`TpuCoreStatus`] (`TpuStatus_New`).
-    pub fn ok() -> Self {
+    #[must_use]
+    pub const fn ok() -> Self {
         Self {
             code: PjrtErrorCode::Ok,
             message: String::new(),
@@ -43,7 +45,8 @@ impl TpuCoreStatus {
     ///
     /// * `raw_code` - Integer status code.
     /// * `message` - Error message string.
-    pub fn new(raw_code: i32, message: String) -> Self {
+    #[must_use]
+    pub const fn new(raw_code: i32, message: String) -> Self {
         Self {
             code: PjrtErrorCode::from_raw(raw_code),
             message,
@@ -62,6 +65,7 @@ impl TpuCoreStatus {
     }
 
     /// Returns `true` if `self.code == PjrtErrorCode::Ok` (`TpuStatus_Ok`).
+    #[must_use]
     pub fn is_ok(&self) -> bool {
         self.code == PjrtErrorCode::Ok
     }
@@ -84,6 +88,7 @@ impl TfTpuCoreOrdinalSelector {
     /// # Arguments
     ///
     /// * `num_cores` - Number of logical cores (clamped to at least 1).
+    #[must_use]
     pub fn new(num_cores: u32) -> Self {
         Self {
             num_cores: num_cores.max(1),
@@ -93,13 +98,11 @@ impl TfTpuCoreOrdinalSelector {
     }
 
     /// Selects the next ordinal in round-robin order (`TfTpuOrdinalSelector_GetOrdinal`).
+    #[must_use]
     pub fn get_ordinal(&self) -> i64 {
         let idx = self.next_ordinal.fetch_add(1, Ordering::Relaxed);
         let ord = i64::from(idx % self.num_cores);
-        self.in_flight
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(i64::from(idx), ord);
+        self.in_flight.lock().insert(i64::from(idx), ord);
         ord
     }
 
@@ -111,10 +114,7 @@ impl TfTpuCoreOrdinalSelector {
     /// * `device_ordinal` - Reserved device ordinal to release.
     /// * `req_id` - Request identifier associated with the reservation.
     pub fn dequeue_ordinal(&self, device_ordinal: i32, req_id: i64) {
-        let mut guard = self
-            .in_flight
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self.in_flight.lock();
         if guard.remove(&req_id).is_none() {
             let target = i64::from(device_ordinal);
             guard.retain(|_, &mut ord| ord != target);
@@ -139,7 +139,8 @@ impl Default for TpuCoreProfiler {
 
 impl TpuCoreProfiler {
     /// Creates a new inactive [`TpuCoreProfiler`] session.
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             active: AtomicBool::new(false),
             recorded_events: AtomicU32::new(0),
@@ -173,6 +174,7 @@ impl TpuCoreProfiler {
 
     /// Serializes collected `tensorflow.profiler.XSpace` profiling data into wire-compatible protobuf bytes
     /// (`TpuProfiler_CollectData`).
+    #[must_use]
     pub fn collect_xspace_bytes(&self) -> Vec<u8> {
         let count = i64::from(self.recorded_events.load(Ordering::Relaxed));
         let event = XEventProto {
@@ -226,7 +228,8 @@ pub struct TpuCoreEmbeddingEngine {
 
 impl TpuCoreEmbeddingEngine {
     /// Creates a new uninitialized [`TpuCoreEmbeddingEngine`].
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             initialized: false,
             hosts_connected: false,
@@ -272,6 +275,7 @@ impl TpuCoreEmbeddingEngine {
     }
 
     /// Collates per-host `SparseCore` HBM memory configurations (`TpuEmbeddingEngine_CollateMemory`).
+    #[must_use]
     pub fn collate_memory(&self) -> Vec<u8> {
         let total_bytes: u64 = self
             .host_memory_configs
@@ -302,12 +306,12 @@ impl TpuCoreEmbeddingEngine {
     }
 
     /// Connects all participating host channels (`TpuEmbeddingEngine_ConnectHosts`).
-    pub fn connect_hosts(&mut self) {
+    pub const fn connect_hosts(&mut self) {
         self.hosts_connected = true;
     }
 
     /// Finalizes the embedding engine initialization (`TpuEmbeddingEngine_Finalize`).
-    pub fn finalize(&mut self) {
+    pub const fn finalize(&mut self) {
         self.initialized = true;
     }
 
@@ -326,6 +330,7 @@ impl TpuCoreEmbeddingEngine {
     /// # Arguments
     ///
     /// * `table_name` - Name of the embedding table.
+    #[must_use]
     pub fn read_parameters(&self, table_name: &str) -> Option<&[u8]> {
         self.tables.get(table_name).map(Vec::as_slice)
     }
@@ -347,6 +352,7 @@ impl TpuCoreEmbeddingEngine {
     /// # Arguments
     ///
     /// * `computation_kind` - Computation identifier (`"recv_activations"`, `"recv_dedup_data"`, `"send_gradients"`, `"dedup_data_size"`, `"dedup_tuple_mask"`).
+    #[must_use]
     pub fn generate_xla_computation(&self, computation_kind: &str) -> Vec<u8> {
         let hlo = HloModuleProto {
             name: format!("tpu_embedding_{computation_kind}"),
@@ -400,6 +406,7 @@ impl TpuCoreDriver {
     /// # Arguments
     ///
     /// * `config` - Initialization configuration.
+    #[must_use]
     pub fn open(config: TpuInitConfig) -> Self {
         let hal = Arc::new(SimulatedTpuHal::new(&config));
         Self { hal, config }
@@ -419,6 +426,7 @@ impl TpuCoreDriver {
     }
 
     /// Queries a summary string of the driver system topology (`TpuDriver_QuerySystemInfo`).
+    #[must_use]
     pub fn query_system_info(&self) -> String {
         format!(
             "TpuDriver(gen={},devices={})",
@@ -583,6 +591,7 @@ impl Default for LibtpuSdkCoreClient {
 
 impl LibtpuSdkCoreClient {
     /// Creates a new [`LibtpuSdkCoreClient`] with default telemetry metrics.
+    #[must_use]
     pub fn new() -> Self {
         let mut metrics = BTreeMap::new();
         metrics.insert(
@@ -648,7 +657,7 @@ impl LibtpuSdkCoreClient {
         self.chip_coordinates
             .get(chip_index)
             .copied()
-            .ok_or(LibTpuError::DeviceNotFound {
+            .ok_or_else(|| LibTpuError::DeviceNotFound {
                 device_id: u32::try_from(chip_index).unwrap_or(u32::MAX),
             })
     }
@@ -672,13 +681,9 @@ impl LibtpuSdkCoreClient {
     }
 
     /// Returns the list of all supported telemetry metric names.
+    #[must_use]
     pub fn list_metric_names(&self) -> Vec<String> {
-        self.metrics
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .keys()
-            .cloned()
-            .collect()
+        self.metrics.lock().keys().cloned().collect()
     }
 
     /// Queries the description and values of a named runtime metric (`LibtpuSdk_GetMetric`).
@@ -693,7 +698,6 @@ impl LibtpuSdkCoreClient {
     pub fn get_metric(&self, metric_name: &str) -> LibTpuResult<(String, Vec<f64>)> {
         self.metrics
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(metric_name)
             .cloned()
             .ok_or_else(|| LibTpuError::MetricNotFound {
@@ -707,6 +711,7 @@ impl LibtpuSdkCoreClient {
     ///
     /// * `callback_addr` - Function pointer address.
     /// * `user_data_addr` - Opaque user data pointer address.
+    #[must_use]
     pub fn register_debug_callback(
         &self,
         callback_addr: usize,
@@ -715,7 +720,6 @@ impl LibtpuSdkCoreClient {
         let id = CallbackId(self.next_callback_id.fetch_add(1, Ordering::Relaxed));
         self.debug_callbacks
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .insert(id, (callback_addr, user_data_addr));
         id
     }
@@ -732,23 +736,19 @@ impl LibtpuSdkCoreClient {
     pub fn unregister_debug_callback(&self, id: CallbackId) -> LibTpuResult<()> {
         self.debug_callbacks
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(&id)
             .map(|_| ())
             .ok_or(LibTpuError::CallbackNotFound { callback_id: id.0 })
     }
 
     /// Returns a snapshot of all registered debug `(callback_addr, user_data_addr)` pairs.
+    #[must_use]
     pub fn registered_debug_callbacks(&self) -> Vec<(usize, usize)> {
-        self.debug_callbacks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values()
-            .copied()
-            .collect()
+        self.debug_callbacks.lock().values().copied().collect()
     }
 
     /// Returns a human-readable core state summary string (`LibtpuSdk_RuntimeStatus_GetCoreStateSummary`).
+    #[must_use]
     pub fn core_state_summary(&self) -> String {
         format!(
             "host={} gen={} chips={} state=READY",
@@ -760,7 +760,7 @@ impl LibtpuSdkCoreClient {
 }
 
 #[cfg(test)]
-#[allow(for_loops_over_fallibles)]
+#[allow(for_loops_over_fallibles, clippy::cognitive_complexity)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -775,10 +775,10 @@ mod tests {
         let st2_cloned = st2.clone();
         assert!(!st2.is_ok());
         drop(st2);
-        assert!(!format!("{st2_cloned:?}").is_empty());
+        assert_ne!(format!("{st2_cloned:?}"), "");
 
         let sel = TfTpuCoreOrdinalSelector::new(2);
-        assert!(!format!("{sel:?}").is_empty());
+        assert_ne!(format!("{sel:?}"), "");
         assert_eq!(sel.get_ordinal(), 0);
         assert_eq!(sel.get_ordinal(), 1);
         sel.dequeue_ordinal(0, 0);
@@ -786,13 +786,13 @@ mod tests {
         assert_eq!(sel.get_ordinal(), 0);
 
         let prof = TpuCoreProfiler::default();
-        assert!(!format!("{prof:?}").is_empty());
+        assert_ne!(format!("{prof:?}"), "");
         assert!(prof.stop().is_err());
         assert!(prof.start().is_ok());
         assert!(prof.start().is_err());
         assert!(prof.stop().is_ok());
         let xspace_bytes = prof.collect_xspace_bytes();
-        assert!(!xspace_bytes.is_empty());
+        assert_ne!(xspace_bytes, [] as [u8; 0]);
         let decoded_xspace = XSpaceProto::decode(&xspace_bytes);
         assert!(decoded_xspace.is_ok());
 
@@ -810,14 +810,14 @@ mod tests {
             num_hosts: 1,
             num_tensor_cores: 2,
         };
-        assert!(!emb.execute_partitioner(&proto_cfg.encode()).is_empty());
+        assert_ne!(emb.execute_partitioner(&proto_cfg.encode()), [] as [u8; 0]);
         assert!(emb.read_parameters("proto_tbl").is_some());
         let part_out = emb.execute_partitioner(b"cfg");
-        assert!(!part_out.is_empty());
+        assert_ne!(part_out, [] as [u8; 0]);
         emb.configure_memory(vec![10, 20]);
         assert_eq!(emb.host_memory_configs.len(), 1);
-        assert!(!emb.collate_memory().is_empty());
-        assert!(!emb.configure_host(b"host0").is_empty());
+        assert_ne!(emb.collate_memory(), [] as [u8; 0]);
+        assert_ne!(emb.configure_host(b"host0"), [] as [u8; 0]);
         emb.connect_hosts();
         assert!(emb.hosts_connected);
         emb.enqueue_tensor_batch(1, 8, 8);
@@ -829,13 +829,13 @@ mod tests {
         assert_eq!(emb.read_parameters("missing"), None);
         emb.finalize();
         assert!(emb.initialized);
-        assert!(!format!("{emb:?}").is_empty());
+        assert_ne!(format!("{emb:?}"), "");
     }
 
     #[test]
     fn test_driver_and_sdk_client() {
         let drv = TpuCoreDriver::open(TpuInitConfig::default());
-        assert!(!format!("{drv:?}").is_empty());
+        assert_ne!(format!("{drv:?}"), "");
         assert!(drv.query_system_info().contains("TpuDriver"));
         assert!(drv.reset(DeviceId(0)).is_ok());
         let addr_res = drv.allocate(DeviceId(0), ByteSize(256));
@@ -844,28 +844,32 @@ mod tests {
         let addr2 = drv
             .allocate(DeviceId(0), ByteSize(256))
             .unwrap_or(DeviceAddress(0));
-        assert!(drv
-            .transfer_to_device(DeviceId(0), addr, &[1, 2, 3, 4])
-            .is_ok());
+        assert!(
+            drv.transfer_to_device(DeviceId(0), addr, &[1, 2, 3, 4])
+                .is_ok()
+        );
         let mut host_out = [0_u8; 4];
-        assert!(drv
-            .transfer_from_device(DeviceId(0), addr, &mut host_out)
-            .is_ok());
+        assert!(
+            drv.transfer_from_device(DeviceId(0), addr, &mut host_out)
+                .is_ok()
+        );
         assert_eq!(host_out, [1, 2, 3, 4]);
-        assert!(drv
-            .transfer_device_to_device(DeviceId(0), addr, DeviceId(0), addr2, ByteSize(4))
-            .is_ok());
+        assert!(
+            drv.transfer_device_to_device(DeviceId(0), addr, DeviceId(0), addr2, ByteSize(4))
+                .is_ok()
+        );
         for prog in drv.compile(b"HloModule test") {
-            assert!(drv
-                .execute_program(DeviceId(0), &prog, &[addr], &[addr2])
-                .is_ok());
+            assert!(
+                drv.execute_program(DeviceId(0), &prog, &[addr], &[addr2])
+                    .is_ok()
+            );
         }
         assert!(drv.deallocate(DeviceId(0), addr).is_ok());
         assert!(drv.deallocate(DeviceId(0), addr2).is_ok());
         assert!(drv.compile(b"").is_err());
 
         let sdk = LibtpuSdkCoreClient::default();
-        assert!(!format!("{sdk:?}").is_empty());
+        assert_ne!(format!("{sdk:?}"), "");
         assert!(sdk.chip_coords(0).is_ok());
         assert!(sdk.chip_coords(99).is_err());
         assert_eq!(
@@ -873,16 +877,17 @@ mod tests {
                 .ok(),
             Some(1)
         );
-        assert!(sdk
-            .chip_index_for_coords(ChipCoordinates::new(9, 9, 9))
-            .is_err());
+        assert!(
+            sdk.chip_index_for_coords(ChipCoordinates::new(9, 9, 9))
+                .is_err()
+        );
         assert_eq!(sdk.list_metric_names().len(), 5);
         assert!(sdk.get_metric("tpu.runtime.hbm.usage_bytes").is_ok());
         assert!(sdk.get_metric("unknown").is_err());
         let cb_id = sdk.register_debug_callback(0x1234, 0x5678);
         assert_eq!(sdk.registered_debug_callbacks(), vec![(0x1234, 0x5678)]);
         assert!(sdk.unregister_debug_callback(cb_id).is_ok());
-        assert!(sdk.registered_debug_callbacks().is_empty());
+        assert_eq!(sdk.registered_debug_callbacks(), [] as [(usize, usize); 0]);
         assert!(sdk.unregister_debug_callback(cb_id).is_err());
         assert!(sdk.core_state_summary().contains("READY"));
     }

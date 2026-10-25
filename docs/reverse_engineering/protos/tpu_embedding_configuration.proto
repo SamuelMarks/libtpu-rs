@@ -1,0 +1,25 @@
+syntax = "proto3";
+package tensorflow.tpu;
+
+message TableDescriptor {
+  string name = 1;
+  int64 vocabulary_size = 2;
+  int64 dimension = 3;
+  int32 num_features = 4;
+  float learning_rate = 5;
+}
+
+message FeatureDescriptor {
+  string name = 1;
+  int32 table_id = 2;
+  repeated int64 input_shape = 3;
+}
+
+message TPUEmbeddingConfiguration {
+  repeated TableDescriptor table_descriptor = 1;
+  int32 mode = 2;
+  int32 batch_size_per_tensor_core = 3;
+  int32 num_hosts = 4;
+  int32 num_tensor_cores = 5;
+  repeated FeatureDescriptor feature_descriptor = 8;
+}

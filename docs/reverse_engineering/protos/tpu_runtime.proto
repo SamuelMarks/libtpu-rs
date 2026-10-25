@@ -1,0 +1,50 @@
+syntax = "proto3";
+package tpu;
+
+message TpuTopologyArgsProto {
+  int32 version = 1;
+  int32 num_hosts = 2;
+  int32 num_chips_per_host = 3;
+  int32 num_cores_per_chip = 4;
+  repeated int64 chip_bounds = 5;
+  string platform_version = 6;
+  string fingerprint = 7;
+}
+
+message TpuCompilationEnvironmentProto {
+  bool xla_tpu_spmd_rng_bit_generator_unsafe = 1;
+  int32 xla_tpu_megacore_fusion_allow_ags = 2;
+  bool xla_tpu_enable_async_collective_fusion = 3;
+  int32 xla_tpu_Overlap_limit = 4;
+  string custom_flags = 5;
+}
+
+message TpuSerializedExecutableProto {
+  string name = 1;
+  uint64 fingerprint = 2;
+  int32 num_replicas = 3;
+  int32 num_partitions = 4;
+  bytes hlo_program_bytes = 5;
+  bytes vliw_machine_code = 6;
+  int64 generated_code_size = 7;
+}
+
+message MegascaleMultiSliceConfigProto {
+  int32 num_slices = 1;
+  int32 slice_id = 2;
+  repeated int32 num_devices_per_slice = 3;
+  repeated string coordinator_addresses = 4;
+}
+
+message RuntimeAbiVersionProto {
+  int64 platform_id = 1;
+  int32 major_version = 2;
+  int32 minor_version = 3;
+  string runtime_tag = 4;
+}
+
+message ExecutableAbiVersionProto {
+  int64 platform_id = 1;
+  int32 target_isa_version = 2;
+  uint64 fingerprint = 3;
+}

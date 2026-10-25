@@ -1,4 +1,6 @@
-//! PJRT executable, loaded executable, and AOT compilation C API entrypoints (`PJRT_Executable_*`, `PJRT_LoadedExecutable_*`, `PJRT_Compile`).
+//! PJRT executable, loaded executable, and AOT compilation C API entrypoints.
+//!
+//! Exports `PJRT_Executable_*`, `PJRT_LoadedExecutable_*`, and `PJRT_Compile`.
 
 use super::*;
 
@@ -16,38 +18,46 @@ unsafe fn handle_loaded_executable_execute(
         args.output_lists as usize,
     ]) {
         // SAFETY: `args.executable` is a valid `PJRT_LoadedExecutable*`.
-        let loaded_ref = unsafe { &(*args.executable).inner };
+        let loaded = unsafe { &*args.executable };
+        let loaded_ref = &loaded.inner;
         if args.num_devices > loaded_ref.addressable_devices.len() {
             return Err(LibTpuError::DeviceNotFound {
                 device_id: u32::try_from(args.num_devices).unwrap_or(99),
             });
         }
         let num_args = loaded_ref.executable.program.parameter_shapes.len().max(1);
-        // SAFETY: `args.argument_lists` points to device 0's input buffer pointer array.
-        let dev0_args_ptr = unsafe { *args.argument_lists };
-        // SAFETY: `args.output_lists` points to device 0's output buffer pointer array.
-        let dev0_outs_ptr = unsafe { *args.output_lists };
-        // SAFETY: `dev0_args_ptr` points to `num_args` input buffer pointers.
-        let arg_slice = unsafe { std::slice::from_raw_parts(dev0_args_ptr, num_args) };
-        let mut core_inputs = Vec::with_capacity(num_args);
-        for &b_ptr in arg_slice {
-            // SAFETY: `b_ptr` is a valid `PJRT_Buffer*`.
-            core_inputs.push(unsafe { &(*b_ptr).inner });
-        }
-        let outs = loaded_ref.execute_on_device(
-            DeviceId(0),
-            libtpu_core::types::MemorySpaceId(0),
-            &core_inputs,
-        )?;
-        for (idx, out_buf) in outs.into_iter().enumerate() {
-            let out_handle = Box::into_raw(Box::new(PJRT_Buffer {
-                inner: out_buf,
-                device_ptr: ptr::null_mut(),
-                memory_ptr: ptr::null_mut(),
-            }));
-            // SAFETY: Writing output buffer handle at `idx`.
-            unsafe {
-                *dev0_outs_ptr.add(idx) = out_handle;
+        for (dev_idx, (&dev_id, &dev_ptr)) in loaded_ref
+            .addressable_devices
+            .iter()
+            .zip(&loaded.device_ptrs)
+            .take(args.num_devices.max(1))
+            .enumerate()
+        {
+            // SAFETY: `dev_ptr` is a valid `PJRT_Device*` owned by the client.
+            let mem_ptr = unsafe { (*dev_ptr).default_memory_ptr };
+            // SAFETY: `args.argument_lists` points to `dev_idx`'s input buffer pointer array.
+            let dev_args_ptr = unsafe { *args.argument_lists.add(dev_idx) };
+            // SAFETY: `args.output_lists` points to `dev_idx`'s output buffer pointer array.
+            let dev_outs_ptr = unsafe { *args.output_lists.add(dev_idx) };
+            // SAFETY: `dev_args_ptr` points to `num_args` input buffer pointers.
+            let arg_slice = unsafe { std::slice::from_raw_parts(dev_args_ptr, num_args) };
+            let mut core_inputs = Vec::with_capacity(num_args);
+            for &b_ptr in arg_slice {
+                // SAFETY: `b_ptr` is a valid `PJRT_Buffer*`.
+                core_inputs.push(unsafe { &(*b_ptr).inner });
+            }
+            let outs = loaded_ref.execute_on_device(
+                dev_id,
+                libtpu_core::types::MemorySpaceId(i32::try_from(dev_id.0 * 3).unwrap_or(0)),
+                &core_inputs,
+            )?;
+            for (idx, out_buf) in outs.into_iter().enumerate() {
+                let out_handle =
+                    Box::into_raw(Box::new(PJRT_Buffer::new(out_buf, dev_ptr, mem_ptr)));
+                // SAFETY: Writing output buffer handle at `idx`.
+                unsafe {
+                    *dev_outs_ptr.add(idx) = out_handle;
+                }
             }
         }
     }
@@ -63,7 +73,7 @@ unsafe fn handle_loaded_executable_execute(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_LoadedExecutable_Execute_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_LoadedExecutable_Execute(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -100,7 +110,7 @@ unsafe fn handle_loaded_executable_destroy(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_LoadedExecutable_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_LoadedExecutable_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -122,7 +132,17 @@ unsafe fn handle_executable_destroy(
     args: &mut crate::pjrt_types::PJRT_Executable_Destroy_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `executable` is null or a valid `PJRT_Executable*`.
-    let _ = unsafe { args.executable.as_ref() }.map(|e| e.inner.id.0);
+    if let Some(exec_ref) = unsafe { args.executable.as_ref() } {
+        if !exec_ref
+            .owned_by_loaded
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            // SAFETY: Standalone `PJRT_Executable` was allocated via `Box::into_raw`.
+            unsafe {
+                drop(Box::from_raw(args.executable));
+            }
+        }
+    }
     Ok(())
 }
 
@@ -135,7 +155,7 @@ unsafe fn handle_executable_destroy(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_Destroy_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -178,7 +198,7 @@ unsafe fn handle_executable_name(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_Name_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_Name(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -212,7 +232,7 @@ unsafe fn handle_executable_num_replicas(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_NumReplicas_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_NumReplicas(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -248,7 +268,7 @@ unsafe fn handle_executable_num_partitions(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_NumPartitions_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_NumPartitions(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -284,7 +304,7 @@ unsafe fn handle_executable_num_outputs(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_NumOutputs_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_NumOutputs(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -321,7 +341,7 @@ unsafe fn handle_executable_size_of_generated_code(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_SizeOfGeneratedCodeInBytes_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_SizeOfGeneratedCodeInBytes(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -342,8 +362,16 @@ pub unsafe extern "C" fn PJRT_Executable_SizeOfGeneratedCodeInBytes(
 unsafe fn handle_executable_get_cost_analysis(
     args: &mut crate::pjrt_types::PJRT_Executable_GetCostAnalysis_Args,
 ) -> Result<(), LibTpuError> {
-    args.properties = GLOBAL_PLUGIN_ATTRIBUTES.as_ptr();
-    args.num_properties = GLOBAL_PLUGIN_ATTRIBUTES.len();
+    // SAFETY: `executable` is null or a valid `PJRT_Executable*`.
+    let (ptr, len) = unsafe { args.executable.as_ref() }.map_or(
+        (
+            GLOBAL_PLUGIN_ATTRIBUTES.as_ptr(),
+            GLOBAL_PLUGIN_ATTRIBUTES.len(),
+        ),
+        |e| (e.cost_properties.as_ptr(), e.cost_properties.len()),
+    );
+    args.properties = ptr;
+    args.num_properties = len;
     Ok(())
 }
 
@@ -356,7 +384,7 @@ unsafe fn handle_executable_get_cost_analysis(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_GetCostAnalysis_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_GetCostAnalysis(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -377,9 +405,24 @@ pub unsafe extern "C" fn PJRT_Executable_GetCostAnalysis(
 unsafe fn handle_executable_output_memory_kinds(
     args: &mut crate::pjrt_types::PJRT_Executable_OutputMemoryKinds_Args,
 ) -> Result<(), LibTpuError> {
-    args.num_outputs = 1;
-    args.memory_kinds = DEFAULT_MEMORY_KIND_PTRS.0.as_ptr();
-    args.memory_kind_sizes = DEFAULT_MEMORY_KIND_SIZES.as_ptr();
+    // SAFETY: `executable` is null or a valid `PJRT_Executable*`.
+    let (num, ptrs, sizes) = unsafe { args.executable.as_ref() }.map_or(
+        (
+            1,
+            DEFAULT_MEMORY_KIND_PTRS.0.as_ptr(),
+            DEFAULT_MEMORY_KIND_SIZES.as_ptr(),
+        ),
+        |e| {
+            (
+                e.output_memory_kind_ptrs.len(),
+                e.output_memory_kind_ptrs.as_ptr(),
+                e.output_memory_kind_sizes.as_ptr(),
+            )
+        },
+    );
+    args.num_outputs = num;
+    args.memory_kinds = ptrs;
+    args.memory_kind_sizes = sizes;
     Ok(())
 }
 
@@ -392,7 +435,7 @@ unsafe fn handle_executable_output_memory_kinds(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_OutputMemoryKinds_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_OutputMemoryKinds(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -414,7 +457,36 @@ unsafe fn handle_executable_optimized_program(
     args: &mut crate::pjrt_types::PJRT_Executable_OptimizedProgram_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `executable` is null or a valid `PJRT_Executable*`.
-    let _ = unsafe { args.executable.as_ref() }.map(|e| e.inner.program.source_bytes.len());
+    let src_bytes: &[u8] = unsafe { args.executable.as_ref() }
+        .map_or(b"module @tpu_optimized { stablehlo.add }", |e| {
+            e.inner.program.source_bytes.as_slice()
+        });
+    // SAFETY: `args.program` is null or a valid `PJRT_Program*`.
+    if let Some(prog) = unsafe { args.program.as_mut() } {
+        prog.format = c"hlo_with_config".as_ptr();
+        prog.format_size = 15;
+        if !prog.code.is_null() {
+            if prog.code_size < src_bytes.len() {
+                return Err(LibTpuError::InvalidArgument {
+                    parameter: "program.code_size",
+                    reason: format!(
+                        "Provided buffer size {} is smaller than optimized program size {}",
+                        prog.code_size,
+                        src_bytes.len()
+                    ),
+                });
+            }
+            // SAFETY: `prog.code` was allocated by the caller with at least `src_bytes.len()` bytes.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    src_bytes.as_ptr(),
+                    prog.code.cast_mut().cast::<u8>(),
+                    src_bytes.len(),
+                );
+            }
+        }
+        prog.code_size = src_bytes.len();
+    }
     Ok(())
 }
 
@@ -427,7 +499,7 @@ unsafe fn handle_executable_optimized_program(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_OptimizedProgram_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_OptimizedProgram(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -449,15 +521,13 @@ unsafe fn handle_executable_serialize(
     args: &mut crate::pjrt_types::PJRT_Executable_Serialize_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `executable` is null or a valid `PJRT_Executable*`.
-    let (ptr, len) = unsafe { args.executable.as_ref() }.map_or((c"TPU_EXEC".as_ptr(), 8), |e| {
-        (
-            e.inner.program.source_bytes.as_ptr().cast::<c_char>(),
-            e.inner.program.source_bytes.len(),
-        )
-    });
+    let ser_bytes = unsafe { args.executable.as_ref() }
+        .map_or_else(|| b"TPU_EXEC".to_vec(), |e| e.inner.program.serialize());
+    let (ptr, len, holder) = crate::box_serialized_artifact(ser_bytes);
     args.serialized_bytes = ptr;
     args.serialized_bytes_size = len;
-    args.serialized_executable = ptr.cast_mut().cast();
+    args.serialized_executable = holder.cast();
+    args.serialized_executable_deleter = Some(crate::pjrt_serialized_artifact_deleter);
     Ok(())
 }
 
@@ -470,7 +540,7 @@ unsafe fn handle_executable_serialize(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_Serialize_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_Serialize(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -506,7 +576,7 @@ unsafe fn handle_loaded_executable_get_executable(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_LoadedExecutable_GetExecutable_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_LoadedExecutable_GetExecutable(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -545,7 +615,7 @@ unsafe fn handle_loaded_executable_addressable_devices(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_LoadedExecutable_AddressableDevices_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_LoadedExecutable_AddressableDevices(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -582,7 +652,7 @@ unsafe fn handle_loaded_executable_delete(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_LoadedExecutable_Delete_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_LoadedExecutable_Delete(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -618,7 +688,7 @@ unsafe fn handle_loaded_executable_is_deleted(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_LoadedExecutable_IsDeleted_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_LoadedExecutable_IsDeleted(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -659,14 +729,14 @@ unsafe fn handle_executable_deserialize_and_load(
                 Err(e)
             }
         })?;
-        let exec_ptr = Box::into_raw(Box::new(PJRT_Executable {
-            inner: loaded_inner.executable.clone(),
-        }));
-        args.loaded_executable = Box::into_raw(Box::new(PJRT_LoadedExecutable {
-            inner: loaded_inner,
-            executable_ptr: exec_ptr,
-            device_ptrs: client.addressable_device_ptrs.clone(),
-        }));
+        let exec_ptr = Box::into_raw(Box::new(PJRT_Executable::new(
+            loaded_inner.executable.clone(),
+        )));
+        args.loaded_executable = Box::into_raw(Box::new(PJRT_LoadedExecutable::new(
+            loaded_inner,
+            exec_ptr,
+            client.addressable_device_ptrs.clone(),
+        )));
     } else {
         args.loaded_executable = ptr::null_mut();
     }
@@ -682,7 +752,7 @@ unsafe fn handle_executable_deserialize_and_load(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_DeserializeAndLoad_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_DeserializeAndLoad(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -730,7 +800,7 @@ unsafe fn handle_loaded_executable_fingerprint(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_LoadedExecutable_Fingerprint_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_LoadedExecutable_Fingerprint(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -776,11 +846,23 @@ unsafe fn handle_pjrt_compile(
             (f, c)
         },
     );
-    let _ = (args.compile_options, args.compile_options_size);
-    if let Ok(prog) = libtpu_core::compiler::CompiledProgram::compile(fmt_str, code_slice, b"") {
-        args.executable = Box::into_raw(Box::new(PJRT_Executable {
-            inner: libtpu_core::pjrt::PjrtCoreExecutable::new(prog),
-        }));
+    let opts_slice: &[u8] = if !args.compile_options.is_null() {
+        // SAFETY: `args.compile_options` has `args.compile_options_size` bytes.
+        unsafe {
+            std::slice::from_raw_parts(args.compile_options.cast::<u8>(), args.compile_options_size)
+        }
+    } else {
+        b""
+    };
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
+    let _ = unsafe { args.topology.as_ref() }.map(|t| t.inner.fingerprint);
+    if let Ok(prog) =
+        libtpu_core::compiler::CompiledProgram::compile(fmt_str, code_slice, opts_slice)
+            .or_else(|_| libtpu_core::compiler::CompiledProgram::compile(fmt_str, code_slice, b""))
+    {
+        args.executable = Box::into_raw(Box::new(PJRT_Executable::new(
+            libtpu_core::pjrt::PjrtCoreExecutable::new(prog),
+        )));
     } else {
         args.executable = ptr::null_mut();
     }
@@ -796,7 +878,7 @@ unsafe fn handle_pjrt_compile(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Compile_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Compile(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
     // SAFETY: Validated by `dispatch_typed_pjrt_args`.
     unsafe {
@@ -815,8 +897,21 @@ pub unsafe extern "C" fn PJRT_Compile(raw_args: *mut std::ffi::c_void) -> *mut P
 unsafe fn handle_executable_output_element_types(
     args: &mut crate::pjrt_types::PJRT_Executable_OutputElementTypes_Args,
 ) -> Result<(), LibTpuError> {
-    args.output_types = DEFAULT_OUTPUT_ELEMENT_TYPES.as_ptr();
-    args.num_output_types = DEFAULT_OUTPUT_ELEMENT_TYPES.len();
+    // SAFETY: `executable` is null or a valid `PJRT_Executable*`.
+    let (ptr, len) = unsafe { args.executable.as_ref() }.map_or(
+        (
+            DEFAULT_OUTPUT_ELEMENT_TYPES.as_ptr(),
+            DEFAULT_OUTPUT_ELEMENT_TYPES.len(),
+        ),
+        |e| {
+            (
+                e.output_element_types.as_ptr(),
+                e.output_element_types.len(),
+            )
+        },
+    );
+    args.output_types = ptr;
+    args.num_output_types = len;
     Ok(())
 }
 
@@ -829,7 +924,7 @@ unsafe fn handle_executable_output_element_types(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_OutputElementTypes_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_OutputElementTypes(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -850,9 +945,24 @@ pub unsafe extern "C" fn PJRT_Executable_OutputElementTypes(
 unsafe fn handle_executable_output_dimensions(
     args: &mut crate::pjrt_types::PJRT_Executable_OutputDimensions_Args,
 ) -> Result<(), LibTpuError> {
-    args.num_outputs = 1;
-    args.dims = DEFAULT_OUTPUT_DIMS.as_ptr();
-    args.dim_sizes = DEFAULT_OUTPUT_DIM_SIZES.as_ptr();
+    // SAFETY: `executable` is null or a valid `PJRT_Executable*`.
+    let (dims_ptr, sizes_ptr, len) = unsafe { args.executable.as_ref() }.map_or(
+        (
+            DEFAULT_OUTPUT_DIMS.as_ptr(),
+            DEFAULT_OUTPUT_DIM_SIZES.as_ptr(),
+            DEFAULT_OUTPUT_DIM_SIZES.len(),
+        ),
+        |e| {
+            (
+                e.output_dims_flat.as_ptr(),
+                e.output_dim_sizes.as_ptr(),
+                e.output_dim_sizes.len(),
+            )
+        },
+    );
+    args.dims = dims_ptr;
+    args.dim_sizes = sizes_ptr;
+    args.num_outputs = len;
     Ok(())
 }
 
@@ -865,7 +975,7 @@ unsafe fn handle_executable_output_dimensions(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_OutputDimensions_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_OutputDimensions(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -908,7 +1018,7 @@ unsafe fn handle_executable_fingerprint(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_Fingerprint_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_Fingerprint(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -946,6 +1056,12 @@ unsafe fn handle_executable_get_compiled_memory_stats(
     args.output_size_in_bytes = out_sz;
     args.alias_size_in_bytes = alias_sz;
     args.temp_size_in_bytes = temp_sz;
+    args.host_generated_code_size_in_bytes = 0;
+    args.host_argument_size_in_bytes = 0;
+    args.host_output_size_in_bytes = 0;
+    args.host_alias_size_in_bytes = 0;
+    args.host_temp_size_in_bytes = 0;
+    args.peak_memory_in_bytes = gen_sz + arg_sz + out_sz + temp_sz;
     Ok(())
 }
 
@@ -958,7 +1074,7 @@ unsafe fn handle_executable_get_compiled_memory_stats(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_GetCompiledMemoryStats_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_GetCompiledMemoryStats(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -980,20 +1096,40 @@ unsafe fn handle_loaded_executable_get_device_assignment(
     args: &mut crate::pjrt_types::PJRT_LoadedExecutable_GetDeviceAssignment_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `executable` is null or a valid `PJRT_LoadedExecutable*`.
-    let _ = unsafe { args.executable.as_ref() }.map(|le| le.inner.addressable_devices.len());
-    let da_bytes = DEFAULT_SERIALIZED_DA_BYTES.get_or_init(|| {
-        libtpu_core::proto::DeviceAssignmentProto {
-            replica_count: 1,
-            computation_count: 1,
-            computation_devices: vec![libtpu_core::proto::ComputationDeviceProto {
-                replica_device_ids: vec![0],
-            }],
-        }
-        .encode()
-    });
-    args.serialized_bytes = da_bytes.as_ptr().cast::<c_char>();
-    args.serialized_bytes_size = da_bytes.len();
-    args.serialized_device_assignment = da_bytes.as_ptr().cast_mut().cast();
+    let da_bytes = unsafe { args.executable.as_ref() }.map_or_else(
+        || {
+            libtpu_core::proto::DeviceAssignmentProto {
+                replica_count: 1,
+                computation_count: 1,
+                computation_devices: vec![libtpu_core::proto::ComputationDeviceProto {
+                    replica_device_ids: vec![0],
+                }],
+            }
+            .encode()
+        },
+        |le| {
+            let replica_device_ids: Vec<i64> = le
+                .inner
+                .addressable_devices
+                .iter()
+                .map(|d| i64::from(d.0))
+                .collect();
+            libtpu_core::proto::DeviceAssignmentProto {
+                replica_count: i32::try_from(le.inner.executable.program.num_replicas).unwrap_or(1),
+                computation_count: i32::try_from(le.inner.executable.program.num_partitions)
+                    .unwrap_or(1),
+                computation_devices: vec![libtpu_core::proto::ComputationDeviceProto {
+                    replica_device_ids,
+                }],
+            }
+            .encode()
+        },
+    );
+    let (ptr, len, holder) = crate::box_serialized_artifact(da_bytes);
+    args.serialized_bytes = ptr;
+    args.serialized_bytes_size = len;
+    args.serialized_device_assignment = holder.cast();
+    args.serialized_device_assignment_deleter = Some(crate::pjrt_serialized_artifact_deleter);
     Ok(())
 }
 
@@ -1006,7 +1142,7 @@ unsafe fn handle_loaded_executable_get_device_assignment(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_LoadedExecutable_GetDeviceAssignment_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_LoadedExecutable_GetDeviceAssignment(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1027,25 +1163,31 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_GetDeviceAssignment(
 unsafe fn handle_executable_get_compile_options(
     args: &mut crate::pjrt_types::PJRT_Executable_GetCompileOptions_Args,
 ) -> Result<(), LibTpuError> {
-    let co_bytes = DEFAULT_SERIALIZED_CO_BYTES.get_or_init(|| {
-        libtpu_core::proto::CompileOptionsProto {
-            argument_layouts: Vec::new(),
-            parameter_is_tupled_arguments: false,
-            executable_build_options: Some(libtpu_core::proto::ExecutableBuildOptionsProto {
-                device_ordinal: 0,
-                num_replicas: 1,
-                num_partitions: 1,
-                use_spmd_partitioning: true,
-                result_layout: None,
-            }),
-            compile_portable_executable: false,
-            profile_version: 1,
-        }
-        .encode()
-    });
-    args.serialized_bytes = co_bytes.as_ptr().cast::<c_char>();
-    args.serialized_bytes_size = co_bytes.len();
-    args.serialized_compile_options = co_bytes.as_ptr().cast_mut().cast();
+    // SAFETY: `executable` is null or a valid `PJRT_Executable*`.
+    let co_bytes = unsafe { args.executable.as_ref() }.map_or_else(
+        || {
+            libtpu_core::proto::CompileOptionsProto {
+                argument_layouts: Vec::new(),
+                parameter_is_tupled_arguments: false,
+                executable_build_options: Some(libtpu_core::proto::ExecutableBuildOptionsProto {
+                    device_ordinal: 0,
+                    num_replicas: 1,
+                    num_partitions: 1,
+                    use_spmd_partitioning: true,
+                    result_layout: None,
+                }),
+                compile_portable_executable: false,
+                profile_version: 1,
+            }
+            .encode()
+        },
+        |e| e.inner.program.compile_options_bytes.clone(),
+    );
+    let (ptr, len, holder) = crate::box_serialized_artifact(co_bytes);
+    args.serialized_bytes = ptr;
+    args.serialized_bytes_size = len;
+    args.serialized_compile_options = holder.cast();
+    args.serialized_compile_options_deleter = Some(crate::pjrt_serialized_artifact_deleter);
     Ok(())
 }
 
@@ -1058,7 +1200,7 @@ unsafe fn handle_executable_get_compile_options(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_GetCompileOptions_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_GetCompileOptions(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1079,8 +1221,16 @@ pub unsafe extern "C" fn PJRT_Executable_GetCompileOptions(
 unsafe fn handle_loaded_executable_logical_ids(
     args: &mut crate::pjrt_types::PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args,
 ) -> Result<(), LibTpuError> {
-    args.addressable_device_logical_ids = GLOBAL_LOGICAL_DEVICE_IDS.as_ptr();
-    args.num_addressable_device_logical_ids = GLOBAL_LOGICAL_DEVICE_IDS.len();
+    // SAFETY: `executable` is null or a valid `PJRT_LoadedExecutable*`.
+    let (ptr, len) = unsafe { args.executable.as_ref() }.map_or(
+        (
+            GLOBAL_LOGICAL_DEVICE_IDS.as_ptr(),
+            GLOBAL_LOGICAL_DEVICE_IDS.len(),
+        ),
+        |le| (le.logical_device_ids.as_ptr(), le.logical_device_ids.len()),
+    );
+    args.addressable_device_logical_ids = ptr;
+    args.num_addressable_device_logical_ids = len;
     Ok(())
 }
 
@@ -1093,7 +1243,7 @@ unsafe fn handle_loaded_executable_logical_ids(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_LoadedExecutable_AddressableDeviceLogicalIds(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
@@ -1113,9 +1263,24 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_AddressableDeviceLogicalIds(
 unsafe fn handle_executable_parameter_memory_kinds(
     args: &mut crate::pjrt_types::PJRT_Executable_ParameterMemoryKinds_Args,
 ) -> Result<(), LibTpuError> {
-    args.num_parameters = 1;
-    args.memory_kinds = DEFAULT_MEMORY_KIND_PTRS.0.as_ptr();
-    args.memory_kind_sizes = DEFAULT_MEMORY_KIND_SIZES.as_ptr();
+    // SAFETY: `executable` is null or a valid `PJRT_Executable*`.
+    let (num, ptrs, sizes) = unsafe { args.executable.as_ref() }.map_or(
+        (
+            1,
+            DEFAULT_MEMORY_KIND_PTRS.0.as_ptr(),
+            DEFAULT_MEMORY_KIND_SIZES.as_ptr(),
+        ),
+        |e| {
+            (
+                e.param_memory_kind_ptrs.len(),
+                e.param_memory_kind_ptrs.as_ptr(),
+                e.param_memory_kind_sizes.as_ptr(),
+            )
+        },
+    );
+    args.num_parameters = num;
+    args.memory_kinds = ptrs;
+    args.memory_kind_sizes = sizes;
     Ok(())
 }
 
@@ -1128,7 +1293,7 @@ unsafe fn handle_executable_parameter_memory_kinds(
 /// # Safety
 ///
 /// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Executable_ParameterMemoryKinds_Args`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Executable_ParameterMemoryKinds(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {

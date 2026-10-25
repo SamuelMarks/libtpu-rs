@@ -81,10 +81,13 @@ enum class DataType : int32_t {
 class Status {
 public:
   /**
-   * @brief Constructs a `Status` taking ownership of a raw `LibTpuCStatus`.
+   * @brief Constructs a `Status` taking ownership of a raw `LibTpuCStatus` and
+   * an optional static/cached message pointer.
    * @param raw Raw `LibTpuCStatus` returned from the C FFI.
+   * @param msg_str Cached null-terminated message string pointer (defaults to
+   * `""`).
    */
-  explicit Status(LibTpuCStatus raw) noexcept;
+  explicit Status(LibTpuCStatus raw, const char *msg_str = "") noexcept;
 
   /**
    * @brief Destroys the `Status` and frees any owned error message.
@@ -141,6 +144,8 @@ public:
 private:
   /** @brief Underlying C status struct. */
   LibTpuCStatus raw_;
+  /** @brief Cached null-terminated diagnostic message string. */
+  const char *msg_str_;
 };
 
 /**
@@ -211,6 +216,13 @@ public:
    * @return Strongly-typed `DataType`.
    */
   [[nodiscard]] DataType element_type() const noexcept;
+
+  /**
+   * @brief Returns the number of hardware layout tiles on this buffer via
+   * `PJRT_Buffer_GetMemoryLayout`.
+   * @return Number of hardware tiles (`1` for standard `(8, 128)` 2D tiling).
+   */
+  [[nodiscard]] size_t tile_count() const noexcept;
 
   /**
    * @brief Copies this buffer to `dst_device_id` on `client`.
@@ -334,6 +346,25 @@ public:
   [[nodiscard]] float flops() const noexcept;
 
   /**
+   * @brief Returns the number of outputs produced by this executable via
+   * `PJRT_Executable_OutputMemoryKinds`.
+   * @return Number of output tensors (`>= 1`).
+   */
+  [[nodiscard]] size_t num_outputs() const noexcept;
+
+  /**
+   * @brief Queries the optimized HLO program via
+   * `PJRT_Executable_OptimizedProgram` using the two-call buffer sizing
+   * protocol.
+   * @param out_bytes Destination byte array receiving the optimized program.
+   * @param max_len Capacity of `out_bytes` in bytes.
+   * @param out_len Output pointer receiving the optimized program byte length.
+   * @return `Status` indicating success or failure.
+   */
+  [[nodiscard]] Status optimized_program(uint8_t *out_bytes, size_t max_len,
+                                         size_t *out_len) const noexcept;
+
+  /**
    * @brief Returns the underlying raw `PJRT_LoadedExecutable*` pointer.
    * @return Raw `PJRT_LoadedExecutable*` handle.
    */
@@ -342,6 +373,93 @@ public:
 private:
   /** @brief Owned C loaded executable handle. */
   PJRT_LoadedExecutable *handle_;
+};
+
+/**
+ * @brief RAII wrapper over `PJRT_Event*` driving asynchronous event readiness
+ * and callbacks.
+ */
+class Event {
+public:
+  /**
+   * @brief Constructs an empty `Event` or takes ownership of `handle`.
+   * @param handle Raw `PJRT_Event*` pointer (defaults to `nullptr`).
+   */
+  explicit Event(PJRT_Event *handle = nullptr) noexcept;
+
+  /**
+   * @brief Destroys the `Event` via `PJRT_Event_Destroy`.
+   */
+  ~Event() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other event.
+   */
+  Event(const Event &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other event.
+   * @return Reference to this event.
+   */
+  Event &operator=(const Event &other) = delete;
+
+  /**
+   * @brief Move constructor transferring ownership of `PJRT_Event*`.
+   * @param other Rvalue event to move from.
+   */
+  Event(Event &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring ownership of `PJRT_Event*`.
+   * @param other Rvalue event to move from.
+   * @return Reference to this event.
+   */
+  Event &operator=(Event &&other) noexcept;
+
+  /**
+   * @brief Creates a new pending `Event` via `PJRT_Event_Create`.
+   * @param event_out Output `Event` receiving the created handle.
+   * @return `Status` indicating success or failure.
+   */
+  [[nodiscard]] static Status create(Event *event_out) noexcept;
+
+  /**
+   * @brief Queries whether this event has completed via `PJRT_Event_IsReady`.
+   * @return `true` if ready, `false` if pending.
+   */
+  [[nodiscard]] bool is_ready() const noexcept;
+
+  /**
+   * @brief Resolves this event with `error_code` and `message` via
+   * `PJRT_Event_Set`.
+   * @param error_code Status code (`0` for OK).
+   * @param message Optional error message string.
+   * @return `Status` indicating success or failure.
+   */
+  [[nodiscard]] Status set(int32_t error_code = 0,
+                           const char *message = nullptr) noexcept;
+
+  /**
+   * @brief Registers a readiness callback via `PJRT_Event_OnReady`.
+   * @param callback C callback function pointer (`void (*)(PJRT_Error*,
+   * void*)`).
+   * @param user_arg Opaque user argument pointer passed to `callback`.
+   * @return `Status` indicating success or failure.
+   */
+  [[nodiscard]] Status on_ready(PJRT_Event_OnReadyCallback callback,
+                                void *user_arg) noexcept;
+
+  /**
+   * @brief Blocks until this event completes via `PJRT_Event_Await`.
+   * @return `Status` indicating event completion status.
+   */
+  [[nodiscard]] Status await() const noexcept;
+
+private:
+  /** @brief Owned C event handle. */
+  PJRT_Event *handle_;
 };
 
 /**
@@ -399,6 +517,16 @@ public:
    * @return Device count (`>= 0`), or `-1` if uninitialized.
    */
   [[nodiscard]] int32_t device_count() const noexcept;
+
+  /**
+   * @brief Returns the number of per-device `PJRT_NamedValue` attributes for
+   * `device_id` via `PJRT_Device_GetAttributes`.
+   * @param device_id Target logical TPU device ID.
+   * @return Number of device attributes (`3` for valid devices, `0` on invalid
+   * device).
+   */
+  [[nodiscard]] size_t
+  device_attribute_count(uint32_t device_id) const noexcept;
 
   /**
    * @brief Allocates a device `Buffer` from host bytes.
