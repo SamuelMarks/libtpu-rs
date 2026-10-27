@@ -255,3 +255,4 @@ class TpuClient:
 Client = TpuClient
 DeviceBuffer = TpuBuffer
 LoadedExecutable = TpuExecutable
+Profiler = TpuProfiler

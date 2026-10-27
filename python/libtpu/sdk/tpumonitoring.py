@@ -377,6 +377,27 @@ def list_supported_metrics() -> list[str]:
     ]
 
 
+Metric = LibtpuSdkMetric
+
+
+def list_metric_names() -> list[str]:
+    """Returns the list of supported TPU runtime telemetry metric names.
+
+    Returns:
+        Sorted list of supported metric identifier strings.
+    """
+    return list_supported_metrics()
+
+
+def get_chip_info() -> list[ChipCoordinates]:
+    """Returns the 3D torus coordinates and host placement for all TPU chips.
+
+    Returns:
+        List of `ChipCoordinates` objects.
+    """
+    return get_chip_coordinates()
+
+
 def get_metric(metric_name: str) -> LibtpuSdkMetric:
     """Convenience function querying a single telemetry metric by name.
 

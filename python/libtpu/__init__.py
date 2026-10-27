@@ -1162,5 +1162,6 @@ class TpuClient:
 Client = TpuClient
 DeviceBuffer = TpuBuffer
 LoadedExecutable = TpuExecutable
+Profiler = TpuProfiler
 
 configure_library_path()

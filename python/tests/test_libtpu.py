@@ -143,6 +143,9 @@ def test_sdk_submodules() -> None:
     """Verifies `tpumonitoring`, `slice`, `tpuz`, and `debug` submodules."""
     metrics = tpumonitoring.list_supported_metrics()
     assert "tpu.runtime.hbm.usage_bytes" in metrics
+    assert tpumonitoring.list_metric_names() == metrics
+    assert tpumonitoring.Metric is tpumonitoring.LibtpuSdkMetric
+    assert len(tpumonitoring.get_chip_info()) == 4
 
     metric = libtpu.sdk.get_metric("tpu.runtime.hbm.usage_bytes")
     assert "HBM" in metric.help()
@@ -156,9 +159,14 @@ def test_sdk_submodules() -> None:
     assert coords[0].hostname == "tpu-worker-0"
     assert coords[0].chip_index == 0
     assert coords[0].coordinates == [0, 0, 0]
+    assert sdk_slice.get_host_name(0) == "tpu-worker-0"
+    assert sdk_slice.get_chip_index(0) == 0
+    assert len(sdk_slice.get_slice_topology()) == 4
 
     summary = tpuz.get_core_state_summary(include_hlo_info=True)
     assert "READY" in summary
+    assert tpuz.start_server(8466) == 8466
+    assert b"/device:TPU:0" in tpuz.collect_xspace()
 
     sdk_client = tpumonitoring.SdkClient()
     sdk_client.close()
@@ -166,12 +174,12 @@ def test_sdk_submodules() -> None:
 
     triggered: list[int] = []
     cb_id1 = debug.register_debug_callback(lambda: triggered.append(1))
-    cb_id2 = debug.register_debug_callback(lambda: triggered.append(2))
+    cb_id2 = debug.register_callback(lambda: triggered.append(2))
     assert cb_id1 > 0 and cb_id2 > cb_id1
-    debug._trigger_debug_callback_for_test()
+    debug.trigger_fault_injection()
     assert triggered == [1, 2]
     debug.unregister_debug_callback(cb_id1)
-    debug.unregister_debug_callback(cb_id2)
+    debug.unregister_callback(cb_id2)
     with pytest.raises(libtpu.TpuError):
         debug.unregister_debug_callback(cb_id1)
 
@@ -258,6 +266,64 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
         "TpuDriver_Initialize",
         "TpuDriver_Open",
         "TpuDriver_Close",
+        "InitializeCreateMeshGlobalState",
+        "ConfigureDistributedTpuOp_DoWork",
+        "WaitForDistributedTpuOp_DoWork",
+        "InitializeHostForDistributedTpuOp_DoWork",
+        "SetGlobalTPUArrayOp",
+        "DisconnectDistributedTpuChipsOp_DoWork",
+        "ShutdownDistributedTpuOp_DoWork",
+        "TpuNodeContext_Initialize",
+        "TpuNodeContext_Create",
+        "TpuNodeContext_CloseTpuHost",
+        "TpuNodeContext_StopChipHeartbeats",
+        "TpuNodeContext_CompilationsDisabled",
+        "TpuCompile_CompileAndBuild",
+        "TpuCompile_XrtCompileAndBuild",
+        "TpuExecutable_LoadProgramAndEnqueueToStream",
+        "TpuResourceMgr_Create",
+        "TpuResourceMgr_Destroy",
+        "TpuStatus_Destroy",
+        "TpuDriver_FreeStatus",
+        "TpuTopology_AnAvailableCore",
+        "TpuTopology_AvailableCores",
+        "TpuTopology_AvailableCoresCount",
+        "TpuTopology_ChipCoordinates",
+        "TpuTopology_ChipCount",
+        "TpuTopology_CoreCount",
+        "TpuTopology_CoreId",
+        "TpuTopology_CoreIndexOnChip",
+        "TpuTopology_CoreLocations",
+        "TpuTopology_CurrentHost",
+        "TpuTopology_HostBounds_X",
+        "TpuTopology_HostBounds_Y",
+        "TpuTopology_HostBounds_Z",
+        "TpuTopology_HostLocations",
+        "TpuDriver_Reset",
+        "TpuDriver_QuerySystemInfo",
+        "TpuDriver_FreeSystemInfo",
+        "TpuDriver_Allocate",
+        "TpuDriver_AllocateTuple",
+        "TpuDriver_AllocateShape",
+        "TpuDriver_Deallocate",
+        "TpuDriver_TransferToDevice",
+        "TpuDriver_TransferFromDevice",
+        "TpuDriver_TransferFromDeviceToDevice",
+        "TpuDriver_CompileProgram",
+        "TpuDriver_CompileProgramFromText",
+        "TpuDriver_LoadProgram",
+        "TpuDriver_UnloadProgram",
+        "TpuDriver_ExecuteProgram",
+        "TpuDriver_CreateEvent",
+        "TpuDriver_FreeEvent",
+        "TpuDriver_AddCallback",
+        "TpuDriver_WaitForEvent",
+        "TpuDriver_ComputeLinearizedBytesFromShape",
+        "TpuDriver_LinearizeShape",
+        "TpuDriver_DelinearizeShape",
+        "TpuDriver_GetCompiledProgramShape",
+        "TpuDriver_FreeCompiledProgramShape",
+        "TpuDriver_Version",
     )
     for sym in exported_symbols:
         assert hasattr(cdll, sym), f"Missing exported C ABI symbol: {sym}"

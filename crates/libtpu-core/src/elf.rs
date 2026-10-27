@@ -1048,17 +1048,22 @@ pub fn render_proto_schema(fd: &FileDescriptorProto) -> String {
     out
 }
 
-/// Parses a `filewrapper_toc` table of contents (`24`-byte entries: `name_offset`, `data_offset`, `size`)
+/// Parses a `filewrapper_toc` table of contents (`24`-byte or `40`-byte `FileToc` entries)
 /// backed by a companion data blob.
 ///
 /// # Arguments
 ///
-/// * `toc_bytes` - Raw byte slice containing 24-byte `(name_off: u64, data_off: u64, size: u64)` records.
+/// * `toc_bytes` - Raw byte slice containing 24-byte `(name_off: u64, data_off: u64, size: u64)` or 40-byte `(name_off, data_off, size, md5_lo, md5_hi)` records.
 /// * `blob_bytes` - Backing string and payload data buffer referenced by `toc_bytes`.
 #[must_use]
 pub fn extract_filewrapper_toc(toc_bytes: &[u8], blob_bytes: &[u8]) -> Vec<FileTocEntry> {
+    let stride = if toc_bytes.len() >= 40 && toc_bytes.len() % 40 == 0 {
+        40
+    } else {
+        24
+    };
     let mut entries = Vec::new();
-    for chunk in toc_bytes.chunks_exact(24) {
+    for chunk in toc_bytes.chunks_exact(stride) {
         let name_off = usize::try_from(u64::from_le(bytemuck::pod_read_unaligned::<u64>(
             chunk.get(0..8).unwrap_or(&[0; 8]),
         )))
@@ -1097,7 +1102,8 @@ pub fn extract_filewrapper_toc(toc_bytes: &[u8], blob_bytes: &[u8]) -> Vec<FileT
 /// Resolves an indirect `filewrapper_toc` pointer array into [`FileTocEntry`] items.
 ///
 /// In `libtpu.so`, each 8-byte slot in `filewrapper_toc` is relocated via `.rela.dyn` to a
-/// `FileToc` struct in `.data.rel.ro`.
+/// null-terminated array of 40-byte `FileToc` structs (`name_ptr`, `data_ptr`, `size`, `md5[16]`)
+/// in `.data.rel.ro`.
 ///
 /// # Arguments
 ///
@@ -1114,42 +1120,44 @@ pub fn extract_indirect_filewrapper_toc(
 ) -> Vec<FileTocEntry> {
     let mut entries = Vec::new();
     for &slot_vaddr in toc_slot_vaddrs {
-        let Some(&toc_struct_vaddr) = reloc_map.get(&slot_vaddr) else {
+        let Some(&base_toc_vaddr) = reloc_map.get(&slot_vaddr) else {
             continue;
         };
-        let Some(&name_vaddr) = reloc_map.get(&toc_struct_vaddr) else {
-            continue;
-        };
-        let Some(&data_vaddr) = reloc_map.get(&toc_struct_vaddr.wrapping_add(8)) else {
-            continue;
-        };
-        let size = usize::try_from(
-            size_word_map
-                .get(&toc_struct_vaddr.wrapping_add(16))
-                .copied()
-                .unwrap_or(0),
-        )
-        .unwrap_or(0);
-        let Some(name_bytes) = rodata_blobs.get(&name_vaddr) else {
-            continue;
-        };
-        let Some(data_bytes) = rodata_blobs.get(&data_vaddr) else {
-            continue;
-        };
-        let nul_pos = name_bytes
-            .iter()
-            .position(|&b| b == 0)
-            .unwrap_or(name_bytes.len());
-        let name =
-            String::from_utf8_lossy(name_bytes.get(..nul_pos).unwrap_or_default()).into_owned();
-        let payload = data_bytes
-            .get(..size.min(data_bytes.len()))
-            .unwrap_or_default();
-        if !name.is_empty() {
-            entries.push(FileTocEntry {
-                name,
-                data: payload.to_vec(),
-            });
+        let mut elem_idx = 0_u64;
+        while let Some(&name_vaddr) = reloc_map.get(&base_toc_vaddr.wrapping_add(elem_idx * 40)) {
+            let entry_vaddr = base_toc_vaddr.wrapping_add(elem_idx * 40);
+            elem_idx += 1;
+            let Some(&data_vaddr) = reloc_map.get(&entry_vaddr.wrapping_add(8)) else {
+                break;
+            };
+            let size = usize::try_from(
+                size_word_map
+                    .get(&entry_vaddr.wrapping_add(16))
+                    .copied()
+                    .unwrap_or(0),
+            )
+            .unwrap_or(0);
+            let Some(name_bytes) = rodata_blobs.get(&name_vaddr) else {
+                continue;
+            };
+            let Some(data_bytes) = rodata_blobs.get(&data_vaddr) else {
+                continue;
+            };
+            let nul_pos = name_bytes
+                .iter()
+                .position(|&b| b == 0)
+                .unwrap_or(name_bytes.len());
+            let name =
+                String::from_utf8_lossy(name_bytes.get(..nul_pos).unwrap_or_default()).into_owned();
+            let payload = data_bytes
+                .get(..size.min(data_bytes.len()))
+                .unwrap_or_default();
+            if !name.is_empty() {
+                entries.push(FileTocEntry {
+                    name,
+                    data: payload.to_vec(),
+                });
+            }
         }
     }
     entries
@@ -2399,12 +2407,23 @@ mod tests {
         toc.extend_from_slice(&15_u64.to_le_bytes());
         toc.extend_from_slice(&10_u64.to_le_bytes());
 
+        assert_eq!(extract_filewrapper_toc(&[], blob).len(), 0);
         let toc_entries = extract_filewrapper_toc(&toc, blob);
         assert_eq!(toc_entries.len(), 1);
         assert_eq!(toc_entries[0].name, "tpu_tiles.cfg");
         assert_eq!(toc_entries[0].data, b"TILE_8x128");
         assert_eq!(toc_entries[0].clone(), toc_entries[0]);
         assert_ne!(format!("{:?}", toc_entries[0]), "");
+
+        let mut toc_40 = Vec::new();
+        toc_40.extend_from_slice(&1_u64.to_le_bytes());
+        toc_40.extend_from_slice(&15_u64.to_le_bytes());
+        toc_40.extend_from_slice(&10_u64.to_le_bytes());
+        toc_40.extend_from_slice(&0_u64.to_le_bytes());
+        toc_40.extend_from_slice(&0_u64.to_le_bytes());
+        let toc_40_entries = extract_filewrapper_toc(&toc_40, blob);
+        assert_eq!(toc_40_entries.len(), 1);
+        assert_eq!(toc_40_entries[0].name, "tpu_tiles.cfg");
 
         // Test indirect filewrapper_toc resolution
         let mut reloc_map = BTreeMap::new();

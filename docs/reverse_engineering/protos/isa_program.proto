@@ -6,6 +6,9 @@ syntax = "proto3";
 
 package xla;
 
+import "host_command_opcodes.proto";
+import "tpu_version.proto";
+
 message IsaBundleSlotProto {
   uint32 unit_kind = 1;
   uint32 opcode = 2;
@@ -44,10 +47,43 @@ message IsaSymbolTableEntryProto {
   uint64 size_bytes = 3;
 }
 
+message ProgramRelocation {
+  int64 bundle = 1;
+  int32 slot = 2;
+  int32 kind = 3;
+  int32 memory_space = 4;
+  int32 memory_sub_space = 5;
+}
+
+message HostTransferProto {
+  int64 channel = 1;
+  int32 direction = 2;
+  string key = 3;
+  int64 buffer_offset = 6;
+  string host_handler_name = 9;
+  int32 done_sflag = 11;
+  repeated int64 aggregated_channel_ids = 12;
+  int32 heap_buffer_index = 13;
+  int64 multi_recv_count = 14;
+  tpu.HostCommandOpcodeProto host_command_opcode = 15;
+}
+
 message IsaProgramProto {
   string isa_architecture = 1;
   int64 isa_abi_version = 2;
   repeated IsaCoreProgramHeaderProto core_programs = 3;
   repeated IsaSymbolTableEntryProto symbols = 4;
   uint64 fingerprint = 5;
+  int64 initial_overlay_size = 8;
+  bytes program_fingerprint = 9;
+  repeated HostTransferProto host_transfers = 11;
+  tpu.TpuCoreTypeProto core_type = 14;
+  int64 overlay_count = 15;
+  int64 compilation_id = 20;
+  int64 scs_start_bundle = 23;
+  int64 tile_start_bundle = 24;
+  repeated ProgramRelocation relocations = 38;
+  tpu.TpuCoreProgramAbiProto abi = 39;
+  string program_name = 42;
+  bool oom_during_compilation = 61;
 }

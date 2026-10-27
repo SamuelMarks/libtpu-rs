@@ -2551,6 +2551,211 @@ impl DeepseaSyncFlagInitProto {
     }
 }
 
+/// Wire-compatible `tpu.TpuCoreProgramAbiProto` (`learning/45eac/tpu/runtime/tpu_version.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuCoreProgramAbiProto {
+    /// Target `tpu.TpuVersionProto` enum value (field `1`).
+    #[prost(int32, tag = "1")]
+    pub version: i32,
+    /// Hardware variant string (field `2`).
+    #[prost(string, tag = "2")]
+    pub variant: String,
+    /// Chip configuration profile name (`"default"` or `"inference"`, field `3`).
+    #[prost(string, tag = "3")]
+    pub chip_config: String,
+    /// Base runtime ABI version (`163` in `libtpu-0.0.50`, field `4`).
+    #[prost(int64, tag = "4")]
+    pub base_abi_version: i64,
+    /// Hardware ABI version (`65537` or `65539`, field `5`).
+    #[prost(int64, tag = "5")]
+    pub hardware_abi_version: i64,
+    /// Required `DeepSea` compiler SHA-256 hash (`00ef0b06...`, field `6`).
+    #[prost(string, tag = "6")]
+    pub required_compiler_hash: String,
+}
+
+impl TpuCoreProgramAbiProto {
+    /// Encodes this [`TpuCoreProgramAbiProto`] to protobuf wire bytes via `prost`.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        self.encode_to_vec()
+    }
+
+    /// Decodes a [`TpuCoreProgramAbiProto`] from protobuf wire bytes via `prost`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Serialized `TpuCoreProgramAbiProto` bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::ProtobufDecodeError`] if decoding fails.
+    pub fn decode(bytes: &[u8]) -> LibTpuResult<Self> {
+        decode_prost_message(bytes, "tpu.TpuCoreProgramAbiProto")
+    }
+}
+
+/// Wire-compatible `tpu.TpuMemorySegmentProto.Range` (`learning/45eac/tpu/runtime/hal/tpu_core_program.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuMemorySegmentRangeProto {
+    /// Byte offset within the initialized data blob (field `1`).
+    #[prost(int64, tag = "1")]
+    pub offset: i64,
+    /// Size in bytes within the initialized data blob (field `2`).
+    #[prost(int64, tag = "2")]
+    pub size: i64,
+}
+
+impl TpuMemorySegmentRangeProto {
+    /// Encodes this [`TpuMemorySegmentRangeProto`] to protobuf wire bytes via `prost`.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        self.encode_to_vec()
+    }
+
+    /// Decodes a [`TpuMemorySegmentRangeProto`] from protobuf wire bytes via `prost`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Serialized `TpuMemorySegmentRangeProto` bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::ProtobufDecodeError`] if decoding fails.
+    pub fn decode(bytes: &[u8]) -> LibTpuResult<Self> {
+        decode_prost_message(bytes, "xla.TpuMemorySegmentRangeProto")
+    }
+}
+
+/// Wire-compatible `tpu.TpuMemorySegmentProto` (`learning/45eac/tpu/runtime/hal/tpu_core_program.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuMemorySegmentProto {
+    /// Segment type (`1` = `CODE`, `2` = `DATA`, `3` = `NOBITS`, field `1`).
+    #[prost(int32, tag = "1")]
+    pub segment_type: i32,
+    /// Target memory space (`1` = `HBM`, `2` = `VMEM`, `3` = `SMEM`, `4` = `CMEM`, `5` = `IMEM`, field `2`).
+    #[prost(int32, tag = "2")]
+    pub memory_type: i32,
+    /// Range within the parent segment set's `initialized_data` buffer (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub initialized_data_range: Option<TpuMemorySegmentRangeProto>,
+    /// Total allocated segment size in bytes (field `4`).
+    #[prost(int64, tag = "4")]
+    pub segment_size_in_bytes: i64,
+}
+
+impl TpuMemorySegmentProto {
+    /// Encodes this [`TpuMemorySegmentProto`] to protobuf wire bytes via `prost`.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        self.encode_to_vec()
+    }
+
+    /// Decodes a [`TpuMemorySegmentProto`] from protobuf wire bytes via `prost`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Serialized `TpuMemorySegmentProto` bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::ProtobufDecodeError`] if decoding fails.
+    pub fn decode(bytes: &[u8]) -> LibTpuResult<Self> {
+        decode_prost_message(bytes, "xla.TpuMemorySegmentProto")
+    }
+}
+
+/// Wire-compatible `tpu.TpuMemorySegmentSetProto` (`learning/45eac/tpu/runtime/hal/tpu_core_program.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuMemorySegmentSetProto {
+    /// Target memory space (`1` = `HBM`, `2` = `VMEM`, `3` = `SMEM`, `4` = `CMEM`, `5` = `IMEM`, field `1`).
+    #[prost(int32, tag = "1")]
+    pub memory_type: i32,
+    /// Individual code/data/nobits segments in this memory space (field `2`).
+    #[prost(message, repeated, tag = "2")]
+    pub segments: Vec<TpuMemorySegmentProto>,
+    /// Concatenated initialized segment bytes (field `3`).
+    #[prost(bytes = "vec", tag = "3")]
+    pub initialized_data: Vec<u8>,
+    /// Content hash digest of `initialized_data` (field `4`).
+    #[prost(bytes = "vec", tag = "4")]
+    pub hash: Vec<u8>,
+    /// Compression algorithm (`0` = uncompressed, `1` = Brotli, field `5`).
+    #[prost(int32, tag = "5")]
+    pub compression: i32,
+}
+
+impl TpuMemorySegmentSetProto {
+    /// Encodes this [`TpuMemorySegmentSetProto`] to protobuf wire bytes via `prost`.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        self.encode_to_vec()
+    }
+
+    /// Decodes a [`TpuMemorySegmentSetProto`] from protobuf wire bytes via `prost`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Serialized `TpuMemorySegmentSetProto` bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::ProtobufDecodeError`] if decoding fails.
+    pub fn decode(bytes: &[u8]) -> LibTpuResult<Self> {
+        decode_prost_message(bytes, "xla.TpuMemorySegmentSetProto")
+    }
+}
+
+/// Wire-compatible `tpu.TpuCoreProgramProto` (`learning/45eac/tpu/runtime/hal/tpu_core_program.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuCoreProgramProto {
+    /// Target `tpu.TpuPlatformTypeProto` enum value (field `2`).
+    #[prost(int32, tag = "2")]
+    pub platform_type: i32,
+    /// Binary program fingerprint (field `3`).
+    #[prost(bytes = "vec", tag = "3")]
+    pub fingerprint: Vec<u8>,
+    /// Monotonic compilation identifier (field `4`).
+    #[prost(uint64, tag = "4")]
+    pub compilation_id: u64,
+    /// Loadable HBM/VMEM/IMEM memory segment sets (field `8`).
+    #[prost(message, repeated, tag = "8")]
+    pub memory_segments: Vec<TpuMemorySegmentSetProto>,
+    /// Concurrent program HBM stack size in bytes (field `9`).
+    #[prost(int64, tag = "9")]
+    pub concurrent_program_hbm_stack_size: i64,
+    /// Whether this program includes a concurrent continuation program (field `10`).
+    #[prost(bool, tag = "10")]
+    pub has_concurrent_program: bool,
+    /// Embedded `TpuCoreProgramAbiProto` descriptor (field `12`).
+    #[prost(message, optional, tag = "12")]
+    pub abi: Option<TpuCoreProgramAbiProto>,
+    /// Whether an out-of-memory condition occurred during compilation (field `14`).
+    #[prost(bool, tag = "14")]
+    pub oom_during_compilation: bool,
+}
+
+impl TpuCoreProgramProto {
+    /// Encodes this [`TpuCoreProgramProto`] to protobuf wire bytes via `prost`.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        self.encode_to_vec()
+    }
+
+    /// Decodes a [`TpuCoreProgramProto`] from protobuf wire bytes via `prost`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Serialized `TpuCoreProgramProto` bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::ProtobufDecodeError`] if decoding fails.
+    pub fn decode(bytes: &[u8]) -> LibTpuResult<Self> {
+        decode_prost_message(bytes, "xla.TpuCoreProgramProto")
+    }
+}
+
 /// Wire-compatible `xla.DeepseaExecutableProto` (`platforms/xla/service/jellyfish/deepsea_executable.proto`).
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct DeepseaExecutableProto {
@@ -2587,6 +2792,12 @@ pub struct DeepseaExecutableProto {
     /// HBM scratchpad bytes allocated (field `11`).
     #[prost(int64, tag = "11")]
     pub hbm_scratchpad_bytes: i64,
+    /// Authentic `tpu.TpuCoreProgramProto` for `TensorCore` (field `12`).
+    #[prost(message, optional, tag = "12")]
+    pub core_program: Option<TpuCoreProgramProto>,
+    /// Authentic `tpu.TpuCoreProgramProto` for `SparseCore` (field `13`).
+    #[prost(message, optional, tag = "13")]
+    pub sparse_core_program: Option<TpuCoreProgramProto>,
 }
 
 impl DeepseaExecutableProto {
@@ -2672,6 +2883,9 @@ pub struct TpuExecutableProto {
     /// Legacy compatibility `TpuSerializedExecutableProto` payload (field `8`).
     #[prost(message, optional, tag = "8")]
     pub legacy_executable: Option<TpuSerializedExecutableProto>,
+    /// Source URI of the compiled module (field `9`).
+    #[prost(string, tag = "9")]
+    pub source_uri: String,
 }
 
 impl TpuExecutableProto {
@@ -3835,6 +4049,68 @@ mod tests {
             Some(ds_sflag.clone())
         );
 
+        let core_abi = TpuCoreProgramAbiProto {
+            version: 6,
+            variant: String::from("default"),
+            chip_config: String::from("default"),
+            base_abi_version: 163,
+            hardware_abi_version: 65_539,
+            required_compiler_hash: String::from(
+                "00ef0b06b559d6911774f1854abee45cdcb62dc50b6c9535921e52231188d011",
+            ),
+        };
+        assert_eq!(
+            TpuCoreProgramAbiProto::decode(&core_abi.encode()).ok(),
+            Some(core_abi.clone())
+        );
+
+        let seg_range = TpuMemorySegmentRangeProto {
+            offset: 0,
+            size: 64,
+        };
+        assert_eq!(
+            TpuMemorySegmentRangeProto::decode(&seg_range.encode()).ok(),
+            Some(seg_range.clone())
+        );
+
+        let seg_proto = TpuMemorySegmentProto {
+            segment_type: 1,
+            memory_type: 1,
+            initialized_data_range: Some(seg_range),
+            segment_size_in_bytes: 64,
+        };
+        assert_eq!(
+            TpuMemorySegmentProto::decode(&seg_proto.encode()).ok(),
+            Some(seg_proto.clone())
+        );
+
+        let seg_set = TpuMemorySegmentSetProto {
+            memory_type: 1,
+            segments: vec![seg_proto],
+            initialized_data: vec![0_u8; 64],
+            hash: vec![1, 2, 3, 4],
+            compression: 0,
+        };
+        assert_eq!(
+            TpuMemorySegmentSetProto::decode(&seg_set.encode()).ok(),
+            Some(seg_set.clone())
+        );
+
+        let core_prog = TpuCoreProgramProto {
+            platform_type: 1,
+            fingerprint: vec![5, 6, 7, 8],
+            compilation_id: 1,
+            memory_segments: vec![seg_set],
+            concurrent_program_hbm_stack_size: 0,
+            has_concurrent_program: false,
+            abi: Some(core_abi),
+            oom_during_compilation: false,
+        };
+        assert_eq!(
+            TpuCoreProgramProto::decode(&core_prog.encode()).ok(),
+            Some(core_prog.clone())
+        );
+
         let ds_exec = DeepseaExecutableProto {
             module_name: String::from("main"),
             isa_program: Some(isa_prog),
@@ -3847,6 +4123,8 @@ mod tests {
             smem_allocation_bytes: 256,
             cmem_allocation_bytes: 0,
             hbm_scratchpad_bytes: 4096,
+            core_program: Some(core_prog.clone()),
+            sparse_core_program: Some(core_prog),
         };
         assert_eq!(
             DeepseaExecutableProto::decode(&ds_exec.encode()).ok(),
@@ -3872,6 +4150,7 @@ mod tests {
             compile_options: None,
             target_arguments: Some(target_args),
             legacy_executable: None,
+            source_uri: String::from("embed://main"),
         };
         assert_eq!(
             TpuExecutableProto::decode(&tpu_exec.encode()).ok(),
@@ -4032,6 +4311,11 @@ mod tests {
         assert!(DeepseaRelocationEntryProto::decode(&corrupt).is_err());
         assert!(DeepseaConstantPoolEntryProto::decode(&corrupt).is_err());
         assert!(DeepseaSyncFlagInitProto::decode(&corrupt).is_err());
+        assert!(TpuCoreProgramAbiProto::decode(&corrupt).is_err());
+        assert!(TpuMemorySegmentRangeProto::decode(&corrupt).is_err());
+        assert!(TpuMemorySegmentProto::decode(&corrupt).is_err());
+        assert!(TpuMemorySegmentSetProto::decode(&corrupt).is_err());
+        assert!(TpuCoreProgramProto::decode(&corrupt).is_err());
         assert!(DeepseaExecutableProto::decode(&corrupt).is_err());
         assert!(HostCommandEnvelopeProto::decode(&corrupt).is_err());
         assert!(TpuExecutableProto::decode(&corrupt).is_err());

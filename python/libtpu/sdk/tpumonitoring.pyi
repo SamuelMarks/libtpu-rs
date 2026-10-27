@@ -80,6 +80,16 @@ def list_supported_metrics() -> list[str]:
     """Returns the sorted list of telemetry metric names supported by `libtpu.sdk`."""
     ...
 
+Metric = LibtpuSdkMetric
+
+def list_metric_names() -> list[str]:
+    """Returns the sorted list of telemetry metric names supported by `libtpu.sdk`."""
+    ...
+
+def get_chip_info() -> list[ChipCoordinates]:
+    """Returns the 3D torus `ChipCoordinates` for all TPU chips on the slice."""
+    ...
+
 def get_metric(metric_name: str) -> LibtpuSdkMetric:
     """Queries a telemetry metric by name using a transient `SdkClient`.
 

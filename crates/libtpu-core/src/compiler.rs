@@ -2733,6 +2733,52 @@ impl CompiledProgram {
         }
     }
 
+    /// Builds a wire-compatible [`crate::proto::TpuCoreProgramProto`] for the given VLIW instruction stream.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw_vliw_stream` - Encoded VLIW instruction bundle bytes.
+    #[must_use]
+    pub fn build_core_program_proto(
+        &self,
+        raw_vliw_stream: &[u8],
+    ) -> crate::proto::TpuCoreProgramProto {
+        let imem_len_i64 = i64::try_from(raw_vliw_stream.len()).unwrap_or(0);
+        crate::proto::TpuCoreProgramProto {
+            platform_type: 1,
+            fingerprint: self.fingerprint.as_bytes().to_vec(),
+            compilation_id: 1,
+            memory_segments: vec![crate::proto::TpuMemorySegmentSetProto {
+                memory_type: 1,
+                segments: vec![crate::proto::TpuMemorySegmentProto {
+                    segment_type: 1,
+                    memory_type: 1,
+                    initialized_data_range: Some(crate::proto::TpuMemorySegmentRangeProto {
+                        offset: 0,
+                        size: imem_len_i64,
+                    }),
+                    segment_size_in_bytes: imem_len_i64,
+                }],
+                initialized_data: raw_vliw_stream.to_vec(),
+                hash: self.fingerprint.as_bytes().to_vec(),
+                compression: 0,
+            }],
+            concurrent_program_hbm_stack_size: 0,
+            has_concurrent_program: false,
+            abi: Some(crate::proto::TpuCoreProgramAbiProto {
+                version: 6,
+                variant: String::from("default"),
+                chip_config: String::from("default"),
+                base_abi_version: 163,
+                hardware_abi_version: 65_539,
+                required_compiler_hash: String::from(
+                    "00ef0b06b559d6911774f1854abee45cdcb62dc50b6c9535921e52231188d011",
+                ),
+            }),
+            oom_during_compilation: false,
+        }
+    }
+
     /// Converts this [`CompiledProgram`] into a full wire-compatible [`TpuExecutableProto`]
     /// containing [`DeepseaExecutableProto`], [`IsaProgramProto`], and [`TargetArgumentsProto`].
     #[must_use]
@@ -2800,6 +2846,7 @@ impl CompiledProgram {
             mxu_dimension: 128,
             ici_bandwidth_bps: 4_800_000_000_000,
         };
+        let core_prog = self.build_core_program_proto(&raw_vliw_stream);
         let ds_exec = DeepseaExecutableProto {
             module_name: self.name.clone(),
             isa_program: Some(isa_prog),
@@ -2819,6 +2866,8 @@ impl CompiledProgram {
             smem_allocation_bytes: 4096,
             cmem_allocation_bytes: 0,
             hbm_scratchpad_bytes: self.memory_stats.generated_code_size_in_bytes,
+            core_program: Some(core_prog.clone()),
+            sparse_core_program: Some(core_prog),
         };
         TpuExecutableProto {
             ds_executable: Some(ds_exec),
@@ -2826,6 +2875,7 @@ impl CompiledProgram {
             compile_options: CompileOptionsProto::decode(&self.compile_options_bytes).ok(),
             target_arguments: Some(target_args),
             legacy_executable: Some(self.to_executable_proto()),
+            source_uri: format!("embed://{}", self.name),
         }
     }
 

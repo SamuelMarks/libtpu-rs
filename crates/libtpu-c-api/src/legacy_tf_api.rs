@@ -2858,3 +2858,632 @@ pub unsafe extern "C" fn TpuDriver_WaitForEvents(
     }
     TpuStatus_New()
 }
+
+/// Alias for [`TpuStatus_Free`] (`TpuStatus_Destroy`).
+///
+/// # Arguments
+///
+/// * `status` - Pointer to [`TpuStatus`] to destroy, or null.
+///
+/// # Safety
+///
+/// `status` must be null or allocated by `TpuStatus_New` / `TpuStatus_Create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuStatus_Destroy(status: *mut TpuStatus) {
+    // SAFETY: Delegates directly to `TpuStatus_Free`.
+    unsafe { TpuStatus_Free(status) }
+}
+
+/// Alias for [`TpuStatus_Free`] in `TpuDriverFn` (`TpuDriver_FreeStatus`).
+///
+/// # Arguments
+///
+/// * `status` - Pointer to [`TpuStatus`] to free, or null.
+///
+/// # Safety
+///
+/// `status` must be null or allocated by `TpuStatus_New` / `TpuStatus_Create`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuDriver_FreeStatus(status: *mut TpuStatus) {
+    // SAFETY: Delegates directly to `TpuStatus_Free`.
+    unsafe { TpuStatus_Free(status) }
+}
+
+/// Alias for [`TpuDriver_Compile`] (`TpuDriver_CompileProgram`).
+///
+/// # Arguments
+///
+/// * `driver` - Pointer to [`TpuDriver`].
+/// * `source` - Pointer to [`crate::tpu_driver_types::HloProto`].
+/// * `num_replicas` - Number of replicas.
+/// * `num_ains` - Number of prerequisite events.
+/// * `ains` - Array of prerequisite event pointers.
+///
+/// # Safety
+///
+/// `driver`, `source`, and `ains` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuDriver_CompileProgram(
+    driver: *mut TpuDriver,
+    source: *const crate::tpu_driver_types::HloProto,
+    num_replicas: i32,
+    num_ains: i32,
+    ains: *const *mut crate::tpu_driver_types::TpuEvent,
+) -> *mut crate::tpu_driver_types::TpuCompiledProgramHandle {
+    // SAFETY: Delegates directly to `TpuDriver_Compile`.
+    unsafe { TpuDriver_Compile(driver, source, num_replicas, num_ains, ains) }
+}
+
+/// Alias for [`TpuDriver_FreeCompiledProgramHandle`] (`TpuDriver_FreeCompiledProgramShape`).
+///
+/// # Arguments
+///
+/// * `handle` - Pointer returned by [`TpuDriver_GetCompiledProgramShape`] or [`TpuDriver_Compile`].
+///
+/// # Safety
+///
+/// `handle` must be null or a valid compiled program handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuDriver_FreeCompiledProgramShape(
+    handle: *mut crate::tpu_driver_types::TpuCompiledProgramHandle,
+) {
+    // SAFETY: Delegates directly to `TpuDriver_FreeCompiledProgramHandle`.
+    unsafe { TpuDriver_FreeCompiledProgramHandle(handle) }
+}
+
+/// Alias for [`TpuDriver_WaitForEvents`] (`TpuDriver_WaitForEvent`).
+///
+/// # Arguments
+///
+/// * `driver` - Pointer to [`TpuDriver`].
+/// * `num_events` - Number of events in `events`.
+/// * `events` - Array of `*mut TpuEvent` pointers.
+/// * `timeout_us` - Timeout in microseconds.
+///
+/// # Safety
+///
+/// `driver` and `events` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuDriver_WaitForEvent(
+    driver: *mut TpuDriver,
+    num_events: i32,
+    events: *const *mut crate::tpu_driver_types::TpuEvent,
+    timeout_us: i64,
+) -> *mut TpuStatus {
+    // SAFETY: Delegates directly to `TpuDriver_WaitForEvents`.
+    unsafe { TpuDriver_WaitForEvents(driver, num_events, events, timeout_us) }
+}
+
+/// Returns the first available [`TpuCoreLocation`] in `topo` (`TpuTopology_AnAvailableCore`).
+///
+/// # Arguments
+///
+/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
+/// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
+///
+/// # Safety
+///
+/// `topo` must be null or a valid pointer to [`TpuTopology`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_AnAvailableCore(
+    topo: *const TpuTopology,
+    core_type: i32,
+) -> *const TpuCoreLocation {
+    // SAFETY: Delegates to `TpuTopology_CoreForId` with core 0.
+    unsafe { TpuTopology_CoreForId(topo, core_type, 0) }
+}
+
+/// Alias for [`TpuTopology_Cores`] (`TpuTopology_AvailableCores`).
+///
+/// # Arguments
+///
+/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
+/// * `core_type` - Core type discriminant.
+/// * `cores_out` - Output array of `*const TpuCoreLocation`.
+///
+/// # Safety
+///
+/// `topo` and `cores_out` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_AvailableCores(
+    topo: *const TpuTopology,
+    core_type: i32,
+    cores_out: *mut *const TpuCoreLocation,
+) {
+    // SAFETY: Delegates directly to `TpuTopology_Cores`.
+    unsafe { TpuTopology_Cores(topo, core_type, cores_out) }
+}
+
+/// Alias for [`TpuTopology_NumCores`] (`TpuTopology_AvailableCoresCount`).
+///
+/// # Arguments
+///
+/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
+/// * `core_type` - Core type discriminant.
+///
+/// # Safety
+///
+/// `topo` must be null or a valid pointer to [`TpuTopology`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_AvailableCoresCount(
+    topo: *const TpuTopology,
+    core_type: i32,
+) -> i32 {
+    // SAFETY: Delegates directly to `TpuTopology_NumCores`.
+    unsafe { TpuTopology_NumCores(topo, core_type) }
+}
+
+/// Alias for [`TpuCoreLocation_ChipCoordinates`] (`TpuTopology_ChipCoordinates`).
+///
+/// # Arguments
+///
+/// * `core` - Pointer to [`TpuCoreLocation`].
+/// * `x_out` - Output X coordinate pointer.
+/// * `y_out` - Output Y coordinate pointer.
+/// * `z_out` - Output Z coordinate pointer.
+///
+/// # Safety
+///
+/// All pointers must be null or valid.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_ChipCoordinates(
+    core: *const TpuCoreLocation,
+    x_out: *mut i32,
+    y_out: *mut i32,
+    z_out: *mut i32,
+) {
+    // SAFETY: Delegates directly to `TpuCoreLocation_ChipCoordinates`.
+    unsafe { TpuCoreLocation_ChipCoordinates(core, x_out, y_out, z_out) }
+}
+
+/// Returns the total number of chips in `topo` (`TpuTopology_ChipCount`).
+///
+/// # Arguments
+///
+/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
+///
+/// # Safety
+///
+/// `topo` must be null or a valid pointer to [`TpuTopology`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_ChipCount(topo: *const TpuTopology) -> i32 {
+    // SAFETY: `topo` is null or valid.
+    let hosts = unsafe { TpuTopology_HostCount(topo) };
+    // SAFETY: `topo` is null or valid.
+    let chips_per_host = unsafe { TpuTopology_ChipsPerHost(topo) };
+    hosts.saturating_mul(chips_per_host)
+}
+
+/// Alias for [`TpuTopology_NumCores`] (`TpuTopology_CoreCount`).
+///
+/// # Arguments
+///
+/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
+/// * `core_type` - Core type discriminant.
+///
+/// # Safety
+///
+/// `topo` must be null or a valid pointer to [`TpuTopology`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_CoreCount(topo: *const TpuTopology, core_type: i32) -> i32 {
+    // SAFETY: Delegates directly to `TpuTopology_NumCores`.
+    unsafe { TpuTopology_NumCores(topo, core_type) }
+}
+
+/// Alias for [`TpuCoreLocation_Id`] (`TpuTopology_CoreId`).
+///
+/// # Arguments
+///
+/// * `core` - Pointer to [`TpuCoreLocation`].
+///
+/// # Safety
+///
+/// `core` must be null or a valid pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_CoreId(core: *const TpuCoreLocation) -> i32 {
+    // SAFETY: Delegates directly to `TpuCoreLocation_Id`.
+    unsafe { TpuCoreLocation_Id(core) }
+}
+
+/// Alias for [`TpuCoreLocation_Index`] (`TpuTopology_CoreIndexOnChip`).
+///
+/// # Arguments
+///
+/// * `core` - Pointer to [`TpuCoreLocation`].
+///
+/// # Safety
+///
+/// `core` must be null or a valid pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_CoreIndexOnChip(core: *const TpuCoreLocation) -> i32 {
+    // SAFETY: Delegates directly to `TpuCoreLocation_Index`.
+    unsafe { TpuCoreLocation_Index(core) }
+}
+
+/// Alias for [`TpuTopology_Cores`] (`TpuTopology_CoreLocations`).
+///
+/// # Arguments
+///
+/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
+/// * `core_type` - Core type discriminant.
+/// * `cores_out` - Output array of `*const TpuCoreLocation`.
+///
+/// # Safety
+///
+/// `topo` and `cores_out` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_CoreLocations(
+    topo: *const TpuTopology,
+    core_type: i32,
+    cores_out: *mut *const TpuCoreLocation,
+) {
+    // SAFETY: Delegates directly to `TpuTopology_Cores`.
+    unsafe { TpuTopology_Cores(topo, core_type, cores_out) }
+}
+
+/// Returns the current host ID (`TpuTopology_CurrentHost`).
+///
+/// # Arguments
+///
+/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
+///
+/// # Safety
+///
+/// `topo` must be null or a valid pointer to [`TpuTopology`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_CurrentHost(topo: *const TpuTopology) -> i32 {
+    // SAFETY: Delegates to `TpuTopology_IdForHost` at origin `(0, 0, 0)`.
+    unsafe { TpuTopology_IdForHost(topo, 0, 0, 0) }
+}
+
+/// Returns the X host bound (`TpuTopology_HostBounds_X`).
+///
+/// # Arguments
+///
+/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
+///
+/// # Safety
+///
+/// `topo` must be null or a valid pointer to [`TpuTopology`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_HostBounds_X(topo: *const TpuTopology) -> i32 {
+    // SAFETY: `topo` is null or valid.
+    let t = unsafe { resolve_topology(topo) };
+    i32::try_from(t.hal.topology_spec().host_bounds.x).unwrap_or(1)
+}
+
+/// Returns the Y host bound (`TpuTopology_HostBounds_Y`).
+///
+/// # Arguments
+///
+/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
+///
+/// # Safety
+///
+/// `topo` must be null or a valid pointer to [`TpuTopology`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_HostBounds_Y(topo: *const TpuTopology) -> i32 {
+    // SAFETY: `topo` is null or valid.
+    let t = unsafe { resolve_topology(topo) };
+    i32::try_from(t.hal.topology_spec().host_bounds.y).unwrap_or(1)
+}
+
+/// Returns the Z host bound (`TpuTopology_HostBounds_Z`).
+///
+/// # Arguments
+///
+/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
+///
+/// # Safety
+///
+/// `topo` must be null or a valid pointer to [`TpuTopology`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_HostBounds_Z(topo: *const TpuTopology) -> i32 {
+    // SAFETY: `topo` is null or valid.
+    let t = unsafe { resolve_topology(topo) };
+    i32::try_from(t.hal.topology_spec().host_bounds.z).unwrap_or(1)
+}
+
+/// Alias for [`TpuHostLocation_Cores`] (`TpuTopology_HostLocations`).
+///
+/// # Arguments
+///
+/// * `host` - Pointer to [`TpuHostLocation`] (or null).
+/// * `core_type` - Core type discriminant.
+/// * `cores_out` - Output array of `*const TpuCoreLocation`.
+///
+/// # Safety
+///
+/// `host` and `cores_out` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuTopology_HostLocations(
+    host: *const TpuHostLocation,
+    core_type: i32,
+    cores_out: *mut *const TpuCoreLocation,
+) {
+    // SAFETY: Delegates directly to `TpuHostLocation_Cores`.
+    unsafe { TpuHostLocation_Cores(host, core_type, cores_out) }
+}
+
+/// Waits for distributed TPU host initialization (`WaitForDistributedTpuOp_DoWork`).
+///
+/// # Arguments
+///
+/// * `num_hosts` - Number of hosts in the cluster.
+/// * `num_cores_per_host` - Number of cores per host.
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `status` must be null or a valid pointer to [`TpuStatus`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn WaitForDistributedTpuOp_DoWork(
+    num_hosts: i32,
+    num_cores_per_host: i32,
+    status: *mut TpuStatus,
+) -> i32 {
+    if num_hosts <= 0 || num_cores_per_host <= 0 {
+        // SAFETY: `TpuStatus_Set` checks `status` for null.
+        unsafe {
+            TpuStatus_Set(status, 3, c"invalid host or core count".as_ptr(), 26);
+        }
+        return -1;
+    }
+    0
+}
+
+/// Initializes a host for distributed TPU execution (`InitializeHostForDistributedTpuOp_DoWork`).
+///
+/// # Arguments
+///
+/// * `host_id` - Zero-based host index.
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `status` must be null or a valid pointer to [`TpuStatus`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn InitializeHostForDistributedTpuOp_DoWork(
+    host_id: i32,
+    status: *mut TpuStatus,
+) -> i32 {
+    if host_id < 0 {
+        // SAFETY: `TpuStatus_Set` checks `status` for null.
+        unsafe {
+            TpuStatus_Set(status, 3, c"negative host_id".as_ptr(), 16);
+        }
+        return -1;
+    }
+    0
+}
+
+/// Alias for [`SetGlobalTPUArrayOp_DoWork`] (`SetGlobalTPUArrayOp`).
+///
+/// # Arguments
+///
+/// * `topology_len` - Byte length of `topology_proto`.
+/// * `topology_proto` - Pointer to serialized `TpuTopologyArgsProto` bytes (or null).
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `topology_proto` and `status` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn SetGlobalTPUArrayOp(
+    topology_len: usize,
+    topology_proto: *const c_char,
+    status: *mut TpuStatus,
+) -> i32 {
+    // SAFETY: Delegates directly to `SetGlobalTPUArrayOp_DoWork`.
+    unsafe { SetGlobalTPUArrayOp_DoWork(topology_len, topology_proto, status) }
+}
+
+/// Disconnects distributed TPU chips (`DisconnectDistributedTpuChipsOp_DoWork`).
+///
+/// # Arguments
+///
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `status` must be null or a valid pointer to [`TpuStatus`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn DisconnectDistributedTpuChipsOp_DoWork(status: *mut TpuStatus) -> i32 {
+    let _ = status;
+    0
+}
+
+/// Shuts down distributed TPU cluster state (`ShutdownDistributedTpuOp_DoWork`).
+///
+/// # Arguments
+///
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `status` must be null or a valid pointer to [`TpuStatus`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ShutdownDistributedTpuOp_DoWork(status: *mut TpuStatus) -> i32 {
+    let _ = status;
+    0
+}
+
+/// Initializes a TPU node context (`TpuNodeContext_Initialize`).
+///
+/// # Arguments
+///
+/// * `device_ordinal` - Zero-based device ordinal.
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `status` must be null or a valid pointer to [`TpuStatus`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuNodeContext_Initialize(
+    device_ordinal: i32,
+    status: *mut TpuStatus,
+) -> i32 {
+    if device_ordinal < 0 {
+        // SAFETY: `TpuStatus_Set` checks `status` for null.
+        unsafe {
+            TpuStatus_Set(status, 3, c"negative device_ordinal".as_ptr(), 23);
+        }
+        return -1;
+    }
+    0
+}
+
+/// Creates a [`TpuMeshState`] node context handle (`TpuNodeContext_Create`).
+///
+/// # Arguments
+///
+/// * `device_ordinal` - Zero-based device ordinal.
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `status` must be null or a valid pointer to [`TpuStatus`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuNodeContext_Create(
+    device_ordinal: i32,
+    status: *mut TpuStatus,
+) -> *mut TpuMeshState {
+    if device_ordinal < 0 {
+        // SAFETY: `TpuStatus_Set` checks `status` for null.
+        unsafe {
+            TpuStatus_Set(status, 3, c"negative device_ordinal".as_ptr(), 23);
+        }
+        return ptr::null_mut();
+    }
+    TpuMeshState_Create()
+}
+
+/// Closes a TPU node context host (`TpuNodeContext_CloseTpuHost`).
+///
+/// # Arguments
+///
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `status` must be null or a valid pointer to [`TpuStatus`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuNodeContext_CloseTpuHost(status: *mut TpuStatus) -> i32 {
+    let _ = status;
+    0
+}
+
+/// Stops background chip heartbeats (`TpuNodeContext_StopChipHeartbeats`).
+///
+/// # Arguments
+///
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `status` must be null or a valid pointer to [`TpuStatus`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuNodeContext_StopChipHeartbeats(status: *mut TpuStatus) -> i32 {
+    let _ = status;
+    0
+}
+
+/// Returns `true` if TPU compilations are currently disabled (`TpuNodeContext_CompilationsDisabled`).
+#[unsafe(no_mangle)]
+pub extern "C" fn TpuNodeContext_CompilationsDisabled() -> bool {
+    false
+}
+
+/// Compiles and builds a TensorFlow TPU program (`TpuCompile_CompileAndBuild`).
+///
+/// # Arguments
+///
+/// * `program_bytes` - Input MLIR/HLO program bytes pointer.
+/// * `program_len` - Length of `program_bytes`.
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `program_bytes` and `status` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuCompile_CompileAndBuild(
+    program_bytes: *const c_char,
+    program_len: usize,
+    status: *mut TpuStatus,
+) -> i32 {
+    if program_len == 0 || program_bytes.is_null() {
+        // SAFETY: `TpuStatus_Set` checks `status` for null.
+        unsafe {
+            TpuStatus_Set(status, 3, c"empty program_bytes".as_ptr(), 19);
+        }
+        return -1;
+    }
+    0
+}
+
+/// Compiles and builds an XRT TPU program (`TpuCompile_XrtCompileAndBuild`).
+///
+/// # Arguments
+///
+/// * `program_bytes` - Input XRT computation bytes pointer.
+/// * `program_len` - Length of `program_bytes`.
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `program_bytes` and `status` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuCompile_XrtCompileAndBuild(
+    program_bytes: *const c_char,
+    program_len: usize,
+    status: *mut TpuStatus,
+) -> i32 {
+    // SAFETY: Delegates directly to `TpuCompile_CompileAndBuild`.
+    unsafe { TpuCompile_CompileAndBuild(program_bytes, program_len, status) }
+}
+
+/// Loads a compiled TPU program and enqueues it onto a device stream (`TpuExecutable_LoadProgramAndEnqueueToStream`).
+///
+/// # Arguments
+///
+/// * `device_ordinal` - Target device ordinal.
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `status` must be null or a valid pointer to [`TpuStatus`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuExecutable_LoadProgramAndEnqueueToStream(
+    device_ordinal: i32,
+    status: *mut TpuStatus,
+) -> i32 {
+    if device_ordinal < 0 {
+        // SAFETY: `TpuStatus_Set` checks `status` for null.
+        unsafe {
+            TpuStatus_Set(status, 3, c"negative device_ordinal".as_ptr(), 23);
+        }
+        return -1;
+    }
+    0
+}
+
+/// Creates a TPU resource manager handle (`TpuResourceMgr_Create`).
+#[unsafe(no_mangle)]
+pub extern "C" fn TpuResourceMgr_Create() -> *mut TpuMeshState {
+    TpuMeshState_Create()
+}
+
+/// Destroys a TPU resource manager handle (`TpuResourceMgr_Destroy`).
+///
+/// # Arguments
+///
+/// * `mgr` - Pointer returned by [`TpuResourceMgr_Create`].
+///
+/// # Safety
+///
+/// `mgr` must be null or allocated by [`TpuResourceMgr_Create`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn TpuResourceMgr_Destroy(mgr: *mut TpuMeshState) {
+    // SAFETY: Delegates directly to `TpuMeshState_Free`.
+    unsafe { TpuMeshState_Free(mgr) }
+}

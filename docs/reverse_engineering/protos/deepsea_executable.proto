@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 The OpenXLA Authors and Google LLC.
 // Source: platforms/xla/service/jellyfish/deepsea_executable.proto (embedded in libtpu/libtpu.so protodesc_cold)
+// Source: learning/45eac/tpu/runtime/hal/tpu_core_program.proto (embedded in libtpu/libtpu.so protodesc_cold)
 
 syntax = "proto3";
 
@@ -8,6 +9,38 @@ package xla;
 
 import "isa_program.proto";
 import "target_arguments.proto";
+import "tpu_version.proto";
+
+message TpuMemorySegmentRangeProto {
+  int64 offset = 1;
+  int64 size = 2;
+}
+
+message TpuMemorySegmentProto {
+  tpu.TpuSegmentTypeProto segment_type = 1;
+  tpu.TpuSegmentMemoryTypeProto memory_type = 2;
+  TpuMemorySegmentRangeProto initialized_data_range = 3;
+  int64 segment_size_in_bytes = 4;
+}
+
+message TpuMemorySegmentSetProto {
+  tpu.TpuSegmentMemoryTypeProto memory_type = 1;
+  repeated TpuMemorySegmentProto segments = 2;
+  bytes initialized_data = 3;
+  bytes hash = 4;
+  int32 compression = 5;
+}
+
+message TpuCoreProgramProto {
+  int32 platform_type = 2;
+  bytes fingerprint = 3;
+  uint64 compilation_id = 4;
+  repeated TpuMemorySegmentSetProto memory_segments = 8;
+  int64 concurrent_program_hbm_stack_size = 9;
+  bool has_concurrent_program = 10;
+  tpu.TpuCoreProgramAbiProto abi = 12;
+  bool oom_during_compilation = 14;
+}
 
 message DeepseaOverlaySectionProto {
   uint32 overlay_id = 1;
@@ -51,4 +84,6 @@ message DeepseaExecutableProto {
   int64 smem_allocation_bytes = 9;
   int64 cmem_allocation_bytes = 10;
   int64 hbm_scratchpad_bytes = 11;
+  TpuCoreProgramProto core_program = 12;
+  TpuCoreProgramProto sparse_core_program = 13;
 }

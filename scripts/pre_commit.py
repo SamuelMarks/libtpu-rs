@@ -12,7 +12,7 @@ Performs:
    and C/C++ (`ctest`).
 5. Official Google `libtpu` (`libtpu.so` v0.0.50) binary ABI & Python wheel API compatibility
    verification (`PJRT_Api` v0.116 1,144-byte vtable, `LibtpuSdk_Api` v0.1 144-byte vtable,
-   17-node PJRT extension linked list, 75 exported dynamic C symbols, `#[repr(C)]` struct sizes).
+   17-node PJRT extension linked list, 79 exported dynamic C symbols, `#[repr(C)]` struct sizes).
 6. Doc & test coverage calculation and `% doc coverage` / `% test coverage` shield updates
    in `README.md`.
 """

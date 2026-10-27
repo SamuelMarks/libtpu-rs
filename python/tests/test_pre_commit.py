@@ -1030,6 +1030,8 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     toc_entries = re_ext.extract_filewrapper_toc(toc, blob)
     assert len(toc_entries) == 2
     assert toc_entries[0] == ("tpu_tiles.cfg", b"TILE_8x128")
+    toc_40 = struct.pack("<QQQQQ", 1, 15, 10, 0, 0)
+    assert re_ext.extract_filewrapper_toc(toc_40, blob) == [("tpu_tiles.cfg", b"TILE_8x128")]
 
     whl_path = tmp_path / "libtpu-0.0.50.whl"
     with zipfile.ZipFile(whl_path, "w") as zf:

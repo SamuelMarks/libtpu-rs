@@ -343,17 +343,18 @@ def carve_protodesc_cold(section_bytes: bytes) -> list[dict[str, str]]:
 
 
 def extract_filewrapper_toc(toc_bytes: bytes, blob_bytes: bytes) -> list[tuple[str, bytes]]:
-    """Extracts `(name, payload)` entries from a 24-byte `filewrapper_toc` table of contents.
+    """Extracts `(name, payload)` entries from a 24-byte or 40-byte `filewrapper_toc` table.
 
     Args:
-        toc_bytes: Raw 24-byte `(name_off, data_off, size)` records.
+        toc_bytes: Raw 24-byte or 40-byte `(name_off, data_off, size, ...)` records.
         blob_bytes: Backing string and data buffer.
 
     Returns:
         List of `(filename, data_bytes)` tuples.
     """
+    stride = 40 if len(toc_bytes) >= 40 and len(toc_bytes) % 40 == 0 else 24
     entries: list[tuple[str, bytes]] = []
-    for off in range(0, len(toc_bytes) - (len(toc_bytes) % 24), 24):
+    for off in range(0, len(toc_bytes) - (len(toc_bytes) % stride), stride):
         name_off, data_off, size = struct.unpack_from("<QQQ", toc_bytes, off)
         if name_off < len(blob_bytes) and data_off + size <= len(blob_bytes):
             tail = blob_bytes[name_off:]
@@ -594,7 +595,9 @@ def validate_golden_manifests(repo_root: Path) -> list[str]:
             or len(proto_desc.get("descriptors", [])) < 59
         ):
             errors.append("golden_proto_descriptors.json: incomplete descriptor closure")
-        if set(csr_map.get("generations", {}).keys()) != {"V3", "V4", "V5e", "V5p", "V6e"}:
+        if not {"V2", "V3", "V4", "V5e", "V5p", "V6e", "V7x"}.issubset(
+            set(csr_map.get("generations", {}).keys())
+        ):
             errors.append("csr_register_map.json: missing TPU generation CSR maps")
 
     return errors

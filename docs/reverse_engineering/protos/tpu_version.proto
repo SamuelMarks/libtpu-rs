@@ -7,15 +7,53 @@ syntax = "proto3";
 package tpu;
 
 enum TpuVersionProto {
-  TPU_VERSION_UNSPECIFIED = 0;
-  TPU_VERSION_V2 = 2;
-  TPU_VERSION_V3 = 3;
-  TPU_VERSION_V4 = 4;
-  TPU_VERSION_V5E = 5;
-  TPU_VERSION_V5P = 6;
-  TPU_VERSION_V6E = 7;
+  TPU_VERSION_INVALID = 0;
+  TPU_VERSION_JELLYFISH = 1;
+  TPU_VERSION_DRAGONFISH = 2;
+  TPU_VERSION_PUFFERFISH = 3;
+  TPU_VERSION_VIPERFISH = 4;
+  TPU_VERSION_GHOSTLITE = 5;
+  TPU_VERSION_6acc60406 = 6;
+  TPU_VERSION_V5E = 7;
   TPU_VERSION_V7X = 8;
   TPU_VERSION_V4_LITE = 9;
+}
+
+enum TpuCoreTypeProto {
+  TPU_CORE_TYPE_INVALID = 0;
+  TPU_CORE_TYPE_TENSOR_CORE = 1;
+  TPU_CORE_TYPE_BARNA_CORE = 2;
+  TPU_CORE_TYPE_SPARSE_CORE = 3;
+}
+
+enum TpuSegmentTypeProto {
+  TPU_SEGMENT_TYPE_INVALID = 0;
+  TPU_SEGMENT_TYPE_CODE = 1;
+  TPU_SEGMENT_TYPE_DATA = 2;
+  TPU_SEGMENT_TYPE_NOBITS = 3;
+}
+
+enum TpuSegmentMemoryTypeProto {
+  TPU_SEGMENT_MEMORY_TYPE_INVALID = 0;
+  TPU_SEGMENT_MEMORY_TYPE_HBM = 1;
+  TPU_SEGMENT_MEMORY_TYPE_VMEM = 2;
+  TPU_SEGMENT_MEMORY_TYPE_SMEM = 3;
+  TPU_SEGMENT_MEMORY_TYPE_CMEM = 4;
+  TPU_SEGMENT_MEMORY_TYPE_IMEM = 5;
+}
+
+message TpuCoreProgramAbiOptionsProto {
+  bool use_continuations = 1;
+}
+
+message TpuCoreProgramAbiProto {
+  TpuVersionProto version = 1;
+  string variant = 2;
+  string chip_config = 3;
+  int64 base_abi_version = 4;
+  int64 hardware_abi_version = 5;
+  string required_compiler_hash = 6;
+  TpuCoreProgramAbiOptionsProto options = 7;
 }
 
 message TpuChipVariantDescriptorProto {

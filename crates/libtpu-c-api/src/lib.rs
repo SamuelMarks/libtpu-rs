@@ -5622,6 +5622,80 @@ mod tests {
             let ev_unload = TpuDriver_UnloadProgram(drv, lp_handle, 0, ptr::null());
             TpuDriver_FreeEvent(ev_unload);
             TpuDriver_FreeCompiledProgramHandle(cp_handle);
+
+            // Exercise all 21 C ABI alias entrypoints
+            let st_alias = TpuStatus_New();
+            TpuStatus_Destroy(st_alias);
+            let st_drv_alias = TpuStatus_New();
+            TpuDriver_FreeStatus(st_drv_alias);
+            let cp_prog_alias =
+                TpuDriver_CompileProgram(drv, ptr::addr_of!(hlo_proto), 1, 0, ptr::null());
+            assert!(!cp_prog_alias.is_null());
+            TpuDriver_FreeCompiledProgramShape(cp_prog_alias);
+            let st_wait_ev_alias = TpuDriver_WaitForEvent(drv, 0, ptr::null(), 100);
+            assert!(TpuStatus_Ok(st_wait_ev_alias));
+            TpuDriver_FreeStatus(st_wait_ev_alias);
+
+            let topo_ptr = TpuUtil_GetTopologyPtr();
+            let avail_core0 = TpuTopology_AnAvailableCore(topo_ptr, 0);
+            assert!(!avail_core0.is_null());
+            let mut avail_cores: [*const TpuCoreLocation; 16] = [ptr::null(); 16];
+            TpuTopology_AvailableCores(topo_ptr, 0, avail_cores.as_mut_ptr());
+            assert_eq!(avail_cores[0], avail_core0);
+            let avail_cnt = TpuTopology_AvailableCoresCount(topo_ptr, 0);
+            assert!(avail_cnt > 0);
+            let mut cx = 0;
+            let mut cy = 0;
+            let mut cz = 0;
+            TpuTopology_ChipCoordinates(
+                avail_core0,
+                ptr::addr_of_mut!(cx),
+                ptr::addr_of_mut!(cy),
+                ptr::addr_of_mut!(cz),
+            );
+            assert!(TpuTopology_ChipCount(topo_ptr) > 0);
+            assert_eq!(TpuTopology_CoreCount(topo_ptr, 0), avail_cnt);
+            assert_eq!(TpuTopology_CoreId(avail_core0), 0);
+            assert_eq!(TpuTopology_CoreIndexOnChip(avail_core0), 0);
+            TpuTopology_CoreLocations(topo_ptr, 0, avail_cores.as_mut_ptr());
+            assert_eq!(TpuTopology_CurrentHost(topo_ptr), 0);
+            assert!(TpuTopology_HostBounds_X(topo_ptr) >= 1);
+            assert!(TpuTopology_HostBounds_Y(topo_ptr) >= 1);
+            assert!(TpuTopology_HostBounds_Z(topo_ptr) >= 1);
+            TpuTopology_HostLocations(ptr::null(), 0, avail_cores.as_mut_ptr());
+
+            let st_dist = TpuStatus_New();
+            assert_eq!(WaitForDistributedTpuOp_DoWork(0, 1, st_dist), -1);
+            assert_eq!(WaitForDistributedTpuOp_DoWork(1, 0, st_dist), -1);
+            assert_eq!(WaitForDistributedTpuOp_DoWork(1, 4, st_dist), 0);
+            assert_eq!(InitializeHostForDistributedTpuOp_DoWork(-1, st_dist), -1);
+            assert_eq!(InitializeHostForDistributedTpuOp_DoWork(0, st_dist), 0);
+            assert_eq!(SetGlobalTPUArrayOp(0, ptr::null(), st_dist), 0);
+            assert_eq!(DisconnectDistributedTpuChipsOp_DoWork(st_dist), 0);
+            assert_eq!(ShutdownDistributedTpuOp_DoWork(st_dist), 0);
+            assert_eq!(TpuNodeContext_Initialize(-1, st_dist), -1);
+            assert_eq!(TpuNodeContext_Initialize(0, st_dist), 0);
+            assert!(TpuNodeContext_Create(-1, st_dist).is_null());
+            let node_ctx = TpuNodeContext_Create(0, st_dist);
+            assert!(!node_ctx.is_null());
+            TpuMeshState_Free(node_ctx);
+            assert_eq!(TpuNodeContext_CloseTpuHost(st_dist), 0);
+            assert_eq!(TpuNodeContext_StopChipHeartbeats(st_dist), 0);
+            assert!(!TpuNodeContext_CompilationsDisabled());
+            assert_eq!(TpuCompile_CompileAndBuild(ptr::null(), 0, st_dist), -1);
+            assert_eq!(TpuCompile_CompileAndBuild(ptr::null(), 4, st_dist), -1);
+            assert_eq!(TpuCompile_CompileAndBuild(c"mlir".as_ptr(), 4, st_dist), 0);
+            assert_eq!(
+                TpuCompile_XrtCompileAndBuild(c"mlir".as_ptr(), 4, st_dist),
+                0
+            );
+            assert_eq!(TpuExecutable_LoadProgramAndEnqueueToStream(-1, st_dist), -1);
+            assert_eq!(TpuExecutable_LoadProgramAndEnqueueToStream(0, st_dist), 0);
+            let res_mgr = TpuResourceMgr_Create();
+            assert!(!res_mgr.is_null());
+            TpuResourceMgr_Destroy(res_mgr);
+            TpuStatus_Destroy(st_dist);
+
             TpuDriver_Close(drv);
             TpuDriver_Close(ptr::null_mut());
 

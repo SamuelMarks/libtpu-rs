@@ -75,32 +75,44 @@ libtpu-rs/
 ├── Cargo.toml                         # Rust workspace manifest & strict rustc/clippy lint table
 ├── pyproject.toml                     # Python package, ruff, mypy (--strict), and pytest config
 ├── README.md                          # User-facing overview, quickstart, and coverage shields
+├── USAGE.md                           # Comprehensive usage & framework integration guide
 ├── ARCHITECTURE.md                    # This architectural reference document
 ├── crates/
 │   ├── libtpu-core/                   # Pure-Rust domain engine, compiler, HAL, PJRT & driver core
 │   │   ├── Cargo.toml
+│   │   ├── build.rs                   # Compiles .proto schemas into FileDescriptorSet via protox/prost
 │   │   └── src/
 │   │       ├── lib.rs                 # Crate root & workspace source invariants test
+│   │       ├── elf.rs                 # ELF64/Mach-O forensics, relocations, iced-x86 CFG & proto carver
 │   │       ├── error.rs               # Unified LibTpuError enum & PJRT/Abseil/SDK status codes
 │   │       ├── types.rs               # Newtype IDs (derive_more), TpuGeneration, Shape, ElementType
 │   │       ├── config.rs              # TpuInitConfig & LIBTPU_INIT_ARGS / env variable parser
-│   │       ├── proto.rs               # Zero-dependency Protobuf wire encoder/decoder & 16 schemas
+│   │       ├── proto.rs               # Wire-compatible Protobuf codecs & prost_reflect DescriptorPool
 │   │       ├── compiler.rs            # HLO/StableHLO lexer, parser, 6-pass compiler & VLIW ISA
 │   │       ├── hal.rs                 # TpuHal trait, SimulatedTpuHal, LinuxDeviceHal (Gasket/VFIO)
 │   │       ├── pjrt.rs                # Thread-safe PJRT core objects (Client, Buffer, Executable...)
 │   │       └── driver.rs              # Legacy TfTpu, TpuDriver, TpuProfiler, Embedding & SDK engines
 │   ├── libtpu-c-api/                  # #[repr(C)] ABI layer exporting libtpu.so & sdk.so symbols
 │   │   ├── Cargo.toml
+│   │   ├── build.rs                   # Configures DT_SONAME (libtpu.so) & LC_ID_DYLIB (@rpath/libtpu.dylib)
 │   │   ├── cbindgen.toml              # C header generation configuration
 │   │   └── src/
-│   │       ├── lib.rs                 # 325 #[no_mangle] extern "C" entrypoints & vtable assembly
+│   │       ├── lib.rs                 # GetPjrtApi vtable assembly & ABI verification test suite
 │   │       ├── pjrt_types.rs          # PJRT_Api (1,144 B) & 138 #[repr(C)] PJRT_*_Args structs
-│   │       ├── extensions.rs          # 17 PJRT extension structs & extension C entrypoints
-│   │       └── tpu_driver_types.rs    # LibtpuSdk_Api (144 B), TpuDriverFn (224 B) & legacy structs
+│   │       ├── pjrt_error_api.rs      # PJRT error, plugin initialization, and event C entrypoints
+│   │       ├── pjrt_client_api.rs     # PJRT client, topology description, and context C entrypoints
+│   │       ├── pjrt_device_api.rs     # PJRT device, device description, and memory C entrypoints
+│   │       ├── pjrt_executable_api.rs # PJRT executable and loaded executable C entrypoints
+│   │       ├── pjrt_buffer_api.rs     # PJRT buffer, stream, and async transfer manager C entrypoints
+│   │       ├── extensions.rs          # 17 PJRT extension structs & 138 extension/profiler C entrypoints
+│   │       ├── tpu_driver_types.rs    # LibtpuSdk_Api (144 B), TpuDriverFn (224 B) & legacy structs
+│   │       ├── sdk_api.rs             # GetLibtpuSdkApi & 17 LibtpuSdk_* C entrypoints
+│   │       ├── legacy_tf_api.rs       # TfTpu_*, TpuDriver_*, TpuProfiler_*, TpuEmbeddingEngine_* & PyInit_sdk
+│   │       └── rust_ergonomic_api.rs  # 18 ergonomic libtpu_rs_* C/C++ helper entrypoints
 │   └── libtpu-py/                     # Rust helper crate for Python runtime sessions
 │       ├── Cargo.toml
 │       └── src/
-│           └── lib.rs                 # PyTpuRuntime high-level execution helper
+│           └── lib.rs                 # PyTpuRuntime & PySdkBridge high-level execution helpers
 ├── cpp/                               # C11 & C++20 native bindings and CMake build system
 │   ├── CMakeLists.txt                 # Root CMake configuration (C11, C++20, llvm-cov support)
 │   ├── Doxyfile                       # Strict Doxygen configuration (WARN_AS_ERROR = YES)
@@ -117,22 +129,28 @@ libtpu-rs/
 │   │   ├── __init__.pyi               # PEP 561 type stubs
 │   │   ├── py.typed                   # PEP 561 marker
 │   │   └── sdk/
-│   │       ├── __init__.py            # Re-exports tpumonitoring, slice, tpuz, debug
+│   │       ├── __init__.py            # Re-exports tpumonitoring, slice, tpuz, debug (+ .pyi stubs)
 │   │       ├── tpumonitoring.py       # Runtime telemetry & metric queries via GetLibtpuSdkApi
 │   │       ├── slice.py               # 3D torus chip coordinate & topology queries
 │   │       ├── tpuz.py                # Core state summary & HLO diagnostic dumps
 │   │       └── debug.py               # C FFI debug callback registration & invocation
 │   └── tests/
 │       ├── test_libtpu.py             # End-to-end Python PJRT, profiler & SDK tests
-│       └── test_pre_commit.py         # Unit tests for the pre-commit verification pipeline
+│       └── test_pre_commit.py         # Unit tests for the pre-commit & forensics pipelines
 ├── docs/
 │   └── reverse_engineering/           # Binary analysis specifications of official libtpu-0.0.50
-│       ├── exported_symbols.md        # All 325 exported ELF symbols & C signatures
+│       ├── exported_symbols.md        # All 78 exported libtpu.so ELF symbols & C signatures
 │       ├── pjrt_abi_layout.md         # Exact byte offsets of PJRT_Api, extensions & LibtpuSdk_Api
 │       ├── kernel_hardware_protocol.md# Gasket/VFIO ioctls, BAR0 MMIO CSRs & Protobuf wire schemas
-│       └── python_api.md              # Python wheel & libtpu.sdk API specification
+│       ├── python_api.md              # Python wheel & libtpu.sdk API specification
+│       ├── golden_binary_manifest.json# Golden SHA-256, symbol, and vtable layout manifest
+│       ├── golden_struct_layouts.json # Disassembled prologue struct sizes & field offsets
+│       ├── golden_proto_descriptors.json # Topologically sorted embedded Protobuf descriptors
+│       ├── csr_register_map.json      # Per-generation DeepSea BAR0 CSR & SyncFlag offsets
+│       └── protos/                    # 64 clean-room .proto schemas carved from libtpu.so
 └── scripts/
-    └── pre_commit.py                  # Cross-language formatting, linting, testing & shield updater
+    ├── pre_commit.py                  # Cross-language formatting, linting, ABI, testing & shield updater
+    └── re_extract.py                  # Clean-room ELF64/wheel forensics & golden manifest verifier
 ```
 
 ---
@@ -505,7 +523,7 @@ Returned by `GetLibtpuSdkApi()`, the static `LIBTPU_SDK_API_VTBL` structure in `
 
 ### 8.5 Ergonomic `libtpu_rs_*` C Entrypoints
 
-For C11 and C++20 applications that prefer direct function calls over manually constructing `PJRT_*_Args` structs, `libtpu-c-api` exports clean `libtpu_rs_*` functions (`libtpu_rs_status_free`, `libtpu_rs_client_create`, `libtpu_rs_client_destroy`, `libtpu_rs_client_device_count`, `libtpu_rs_buffer_from_host`, `libtpu_rs_buffer_to_host`, `libtpu_rs_buffer_rank`, `libtpu_rs_buffer_dimension`, `libtpu_rs_buffer_element_type`, `libtpu_rs_buffer_copy_to_device`, `libtpu_rs_buffer_destroy`, `libtpu_rs_compile`, `libtpu_rs_executable_serialize`, `libtpu_rs_executable_deserialize`, `libtpu_rs_executable_fingerprint`, `libtpu_rs_executable_flops`, `libtpu_rs_loaded_executable_destroy`, `libtpu_rs_execute_binary`, `libtpu_rs_execute`, `libtpu_rs_sdk_core_state_summary_size`, `libtpu_rs_sdk_metric_value_count`, `libtpu_rs_sdk_chip_count`).
+For C11 and C++20 applications that prefer direct function calls over manually constructing `PJRT_*_Args` structs, `libtpu-c-api` exports 18 clean `libtpu_rs_*` functions (`libtpu_rs_status_free`, `libtpu_rs_client_create`, `libtpu_rs_client_destroy`, `libtpu_rs_client_device_count`, `libtpu_rs_buffer_from_host`, `libtpu_rs_buffer_to_host`, `libtpu_rs_buffer_dimensions`, `libtpu_rs_buffer_element_type`, `libtpu_rs_buffer_copy_to_device`, `libtpu_rs_buffer_destroy`, `libtpu_rs_compile`, `libtpu_rs_executable_serialize`, `libtpu_rs_executable_deserialize`, `libtpu_rs_executable_fingerprint`, `libtpu_rs_executable_flops`, `libtpu_rs_executable_destroy`, `libtpu_rs_execute`, `libtpu_rs_execute_multi`).
 
 ---
 
@@ -646,22 +664,24 @@ Caller invokes `PJRT_Client_Compile(&args)`
 
 The repository enforces strict quality gates via `scripts/pre_commit.py`:
 
-1. **Formatting (`--stage fmt`)**:
+1. **Formatting (`fmt`)**:
    - Rust: `cargo fmt --all -- --check`
    - Python: `ruff format --check python/ scripts/`
    - C/C++: `clang-format --dry-run --Werror -style=LLVM`
-2. **Compilation (`--stage build`)**:
+2. **Compilation (`build`)**:
    - Rust: `cargo build --workspace --all-targets`
    - C/C++: `cmake -B cpp/build -S cpp -DENABLE_COVERAGE=ON && cmake --build cpp/build`
-3. **Linting & Static Analysis (`--stage clippy`)**:
+3. **Linting & Static Analysis (`clippy` / `lint`)**:
    - Rust Clippy: `cargo clippy --workspace --all-targets --all-features -- -D warnings` (enforcing `pedantic`, `nursery`, `unwrap_used = "deny"`, `expect_used = "deny"`, `missing_docs = "forbid"`, `missing_safety_doc = "forbid"`, `undocumented_unsafe_blocks = "forbid"`).
    - Rustdoc: `RUSTDOCFLAGS="-D warnings -D missing_docs -D rustdoc::broken_intra_doc_links" cargo doc --workspace --no-deps --document-private-items`.
    - Python: `ruff check python/ scripts/` and `mypy --strict python/ scripts/`.
    - C/C++: `doxygen cpp/Doxyfile` (`WARN_AS_ERROR = YES`).
-4. **Testing (`--stage test`)**:
+4. **Binary ABI & Source Invariant Verification (`abi`)**:
+   - Verifies all 79 official `libtpu.so` / `sdk.so` dynamic symbols, `#[repr(C)]` struct sizes, non-null `PJRT_Api` (1,144 B, 138 slots), 17-node `PJRT_Extension_Base` linked list, `LibtpuSdk_Api` (144 B, 17 slots), `TpuDriverFn` (224 B, 28 slots), and zero `.unwrap()` / `.expect()` / `anyhow` / `thiserror`.
+5. **Testing (`test`)**:
    - Rust: `cargo test --workspace --all-targets`
    - Python: `pytest --cov=libtpu --cov=scripts --cov-branch --cov-fail-under=100`
    - C/C++: `ctest --test-dir cpp/build --output-on-failure`
-5. **Coverage Verification & Shield Updates (`--stage shields`)**:
+6. **Coverage Verification & Shield Updates (`shields`)**:
    - Computes aggregate documentation coverage across Rust (`rustdoc --show-coverage`), Python (`ast` docstring inspection), and C/C++ (Doxygen XML) -> **100%**.
-   - Computes aggregate test coverage across Rust (`cargo +nightly llvm-cov --workspace --branch`) and Python (`pytest-cov --cov-branch`) -> **100%**.
+   - Computes aggregate test coverage across Rust (`cargo +nightly llvm-cov --workspace --branch`), Python (`pytest-cov --cov-branch`), and C/C++ (`llvm-cov export`) -> **100%**.

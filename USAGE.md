@@ -1086,12 +1086,11 @@ int main() {
 
 ### 8.1 Compilation Phases (`PJRT_PhaseCompile_Extension`)
 
-1. `hlo_legalization`
-2. `layout_assignment` (assigns 128x8 tiled TPU MXU layouts)
-3. `sharding_propagation` (`xla.OpSharding` extraction)
-4. `fusion_and_vmem_allocation` (computes HBM and VMEM scratchpad footprint)
-5. `llo_scheduling` (schedules VPU/MXU/DMA instructions)
-6. `binary_emission` (emits deterministic `LTPUBIN1` executable payload)
+1. `hlo_verification`
+2. `tpu_layout_assignment` (assigns `(8, 128)` tiled TPU MXU layouts)
+3. `tpu_memory_planning` (computes HBM and VMEM scratchpad footprint)
+4. `vliw_bundle_emission` (schedules VPU/MXU/DMA VLIW instruction bundles and `SyncFlag` IDs)
+5. `binary_serialization` (emits deterministic `LTPUEXEC` executable payload and `TpuSerializedExecutableProto`)
 
 ### 8.2 Executed Operations on `SimulatedTpuHal`
 

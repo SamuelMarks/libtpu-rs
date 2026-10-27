@@ -101,3 +101,12 @@ def _trigger_debug_callback_for_test() -> None:
     """Invokes all currently registered debug callbacks via `LibtpuSdk_TriggerDebugCallbacks`."""
     client = _get_debug_client()
     client._cdll.LibtpuSdk_TriggerDebugCallbacks(client._handle)
+
+
+register_callback = register_debug_callback
+unregister_callback = unregister_debug_callback
+
+
+def trigger_fault_injection() -> None:
+    """Triggers registered diagnostic debug callbacks (`_trigger_debug_callback_for_test`)."""
+    _trigger_debug_callback_for_test()
