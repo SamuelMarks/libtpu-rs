@@ -5,10 +5,11 @@
 //! status codes ([`PjrtErrorCode`], [`AbseilStatusCode`], and [`LibtpuSdkErrorCode`]).
 
 use derive_more::{Display, Error, From};
+use num_enum::{FromPrimitive, IntoPrimitive};
 
 /// Standard PJRT and Abseil status error codes matching `PJRT_Error_Code` and `TpuStatus`.
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromPrimitive, IntoPrimitive)]
 pub enum PjrtErrorCode {
     /// Operation completed successfully (`0`).
     #[display("OK")]
@@ -18,6 +19,7 @@ pub enum PjrtErrorCode {
     Cancelled = 1,
     /// Unknown error (`2`).
     #[display("UNKNOWN")]
+    #[num_enum(default)]
     Unknown = 2,
     /// Client specified an invalid argument (`3`).
     #[display("INVALID_ARGUMENT")]
@@ -104,7 +106,7 @@ pub type AbseilStatusCode = PjrtErrorCode;
 
 /// Strongly-typed `LibtpuSdk` status code returned by `LibtpuSdk_Error_GetCode`.
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromPrimitive, IntoPrimitive)]
 pub enum LibtpuSdkErrorCode {
     /// Operation succeeded (`0`).
     #[display("SDK_OK")]
@@ -120,6 +122,7 @@ pub enum LibtpuSdkErrorCode {
     FailedPrecondition = 9,
     /// Internal SDK or telemetry error (`13`).
     #[display("SDK_INTERNAL")]
+    #[num_enum(default)]
     Internal = 13,
     /// Hardware telemetry service is unavailable (`14`).
     #[display("SDK_UNAVAILABLE")]
@@ -153,10 +156,104 @@ impl LibtpuSdkErrorCode {
     }
 }
 
+/// Type alias for [`LibtpuSdkErrorCode`] (`SdkStatusCode`).
+pub type SdkStatusCode = LibtpuSdkErrorCode;
+
+/// Type alias for [`LibtpuSdkErrorCode`] (`SdkErrorCode`).
+pub type SdkErrorCode = LibtpuSdkErrorCode;
+
 /// Wrapper struct for UTF-8 conversion errors to enable automatic `From` conversion into [`LibTpuError`].
 #[derive(Debug, Clone, PartialEq, Eq, Display, Error, From)]
 #[display("UTF-8 conversion failed: {_0}")]
 pub struct Utf8ErrorWrapper(#[error(not(source))] pub std::str::Utf8Error);
+
+/// Wrapper struct for `prost` protobuf wire decode errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error, From)]
+#[display("Prost decode error: {_0}")]
+pub struct ProstDecodeErrorWrapper(#[error(not(source))] pub prost::DecodeError);
+
+/// Wrapper struct for `prost` protobuf wire encode errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error, From)]
+#[display("Prost encode error: {_0}")]
+pub struct ProstEncodeErrorWrapper(#[error(not(source))] pub prost::EncodeError);
+
+/// Wrapper struct for `prost_reflect::DescriptorError` reflection errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error)]
+#[display("Prost reflect descriptor error: {_0}")]
+pub struct ProstReflectErrorWrapper(#[error(not(source))] pub String);
+
+impl From<prost_reflect::DescriptorError> for ProstReflectErrorWrapper {
+    fn from(err: prost_reflect::DescriptorError) -> Self {
+        Self(err.to_string())
+    }
+}
+
+/// Wrapper struct for `goblin` binary object parsing errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error)]
+#[display("Goblin binary parse error: {_0}")]
+pub struct GoblinErrorWrapper(#[error(not(source))] pub String);
+
+impl From<goblin::error::Error> for GoblinErrorWrapper {
+    fn from(err: goblin::error::Error) -> Self {
+        Self(err.to_string())
+    }
+}
+
+/// Wrapper struct for `lexopt` CLI flag parsing errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error)]
+#[display("CLI flag parse error: {_0}")]
+pub struct LexoptErrorWrapper(#[error(not(source))] pub String);
+
+impl From<lexopt::Error> for LexoptErrorWrapper {
+    fn from(err: lexopt::Error) -> Self {
+        Self(err.to_string())
+    }
+}
+
+/// Wrapper struct for `object::read::Error` binary parsing errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error)]
+#[display("Object binary parse error: {_0}")]
+pub struct ObjectErrorWrapper(#[error(not(source))] pub String);
+
+impl From<object::read::Error> for ObjectErrorWrapper {
+    fn from(err: object::read::Error) -> Self {
+        Self(err.to_string())
+    }
+}
+
+/// Wrapper struct for `gimli::Error` DWARF `.eh_frame` parsing errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error, From)]
+#[display("Gimli DWARF parse error: {_0}")]
+pub struct GimliErrorWrapper(#[error(not(source))] pub gimli::Error);
+
+/// Wrapper struct for `cpp_demangle::error::Error` C++ symbol demangling errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error, From)]
+#[display("C++ symbol demangle error: {_0}")]
+pub struct CppDemangleErrorWrapper(#[error(not(source))] pub cpp_demangle::error::Error);
+
+/// Wrapper struct for `std::io::Error` I/O errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error)]
+#[display("I/O error (errno={errno:?}): {message}")]
+pub struct IoErrorWrapper {
+    /// Optional OS error code (`errno`).
+    pub errno: Option<i32>,
+    /// Human-readable I/O error message.
+    pub message: String,
+}
+
+impl From<std::io::Error> for IoErrorWrapper {
+    fn from(err: std::io::Error) -> Self {
+        Self {
+            errno: err.raw_os_error(),
+            message: err.to_string(),
+        }
+    }
+}
+
+/// Wrapper struct for `rustix::io::Errno` POSIX syscall errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error, From)]
+#[display("POSIX syscall error: {_0}")]
+pub struct RustixErrnoWrapper(#[error(not(source))] pub rustix::io::Errno);
 
 /// Structured diagnostic payload attached to a [`LibTpuError`] for `PJRT_Error_ForEachPayload`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,6 +280,7 @@ impl ErrorPayload {
 /// Single unified error enum for the entire `libtpu-rs` workspace.
 ///
 /// Uses `derive_more` (`Display`, `Error`, `From`) without `anyhow` or `thiserror`.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Display, Error, From)]
 pub enum LibTpuError {
     /// A null pointer was passed across an FFI boundary.
@@ -734,6 +832,106 @@ pub enum LibTpuError {
         parameter: &'static str,
     },
 
+    /// A `prost` protobuf wire decoding operation failed.
+    #[display("{_0}")]
+    ProstDecodeFailed(#[error(not(source))] ProstDecodeErrorWrapper),
+
+    /// A `prost` protobuf wire encoding operation failed.
+    #[display("{_0}")]
+    ProstEncodeFailed(#[error(not(source))] ProstEncodeErrorWrapper),
+
+    /// A `prost_reflect` dynamic descriptor pool operation failed.
+    #[display("{_0}")]
+    ProstReflectDescriptorFailed(#[error(not(source))] ProstReflectErrorWrapper),
+
+    /// A hardware `SyncFlag` wait barrier timed out before reaching the expected threshold.
+    #[display(
+        "SyncFlag {sync_flag_id} timed out on device {device_id}: expected >= {expected_value}, actual {actual_value}"
+    )]
+    #[from(ignore)]
+    SyncFlagTimeout {
+        /// Logical device ID.
+        device_id: u32,
+        /// Hardware `SyncFlag` register index.
+        sync_flag_id: u32,
+        /// Minimum expected counter value.
+        expected_value: u32,
+        /// Observed counter value at timeout.
+        actual_value: u32,
+    },
+
+    /// A host command continuation (`HostCommandOpcodeProto`) failed during dispatch.
+    #[display("Host command (opcode={opcode}, continuation_id={continuation_id}) failed: {reason}")]
+    #[from(ignore)]
+    HostCommandError {
+        /// Raw `HostCommandOpcodeProto` discriminant.
+        opcode: i32,
+        /// Host continuation identifier.
+        continuation_id: u64,
+        /// Failure diagnostic.
+        reason: String,
+    },
+
+    /// Low-level optimizer (`LLO`) physical register allocation exceeded hardware register file capacity.
+    #[display(
+        "Register allocation failed for {reg_class}: requested {requested} registers, capacity {capacity}"
+    )]
+    #[from(ignore)]
+    RegisterAllocationFailed {
+        /// Hardware register file class (`SREG`, `PREG`, `VREG`, `VMASK`).
+        reg_class: &'static str,
+        /// Number of live registers requested.
+        requested: usize,
+        /// Hardware register file capacity.
+        capacity: usize,
+    },
+
+    /// An unexpected panic was caught at an `extern "C"` FFI boundary.
+    #[display("FFI boundary panic caught in '{symbol}': {detail}")]
+    #[from(ignore)]
+    FfiBoundaryPanic {
+        /// Exported C symbol name where the unwind was intercepted.
+        symbol: &'static str,
+        /// Extracted panic payload description.
+        detail: String,
+    },
+
+    /// An ELF, Mach-O, or PE binary object failed to parse via `goblin`.
+    #[display("{_0}")]
+    GoblinParseFailed(#[error(not(source))] GoblinErrorWrapper),
+
+    /// A CLI flag failed to parse via `lexopt`.
+    #[display("{_0}")]
+    LexoptParseFailed(#[error(not(source))] LexoptErrorWrapper),
+
+    /// An ELF, Mach-O, or PE binary failed to parse via `object`.
+    #[display("{_0}")]
+    ObjectParseFailed(#[error(not(source))] ObjectErrorWrapper),
+
+    /// A DWARF `.eh_frame` unwind section failed to parse via `gimli`.
+    #[display("{_0}")]
+    GimliParseFailed(#[error(not(source))] GimliErrorWrapper),
+
+    /// An Itanium C++ ABI symbol failed to demangle via `cpp_demangle`.
+    #[display("{_0}")]
+    CppDemangleFailed(#[error(not(source))] CppDemangleErrorWrapper),
+
+    /// A standard library I/O operation failed.
+    #[display("{_0}")]
+    IoFailed(#[error(not(source))] IoErrorWrapper),
+
+    /// A low-level POSIX syscall failed via `rustix`.
+    #[display("{_0}")]
+    RustixSyscallFailed(#[error(not(source))] RustixErrnoWrapper),
+
+    /// An executable or shared library binary had an invalid or unsupported format.
+    #[display("Binary format error: {reason}")]
+    #[from(ignore)]
+    BinaryFormatError {
+        /// Detailed explanation of the binary format failure.
+        reason: String,
+    },
+
     /// An operation is recognized by the ABI but intentionally unimplemented.
     #[display("Operation '{operation}' is not implemented")]
     #[from(ignore)]
@@ -741,6 +939,200 @@ pub enum LibTpuError {
         /// Name of the unimplemented operation.
         operation: &'static str,
     },
+
+    /// Unrecognized TPU hardware generation identifier (`UnsupportedGeneration`).
+    #[display("Unsupported TPU generation '{raw_value}'")]
+    #[from(ignore)]
+    UnsupportedGeneration {
+        /// Raw generation string that could not be parsed.
+        raw_value: String,
+    },
+
+    /// Host-to-device or device-to-host byte length mismatch (`BufferShapeMismatch`).
+    #[display("Buffer shape byte mismatch: expected {expected_bytes}, got {actual_bytes}")]
+    #[from(ignore)]
+    BufferShapeMismatch {
+        /// Expected byte length for the tensor shape.
+        expected_bytes: usize,
+        /// Actual byte length provided by caller.
+        actual_bytes: usize,
+    },
+
+    /// HBM or VMEM region exhaustion in `HbmRegionAllocator` (`OutOfDeviceMemory`).
+    #[display(
+        "Out of device memory in {memory_kind}: requested {requested}, available {available}"
+    )]
+    #[from(ignore)]
+    OutOfDeviceMemory {
+        /// Number of bytes requested.
+        requested: usize,
+        /// Number of bytes available.
+        available: usize,
+        /// Memory space kind name.
+        memory_kind: &'static str,
+    },
+
+    /// Unmapped or misaligned device physical/IOVA address (`InvalidDeviceAddress`).
+    #[display("Invalid device address {address:#x}")]
+    #[from(ignore)]
+    InvalidDeviceAddress {
+        /// Raw device physical or IOVA address.
+        address: u64,
+    },
+
+    /// Linux `PCIe` `/sys/bus/pci/devices` or `/sys/class/accel` enumeration error (`SysfsDiscoveryFailed`).
+    #[display("Sysfs device discovery failed at '{path}': {reason}")]
+    #[from(ignore)]
+    SysfsDiscoveryFailed {
+        /// Sysfs directory path.
+        path: String,
+        /// Failure diagnostic.
+        reason: String,
+    },
+
+    /// `TensorCore` or `SparseCore` ECC, MXU overflow, or `SyncFlag` timeout fault (`HardwareFault`).
+    #[display("Hardware fault on device {device_id} (CSR={status_csr:#x}): {fault_description}")]
+    #[from(ignore)]
+    HardwareFault {
+        /// Logical device ID where the fault occurred.
+        device_id: u32,
+        /// Raw status CSR register value.
+        status_csr: u64,
+        /// Static description of the hardware fault bit.
+        fault_description: &'static str,
+    },
+
+    /// Textual MLIR / `StableHLO` / HLO syntax or semantic error (`MlirParseError`).
+    #[display("MLIR parse error at {line}:{column}: {reason}")]
+    #[from(ignore)]
+    MlirParseError {
+        /// 1-based line number.
+        line: usize,
+        /// 1-based column number.
+        column: usize,
+        /// Diagnostic message.
+        reason: String,
+    },
+
+    /// Binary `ML\xefR` container or bitstream decoding error (`MlirBytecodeDecodeError`).
+    #[display("MLIR bytecode decode error at offset {offset} (section {section_id}): {reason}")]
+    #[from(ignore)]
+    MlirBytecodeDecodeError {
+        /// Byte offset in the `ML\xefR` payload.
+        offset: usize,
+        /// MLIR bytecode section identifier (`0..=5`).
+        section_id: u8,
+        /// Static failure description.
+        reason: &'static str,
+    },
+
+    /// SSA dominance, operand arity, or shape inference violation (`HloVerificationError`).
+    #[display("HLO verification error in '{instruction_name}': {reason}")]
+    #[from(ignore)]
+    HloVerificationError {
+        /// Name of the failing HLO instruction.
+        instruction_name: String,
+        /// Verification failure explanation.
+        reason: String,
+    },
+
+    /// Invalid minor-to-major permutation or tile specification (`LayoutAssignmentError`).
+    #[display("Layout assignment error for {shape_summary}: {reason}")]
+    #[from(ignore)]
+    LayoutAssignmentError {
+        /// Summary of the tensor shape.
+        shape_summary: String,
+        /// Static layout assignment failure reason.
+        reason: &'static str,
+    },
+
+    /// Binary ELF/Mach-O/PE header, symbol, relocation, or DWARF `.eh_frame` parse error (`ElfInspectionError`).
+    #[display("ELF inspection error: {reason}")]
+    #[from(ignore)]
+    ElfInspectionError {
+        /// Detailed inspection failure reason.
+        reason: String,
+    },
+
+    /// Embedded `filewrapper_toc` CSR decompression failure (`BrotliDecompressionError`).
+    #[display("Brotli decompression error for '{resource_name}': {reason}")]
+    #[from(ignore)]
+    BrotliDecompressionError {
+        /// Embedded TOC resource name.
+        resource_name: String,
+        /// Decompression failure explanation.
+        reason: String,
+    },
+
+    /// Host filesystem or memory-map I/O failure (`IoError`).
+    #[display("I/O error during {operation}: {reason}")]
+    #[from(ignore)]
+    IoError {
+        /// Operation name.
+        operation: &'static str,
+        /// Failure reason string.
+        reason: String,
+    },
+}
+
+impl From<prost::DecodeError> for LibTpuError {
+    fn from(err: prost::DecodeError) -> Self {
+        Self::ProstDecodeFailed(ProstDecodeErrorWrapper::from(err))
+    }
+}
+
+impl From<prost::EncodeError> for LibTpuError {
+    fn from(err: prost::EncodeError) -> Self {
+        Self::ProstEncodeFailed(ProstEncodeErrorWrapper::from(err))
+    }
+}
+
+impl From<prost_reflect::DescriptorError> for LibTpuError {
+    fn from(err: prost_reflect::DescriptorError) -> Self {
+        Self::ProstReflectDescriptorFailed(ProstReflectErrorWrapper::from(err))
+    }
+}
+
+impl From<goblin::error::Error> for LibTpuError {
+    fn from(err: goblin::error::Error) -> Self {
+        Self::GoblinParseFailed(GoblinErrorWrapper::from(err))
+    }
+}
+
+impl From<lexopt::Error> for LibTpuError {
+    fn from(err: lexopt::Error) -> Self {
+        Self::LexoptParseFailed(LexoptErrorWrapper::from(err))
+    }
+}
+
+impl From<object::read::Error> for LibTpuError {
+    fn from(err: object::read::Error) -> Self {
+        Self::ObjectParseFailed(ObjectErrorWrapper::from(err))
+    }
+}
+
+impl From<gimli::Error> for LibTpuError {
+    fn from(err: gimli::Error) -> Self {
+        Self::GimliParseFailed(GimliErrorWrapper::from(err))
+    }
+}
+
+impl From<cpp_demangle::error::Error> for LibTpuError {
+    fn from(err: cpp_demangle::error::Error) -> Self {
+        Self::CppDemangleFailed(CppDemangleErrorWrapper::from(err))
+    }
+}
+
+impl From<std::io::Error> for LibTpuError {
+    fn from(err: std::io::Error) -> Self {
+        Self::IoFailed(IoErrorWrapper::from(err))
+    }
+}
+
+impl From<rustix::io::Errno> for LibTpuError {
+    fn from(err: rustix::io::Errno) -> Self {
+        Self::RustixSyscallFailed(RustixErrnoWrapper::from(err))
+    }
 }
 
 impl LibTpuError {
@@ -760,8 +1152,25 @@ impl LibTpuError {
             | Self::InvalidShape { .. }
             | Self::UnsupportedElementType { .. }
             | Self::ProtobufDecodeError { .. }
+            | Self::ProstDecodeFailed(_)
+            | Self::ProstReflectDescriptorFailed(_)
+            | Self::GoblinParseFailed(_)
+            | Self::LexoptParseFailed(_)
+            | Self::ObjectParseFailed(_)
+            | Self::GimliParseFailed(_)
+            | Self::CppDemangleFailed(_)
+            | Self::BinaryFormatError { .. }
             | Self::HloParseError { .. }
             | Self::StableHloParseError { .. }
+            | Self::UnsupportedGeneration { .. }
+            | Self::BufferShapeMismatch { .. }
+            | Self::InvalidDeviceAddress { .. }
+            | Self::MlirParseError { .. }
+            | Self::MlirBytecodeDecodeError { .. }
+            | Self::HloVerificationError { .. }
+            | Self::LayoutAssignmentError { .. }
+            | Self::ElfInspectionError { .. }
+            | Self::BrotliDecompressionError { .. }
             | Self::Utf8ConversionFailed(_)
             | Self::Utf8ConversionError { .. } => PjrtErrorCode::InvalidArgument,
             Self::UnsupportedApiVersion { .. } | Self::UnimplementedOperation { .. } => {
@@ -786,15 +1195,20 @@ impl LibTpuError {
             | Self::ProfilerNotActive
             | Self::EmbeddingEngineNotInitialized => PjrtErrorCode::FailedPrecondition,
             Self::ProfilerAlreadyActive => PjrtErrorCode::AlreadyExists,
-            Self::OutOfMemory { .. } | Self::DmaMappingFailed { .. } => {
-                PjrtErrorCode::ResourceExhausted
-            }
+            Self::OutOfMemory { .. }
+            | Self::OutOfDeviceMemory { .. }
+            | Self::RegisterAllocationFailed { .. }
+            | Self::DmaMappingFailed { .. } => PjrtErrorCode::ResourceExhausted,
             Self::NumericOverflow { .. }
             | Self::StreamOverflow { .. }
             | Self::MmioOutOfBounds { .. } => PjrtErrorCode::OutOfRange,
-            Self::MegascaleBarrierTimeout { .. } => PjrtErrorCode::DeadlineExceeded,
+            Self::MegascaleBarrierTimeout { .. } | Self::SyncFlagTimeout { .. } => {
+                PjrtErrorCode::DeadlineExceeded
+            }
             Self::DevicePoisoned { .. }
+            | Self::HardwareFault { .. }
             | Self::ProtobufEncodeError { .. }
+            | Self::ProstEncodeFailed(_)
             | Self::CompilationFailed { .. }
             | Self::PhaseCompilationFailed { .. }
             | Self::SerializationFailed { .. }
@@ -803,14 +1217,50 @@ impl LibTpuError {
             | Self::TransferFailed { .. }
             | Self::AsyncTransferError { .. }
             | Self::CollectiveError { .. }
+            | Self::HostCommandError { .. }
+            | Self::FfiBoundaryPanic { .. }
             | Self::InternalError { .. }
             | Self::EventError { .. }
             | Self::EventFailed { .. }
             | Self::LockPoisoned { .. } => PjrtErrorCode::Internal,
             Self::HardwareIoError { .. }
+            | Self::SysfsDiscoveryFailed { .. }
             | Self::IoctlFailed { .. }
-            | Self::VfioIommuError { .. } => PjrtErrorCode::Unavailable,
+            | Self::VfioIommuError { .. }
+            | Self::IoError { .. }
+            | Self::IoFailed(_)
+            | Self::RustixSyscallFailed(_) => PjrtErrorCode::Unavailable,
         }
+    }
+
+    /// Maps this [`LibTpuError`] to its corresponding [`PjrtErrorCode`].
+    #[must_use]
+    pub const fn pjrt_code(&self) -> PjrtErrorCode {
+        self.error_code()
+    }
+
+    /// Maps this [`LibTpuError`] to its corresponding [`PjrtErrorCode`].
+    #[must_use]
+    pub const fn pjrt_error_code(&self) -> PjrtErrorCode {
+        self.error_code()
+    }
+
+    /// Maps this [`LibTpuError`] to its corresponding [`AbseilStatusCode`].
+    #[must_use]
+    pub const fn abseil_code(&self) -> AbseilStatusCode {
+        self.error_code()
+    }
+
+    /// Maps this [`LibTpuError`] to its corresponding [`AbseilStatusCode`].
+    #[must_use]
+    pub const fn abseil_status_code(&self) -> AbseilStatusCode {
+        self.error_code()
+    }
+
+    /// Maps this [`LibTpuError`] to its corresponding [`LibtpuSdkErrorCode`].
+    #[must_use]
+    pub const fn sdk_code(&self) -> LibtpuSdkErrorCode {
+        self.sdk_error_code()
     }
 
     /// Maps this [`LibTpuError`] to its corresponding [`LibtpuSdkErrorCode`].
@@ -994,6 +1444,27 @@ mod tests {
             let err_from_utf8 = LibTpuError::from(wrapper);
             assert_eq!(err_from_utf8.error_code(), PjrtErrorCode::InvalidArgument);
         }
+
+        for prost_dec_err in <u64 as prost::Message>::decode(&[0x80_u8][..]).err() {
+            let err = LibTpuError::from(prost_dec_err);
+            assert_eq!(err.error_code(), PjrtErrorCode::InvalidArgument);
+            assert_ne!(err.to_string(), "");
+        }
+
+        let mut zero_buf = [0_u8; 0];
+        let mut zero_slice: &mut [u8] = &mut zero_buf;
+        for prost_enc_err in <u64 as prost::Message>::encode(&1_u64, &mut zero_slice).err() {
+            let err = LibTpuError::from(prost_enc_err);
+            assert_eq!(err.error_code(), PjrtErrorCode::Internal);
+            assert_ne!(err.to_string(), "");
+        }
+
+        assert_eq!(
+            LibtpuSdkErrorCode::from_primitive(999),
+            LibtpuSdkErrorCode::Internal
+        );
+        assert_eq!(i32::from(LibtpuSdkErrorCode::Ok), 0);
+        assert_eq!(i32::from(PjrtErrorCode::Ok), 0);
 
         let variants: Vec<(LibTpuError, PjrtErrorCode)> = vec![
             (
@@ -1348,18 +1819,203 @@ mod tests {
                 PjrtErrorCode::InvalidArgument,
             ),
             (
+                LibTpuError::from(goblin::error::Error::Malformed(String::from("bad elf"))),
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::from(lexopt::Error::MissingValue {
+                    option: Some(String::from("--flag")),
+                }),
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                object::File::parse(&b"bad"[..]).map_or_else(LibTpuError::from, |_| {
+                    LibTpuError::ObjectParseFailed(ObjectErrorWrapper(String::from("bad")))
+                }),
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::from(gimli::Error::Io),
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                cpp_demangle::Symbol::new(&b"_Z"[..]).map_or_else(LibTpuError::from, |_| {
+                    LibTpuError::CppDemangleFailed(CppDemangleErrorWrapper(
+                        cpp_demangle::error::Error::UnexpectedEnd,
+                    ))
+                }),
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::from(std::io::Error::from_raw_os_error(2)),
+                PjrtErrorCode::Unavailable,
+            ),
+            (
+                LibTpuError::from(rustix::io::Errno::INVAL),
+                PjrtErrorCode::Unavailable,
+            ),
+            (
+                LibTpuError::BinaryFormatError {
+                    reason: String::from("not an ELF64 binary"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
                 LibTpuError::UnimplementedOperation {
                     operation: "custom",
                 },
                 PjrtErrorCode::Unimplemented,
+            ),
+            (
+                LibTpuError::UnsupportedGeneration {
+                    raw_value: String::from("tpu_v99"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::BufferShapeMismatch {
+                    expected_bytes: 256,
+                    actual_bytes: 128,
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::OutOfDeviceMemory {
+                    requested: 1024,
+                    available: 512,
+                    memory_kind: "vmem",
+                },
+                PjrtErrorCode::ResourceExhausted,
+            ),
+            (
+                LibTpuError::InvalidDeviceAddress {
+                    address: 0xDEAD_BEEF,
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::SysfsDiscoveryFailed {
+                    path: String::from("/sys/class/accel"),
+                    reason: String::from("ENOENT"),
+                },
+                PjrtErrorCode::Unavailable,
+            ),
+            (
+                LibTpuError::HardwareFault {
+                    device_id: 0,
+                    status_csr: 0x04,
+                    fault_description: "HBM_ECC_ERROR",
+                },
+                PjrtErrorCode::Internal,
+            ),
+            (
+                LibTpuError::MlirParseError {
+                    line: 10,
+                    column: 4,
+                    reason: String::from("unexpected token"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::MlirBytecodeDecodeError {
+                    offset: 64,
+                    section_id: 4,
+                    reason: "truncated section",
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::HloVerificationError {
+                    instruction_name: String::from("dot.1"),
+                    reason: String::from("contracting dim mismatch"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::LayoutAssignmentError {
+                    shape_summary: String::from("f32[8,128]"),
+                    reason: "invalid minor_to_major permutation",
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::ElfInspectionError {
+                    reason: String::from("missing .dynsym"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::BrotliDecompressionError {
+                    resource_name: String::from("vfc_pf_csrs.br"),
+                    reason: String::from("corrupt stream"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::IoError {
+                    operation: "mmap",
+                    reason: String::from("EPERM"),
+                },
+                PjrtErrorCode::Unavailable,
+            ),
+            (
+                prost_reflect::DescriptorPool::decode(&b"\x80"[..]).map_or_else(
+                    LibTpuError::from,
+                    |_| {
+                        LibTpuError::ProstReflectDescriptorFailed(ProstReflectErrorWrapper(
+                            String::from("bad pool"),
+                        ))
+                    },
+                ),
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::SyncFlagTimeout {
+                    device_id: 0,
+                    sync_flag_id: 3,
+                    expected_value: 2,
+                    actual_value: 1,
+                },
+                PjrtErrorCode::DeadlineExceeded,
+            ),
+            (
+                LibTpuError::HostCommandError {
+                    opcode: 3,
+                    continuation_id: 99,
+                    reason: String::from("callback failed"),
+                },
+                PjrtErrorCode::Internal,
+            ),
+            (
+                LibTpuError::RegisterAllocationFailed {
+                    reg_class: "VREG",
+                    requested: 128,
+                    capacity: 64,
+                },
+                PjrtErrorCode::ResourceExhausted,
+            ),
+            (
+                LibTpuError::FfiBoundaryPanic {
+                    symbol: "GetPjrtApi",
+                    detail: String::from("unexpected panic"),
+                },
+                PjrtErrorCode::Internal,
             ),
         ];
 
         for (err, expected_code) in variants {
             let cloned = err.clone();
             assert_eq!(cloned.error_code(), expected_code);
+            assert_eq!(cloned.pjrt_code(), expected_code);
+            assert_eq!(cloned.pjrt_error_code(), expected_code);
+            assert_eq!(cloned.abseil_code(), expected_code);
+            assert_eq!(cloned.abseil_status_code(), expected_code);
             assert_eq!(
                 cloned.sdk_error_code(),
+                LibtpuSdkErrorCode::from_pjrt_code(expected_code)
+            );
+            assert_eq!(
+                cloned.sdk_code(),
                 LibtpuSdkErrorCode::from_pjrt_code(expected_code)
             );
             let payloads = cloned.payloads();

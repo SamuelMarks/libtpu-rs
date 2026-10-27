@@ -160,7 +160,7 @@ int main() {
     return 100;
   }
   size_t ser_len = 0;
-  uint8_t ser_buf[512] = {};
+  uint8_t ser_buf[4096] = {};
   if (!exec.serialize(ser_buf, sizeof(ser_buf), &ser_len).is_ok() ||
       ser_len == 0) {
     return 101;
@@ -320,6 +320,45 @@ int main() {
   TpuDriver_Initialize(&drv_fn, true);
   if (drv_fn.open == nullptr || drv_fn.version == nullptr) {
     return 24;
+  }
+
+  libtpu::PjrtApiView api_view;
+  PJRT_MemoryDescription_Kind_Args kind_args{
+      sizeof(PJRT_MemoryDescription_Kind_Args),
+      nullptr,
+      reinterpret_cast<const void *>(static_cast<uintptr_t>(2)),
+      nullptr,
+      0,
+      -1,
+      0};
+  (void)PJRT_MemoryDescriptions_Destroy(&kind_args);
+  if (api_view.struct_size() != 1144 || api_view.minor_version() != 116 ||
+      api_view.extension_count() != 17 ||
+      api_view.memory_description_count() != 4 || kind_args.kind_id != 1 ||
+      api_view.find_extension(16) == nullptr ||
+      api_view.find_extension(999) != nullptr) {
+    return 25;
+  }
+
+  libtpu::Device dev_view(nullptr);
+  libtpu::Memory mem_view(nullptr);
+  libtpu::Executable exec_view(nullptr);
+  libtpu::PhaseCompiler phase_compiler;
+  libtpu::MegascaleContext ms_ctx;
+  libtpu::EmbeddingEngine emb_engine;
+  if (dev_view.raw() != nullptr || mem_view.raw() != nullptr ||
+      exec_view.raw() != nullptr) {
+    return 26;
+  }
+  if (phase_compiler.phase_count() != 5 ||
+      phase_compiler.run_phase("hlo_verification", mlir_code,
+                               std::strlen(mlir_code)) == 0) {
+    return 27;
+  }
+  if (ms_ctx.barrier() == 0 || ms_ctx.num_slices() == 0 ||
+      emb_engine.raw_state() == nullptr ||
+      static_cast<int32_t>(libtpu::TpuVersion::V5e) != topo.version()) {
+    return 28;
   }
 
   return 0;

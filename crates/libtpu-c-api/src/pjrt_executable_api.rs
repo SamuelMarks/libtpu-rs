@@ -6,6 +6,10 @@ use super::*;
 
 /// Strongly-typed handler for [`PJRT_LoadedExecutable_Execute`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_LoadedExecutable_Execute_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_LoadedExecutable_Execute_Args`].
@@ -41,7 +45,8 @@ unsafe fn handle_loaded_executable_execute(
             let dev_outs_ptr = unsafe { *args.output_lists.add(dev_idx) };
             // SAFETY: `dev_args_ptr` points to `num_args` input buffer pointers.
             let arg_slice = unsafe { std::slice::from_raw_parts(dev_args_ptr, num_args) };
-            let mut core_inputs = Vec::with_capacity(num_args);
+            let mut core_inputs: smallvec::SmallVec<[&libtpu_core::pjrt::PjrtCoreBuffer; 8]> =
+                smallvec::SmallVec::with_capacity(num_args);
             for &b_ptr in arg_slice {
                 // SAFETY: `b_ptr` is a valid `PJRT_Buffer*`.
                 core_inputs.push(unsafe { &(*b_ptr).inner });
@@ -88,6 +93,10 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_Execute(
 
 /// Strongly-typed handler for [`PJRT_LoadedExecutable_Destroy`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_LoadedExecutable_Destroy_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_LoadedExecutable_Destroy_Args`].
@@ -124,6 +133,10 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_Destroy(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_Destroy_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_Destroy_Args`] structure.
 ///
 /// # Safety
 ///
@@ -170,6 +183,10 @@ pub unsafe extern "C" fn PJRT_Executable_Destroy(
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_Name_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_Name_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Executable_Name_Args`].
@@ -211,6 +228,10 @@ pub unsafe extern "C" fn PJRT_Executable_Name(raw_args: *mut std::ffi::c_void) -
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_NumReplicas_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_NumReplicas_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Executable_NumReplicas_Args`].
@@ -246,6 +267,10 @@ pub unsafe extern "C" fn PJRT_Executable_NumReplicas(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_NumPartitions_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_NumPartitions_Args`] structure.
 ///
 /// # Safety
 ///
@@ -283,6 +308,10 @@ pub unsafe extern "C" fn PJRT_Executable_NumPartitions(
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_NumOutputs_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_NumOutputs_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Executable_NumOutputs_Args`].
@@ -318,6 +347,10 @@ pub unsafe extern "C" fn PJRT_Executable_NumOutputs(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_SizeOfGeneratedCodeInBytes_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_SizeOfGeneratedCodeInBytes_Args`] structure.
 ///
 /// # Safety
 ///
@@ -355,6 +388,10 @@ pub unsafe extern "C" fn PJRT_Executable_SizeOfGeneratedCodeInBytes(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_GetCostAnalysis_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_GetCostAnalysis_Args`] structure.
 ///
 /// # Safety
 ///
@@ -398,6 +435,10 @@ pub unsafe extern "C" fn PJRT_Executable_GetCostAnalysis(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_OutputMemoryKinds_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_OutputMemoryKinds_Args`] structure.
 ///
 /// # Safety
 ///
@@ -449,6 +490,10 @@ pub unsafe extern "C" fn PJRT_Executable_OutputMemoryKinds(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_OptimizedProgram_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_OptimizedProgram_Args`] structure.
 ///
 /// # Safety
 ///
@@ -514,6 +559,10 @@ pub unsafe extern "C" fn PJRT_Executable_OptimizedProgram(
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_Serialize_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_Serialize_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Executable_Serialize_Args`].
@@ -555,6 +604,10 @@ pub unsafe extern "C" fn PJRT_Executable_Serialize(
 
 /// Populates [`crate::pjrt_types::PJRT_LoadedExecutable_GetExecutable_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_LoadedExecutable_GetExecutable_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_LoadedExecutable_GetExecutable_Args`].
@@ -590,6 +643,10 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_GetExecutable(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_LoadedExecutable_AddressableDevices_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_LoadedExecutable_AddressableDevices_Args`] structure.
 ///
 /// # Safety
 ///
@@ -630,6 +687,10 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_AddressableDevices(
 
 /// Populates [`crate::pjrt_types::PJRT_LoadedExecutable_Delete_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_LoadedExecutable_Delete_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_LoadedExecutable_Delete_Args`].
@@ -667,6 +728,10 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_Delete(
 
 /// Populates [`crate::pjrt_types::PJRT_LoadedExecutable_IsDeleted_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_LoadedExecutable_IsDeleted_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_LoadedExecutable_IsDeleted_Args`].
@@ -702,6 +767,10 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_IsDeleted(
 }
 
 /// Strongly-typed handler for [`PJRT_Executable_DeserializeAndLoad`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_DeserializeAndLoad_Args`] structure.
 ///
 /// # Safety
 ///
@@ -767,6 +836,10 @@ pub unsafe extern "C" fn PJRT_Executable_DeserializeAndLoad(
 
 /// Populates [`crate::pjrt_types::PJRT_LoadedExecutable_Fingerprint_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_LoadedExecutable_Fingerprint_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_LoadedExecutable_Fingerprint_Args`].
@@ -814,6 +887,10 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_Fingerprint(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Compile_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Compile_Args`] structure.
 ///
 /// # Safety
 ///
@@ -891,6 +968,10 @@ pub unsafe extern "C" fn PJRT_Compile(raw_args: *mut std::ffi::c_void) -> *mut P
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_OutputElementTypes_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_OutputElementTypes_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Executable_OutputElementTypes_Args`].
@@ -938,6 +1019,10 @@ pub unsafe extern "C" fn PJRT_Executable_OutputElementTypes(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_OutputDimensions_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_OutputDimensions_Args`] structure.
 ///
 /// # Safety
 ///
@@ -990,6 +1075,10 @@ pub unsafe extern "C" fn PJRT_Executable_OutputDimensions(
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_Fingerprint_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_Fingerprint_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Executable_Fingerprint_Args`].
@@ -1032,6 +1121,10 @@ pub unsafe extern "C" fn PJRT_Executable_Fingerprint(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_GetCompiledMemoryStats_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_GetCompiledMemoryStats_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1088,6 +1181,10 @@ pub unsafe extern "C" fn PJRT_Executable_GetCompiledMemoryStats(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_LoadedExecutable_GetDeviceAssignment_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_LoadedExecutable_GetDeviceAssignment_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1157,6 +1254,10 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_GetDeviceAssignment(
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_GetCompileOptions_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_GetCompileOptions_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Executable_GetCompileOptions_Args`].
@@ -1175,9 +1276,12 @@ unsafe fn handle_executable_get_compile_options(
                     num_partitions: 1,
                     use_spmd_partitioning: true,
                     result_layout: None,
+                    ..libtpu_core::proto::ExecutableBuildOptionsProto::default()
                 }),
                 compile_portable_executable: false,
+                env_option_overrides: std::collections::BTreeMap::new(),
                 profile_version: 1,
+                serialized_multi_slice_config: Vec::new(),
             }
             .encode()
         },
@@ -1214,6 +1318,10 @@ pub unsafe extern "C" fn PJRT_Executable_GetCompileOptions(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_LoadedExecutable_AddressableDeviceLogicalIds_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1256,6 +1364,10 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_AddressableDeviceLogicalIds(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Executable_ParameterMemoryKinds_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Executable_ParameterMemoryKinds_Args`] structure.
 ///
 /// # Safety
 ///

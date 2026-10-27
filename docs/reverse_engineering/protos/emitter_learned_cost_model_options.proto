@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: platforms/xla/service/jellyfish/lowering/emitter_learned_cost_model_options.proto
+
+syntax = "proto3";
+
+package xla.jellyfish;
+
+message EmitterLearnedCostModelOptions {
+  bool enabled = 1;
+  string model_version = 2;
+  double confidence_threshold = 3;
+}

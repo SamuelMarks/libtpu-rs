@@ -6,9 +6,29 @@
 
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::types::{ByteSize, ChipCoordinates, DeviceId, ProcessIndex, TpuGeneration};
+use lexopt::Arg;
 use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
+use winnow::Parser;
+use winnow::ascii::{digit1, multispace0};
+use winnow::combinator::{delimited, separated};
+use winnow::error::ContextError;
+use winnow::token::one_of;
+
+/// Parses a 3D mesh coordinate triple (`"2,2,1"`, `"2x2x1"`, or `"2X2X1"`) using `winnow`.
+///
+/// # Arguments
+///
+/// * `input` - Mutable input string slice reference for `winnow`.
+///
+/// # Errors
+///
+/// Returns a `winnow` [`ContextError`] if the input does not match three positive integers.
+fn winnow_parse_bounds_vec(input: &mut &str) -> Result<Vec<u32>, ContextError> {
+    let uint_token = delimited(multispace0, digit1.try_map(str::parse::<u32>), multispace0);
+    separated(1..=4, uint_token, one_of([',', 'x', 'X'])).parse_next(input)
+}
 
 /// Process-wide global [`TpuInitConfig`] synchronized across `TfTpu_Initialize`,
 /// `SetGlobalTPUArrayOp_DoWork`, `PJRT_Client_Create`, and `libtpu.set_init_args`.
@@ -94,7 +114,7 @@ impl Default for TpuInitConfig {
 }
 
 impl TpuInitConfig {
-    /// Parses a 3D coordinate bound string such as `"2,2,1"` or `"2x2x1"`.
+    /// Parses a 3D coordinate bound string such as `"2,2,1"` or `"2x2x1"` using `winnow`.
     ///
     /// # Arguments
     ///
@@ -104,44 +124,28 @@ impl TpuInitConfig {
     ///
     /// Returns [`LibTpuError::InvalidArgument`] if the string does not contain 3 positive integers.
     pub fn parse_bounds(raw: &str) -> LibTpuResult<ChipCoordinates> {
-        let parts: Vec<&str> = raw.trim().split([',', 'x', 'X']).collect();
-        let [sx, sy, sz] = parts.as_slice() else {
+        let coords = winnow_parse_bounds_vec.parse(raw.trim()).map_err(|_| {
+            LibTpuError::InvalidArgument {
+                parameter: "bounds",
+                reason: format!("Expected 3 coordinates 'x,y,z', got '{raw}'"),
+            }
+        })?;
+        let [x, y, z] = coords.as_slice() else {
             return Err(LibTpuError::InvalidArgument {
                 parameter: "bounds",
                 reason: format!("Expected 3 coordinates 'x,y,z', got '{raw}'"),
             });
         };
-        let x = sx
-            .trim()
-            .parse::<u32>()
-            .map_err(|_| LibTpuError::InvalidArgument {
-                parameter: "bounds.x",
-                reason: format!("Invalid integer '{sx}'"),
-            })?;
-        let y = sy
-            .trim()
-            .parse::<u32>()
-            .map_err(|_| LibTpuError::InvalidArgument {
-                parameter: "bounds.y",
-                reason: format!("Invalid integer '{sy}'"),
-            })?;
-        let z = sz
-            .trim()
-            .parse::<u32>()
-            .map_err(|_| LibTpuError::InvalidArgument {
-                parameter: "bounds.z",
-                reason: format!("Invalid integer '{sz}'"),
-            })?;
-        if x == 0 || y == 0 || z == 0 {
+        if *x == 0 || *y == 0 || *z == 0 {
             return Err(LibTpuError::InvalidArgument {
                 parameter: "bounds",
                 reason: String::from("Mesh bounds must be strictly positive (>= 1)"),
             });
         }
-        Ok(ChipCoordinates::new(x, y, z))
+        Ok(ChipCoordinates::new(*x, *y, *z))
     }
 
-    /// Parses a whitespace-separated `LIBTPU_INIT_ARGS` string and applies flags to this config.
+    /// Parses a whitespace-separated `LIBTPU_INIT_ARGS` string via `lexopt` and applies flags to this config.
     ///
     /// # Arguments
     ///
@@ -151,16 +155,37 @@ impl TpuInitConfig {
     ///
     /// Returns [`LibTpuError::InvalidArgument`] if any flag is malformed or has an invalid value.
     pub fn apply_init_args(&mut self, init_args: &str) -> LibTpuResult<()> {
-        for token in init_args.split_whitespace() {
-            let stripped = token.trim_start_matches('-');
-            if stripped.is_empty() {
+        let normalized_tokens: Vec<String> = init_args
+            .split_whitespace()
+            .map(|tok| {
+                if tok.starts_with('-') && !tok.starts_with("--") && tok.len() > 1 {
+                    format!("-{tok}")
+                } else {
+                    String::from(tok)
+                }
+            })
+            .collect();
+        let mut parser = lexopt::Parser::from_args(&normalized_tokens);
+        while let Some(arg) = parser.next()? {
+            let Arg::Long(raw_key) = arg else {
                 return Err(LibTpuError::InvalidArgument {
                     parameter: "LIBTPU_INIT_ARGS",
-                    reason: format!("Empty flag token '{token}'"),
+                    reason: format!("Unexpected positional or short argument '{arg:?}'"),
+                });
+            };
+            let key_owned = String::from(raw_key.trim_start_matches('-'));
+            if key_owned.is_empty() {
+                return Err(LibTpuError::InvalidArgument {
+                    parameter: "LIBTPU_INIT_ARGS",
+                    reason: String::from("Empty flag key"),
                 });
             }
-            let (key, value) = stripped.split_once('=').unwrap_or((stripped, "true"));
-            match key {
+            let value_os = parser.optional_value();
+            let value = value_os
+                .as_deref()
+                .and_then(|v| v.to_str())
+                .unwrap_or("true");
+            match key_owned.as_str() {
                 "tpu_generation" | "xla_tpu_generation" => {
                     self.generation = TpuGeneration::from_name(value)?;
                 }
@@ -183,8 +208,7 @@ impl TpuInitConfig {
                     self.host_bounds = Self::parse_bounds(value)?;
                 }
                 _ => {
-                    self.extra_flags
-                        .insert(String::from(key), String::from(value));
+                    self.extra_flags.insert(key_owned, String::from(value));
                 }
             }
         }
@@ -225,7 +249,13 @@ impl TpuInitConfig {
             cfg.process_index = ProcessIndex(wid);
         }
         for passthrough_key in [
+            "TPU_LIBRARY_PATH",
+            "TPU_PROCESS_ADDRESSES",
+            "TPU_PROCESS_PORT",
             "TPU_WORKER_HOSTNAMES",
+            "TPU_SKIP_MDS_QUERY",
+            "TPU_TOPOLOGY",
+            "TPU_TOPOLOGY_WRAP",
             "TPU_MESH_CONTROLLER_ADDRESS",
             "TPU_MESH_CONTROLLER_PORT",
             "TPU_STDERR_LOG_LEVEL",
@@ -332,7 +362,7 @@ mod tests {
 
         assert!(cfg
             .apply_init_args(
-                "--tpu_generation=v6e --xla_tpu_allow_async_allocations=false --tpu_chips_per_host_bounds=4x2x1 --tpu_host_bounds=2,1,1 --xla_tpu_custom_flag"
+                "--tpu_generation=v6e --xla_tpu_allow_async_allocations=false --tpu_chips_per_host_bounds=4x2x1 --tpu_host_bounds=2,1,1 --tpu_driver_mode=vfio --xla_tpu_use_sparse_core=true --xla_tpu_custom_flag"
             )
             .is_ok());
         assert_eq!(cfg.generation, TpuGeneration::V6e);
@@ -347,12 +377,16 @@ mod tests {
         );
 
         assert!(
-            cfg.apply_init_args("--xla_tpu_allow_async_allocations=1")
+            cfg.apply_init_args("-xla_tpu_allow_async_allocations=1")
                 .is_ok()
         );
         assert!(cfg.allow_async_allocations);
 
         assert!(cfg.apply_init_args("---").is_err());
+        assert!(cfg.apply_init_args("-").is_err());
+        assert!(cfg.apply_init_args("-- positional").is_err());
+        assert!(cfg.apply_init_args("positional_token").is_err());
+        assert!(cfg.apply_init_args("--=val").is_err());
         assert!(
             cfg.apply_init_args("--xla_tpu_allow_async_allocations=maybe")
                 .is_err()
@@ -428,6 +462,31 @@ mod tests {
             let mut bad_env = BTreeMap::new();
             bad_env.insert(String::from(k), String::from(v));
             assert!(TpuInitConfig::from_env_map(&bad_env).is_err());
+        }
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn proptest_bounds_and_init_args(
+            x in 1_u32..32,
+            y in 1_u32..32,
+            z in 1_u32..32,
+            flag_val in "[a-zA-Z0-9_]{1,12}"
+        ) {
+            let comma_str = format!("{x},{y},{z}");
+            let x_str = format!("{x}x{y}X{z}");
+            proptest::prop_assert_eq!(
+                TpuInitConfig::parse_bounds(&comma_str).ok(),
+                Some(ChipCoordinates::new(x, y, z))
+            );
+            proptest::prop_assert_eq!(
+                TpuInitConfig::parse_bounds(&x_str).ok(),
+                Some(ChipCoordinates::new(x, y, z))
+            );
+            let mut cfg = TpuInitConfig::default();
+            let args = format!("--tpu_chips_per_host_bounds={comma_str} --xla_tpu_custom={flag_val}");
+            proptest::prop_assert!(cfg.apply_init_args(&args).is_ok());
+            proptest::prop_assert_eq!(cfg.chips_per_host_bounds, ChipCoordinates::new(x, y, z));
         }
     }
 }

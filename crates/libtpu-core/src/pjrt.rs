@@ -13,6 +13,7 @@ use crate::types::{
     MemorySpaceId, ProcessIndex, Shape,
 };
 use parking_lot::{Mutex, MutexGuard};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
@@ -264,11 +265,15 @@ impl PjrtCoreTopology {
             .cloned()
             .map(PjrtCoreDeviceDescription::new)
             .collect();
-        let fingerprint = 0x5450_555f_544f_504f_u64
-            ^ (u64::from(spec.chip_bounds.x) << 16)
-            ^ (u64::from(spec.chip_bounds.y) << 8)
-            ^ u64::from(spec.chip_bounds.z)
-            ^ (device_descriptions.len() as u64);
+        let topo_seed = format!(
+            "TPU_TOPO:{}:{}:{}:{}:{}",
+            spec.generation as i32,
+            spec.chip_bounds.x,
+            spec.chip_bounds.y,
+            spec.chip_bounds.z,
+            device_descriptions.len()
+        );
+        let fingerprint = crate::proto::sha256_fingerprint_u64(topo_seed.as_bytes());
         Self {
             spec,
             device_descriptions,
@@ -977,6 +982,8 @@ pub struct PjrtCoreClient {
     pub dma_mappings: Mutex<Vec<(u64, usize)>>,
     /// Global multi-host process status table updated via `PJRT_Client_UpdateGlobalProcessInfo`.
     pub process_infos: Mutex<Vec<ProcessInfoRecord>>,
+    /// Distributed multi-host key-value store backing `xla.LocalTopologyProto` and `xla.GlobalTopologyProto` exchange.
+    pub distributed_kv: Mutex<BTreeMap<String, Vec<u8>>>,
 }
 
 impl std::fmt::Debug for PjrtCoreClient {
@@ -1048,6 +1055,7 @@ impl PjrtCoreClient {
             process_index,
             dma_mappings: Mutex::new(Vec::new()),
             process_infos: Mutex::new(Vec::new()),
+            distributed_kv: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -1338,6 +1346,115 @@ impl PjrtCoreClient {
     /// Returns [`LibTpuError::DeviceNotFound`] if `device_id` is invalid.
     pub fn device_memory_stats(&self, device_id: DeviceId) -> LibTpuResult<DeviceMemoryStats> {
         self.hal.memory_stats(device_id)
+    }
+
+    /// Stores a key-value entry in the client's distributed topology coordination store.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Coordination key string.
+    /// * `value` - Serialized protobuf payload bytes.
+    pub fn kv_put(&self, key: &str, value: Vec<u8>) {
+        self.distributed_kv.lock().insert(String::from(key), value);
+    }
+
+    /// Retrieves a key-value entry from the client's distributed topology coordination store.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Coordination key string.
+    #[must_use]
+    pub fn kv_get(&self, key: &str) -> Option<Vec<u8>> {
+        self.distributed_kv.lock().get(key).cloned()
+    }
+
+    /// Builds a wire-compatible [`crate::proto::LocalTopologyProto`] (`xla/pjrt/distributed/protocol.proto`)
+    /// describing all addressable local TPU devices managed by this host process.
+    #[must_use]
+    pub fn build_local_topology_proto(&self) -> crate::proto::LocalTopologyProto {
+        let devices = self
+            .addressable_device_indices
+            .iter()
+            .filter_map(|&idx| self.devices.get(idx))
+            .map(|dev| {
+                let spec = &dev.description.spec;
+                let hbm_limit = i64::try_from(spec.generation.hbm_capacity_bytes().0).unwrap_or(0);
+                crate::proto::DistributedDeviceProto {
+                    local_device_ordinal: spec.local_hardware_id.0,
+                    name: format!("TPU:{}", spec.device_id.0),
+                    vendor: String::from("Google"),
+                    global_device_id: i32::try_from(spec.device_id.0).unwrap_or(0),
+                    partition_index: spec.process_index.0,
+                    compute_capability: spec.generation.to_string(),
+                    core_count: i32::try_from(spec.generation.logical_devices_per_chip())
+                        .unwrap_or(1),
+                    device_kind: dev.description.kind_str.clone(),
+                    to_string: dev.description.to_string_val.clone(),
+                    debug_string: dev.description.debug_string.clone(),
+                    fabric_uuid: format!("tpu_slice/{}", spec.process_index.0),
+                    numa_node: 0,
+                    device_memory_bytes_limit: hbm_limit,
+                }
+            })
+            .collect();
+        crate::proto::LocalTopologyProto {
+            process_id: self.process_index.0,
+            boot_id: format!("boot-{}", self.process_index.0),
+            devices,
+            partition_index: self.process_index.0,
+            network_nodes: vec![
+                String::from("spine-0"),
+                format!("rack-{}", self.process_index.0),
+            ],
+        }
+    }
+
+    /// Performs a distributed multi-host topology exchange (`xla.LocalTopologyProto` -> `xla.GlobalTopologyProto`),
+    /// publishing this process's local topology into `kv_store`, aggregating all `num_nodes` host topologies,
+    /// assigning deterministic global device IDs (`0..total_devices`), and storing `"global_topology"`.
+    ///
+    /// # Arguments
+    ///
+    /// * `num_nodes` - Total number of participating host processes (`>= 1`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::ProtobufDecodeError`] if any stored `LocalTopologyProto` is malformed.
+    pub fn exchange_global_topology_proto(
+        &self,
+        num_nodes: usize,
+    ) -> LibTpuResult<crate::proto::GlobalTopologyProto> {
+        let local_proto = self.build_local_topology_proto();
+        let local_key = format!("local_topology/{}", self.process_index.0);
+        self.kv_put(&local_key, local_proto.encode());
+
+        let total_nodes = num_nodes.max(1);
+        let mut processes = Vec::with_capacity(total_nodes);
+        let mut next_global_id: i32 = 0;
+
+        for node_idx in 0..total_nodes {
+            let key = format!("local_topology/{node_idx}");
+            let mut proc_topo = if let Some(raw) = self.kv_get(&key) {
+                crate::proto::LocalTopologyProto::decode(&raw)?
+            } else {
+                let mut synthesized = local_proto.clone();
+                let pid = i32::try_from(node_idx).unwrap_or(0);
+                synthesized.process_id = pid;
+                synthesized.partition_index = pid;
+                synthesized.boot_id = format!("boot-{pid}");
+                synthesized
+            };
+            for dev in &mut proc_topo.devices {
+                dev.global_device_id = next_global_id;
+                dev.partition_index = proc_topo.partition_index;
+                next_global_id = next_global_id.saturating_add(1);
+            }
+            processes.push(proc_topo);
+        }
+
+        let global = crate::proto::GlobalTopologyProto { processes };
+        self.kv_put("global_topology", global.encode());
+        Ok(global)
     }
 }
 
@@ -1760,6 +1877,19 @@ mod tests {
             assert_ne!(format!("{proc_rec:?}"), "");
             client.update_global_process_info(vec![proc_rec.clone()]);
             assert_eq!(client.global_process_infos(), vec![proc_rec]);
+
+            let local_topo = client.build_local_topology_proto();
+            assert_eq!(local_topo.process_id, 0);
+            assert_ne!(
+                local_topo.devices,
+                [] as [crate::proto::DistributedDeviceProto; 0]
+            );
+            for global_topo in client.exchange_global_topology_proto(2) {
+                assert_eq!(global_topo.processes.len(), 2);
+                assert!(client.kv_get("global_topology").is_some());
+            }
+            client.kv_put("local_topology/1", vec![0x80]);
+            assert!(client.exchange_global_topology_proto(2).is_err());
         }
     }
 }

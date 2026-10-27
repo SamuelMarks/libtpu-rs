@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: learning/45eac/tpu/runtime/tpu_version.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package tpu;
+
+enum TpuVersionProto {
+  TPU_VERSION_UNSPECIFIED = 0;
+  TPU_VERSION_V2 = 2;
+  TPU_VERSION_V3 = 3;
+  TPU_VERSION_V4 = 4;
+  TPU_VERSION_V5E = 5;
+  TPU_VERSION_V5P = 6;
+  TPU_VERSION_V6E = 7;
+  TPU_VERSION_V7X = 8;
+  TPU_VERSION_V4_LITE = 9;
+}
+
+message TpuChipVariantDescriptorProto {
+  TpuVersionProto version = 1;
+  string codename = 2;
+  uint32 pcie_vendor_id = 3;
+  uint32 pcie_device_id = 4;
+  uint32 csr_count = 5;
+  uint64 bar0_span_bytes = 6;
+}

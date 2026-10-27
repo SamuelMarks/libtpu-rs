@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: platforms/xla/megascale/runtime/common/runtime_config.proto
+
+syntax = "proto3";
+
+package xla.megascale.runtime;
+
+message MegascaleTransportConfigProto {
+  int32 num_channels = 1;
+  int64 max_inflight_bytes = 2;
+  int64 timeout_ms = 3;
+  bool enable_zstd_compression = 4;
+  int32 zstd_compression_level = 5;
+}

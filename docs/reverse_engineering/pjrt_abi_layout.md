@@ -26,7 +26,7 @@ Disassembly of `pjrt::CreatePjrtApi` (`0x0c5a55e0`) in `libtpu.so` reveals the e
 | `0x060` | 12 | `PJRT_Event_Error` | `pjrt::PJRT_Event_Error` (`0x0c5a1510`) | 24 |
 | `0x068` | 13 | `PJRT_Event_Await` | `pjrt::PJRT_Event_Await` (`0x0c5a13e0`) | 24 |
 | `0x070` | 14 | `PJRT_Event_OnReady` | `pjrt::PJRT_Event_OnReady` (`0x0c5a15d0`) | 40 |
-| `0x078` | 15 | `PJRT_Client_Create` | `pjrt::tpu_plugin::PJRT_Client_Create` (`0x0b4fa500`) | 72 |
+| `0x078` | 15 | `PJRT_Client_Create` | `pjrt::tpu_plugin::PJRT_Client_Create` (`0x0b4fa500`) | 88 |
 | `0x080` | 16 | `PJRT_Client_Destroy` | `pjrt::PJRT_Client_Destroy` (`0x0c591520`) | 24 |
 | `0x088` | 17 | `PJRT_Client_PlatformName` | `pjrt::PJRT_Client_PlatformName` (`0x0c591770`) | 40 |
 | `0x090` | 18 | `PJRT_Client_ProcessIndex` | `pjrt::PJRT_Client_ProcessIndex` (`0x0c591720`) | 32 |
@@ -50,7 +50,7 @@ Disassembly of `pjrt::CreatePjrtApi` (`0x0c5a55e0`) in `libtpu.so` reveals the e
 | `0x120` | 36 | `PJRT_Device_LocalHardwareId` | `pjrt::PJRT_Device_LocalHardwareId` (`0x0c597850`) | 32 |
 | `0x128` | 37 | `PJRT_Device_AddressableMemories` | `pjrt::PJRT_Device_AddressableMemories` (`0x0c5978a0`) | 40 |
 | `0x130` | 38 | `PJRT_Device_DefaultMemory` | `pjrt::PJRT_Device_DefaultMemory` (`0x0c597900`) | 32 |
-| `0x138` | 39 | `PJRT_Device_MemoryStats` | `pjrt::PJRT_Device_MemoryStats` (`0x0c5979a0`) | 112 |
+| `0x138` | 39 | `PJRT_Device_MemoryStats` | `pjrt::PJRT_Device_MemoryStats` (`0x0c5979a0`) | 192 |
 | `0x140` | 40 | `PJRT_Memory_Id` | `pjrt::PJRT_Memory_Id` (`0x0c597b70`) | 32 |
 | `0x148` | 41 | `PJRT_Memory_Kind` | `pjrt::PJRT_Memory_Kind` (`0x0c597bd0`) | 40 |
 | `0x150` | 42 | `PJRT_Memory_DebugString` | `pjrt::PJRT_Memory_DebugString` (`0x0c597ca0`) | 40 |

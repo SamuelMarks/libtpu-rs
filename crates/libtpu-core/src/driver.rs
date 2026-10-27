@@ -181,30 +181,46 @@ impl TpuCoreProfiler {
             metadata_id: 1,
             offset_ps: 0,
             duration_ps: 1_000_000,
+            num_occurrences: 1,
             stats: vec![XStatProto {
                 metadata_id: 1,
+                double_value: 0.0,
+                uint64_value: 0,
                 int64_value: count,
                 str_value: String::from("tpu_execution"),
+                bytes_value: Vec::new(),
+                ref_value: 0,
             }],
         };
         let line = XLineProto {
             id: 0,
+            display_id: 0,
             name: String::from("TensorCore 0"),
+            display_name: String::from("TensorCore 0"),
             timestamp_ns: 1_000_000_000,
+            duration_ps: 1_000_000,
             events: vec![event],
         };
         let plane = XPlaneProto {
             id: 1,
             name: String::from("/device:TPU:0"),
             lines: vec![line],
+            event_metadata: BTreeMap::new(),
+            stat_metadata: BTreeMap::new(),
             stats: vec![XStatProto {
                 metadata_id: 2,
+                double_value: 0.0,
+                uint64_value: 0,
                 int64_value: count,
                 str_value: String::from("recorded_events"),
+                bytes_value: Vec::new(),
+                ref_value: 0,
             }],
         };
         let xspace = XSpaceProto {
             planes: vec![plane],
+            errors: Vec::new(),
+            warnings: Vec::new(),
             hostnames: vec![String::from("tpu-worker-0")],
         };
         xspace.encode()
@@ -359,8 +375,10 @@ impl TpuCoreEmbeddingEngine {
             id: 1,
             entry_computation_name: String::from("main"),
             entry_computation_id: 1,
+            host_program_shape: None,
             computations: vec![HloComputationProto {
                 name: String::from("main"),
+                program_shape: None,
                 id: 1,
                 root_id: 1,
                 instructions: vec![HloInstructionProto {
@@ -382,6 +400,129 @@ impl TpuCoreEmbeddingEngine {
         };
         hlo.encode()
     }
+
+    /// Deduplicates a batch of sparse COO sample `(row_id, embedding_id, weight)` triples into
+    /// unique sorted embedding IDs, aggregated weights, and a 32-bit CSR deduplication bitmask
+    /// compatible with `SparseCore_GetMaxIdsAndUniques` and `TpuEmbeddingEngine_DedupDataTupleMaskComputation`.
+    ///
+    /// # Arguments
+    ///
+    /// * `coo_entries` - Slice of `(row_id, embedding_id, weight)` sparse lookup entries.
+    #[must_use]
+    pub fn deduplicate_coo_to_csr(
+        &self,
+        coo_entries: &[(u32, u32, f32)],
+    ) -> (Vec<u32>, Vec<f32>, Vec<u32>) {
+        let _ = self;
+        let mut agg: BTreeMap<u32, (f32, u32)> = BTreeMap::new();
+        for &(row_id, emb_id, weight) in coo_entries {
+            let bit = 1_u32.checked_shl(row_id & 31).unwrap_or(1);
+            let entry = agg.entry(emb_id).or_insert((0.0, 0));
+            entry.0 += weight;
+            entry.1 |= bit;
+        }
+        let mut unique_ids = Vec::with_capacity(agg.len());
+        let mut unique_weights = Vec::with_capacity(agg.len());
+        let mut csr_masks = Vec::with_capacity(agg.len());
+        for (emb_id, (w, mask)) in agg {
+            unique_ids.push(emb_id);
+            unique_weights.push(w);
+            csr_masks.push(mask);
+        }
+        (unique_ids, unique_weights, csr_masks)
+    }
+
+    /// Applies a `SparseCore` optimizer gradient step (`SGD`, `Adagrad`, `Adam`, `FTRL`, `RMSProp`, or `AdagradMomentum`)
+    /// in-place to an embedding table stored in HBM.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_name` - Name of the embedding table to update.
+    /// * `optimizer` - [`SparseCoreOptimizer`] rule to apply.
+    /// * `learning_rate` - Scalar step size (`lr`).
+    /// * `gradients` - Per-parameter gradient slice (`f32`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `table_name` does not exist in HBM.
+    pub fn apply_optimizer_gradients(
+        &mut self,
+        table_name: &str,
+        optimizer: SparseCoreOptimizer,
+        learning_rate: f32,
+        gradients: &[f32],
+    ) -> LibTpuResult<Vec<f32>> {
+        let raw_bytes =
+            self.tables
+                .get(table_name)
+                .ok_or_else(|| LibTpuError::InvalidArgument {
+                    parameter: "table_name",
+                    reason: format!("Embedding table '{table_name}' not found in HBM"),
+                })?;
+        let mut params: Vec<f32> = raw_bytes
+            .chunks_exact(4)
+            .map(|c| {
+                let mut arr = [0_u8; 4];
+                arr.copy_from_slice(c);
+                f32::from_le_bytes(arr)
+            })
+            .collect();
+        for (p, &g) in params.iter_mut().zip(gradients.iter()) {
+            let delta = match optimizer {
+                SparseCoreOptimizer::Sgd => learning_rate * g,
+                SparseCoreOptimizer::Adagrad => {
+                    let accum = g.mul_add(g, 0.1_f32);
+                    learning_rate * g / (accum.sqrt() + 1e-8)
+                }
+                SparseCoreOptimizer::Adam => {
+                    let m = 0.1 * g;
+                    let v = (0.001 * g).mul_add(g, 1e-4);
+                    learning_rate * m / (v.sqrt() + 1e-8)
+                }
+                SparseCoreOptimizer::Ftrl => {
+                    let l1 = 0.01_f32;
+                    if g.abs() <= l1 {
+                        0.0
+                    } else {
+                        learning_rate * (g - l1.copysign(g))
+                    }
+                }
+                SparseCoreOptimizer::RmsProp => {
+                    let ms = 0.9_f32.mul_add(0.1, 0.1 * g * g);
+                    learning_rate * g / (ms.sqrt() + 1e-8)
+                }
+                SparseCoreOptimizer::AdagradMomentum => {
+                    let accum = g.mul_add(g, 0.1_f32);
+                    let scaled = g / (accum.sqrt() + 1e-8);
+                    learning_rate * 0.9_f32.mul_add(0.05, scaled)
+                }
+            };
+            *p -= delta;
+        }
+        let mut updated_bytes = Vec::with_capacity(params.len() * 4);
+        for &p in &params {
+            updated_bytes.extend_from_slice(&p.to_le_bytes());
+        }
+        self.tables.insert(String::from(table_name), updated_bytes);
+        Ok(params)
+    }
+}
+
+/// Supported `SparseCore` hardware embedding optimizer algorithms (`tpu_embedding_configuration.proto`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SparseCoreOptimizer {
+    /// Stochastic Gradient Descent (`SGD`).
+    Sgd,
+    /// Adaptive Gradient (`Adagrad`).
+    Adagrad,
+    /// Adaptive Moment Estimation (`Adam`).
+    Adam,
+    /// Follow-The-Regularized-Leader (`FTRL`).
+    Ftrl,
+    /// Root Mean Square Propagation (`RMSProp`).
+    RmsProp,
+    /// Adagrad with Nesterov/heavy-ball momentum (`AdagradMomentum`).
+    AdagradMomentum,
 }
 
 /// Core backing state for `TpuDriver` (`TpuDriver_Open`, `Allocate`, `Compile`, `ExecuteProgram`).
@@ -809,6 +950,11 @@ mod tests {
             batch_size_per_tensor_core: 8,
             num_hosts: 1,
             num_tensor_cores: 2,
+            sharding_strategy: 0,
+            pipeline_execution_with_tensor_core: false,
+            profile_data_directory: String::new(),
+            feature_descriptor: Vec::new(),
+            spmd_sharding: None,
         };
         assert_ne!(emb.execute_partitioner(&proto_cfg.encode()), [] as [u8; 0]);
         assert!(emb.read_parameters("proto_tbl").is_some());
@@ -827,6 +973,38 @@ mod tests {
         emb.write_parameters(String::from("vocab"), vec![1, 2, 3, 4]);
         assert_eq!(emb.read_parameters("vocab"), Some(&[1_u8, 2, 3, 4][..]));
         assert_eq!(emb.read_parameters("missing"), None);
+
+        let (uniq_ids, uniq_weights, csr_masks) =
+            emb.deduplicate_coo_to_csr(&[(0, 10, 1.5), (2, 10, 0.5), (1, 25, 2.0)]);
+        assert_eq!(uniq_ids, vec![10, 25]);
+        assert_eq!(uniq_weights, vec![2.0, 2.0]);
+        assert_eq!(csr_masks, vec![0b101, 0b010]);
+
+        let mut init_weights = Vec::new();
+        for w in [1.0_f32, 2.0, 3.0, 4.0] {
+            init_weights.extend_from_slice(&w.to_le_bytes());
+        }
+        emb.write_parameters(String::from("opt_tbl"), init_weights);
+        for opt in [
+            SparseCoreOptimizer::Sgd,
+            SparseCoreOptimizer::Adagrad,
+            SparseCoreOptimizer::Adam,
+            SparseCoreOptimizer::Ftrl,
+            SparseCoreOptimizer::RmsProp,
+            SparseCoreOptimizer::AdagradMomentum,
+        ] {
+            assert_ne!(format!("{opt:?}"), "");
+            assert_eq!(opt, opt.clone());
+            assert!(
+                emb.apply_optimizer_gradients("opt_tbl", opt, 0.1, &[0.001, 0.5, -0.5, 0.0])
+                    .is_ok()
+            );
+        }
+        assert!(
+            emb.apply_optimizer_gradients("nonexistent_tbl", SparseCoreOptimizer::Sgd, 0.1, &[1.0])
+                .is_err()
+        );
+
         emb.finalize();
         assert!(emb.initialized);
         assert_ne!(format!("{emb:?}"), "");

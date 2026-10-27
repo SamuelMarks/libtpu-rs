@@ -4,6 +4,10 @@ use super::*;
 
 /// Strongly-typed handler for [`PJRT_Error_Destroy`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Error_Destroy_Args`] structure.
+///
 /// # Safety
 ///
 /// `args.error` must be null or a valid heap-allocated [`PJRT_Error`].
@@ -34,6 +38,10 @@ pub unsafe extern "C" fn PJRT_Error_Destroy(raw_args: *mut std::ffi::c_void) {
 }
 
 /// Strongly-typed handler for [`PJRT_Error_Message`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Error_Message_Args`] structure.
 ///
 /// # Safety
 ///
@@ -66,6 +74,10 @@ pub unsafe extern "C" fn PJRT_Error_Message(raw_args: *mut std::ffi::c_void) {
 
 /// Strongly-typed handler for [`PJRT_Error_GetCode`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Error_GetCode_Args`] structure.
+///
 /// # Safety
 ///
 /// `args.error` must be null or a valid [`PJRT_Error`].
@@ -93,6 +105,10 @@ pub unsafe extern "C" fn PJRT_Error_GetCode(raw_args: *mut std::ffi::c_void) -> 
 }
 
 /// Strongly-typed handler for [`PJRT_Plugin_Initialize`].
+///
+/// # Arguments
+///
+/// * `_args` - Validated [`PJRT_Plugin_Initialize_Args`] structure.
 ///
 /// # Safety
 ///
@@ -123,6 +139,10 @@ pub unsafe extern "C" fn PJRT_Plugin_Initialize(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Plugin_Attributes_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Plugin_Attributes_Args`] structure.
 ///
 /// # Safety
 ///
@@ -158,6 +178,10 @@ pub unsafe extern "C" fn PJRT_Plugin_Attributes(
 }
 
 /// Strongly-typed handler for [`PJRT_Event_Destroy`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Event_Destroy_Args`] structure.
 ///
 /// # Safety
 ///
@@ -196,6 +220,10 @@ pub unsafe extern "C" fn PJRT_Event_Destroy(raw_args: *mut std::ffi::c_void) -> 
 
 /// Populates [`crate::pjrt_types::PJRT_Event_IsReady_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Event_IsReady_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Event_IsReady_Args`].
@@ -229,6 +257,10 @@ pub unsafe extern "C" fn PJRT_Event_IsReady(raw_args: *mut std::ffi::c_void) -> 
 }
 
 /// Strongly-typed handler for [`PJRT_Event_Error`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Event_Error_Args`] structure.
 ///
 /// # Safety
 ///
@@ -267,6 +299,10 @@ pub unsafe extern "C" fn PJRT_Event_Error(raw_args: *mut std::ffi::c_void) -> *m
 
 /// Strongly-typed handler for [`PJRT_Event_Await`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Event_Await_Args`] structure.
+///
 /// # Safety
 ///
 /// `args.event` must be null or a valid `PJRT_Event*`.
@@ -301,6 +337,10 @@ pub unsafe extern "C" fn PJRT_Event_Await(raw_args: *mut std::ffi::c_void) -> *m
 }
 
 /// Strongly-typed handler for [`PJRT_Event_OnReady`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Event_OnReady_Args`] structure.
 ///
 /// # Safety
 ///
@@ -351,6 +391,10 @@ pub unsafe extern "C" fn PJRT_Event_OnReady(raw_args: *mut std::ffi::c_void) -> 
 
 /// Strongly-typed handler for [`PJRT_Event_Create`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Event_Create_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Event_Create_Args`].
@@ -384,6 +428,10 @@ pub unsafe extern "C" fn PJRT_Event_Create(raw_args: *mut std::ffi::c_void) -> *
 }
 
 /// Strongly-typed handler for [`PJRT_Event_Set`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Event_Set_Args`] structure.
 ///
 /// # Safety
 ///
@@ -435,6 +483,10 @@ pub unsafe extern "C" fn PJRT_Event_Set(raw_args: *mut std::ffi::c_void) -> *mut
 }
 
 /// Strongly-typed handler for [`PJRT_Error_ForEachPayload`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Error_ForEachPayload_Args`] structure.
 ///
 /// # Safety
 ///

@@ -4,6 +4,10 @@ use super::*;
 
 /// Populates [`crate::pjrt_types::PJRT_DeviceDescription_Id_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_DeviceDescription_Id_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_DeviceDescription_Id_Args`].
@@ -40,6 +44,10 @@ pub unsafe extern "C" fn PJRT_DeviceDescription_Id(
 
 /// Populates [`crate::pjrt_types::PJRT_DeviceDescription_ProcessIndex_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_DeviceDescription_ProcessIndex_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_DeviceDescription_ProcessIndex_Args`].
@@ -75,6 +83,10 @@ pub unsafe extern "C" fn PJRT_DeviceDescription_ProcessIndex(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_DeviceDescription_Attributes_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_DeviceDescription_Attributes_Args`] structure.
 ///
 /// # Safety
 ///
@@ -119,6 +131,10 @@ pub unsafe extern "C" fn PJRT_DeviceDescription_Attributes(
 
 /// Populates [`crate::pjrt_types::PJRT_DeviceDescription_Kind_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_DeviceDescription_Kind_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_DeviceDescription_Kind_Args`].
@@ -161,6 +177,10 @@ pub unsafe extern "C" fn PJRT_DeviceDescription_Kind(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_DeviceDescription_DebugString_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_DeviceDescription_DebugString_Args`] structure.
 ///
 /// # Safety
 ///
@@ -205,6 +225,10 @@ pub unsafe extern "C" fn PJRT_DeviceDescription_DebugString(
 
 /// Populates [`crate::pjrt_types::PJRT_DeviceDescription_ToString_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_DeviceDescription_ToString_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_DeviceDescription_ToString_Args`].
@@ -248,6 +272,10 @@ pub unsafe extern "C" fn PJRT_DeviceDescription_ToString(
 
 /// Populates [`crate::pjrt_types::PJRT_Device_GetDescription_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Device_GetDescription_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Device_GetDescription_Args`].
@@ -283,6 +311,10 @@ pub unsafe extern "C" fn PJRT_Device_GetDescription(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Device_IsAddressable_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Device_IsAddressable_Args`] structure.
 ///
 /// # Safety
 ///
@@ -320,6 +352,10 @@ pub unsafe extern "C" fn PJRT_Device_IsAddressable(
 
 /// Populates [`crate::pjrt_types::PJRT_Device_LocalHardwareId_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Device_LocalHardwareId_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Device_LocalHardwareId_Args`].
@@ -355,6 +391,10 @@ pub unsafe extern "C" fn PJRT_Device_LocalHardwareId(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Device_AddressableMemories_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Device_AddressableMemories_Args`] structure.
 ///
 /// # Safety
 ///
@@ -398,6 +438,10 @@ pub unsafe extern "C" fn PJRT_Device_AddressableMemories(
 
 /// Populates [`crate::pjrt_types::PJRT_Device_DefaultMemory_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Device_DefaultMemory_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Device_DefaultMemory_Args`].
@@ -432,6 +476,10 @@ pub unsafe extern "C" fn PJRT_Device_DefaultMemory(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Device_MemoryStats_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Device_MemoryStats_Args`] structure.
 ///
 /// # Safety
 ///
@@ -498,6 +546,10 @@ pub unsafe extern "C" fn PJRT_Device_MemoryStats(
 
 /// Populates [`crate::pjrt_types::PJRT_Memory_Id_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Memory_Id_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Memory_Id_Args`].
@@ -530,6 +582,10 @@ pub unsafe extern "C" fn PJRT_Memory_Id(raw_args: *mut std::ffi::c_void) -> *mut
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Memory_Kind_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Memory_Kind_Args`] structure.
 ///
 /// # Safety
 ///
@@ -570,6 +626,10 @@ pub unsafe extern "C" fn PJRT_Memory_Kind(raw_args: *mut std::ffi::c_void) -> *m
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Memory_DebugString_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Memory_DebugString_Args`] structure.
 ///
 /// # Safety
 ///
@@ -613,6 +673,10 @@ pub unsafe extern "C" fn PJRT_Memory_DebugString(
 
 /// Populates [`crate::pjrt_types::PJRT_Memory_ToString_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Memory_ToString_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Memory_ToString_Args`].
@@ -652,6 +716,10 @@ pub unsafe extern "C" fn PJRT_Memory_ToString(raw_args: *mut std::ffi::c_void) -
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Memory_AddressableByDevices_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Memory_AddressableByDevices_Args`] structure.
 ///
 /// # Safety
 ///
@@ -695,6 +763,10 @@ pub unsafe extern "C" fn PJRT_Memory_AddressableByDevices(
 
 /// Populates [`crate::pjrt_types::PJRT_Memory_Kind_Id_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Memory_Kind_Id_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Memory_Kind_Id_Args`].
@@ -727,6 +799,10 @@ pub unsafe extern "C" fn PJRT_Memory_Kind_Id(raw_args: *mut std::ffi::c_void) ->
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Device_PoisonExecution_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Device_PoisonExecution_Args`] structure.
 ///
 /// # Safety
 ///
@@ -771,6 +847,10 @@ pub unsafe extern "C" fn PJRT_Device_PoisonExecution(
 
 /// Populates [`crate::pjrt_types::PJRT_Device_CreateAsyncTrackingEvent_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Device_CreateAsyncTrackingEvent_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Device_CreateAsyncTrackingEvent_Args`].
@@ -808,6 +888,10 @@ pub unsafe extern "C" fn PJRT_Device_CreateAsyncTrackingEvent(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_AsyncTrackingEvent_Destroy_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_AsyncTrackingEvent_Destroy_Args`] structure.
 ///
 /// # Safety
 ///
@@ -847,6 +931,10 @@ pub unsafe extern "C" fn PJRT_AsyncTrackingEvent_Destroy(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Device_GetAttributes_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Device_GetAttributes_Args`] structure.
 ///
 /// # Safety
 ///
@@ -890,6 +978,10 @@ pub unsafe extern "C" fn PJRT_Device_GetAttributes(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Device_ClearMemoryStats_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Device_ClearMemoryStats_Args`] structure.
 ///
 /// # Safety
 ///

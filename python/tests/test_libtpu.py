@@ -43,6 +43,8 @@ def test_library_path_and_init_args(monkeypatch: pytest.MonkeyPatch) -> None:
         "--tpu_generation=v6e",
         "--xla_tpu_allow_async_allocations=true",
     ]
+    libtpu.set_init_args("--tpu_generation=v4")
+    assert libtpu.get_init_args() == ["--tpu_generation=v4"]
     assert libtpu.initialize() == "/custom/libtpu.so"
     assert libtpu.initialize(["--tpu_generation=v5p"]) == "/custom/libtpu.so"
     assert libtpu.get_init_args() == ["--tpu_generation=v5p"]

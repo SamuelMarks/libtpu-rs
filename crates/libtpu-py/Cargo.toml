@@ -15,7 +15,6 @@ name = "libtpu_py"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-libtpu-c-api = { path = "../libtpu-c-api" }
 libtpu-core.workspace = true
 
 [lints]

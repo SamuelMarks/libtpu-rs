@@ -116,6 +116,72 @@ pub unsafe extern "C" fn SetGlobalTPUArrayOp_DoWork(
     0
 }
 
+/// Initializes global mesh state for distributed TensorFlow TPU execution (`InitializeCreateMeshGlobalState`).
+///
+/// # Arguments
+///
+/// * `mesh_state_len` - Byte length of `mesh_state_proto`.
+/// * `mesh_state_proto` - Pointer to serialized mesh state bytes (or null).
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// `mesh_state_proto` and `status` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn InitializeCreateMeshGlobalState(
+    mesh_state_len: usize,
+    mesh_state_proto: *const c_char,
+    status: *mut TpuStatus,
+) -> i32 {
+    // SAFETY: Delegates to `SetGlobalTPUArrayOp_DoWork` with identical pointer contract.
+    unsafe { SetGlobalTPUArrayOp_DoWork(mesh_state_len, mesh_state_proto, status) }
+}
+
+/// Configures a distributed TensorFlow TPU cluster (`ConfigureDistributedTpuOp_DoWork`).
+///
+/// # Arguments
+///
+/// * `num_cores_per_host_len` - Number of elements in `num_cores_per_host`.
+/// * `num_cores_per_host` - Optional pointer to an array of core counts per host.
+/// * `output_config_len` - Optional output pointer receiving the serialized config byte length.
+/// * `output_config` - Optional output pointer receiving a heap-allocated serialized config string.
+/// * `status` - Optional [`TpuStatus`] pointer.
+///
+/// # Safety
+///
+/// All pointer arguments must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn ConfigureDistributedTpuOp_DoWork(
+    num_cores_per_host_len: usize,
+    num_cores_per_host: *const i32,
+    output_config_len: *mut usize,
+    output_config: *mut *mut c_char,
+    status: *mut TpuStatus,
+) -> i32 {
+    if num_cores_per_host_len > 0 && num_cores_per_host.is_null() {
+        // SAFETY: `TpuStatus_Set` checks `status` for null.
+        unsafe {
+            TpuStatus_Set(status, 3, c"num_cores_per_host is null".as_ptr(), 26);
+        }
+        return -1;
+    }
+    let topo_str = global_topology().hal.topology_spec().platform_version;
+    if !output_config_len.is_null() {
+        // SAFETY: `output_config_len` is non-null.
+        unsafe {
+            *output_config_len = topo_str.len();
+        }
+    }
+    if !output_config.is_null() {
+        let cstr = to_c_string(&topo_str);
+        // SAFETY: `output_config` is non-null.
+        unsafe {
+            *output_config = cstr.into_raw();
+        }
+    }
+    0
+}
+
 /// Queries TPU partitioned call runtime parameters (`TfTpu_GetTpuPartitionedCallParams`).
 ///
 /// # Arguments
@@ -1801,11 +1867,10 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_EnqueueTensorBatch(
     } else {
         8
     };
-    global_embedding_engine().lock().enqueue_tensor_batch(
-        i32::try_from(p.device_ordinal).unwrap_or(0),
-        num_indices,
-        num_weights,
-    );
+    let dev_ord = i32::try_from(p.priv_data as usize).unwrap_or(0);
+    global_embedding_engine()
+        .lock()
+        .enqueue_tensor_batch(dev_ord, num_indices, num_weights);
     0
 }
 

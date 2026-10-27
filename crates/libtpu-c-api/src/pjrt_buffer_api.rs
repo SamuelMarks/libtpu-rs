@@ -4,6 +4,10 @@ use super::*;
 
 /// Strongly-typed handler for [`PJRT_Buffer_ToHostBuffer`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_ToHostBuffer_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_ToHostBuffer_Args`].
@@ -51,6 +55,10 @@ pub unsafe extern "C" fn PJRT_Buffer_ToHostBuffer(
 
 /// Strongly-typed handler for [`PJRT_Buffer_Dimensions`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_Dimensions_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_Dimensions_Args`].
@@ -89,6 +97,10 @@ pub unsafe extern "C" fn PJRT_Buffer_Dimensions(
 
 /// Strongly-typed handler for [`PJRT_Buffer_ElementType`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_ElementType_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_ElementType_Args`].
@@ -125,6 +137,10 @@ pub unsafe extern "C" fn PJRT_Buffer_ElementType(
 }
 
 /// Strongly-typed handler for [`PJRT_Buffer_OnDeviceSizeInBytes`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_OnDeviceSizeInBytes_Args`] structure.
 ///
 /// # Safety
 ///
@@ -163,6 +179,10 @@ pub unsafe extern "C" fn PJRT_Buffer_OnDeviceSizeInBytes(
 
 /// Strongly-typed handler for [`PJRT_Buffer_Destroy`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_Destroy_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_Destroy_Args`].
@@ -197,6 +217,10 @@ pub unsafe extern "C" fn PJRT_Buffer_Destroy(raw_args: *mut std::ffi::c_void) ->
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_UnpaddedDimensions_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_UnpaddedDimensions_Args`] structure.
 ///
 /// # Safety
 ///
@@ -236,6 +260,10 @@ pub unsafe extern "C" fn PJRT_Buffer_UnpaddedDimensions(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_DynamicDimensionIndices_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_DynamicDimensionIndices_Args`] structure.
 ///
 /// # Safety
 ///
@@ -281,6 +309,10 @@ static DEFAULT_TILE_DIMS: [i64; 2] = [8, 128];
 static DEFAULT_TILE_DIM_SIZES: [usize; 1] = [2];
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_GetMemoryLayout_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_GetMemoryLayout_Args`] structure.
 ///
 /// # Safety
 ///
@@ -354,6 +386,10 @@ pub unsafe extern "C" fn PJRT_Buffer_GetMemoryLayout(
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_Device_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_Device_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_Device_Args`].
@@ -387,6 +423,10 @@ pub unsafe extern "C" fn PJRT_Buffer_Device(raw_args: *mut std::ffi::c_void) -> 
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_Memory_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_Memory_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_Memory_Args`].
@@ -419,6 +459,10 @@ pub unsafe extern "C" fn PJRT_Buffer_Memory(raw_args: *mut std::ffi::c_void) -> 
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_Delete_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_Delete_Args`] structure.
 ///
 /// # Safety
 ///
@@ -455,6 +499,10 @@ pub unsafe extern "C" fn PJRT_Buffer_Delete(raw_args: *mut std::ffi::c_void) -> 
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_IsDeleted_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_IsDeleted_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_IsDeleted_Args`].
@@ -488,6 +536,10 @@ pub unsafe extern "C" fn PJRT_Buffer_IsDeleted(raw_args: *mut std::ffi::c_void) 
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_CopyToDevice_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_CopyToDevice_Args`] structure.
 ///
 /// # Safety
 ///
@@ -537,6 +589,10 @@ pub unsafe extern "C" fn PJRT_Buffer_CopyToDevice(
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_IsOnCpu_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_IsOnCpu_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_IsOnCpu_Args`].
@@ -569,6 +625,10 @@ pub unsafe extern "C" fn PJRT_Buffer_IsOnCpu(raw_args: *mut std::ffi::c_void) ->
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_ReadyEvent_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_ReadyEvent_Args`] structure.
 ///
 /// # Safety
 ///
@@ -611,6 +671,10 @@ pub unsafe extern "C" fn PJRT_Buffer_ReadyEvent(
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_UnsafePointer_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_UnsafePointer_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_UnsafePointer_Args`].
@@ -648,6 +712,10 @@ pub unsafe extern "C" fn PJRT_Buffer_UnsafePointer(
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_IncreaseExternalReferenceCount_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_IncreaseExternalReferenceCount_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_IncreaseExternalReferenceCount_Args`].
@@ -683,6 +751,10 @@ pub unsafe extern "C" fn PJRT_Buffer_IncreaseExternalReferenceCount(
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_DecreaseExternalReferenceCount_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_DecreaseExternalReferenceCount_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_DecreaseExternalReferenceCount_Args`].
@@ -717,6 +789,10 @@ pub unsafe extern "C" fn PJRT_Buffer_DecreaseExternalReferenceCount(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args`] structure.
 ///
 /// # Safety
 ///
@@ -756,6 +832,10 @@ pub unsafe extern "C" fn PJRT_Buffer_OpaqueDeviceMemoryDataPointer(
 
 /// Populates [`crate::pjrt_types::PJRT_CopyToDeviceStream_Destroy_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_CopyToDeviceStream_Destroy_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_CopyToDeviceStream_Destroy_Args`].
@@ -794,6 +874,10 @@ pub unsafe extern "C" fn PJRT_CopyToDeviceStream_Destroy(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_CopyToDeviceStream_AddChunk_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_CopyToDeviceStream_AddChunk_Args`] structure.
 ///
 /// # Safety
 ///
@@ -853,6 +937,10 @@ pub unsafe extern "C" fn PJRT_CopyToDeviceStream_AddChunk(
 
 /// Populates [`crate::pjrt_types::PJRT_CopyToDeviceStream_TotalBytes_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_CopyToDeviceStream_TotalBytes_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_CopyToDeviceStream_TotalBytes_Args`].
@@ -887,6 +975,10 @@ pub unsafe extern "C" fn PJRT_CopyToDeviceStream_TotalBytes(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_CopyToDeviceStream_GranuleSize_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_CopyToDeviceStream_GranuleSize_Args`] structure.
 ///
 /// # Safety
 ///
@@ -924,6 +1016,10 @@ pub unsafe extern "C" fn PJRT_CopyToDeviceStream_GranuleSize(
 
 /// Populates [`crate::pjrt_types::PJRT_CopyToDeviceStream_CurrentBytes_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_CopyToDeviceStream_CurrentBytes_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_CopyToDeviceStream_CurrentBytes_Args`].
@@ -959,6 +1055,10 @@ pub unsafe extern "C" fn PJRT_CopyToDeviceStream_CurrentBytes(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_CopyToMemory_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_CopyToMemory_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1007,6 +1107,10 @@ pub unsafe extern "C" fn PJRT_Buffer_CopyToMemory(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_CopyRawToHost_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_CopyRawToHost_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1057,6 +1161,10 @@ pub unsafe extern "C" fn PJRT_Buffer_CopyRawToHost(
 
 /// Populates [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_Destroy_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_Destroy_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_Destroy_Args`].
@@ -1094,6 +1202,10 @@ pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_Destroy(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_TransferData_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_TransferData_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1139,6 +1251,10 @@ pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_TransferData(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1192,6 +1308,10 @@ pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer(
 
 /// Populates [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_Device_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_Device_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_Device_Args`].
@@ -1227,6 +1347,10 @@ pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_Device(
 
 /// Populates [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_BufferCount_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_BufferCount_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_BufferCount_Args`].
@@ -1261,6 +1385,10 @@ pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_BufferCount(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1305,6 +1433,10 @@ pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_BufferSize(
 
 /// Populates [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_SetBufferError_Args`].
@@ -1347,6 +1479,10 @@ pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_SetBufferError(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_AddMetadata_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_AddMetadata_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1394,6 +1530,10 @@ pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_AddMetadata(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_TransferLiteral_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager_TransferLiteral_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1453,6 +1593,10 @@ pub unsafe extern "C" fn PJRT_AsyncHostToDeviceTransferManager_TransferLiteral(
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_CopyRawToHostFuture_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_CopyRawToHostFuture_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_CopyRawToHostFuture_Args`].
@@ -1491,6 +1635,10 @@ pub unsafe extern "C" fn PJRT_Buffer_CopyRawToHostFuture(
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_DonateWithControlDependency_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_DonateWithControlDependency_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Buffer_DonateWithControlDependency_Args`].
@@ -1524,6 +1672,10 @@ pub unsafe extern "C" fn PJRT_Buffer_DonateWithControlDependency(
 }
 
 /// Strongly-typed handler for [`PJRT_Buffer_Bitcast`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Buffer_Bitcast_Args`] structure.
 ///
 /// # Safety
 ///

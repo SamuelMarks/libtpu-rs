@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: platforms/xla/service/jellyfish/isa_program.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package xla;
+
+message IsaBundleSlotProto {
+  uint32 unit_kind = 1;
+  uint32 opcode = 2;
+  uint32 dst_reg = 3;
+  uint32 src0_reg = 4;
+  uint32 src1_reg = 5;
+  uint32 predicate_reg = 6;
+  int64 immediate = 7;
+}
+
+message IsaVliwBundleProto {
+  uint32 pc_index = 1;
+  IsaBundleSlotProto scalar_s0 = 2;
+  IsaBundleSlotProto scalar_s1 = 3;
+  IsaBundleSlotProto vector_v0 = 4;
+  IsaBundleSlotProto vector_v1 = 5;
+  IsaBundleSlotProto matrix_m0 = 6;
+  IsaBundleSlotProto matrix_m1 = 7;
+  IsaBundleSlotProto unary_xlu = 8;
+  IsaBundleSlotProto dma_d0 = 9;
+  string llo_annotation = 10;
+}
+
+message IsaCoreProgramHeaderProto {
+  uint32 core_index = 1;
+  uint32 core_type = 2;
+  uint64 entry_pc = 3;
+  uint64 bundle_count = 4;
+  bytes raw_vliw_stream = 5;
+  repeated IsaVliwBundleProto structured_bundles = 6;
+}
+
+message IsaSymbolTableEntryProto {
+  string name = 1;
+  uint64 pc_offset = 2;
+  uint64 size_bytes = 3;
+}
+
+message IsaProgramProto {
+  string isa_architecture = 1;
+  int64 isa_abi_version = 2;
+  repeated IsaCoreProgramHeaderProto core_programs = 3;
+  repeated IsaSymbolTableEntryProto symbols = 4;
+  uint64 fingerprint = 5;
+}

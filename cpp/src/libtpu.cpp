@@ -664,4 +664,135 @@ size_t SdkClient::trigger_debug_callbacks() const noexcept {
   return LibtpuSdk_TriggerDebugCallbacks(handle_);
 }
 
+PjrtApiView::PjrtApiView() noexcept : api_(GetPjrtApi()) {}
+
+size_t PjrtApiView::struct_size() const noexcept { return api_->struct_size; }
+
+int32_t PjrtApiView::minor_version() const noexcept {
+  return api_->pjrt_api_version.minor_version;
+}
+
+size_t PjrtApiView::extension_count() const noexcept {
+  size_t count = 0;
+  const PJRT_Extension_Base *cur = api_->extension_start;
+  while (cur != nullptr) {
+    ++count;
+    cur = cur->next;
+  }
+  return count;
+}
+
+const PJRT_Extension_Base *
+PjrtApiView::find_extension(int32_t ext_type) const noexcept {
+  const PJRT_Extension_Base *cur = api_->extension_start;
+  while (cur != nullptr) {
+    if (cur->ext_type == ext_type) {
+      return cur;
+    }
+    cur = cur->next;
+  }
+  return nullptr;
+}
+
+size_t PjrtApiView::memory_description_count() const noexcept {
+  PJRT_DeviceDescription_MemoryDescriptions_Args args{
+      sizeof(PJRT_DeviceDescription_MemoryDescriptions_Args),
+      nullptr,
+      nullptr,
+      nullptr,
+      0,
+      -1};
+  (void)PJRT_MemoryDescriptions_Get(&args);
+  return args.num_memory_descriptions;
+}
+
+Device::Device(PJRT_Device *handle) noexcept : handle_(handle) {}
+
+PJRT_Device *Device::raw() const noexcept { return handle_; }
+
+Memory::Memory(PJRT_Memory *handle) noexcept : handle_(handle) {}
+
+PJRT_Memory *Memory::raw() const noexcept { return handle_; }
+
+Executable::Executable(PJRT_Executable *handle) noexcept : handle_(handle) {}
+
+PJRT_Executable *Executable::raw() const noexcept { return handle_; }
+
+PhaseCompiler::PhaseCompiler() noexcept : handle_(0) {
+  PJRT_PhaseCompile_GetCompiler_Args args{
+      sizeof(PJRT_PhaseCompile_GetCompiler_Args), nullptr, nullptr, 0};
+  (void)PJRT_PhaseCompile_GetCompiler(&args);
+  handle_ = args.compiler_out;
+}
+
+PhaseCompiler::~PhaseCompiler() noexcept {
+  PJRT_PhaseCompile_Destroy_Args args{sizeof(PJRT_PhaseCompile_Destroy_Args),
+                                      nullptr,
+                                      reinterpret_cast<void *>(handle_)};
+  (void)PJRT_PhaseCompile_DestroyCompiler(&args);
+}
+
+size_t PhaseCompiler::phase_count() const noexcept {
+  PJRT_PhaseCompile_GetPhaseNames_Args args{
+      sizeof(PJRT_PhaseCompile_GetPhaseNames_Args),
+      nullptr,
+      reinterpret_cast<const void *>(handle_),
+      nullptr,
+      nullptr,
+      0};
+  (void)PJRT_PhaseCompile_GetPhaseNames(&args);
+  return args.num_phase_names;
+}
+
+size_t PhaseCompiler::run_phase(const char *phase_name, const char *input_bytes,
+                                size_t input_size) noexcept {
+  PJRT_PhaseCompile_RunPhase_Args args{sizeof(PJRT_PhaseCompile_RunPhase_Args),
+                                       nullptr,
+                                       reinterpret_cast<void *>(handle_),
+                                       input_bytes,
+                                       input_size,
+                                       phase_name,
+                                       0};
+  (void)PJRT_PhaseCompile_RunPhase(&args);
+  return args.output_status;
+}
+
+MegascaleContext::MegascaleContext() noexcept : handle_(0) {
+  PJRT_Megascale_Query_Args args{sizeof(PJRT_Megascale_Query_Args), nullptr, 0,
+                                 0};
+  (void)PJRT_Megascale_CreateClientContext(&args);
+  handle_ = args.out_value;
+}
+
+MegascaleContext::~MegascaleContext() noexcept {
+  PJRT_Megascale_Handle_Args args{sizeof(PJRT_Megascale_Handle_Args), nullptr,
+                                  reinterpret_cast<void *>(handle_)};
+  (void)PJRT_Megascale_DeleteClientContext(&args);
+}
+
+size_t MegascaleContext::barrier() noexcept {
+  PJRT_Megascale_Query_Args args{sizeof(PJRT_Megascale_Query_Args), nullptr,
+                                 handle_, 0};
+  (void)PJRT_Megascale_Barrier(&args);
+  return args.out_value;
+}
+
+size_t MegascaleContext::num_slices() const noexcept {
+  PJRT_Megascale_Query_Args args{sizeof(PJRT_Megascale_Query_Args), nullptr,
+                                 handle_, 0};
+  (void)PJRT_Megascale_GetNumSlices(&args);
+  return args.out_value;
+}
+
+EmbeddingEngine::EmbeddingEngine() noexcept
+    : state_(TpuEmbeddingEngineState_Create()) {}
+
+EmbeddingEngine::~EmbeddingEngine() noexcept {
+  TpuEmbeddingEngineState_Free(state_);
+}
+
+const void *EmbeddingEngine::raw_state() const noexcept {
+  return TpuEmbeddingEngineState_GetState(state_);
+}
+
 } // namespace libtpu

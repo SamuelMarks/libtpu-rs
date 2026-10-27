@@ -34,6 +34,7 @@ from pathlib import Path
 GOOGLE_LIBTPU_EXPORTED_SYMBOLS: tuple[str, ...] = (
     "GetPjrtApi",
     "GetLibtpuSdkApi",
+    "PyInit_sdk",
     "TfTpu_Initialize",
     "TF_InitKernel",
     "TFNPD_InitPlugin",
@@ -172,13 +173,13 @@ EXPECTED_REPR_C_STRUCT_SIZES: tuple[tuple[str, int], ...] = (
     ("TpuSerializedProto", 16),
     ("TpuEmbeddingEngine_ExecutePartitioner_Params", 56),
     ("TpuEmbeddingEngine_ConfigureMemory_Params", 64),
-    ("TpuEmbeddingEngine_CollateMemory_Params", 48),
-    ("TpuEmbeddingEngine_ConfigureHost_Params", 80),
+    ("TpuEmbeddingEngine_CollateMemory_Params", 56),
+    ("TpuEmbeddingEngine_ConfigureHost_Params", 96),
     ("TpuEmbeddingEngine_ConnectHosts_Params", 40),
     ("TpuEmbeddingEngine_Finalize_Params", 64),
-    ("TpuEmbeddingEngine_IsInitialized_Params", 40),
+    ("TpuEmbeddingEngine_IsInitialized_Params", 48),
     ("TpuEmbeddingEngine_WriteParameters_Params", 72),
-    ("TpuEmbeddingEngine_EnqueueTensorBatch_Params", 88),
+    ("TpuEmbeddingEngine_EnqueueTensorBatch_Params", 56),
     ("TpuEmbeddingEngine_Computation_Params", 96),
     ("PJRT_XlaTransform_Extension", 56),
     ("PJRT_HostMemoryAllocator_Extension", 32),
@@ -561,7 +562,7 @@ def calculate_rust_doc_coverage(repo_root: Path, force_run: bool = True) -> tupl
 
 
 def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
-    """Calculates documented vs total parameters across Rust `pub fn` items.
+    """Calculates documented vs total parameters across all Rust `fn` items.
 
     Args:
         repo_root: Path to the workspace root directory.
@@ -574,7 +575,7 @@ def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
         return 0, 0
 
     fn_re = re.compile(
-        r"((?:\s*///[^\n]*\n)+(?:\s*#\[[^\n]*\n)*)\s*pub(?:\s+unsafe)?(?:\s+extern\s+\"C\")?\s+fn\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)",
+        r"((?:\s*///[^\n]*\n)+(?:\s*#\[[^\n]*\n)*)\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:unsafe\s+)?(?:extern\s+\"C\"\s+)?fn\s+([A-Za-z0-9_]+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)",
         re.MULTILINE,
     )
     param_re = re.compile(r"^\s*(?:mut\s+)?([A-Za-z0-9_]+)\s*:")
@@ -600,7 +601,7 @@ def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
 
 
 def calculate_python_doc_coverage(repo_root: Path) -> tuple[int, int]:
-    """Calculates documented vs total modules, classes, functions, and args in Python.
+    """Calculates documented vs total modules, classes, functions, and args in `.py`/`.pyi`.
 
     Args:
         repo_root: Path to the workspace root directory.
@@ -611,9 +612,11 @@ def calculate_python_doc_coverage(repo_root: Path) -> tuple[int, int]:
     total_items = 0
     with_docs = 0
     py_files = sorted((repo_root / "python" / "libtpu").rglob("*.py"))
+    py_files.extend(sorted((repo_root / "python" / "libtpu").rglob("*.pyi")))
     scripts_dir = repo_root / "scripts"
     if scripts_dir.exists():
         py_files.extend(sorted(scripts_dir.rglob("*.py")))
+        py_files.extend(sorted(scripts_dir.rglob("*.pyi")))
 
     for py_file in py_files:
         tree = ast.parse(py_file.read_text(encoding="utf-8"))
@@ -1027,6 +1030,23 @@ def verify_rust_and_c_abi_sources(repo_root: Path) -> list[str]:
         for req_name in required_names:
             if req_name not in py_text:
                 errors.append(f"Python wheel API symbol {req_name} missing from {rel_py}")
+
+    cargo_toml = repo_root / "Cargo.toml"
+    if cargo_toml.exists():
+        cargo_text = cargo_toml.read_text(encoding="utf-8")
+        if "anyhow" in cargo_text or "thiserror" in cargo_text:
+            errors.append("Forbidden dependency anyhow/thiserror found in Cargo.toml")
+
+    error_rs = repo_root / "crates" / "libtpu-core" / "src" / "error.rs"
+    if error_rs.exists():
+        error_text = error_rs.read_text(encoding="utf-8")
+        if "pub enum LibTpuError" not in error_text or "Display, Error, From" not in error_text:
+            errors.append("LibTpuError in error.rs must derive Display, Error, From")
+
+    for rs_file in sorted((repo_root / "crates").rglob("*.rs")):
+        rs_text = rs_file.read_text(encoding="utf-8")
+        if ".unwrap(" in rs_text or ".expect(" in rs_text:
+            errors.append(f"Forbidden .unwrap() or .expect() found in {rs_file.name}")
 
     return errors
 

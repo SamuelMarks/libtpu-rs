@@ -529,7 +529,7 @@
     {
       "word_index": 62,
       "byte_offset": "0x1f0",
-      "min_struct_size": null,
+      "min_struct_size": 40,
       "vaddr": "0x0c591ef0",
       "mangled_symbol": "_ZN4pjrt33PJRT_LoadedExecutable_FingerprintEP38PJRT_LoadedExecutable_Fingerprint_Args"
     },
@@ -781,7 +781,7 @@
     {
       "word_index": 98,
       "byte_offset": "0x310",
-      "min_struct_size": null,
+      "min_struct_size": 72,
       "vaddr": "0x0c596ed0",
       "mangled_symbol": "_ZN4pjrt36PJRT_Client_CreateViewOfDeviceBufferEP41PJRT_Client_CreateViewOfDeviceBuffer_Args"
     },

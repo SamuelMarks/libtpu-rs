@@ -4,8 +4,23 @@
 //! (`Add`, `Display`, `From`, `Into`, `Sub`) to eliminate primitive obsession.
 
 use crate::error::{LibTpuError, LibTpuResult};
+use bytemuck::{Pod, Zeroable};
 use derive_more::{Add, Display, From, Into, Sub};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use smallvec::SmallVec;
 use std::marker::PhantomData;
+
+/// IEEE 754 16-bit half-precision floating-point scalar type (`f16`) re-exported from `half`.
+pub type F16Scalar = half::f16;
+
+/// 16-bit Brain Floating-Point scalar type (`bf16`) re-exported from `half`.
+pub type Bf16Scalar = half::bf16;
+
+/// Stack-inlined dimension vector capable of storing up to 6 tensor dimensions without heap allocation.
+pub type DimVec = SmallVec<[i64; 6]>;
+
+/// Stack-inlined dynamic dimension flag vector capable of storing up to 6 flags without heap allocation.
+pub type DynamicDimVec = SmallVec<[bool; 6]>;
 
 /// Unique identifier for a logical TPU device (`PJRT_Device_Id`).
 #[derive(
@@ -111,6 +126,260 @@ pub struct HostVirtualAddress(pub u64);
 )]
 #[display("{_0:#x}")]
 pub struct IovaAddress(pub u64);
+
+/// On-chip Vector Memory (VMEM) byte offset (`VmemAddress`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#x}")]
+pub struct VmemAddress(pub u32);
+
+/// On-chip Scalar Memory (SMEM) byte offset (`SmemAddress`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#x}")]
+pub struct SmemAddress(pub u32);
+
+/// On-chip Collective Memory (CMEM) byte offset (`CmemAddress`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#x}")]
+pub struct CmemAddress(pub u32);
+
+/// Type alias for [`DeviceAddress`] representing an HBM byte offset (`HbmOffset`).
+pub type HbmOffset = DeviceAddress;
+
+/// Type alias for [`IovaAddress`] representing an IOMMU IOVA address (`IovaAddr`).
+pub type IovaAddr = IovaAddress;
+
+/// Type alias for [`VmemAddress`] representing a VMEM byte offset (`VmemOffset`).
+pub type VmemOffset = VmemAddress;
+
+/// Type alias for [`SmemAddress`] representing an SMEM byte offset (`SmemOffset`).
+pub type SmemOffset = SmemAddress;
+
+/// Type alias for [`CmemAddress`] representing a CMEM byte offset (`CmemOffset`).
+pub type CmemOffset = CmemAddress;
+
+/// Type alias for [`MmioOffset`] representing a `PCIe` BAR byte offset (`BarOffset`).
+pub type BarOffset = MmioOffset;
+
+/// Dedicated identifier for a `SparseCore` or sub-core tile sequencer (`SparseCoreId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct SparseCoreId(pub u32);
+
+/// Physical or BAR-relative Control and Status Register byte offset (`CsrAddress`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#x}")]
+pub struct CsrAddress(pub u64);
+
+/// Type alias for [`AlignmentBytes`] (`Alignment`).
+pub type Alignment = AlignmentBytes;
+
+/// Instruction Memory (`IMEM`) or `SparseCore` overlay identifier (`OverlayId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct OverlayId(pub u32);
+
+/// Host command continuation queue sequence identifier (`ContinuationId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct ContinuationId(pub u64);
+
+/// Unique execution run identifier for a `PJRT_LoadedExecutable_Execute` invocation (`RunId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct RunId(pub u64);
+
+pub use crate::error::LibtpuSdkErrorCode;
+
+/// Hardware-to-host command opcode (`tpu.HostCommandOpcodeProto` / `TN_QUEUE_CONTINUATION`).
+#[repr(i32)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Display,
+    num_enum::IntoPrimitive,
+    num_enum::TryFromPrimitive,
+)]
+pub enum HostCommandOpcode {
+    /// Unspecified / no-op host command (`0`).
+    #[display("HOST_COMMAND_UNSPECIFIED")]
+    Unspecified = 0,
+    /// Invoke a registered Python or C++ host callback (`1`).
+    #[display("HOST_CALLBACK")]
+    HostCallback = 1,
+    /// Dequeue next tensor batch from host infeed queue (`2`).
+    #[display("INFEED_DEQUEUE")]
+    InfeedDequeue = 2,
+    /// Enqueue device tensor payload into host outfeed queue (`3`).
+    #[display("OUTFEED_ENQUEUE")]
+    OutfeedEnqueue = 3,
+    /// Emit a device-side `tpu.trace` or debug print message (`4`).
+    #[display("DEVICE_PRINT")]
+    DevicePrint = 4,
+    /// Signal a device-side assertion trap (`5`).
+    #[display("DEVICE_ASSERT")]
+    DeviceAssert = 5,
+    /// Execute a cross-host barrier synchronization (`6`).
+    #[display("RENDEZVOUS_BARRIER")]
+    RendezvousBarrier = 6,
+    /// Resolve dynamic slice / dynamic update slice offsets on host (`7`).
+    #[display("DYNAMIC_SLICE_RESOLVE")]
+    DynamicSliceResolve = 7,
+    /// Resume `TN_QUEUE_CONTINUATION` after host offloading completion (`8`).
+    #[display("QUEUE_CONTINUATION")]
+    QueueContinuation = 8,
+}
+
+/// Type alias for [`TpuCoreTypeEnum`] (`TpuCoreType`).
+pub type TpuCoreType = TpuCoreTypeEnum;
+
+/// Type alias for [`MemoryKind`] (`MemorySpaceKind`).
+pub type MemorySpaceKind = MemoryKind;
+
+/// Hardware DMA transfer direction (`DmaDirection`).
+#[repr(u32)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Display,
+    num_enum::IntoPrimitive,
+    num_enum::TryFromPrimitive,
+)]
+pub enum DmaDirection {
+    /// Host RAM to Device HBM/VMEM (`0`).
+    #[display("HostToDevice")]
+    HostToDevice = 0,
+    /// Device HBM/VMEM to Host RAM (`1`).
+    #[display("DeviceToHost")]
+    DeviceToHost = 1,
+    /// Intra-chip Device-to-Device HBM/VMEM copy (`2`).
+    #[display("DeviceToDevice")]
+    DeviceToDevice = 2,
+    /// Cross-chip Inter-Chip Interconnect (ICI) remote DMA (`3`).
+    #[display("IciRemote")]
+    IciRemote = 3,
+}
+
+/// Architectural hardware synchronization flag identifier (`SyncFlagId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct SyncFlagId(pub u32);
+
+/// `PCIe` Bus:Device.Function address (`BdfAddress`, e.g., `0000:00:04.0`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[display("{domain:04x}:{bus:02x}:{device:02x}.{function}")]
+pub struct BdfAddress {
+    /// 16-bit PCI domain number (`0x0000`..`0xffff`).
+    pub domain: u16,
+    /// 8-bit PCI bus number (`0x00`..`0xff`).
+    pub bus: u8,
+    /// 5-bit PCI device slot number (`0x00`..`0x1f`).
+    pub device: u8,
+    /// 3-bit PCI function number (`0`..`7`).
+    pub function: u8,
+}
+
+impl BdfAddress {
+    /// Constructs a new [`BdfAddress`] from domain, bus, device, and function numbers.
+    ///
+    /// # Arguments
+    ///
+    /// * `domain` - 16-bit PCI domain number.
+    /// * `bus` - 8-bit PCI bus number.
+    /// * `device` - 5-bit PCI device slot number.
+    /// * `function` - 3-bit PCI function number.
+    #[must_use]
+    pub const fn new(domain: u16, bus: u8, device: u8, function: u8) -> Self {
+        Self {
+            domain,
+            bus,
+            device,
+            function,
+        }
+    }
+
+    /// Parses a `sysfs` BDF string such as `"0000:00:04.0"` into a [`BdfAddress`].
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - BDF slot string in `DDDD:BB:DD.F` format.
+    #[must_use]
+    pub fn parse_bdf(raw: &str) -> Option<Self> {
+        let trimmed = raw.trim();
+        let (domain_str, rest) = trimmed.split_once(':')?;
+        let (bus_str, dev_fn_str) = rest.split_once(':')?;
+        let (dev_str, fn_str) = dev_fn_str.split_once('.')?;
+        let domain = u16::from_str_radix(domain_str, 16).ok()?;
+        let bus = u8::from_str_radix(bus_str, 16).ok()?;
+        let device = u8::from_str_radix(dev_str, 16).ok()?;
+        let function = u8::from_str_radix(fn_str, 16).ok()?;
+        Some(Self::new(domain, bus, device, function))
+    }
+}
+
+/// Type alias for [`BdfAddress`] (`PciBdfSlot`).
+pub type PciBdfSlot = BdfAddress;
+
+/// Type alias for [`BdfAddress`] (`PciBdfAddress`).
+pub type PciBdfAddress = BdfAddress;
+
+/// `PCIe` configuration space Revision ID (`PciRevisionId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#04x}")]
+pub struct PciRevisionId(pub u8);
+
+/// Context identifier for `XSpace` `TraceMe` profiler scopes (`TraceMeContextId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct TraceMeContextId(pub i64);
+
+/// Monotonic runtime or executable ABI version number (`AbiVersionNumber`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct AbiVersionNumber(pub u64);
 
 /// `PCIe` Base Address Register (BAR) MMIO byte offset (`MmioOffset`).
 #[derive(
@@ -260,11 +529,101 @@ pub struct ChannelId(pub i64);
 pub struct WindowId(pub u32);
 
 /// Unique incarnation identifier for a distributed PJRT task (`IncarnationId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
 #[display("{_0}")]
 pub struct IncarnationId(pub i64);
+
+/// Globally unique 64-bit TPU chip identifier across a multi-slice pod (`GlobalChipId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct GlobalChipId(pub u64);
+
+/// Unique identifier for a Megascale or multi-slice synchronization barrier (`BarrierId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct BarrierId(pub u64);
+
+/// Hardware Gasket IOMMU page table index (`PageTableIndex`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct PageTableIndex(pub u32);
+
+/// Hardware MSI-X interrupt vector index (`InterruptVector`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct InterruptVector(pub u32);
+
+/// `TensorCore` Scalar Register index (`SregIndex`, `0..32`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("s{_0}")]
+pub struct SregIndex(pub u8);
+
+/// `TensorCore` Vector Register index (`VregIndex`, `0..64`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("v{_0}")]
+pub struct VregIndex(pub u8);
+
+/// `TensorCore` Scalar Predicate Register index (`PregIndex`, `0..16`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("p{_0}")]
+pub struct PregIndex(pub u8);
+
+/// `TensorCore` 8-bit Vector Mask register bitmask (`VmaskBits`).
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
+#[display("{_0:#04x}")]
+pub struct VmaskBits(pub u8);
+
+/// On-chip Vector Memory (VMEM) 32-bit word offset (`VmOffset`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#x}")]
+pub struct VmOffset(pub u32);
+
+/// On-chip Scalar Memory (SMEM) 32-bit word offset (`SmOffset`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#x}")]
+pub struct SmOffset(pub u32);
+
+/// `TensorCore` VLIW instruction bundle Program Counter (`BundlePc`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#x}")]
+pub struct BundlePc(pub u32);
+
+/// Type alias representing a 2D TPU tile shape (`TileShape`).
+pub type TileShape = (i64, i64);
 
 /// Type alias for [`CollectiveReductionOp`] (`ReductionKind`).
 pub type ReductionKind = CollectiveReductionOp;
@@ -288,6 +647,9 @@ pub enum TilingKind {
     #[display("CustomTile")]
     CustomTile,
 }
+
+/// Type alias for [`TilingKind`] (`TilingSpec`).
+pub type TilingSpec = TilingKind;
 
 /// Collective reduction operation kind (`CollectiveReductionOp`).
 #[repr(i32)]
@@ -343,9 +705,16 @@ impl CollectiveReductionOp {
 pub struct FileDescriptor(pub i32);
 
 /// Linux `eventfd` interrupt notification descriptor (`EventFdHandle`).
+#[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
 #[display("{_0}")]
 pub struct EventFdHandle(pub i32);
+
+/// Linux `dma_buf` file descriptor for zero-copy HBM/PCIe peer-to-peer DMA (`DmaBufFd`).
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
+#[display("{_0}")]
+pub struct DmaBufFd(pub i32);
 
 /// Kernel `ioctl` request command code (`IoctlCommand`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
@@ -369,7 +738,7 @@ pub struct IommuGroupId(pub u32);
 
 /// TPU hardware core type classification (`TpuCoreTypeEnum`) matching `libtpu.so` topology queries.
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, TryFromPrimitive, IntoPrimitive)]
 pub enum TpuCoreTypeEnum {
     /// Primary dense matrix/vector `TensorCore` (`0`).
     #[display("TensorCore")]
@@ -377,6 +746,9 @@ pub enum TpuCoreTypeEnum {
     /// Dedicated embedding `SparseCore` (`1`).
     #[display("SparseCore")]
     SparseCore = 1,
+    /// Legacy v2/v3 `BarnaCore` embedding lookup engine (`2`).
+    #[display("BarnaCore")]
+    BarnaCore = 2,
 }
 
 impl TpuCoreTypeEnum {
@@ -390,14 +762,10 @@ impl TpuCoreTypeEnum {
     ///
     /// Returns [`LibTpuError::InvalidArgument`] if `raw` is not `0` or `1`.
     pub fn from_raw(raw: i32) -> LibTpuResult<Self> {
-        match raw {
-            0 => Ok(Self::TensorCore),
-            1 => Ok(Self::SparseCore),
-            _ => Err(LibTpuError::InvalidArgument {
-                parameter: "core_type",
-                reason: format!("Unknown TpuCoreTypeEnum discriminant {raw}"),
-            }),
-        }
+        Self::try_from(raw).map_err(|_| LibTpuError::InvalidArgument {
+            parameter: "core_type",
+            reason: format!("Unknown TpuCoreTypeEnum discriminant {raw}"),
+        })
     }
 
     /// Returns the raw 32-bit integer discriminant of this [`TpuCoreTypeEnum`].
@@ -409,7 +777,7 @@ impl TpuCoreTypeEnum {
 
 /// 3D torus coordinates `(x, y, z)` of a TPU chip or host in a pod slice.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, Pod, Zeroable)]
 #[display("({x}, {y}, {z})")]
 pub struct ChipCoordinates {
     /// X coordinate in the torus mesh.
@@ -442,11 +810,60 @@ impl ChipCoordinates {
     pub const fn matches(self, other: Self) -> bool {
         self.x == other.x && self.y == other.y && self.z == other.z
     }
+
+    /// Computes the 3D Manhattan distance between `self` and `other`.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - Target 3D coordinates.
+    #[must_use]
+    pub const fn manhattan_distance(self, other: Self) -> u32 {
+        self.x
+            .abs_diff(other.x)
+            .saturating_add(self.y.abs_diff(other.y))
+            .saturating_add(self.z.abs_diff(other.z))
+    }
+
+    /// Computes the 3D torus distance between `self` and `other` given mesh `bounds` and `wrap` flags.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - Target 3D coordinates.
+    /// * `bounds` - Mesh dimensions `(bx, by, bz)`.
+    /// * `wrap` - Per-axis torus wrap flags `(wx, wy, wz)`.
+    #[must_use]
+    pub fn torus_distance(self, other: Self, bounds: Self, wrap: (bool, bool, bool)) -> u32 {
+        let axis_dist = |a: u32, b: u32, bound: u32, wrapped: bool| -> u32 {
+            let d = a.abs_diff(b);
+            if wrapped {
+                d.min(bound.saturating_sub(d))
+            } else {
+                d
+            }
+        };
+        axis_dist(self.x, other.x, bounds.x, wrap.0)
+            .saturating_add(axis_dist(self.y, other.y, bounds.y, wrap.1))
+            .saturating_add(axis_dist(self.z, other.z, bounds.z, wrap.2))
+    }
+
+    /// Computes the row-major linear index of `self` within `bounds`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bounds` - Mesh dimensions `(bx, by, bz)`.
+    #[must_use]
+    pub const fn row_major_index(self, bounds: Self) -> u32 {
+        self.x
+            .saturating_mul(bounds.y)
+            .saturating_add(self.y)
+            .saturating_mul(bounds.z)
+            .saturating_add(self.z)
+    }
 }
 
 /// Google Cloud TPU hardware architecture generation (`TpuVersionEnum`).
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, TryFromPrimitive, IntoPrimitive)]
 pub enum TpuGeneration {
     /// Cloud TPU v2 (`Jellyfish`, 2 `TensorCores`/chip, 8 GiB HBM/core).
     #[display("TPU v2")]
@@ -457,6 +874,9 @@ pub enum TpuGeneration {
     /// Cloud TPU v4 (`Pufferfish`, Megacore, 32 GiB HBM/chip, `SparseCore` v1).
     #[display("TPU v4")]
     V4 = 4,
+    /// Cloud TPU v4 lite (`Pufferfish Lite`, 1 `TensorCore`/chip, 16 GiB HBM/chip).
+    #[display("TPU v4 lite")]
+    V4Lite = 9,
     /// Cloud TPU v5e / v5lite (`Viperfish Lite`, 1 `TensorCore`/chip, 16 GiB HBM/chip).
     #[display("TPU v5 lite")]
     V5e = 5,
@@ -490,6 +910,7 @@ impl TpuGeneration {
             "v2" | "tpu_v2" | "jellyfish" => Ok(Self::V2),
             "v3" | "tpu_v3" | "dragonfish" => Ok(Self::V3),
             "v4" | "tpu_v4" | "pufferfish" => Ok(Self::V4),
+            "v4lite" | "tpu_v4lite" | "pufferfish_lite" => Ok(Self::V4Lite),
             "v5e" | "v5lite" | "tpu_v5e" | "tpu_v5lite" | "viperfish_lite" => Ok(Self::V5e),
             "v5p" | "tpu_v5p" | "viperfish" => Ok(Self::V5p),
             "v6e" | "v6lite" | "tpu_v6e" | "trillium" | "ghostfish" => Ok(Self::V6e),
@@ -514,6 +935,7 @@ impl TpuGeneration {
         match self {
             Self::V2 | Self::V3 => 0x0027,
             Self::V4 => 0x0056,
+            Self::V4Lite => 0x005e,
             Self::V5e => 0x0063,
             Self::V5p => 0x0062,
             Self::V6e => 0x006f,
@@ -532,7 +954,7 @@ impl TpuGeneration {
     pub const fn hbm_capacity_bytes(self) -> ByteSize {
         match self {
             Self::V2 => ByteSize(8 * 1024 * 1024 * 1024),
-            Self::V3 | Self::V5e => ByteSize(16 * 1024 * 1024 * 1024),
+            Self::V3 | Self::V4Lite | Self::V5e => ByteSize(16 * 1024 * 1024 * 1024),
             Self::V4 | Self::V6e => ByteSize(32 * 1024 * 1024 * 1024),
             Self::V5p => ByteSize(95 * 1024 * 1024 * 1024),
             Self::V7x => ByteSize(192 * 1024 * 1024 * 1024),
@@ -543,7 +965,7 @@ impl TpuGeneration {
     #[must_use]
     pub const fn vmem_capacity_bytes(self) -> ByteSize {
         match self {
-            Self::V2 | Self::V3 => ByteSize(16 * 1024 * 1024),
+            Self::V2 | Self::V3 | Self::V4Lite => ByteSize(16 * 1024 * 1024),
             Self::V4 | Self::V5e => ByteSize(32 * 1024 * 1024),
             Self::V5p | Self::V6e | Self::V7x => ByteSize(64 * 1024 * 1024),
         }
@@ -553,8 +975,17 @@ impl TpuGeneration {
     #[must_use]
     pub const fn smem_capacity_bytes(self) -> ByteSize {
         match self {
-            Self::V2 | Self::V3 | Self::V4 | Self::V5e => ByteSize(1024 * 1024),
+            Self::V2 | Self::V3 | Self::V4 | Self::V4Lite | Self::V5e => ByteSize(1024 * 1024),
             Self::V5p | Self::V6e | Self::V7x => ByteSize(2 * 1024 * 1024),
+        }
+    }
+
+    /// Returns the on-chip Collective Memory (CMEM) capacity per chip in bytes.
+    #[must_use]
+    pub const fn cmem_capacity_bytes(self) -> ByteSize {
+        match self {
+            Self::V4 | Self::V5p | Self::V7x => ByteSize(128 * 1024 * 1024),
+            Self::V2 | Self::V3 | Self::V4Lite | Self::V5e | Self::V6e => ByteSize(0),
         }
     }
 
@@ -562,7 +993,7 @@ impl TpuGeneration {
     #[must_use]
     pub const fn mxu_dimension(self) -> u32 {
         match self {
-            Self::V2 | Self::V3 | Self::V4 | Self::V5e | Self::V5p => 128,
+            Self::V2 | Self::V3 | Self::V4 | Self::V4Lite | Self::V5e | Self::V5p => 128,
             Self::V6e | Self::V7x => 256,
         }
     }
@@ -572,7 +1003,7 @@ impl TpuGeneration {
     pub const fn hbm_bandwidth_gbps(self) -> u32 {
         match self {
             Self::V2 => 600,
-            Self::V3 => 900,
+            Self::V3 | Self::V4Lite => 900,
             Self::V4 => 1200,
             Self::V5e => 820,
             Self::V5p => 2765,
@@ -587,6 +1018,7 @@ impl TpuGeneration {
         match self {
             Self::V2 => 45,
             Self::V3 => 123,
+            Self::V4Lite => 138,
             Self::V4 => 275,
             Self::V5e => 197,
             Self::V5p => 459,
@@ -599,7 +1031,7 @@ impl TpuGeneration {
     #[must_use]
     pub const fn ici_link_count(self) -> u32 {
         match self {
-            Self::V2 | Self::V3 | Self::V5e | Self::V6e => 4,
+            Self::V2 | Self::V3 | Self::V4Lite | Self::V5e | Self::V6e => 4,
             Self::V4 | Self::V5p | Self::V7x => 6,
         }
     }
@@ -609,7 +1041,7 @@ impl TpuGeneration {
     pub const fn logical_devices_per_chip(self) -> u32 {
         match self {
             Self::V2 | Self::V3 => 2,
-            Self::V4 | Self::V5e | Self::V5p | Self::V6e | Self::V7x => 1,
+            Self::V4 | Self::V4Lite | Self::V5e | Self::V5p | Self::V6e | Self::V7x => 1,
         }
     }
 
@@ -617,7 +1049,7 @@ impl TpuGeneration {
     #[must_use]
     pub const fn sparse_cores_per_device(self) -> u32 {
         match self {
-            Self::V2 | Self::V3 => 0,
+            Self::V2 | Self::V3 | Self::V4Lite => 0,
             Self::V5e | Self::V6e => 2,
             Self::V4 | Self::V5p | Self::V7x => 4,
         }
@@ -627,15 +1059,86 @@ impl TpuGeneration {
     #[must_use]
     pub const fn xla_pad_size(self) -> i32 {
         match self {
-            Self::V2 | Self::V3 | Self::V4 | Self::V5e | Self::V5p => 128,
+            Self::V2 | Self::V3 | Self::V4 | Self::V4Lite | Self::V5e | Self::V5p => 128,
             Self::V6e | Self::V7x => 256,
+        }
+    }
+
+    /// Returns the number of physical `TensorCores` per TPU chip.
+    #[must_use]
+    pub const fn tensor_cores_per_chip(self) -> u32 {
+        match self {
+            Self::V4Lite | Self::V5e | Self::V6e => 1,
+            Self::V2 | Self::V3 | Self::V4 | Self::V5p | Self::V7x => 2,
+        }
+    }
+
+    /// Returns the number of physical `SparseCores` per TPU chip.
+    #[must_use]
+    pub const fn sparse_cores_per_chip(self) -> u32 {
+        self.sparse_cores_per_device()
+    }
+
+    /// Returns the number of Matrix Multiply Units (MXUs) per `TensorCore`.
+    #[must_use]
+    pub const fn mxu_count_per_core(self) -> u32 {
+        match self {
+            Self::V2 => 1,
+            Self::V3 | Self::V4 | Self::V4Lite | Self::V6e => 2,
+            Self::V5e | Self::V5p | Self::V7x => 4,
+        }
+    }
+
+    /// Returns the 2D systolic array dimensions `(rows, cols)` of each MXU.
+    #[must_use]
+    pub const fn mxu_systolic_dim(self) -> (u32, u32) {
+        let dim = self.mxu_dimension();
+        (dim, dim)
+    }
+
+    /// Returns the Vector Processing Unit (VPU) `(lanes, sublanes)` geometry (`(128, 8)`).
+    #[must_use]
+    pub const fn vpu_lanes_and_sublanes(self) -> (u32, u32) {
+        let _ = self;
+        (128, 8)
+    }
+
+    /// Returns the total HBM capacity per physical TPU chip in bytes.
+    #[must_use]
+    pub const fn hbm_capacity_bytes_per_chip(self) -> ByteSize {
+        match self {
+            Self::V2 | Self::V4Lite | Self::V5e => ByteSize(16 * 1024 * 1024 * 1024),
+            Self::V3 | Self::V4 | Self::V6e => ByteSize(32 * 1024 * 1024 * 1024),
+            Self::V5p => ByteSize(95 * 1024 * 1024 * 1024),
+            Self::V7x => ByteSize(192 * 1024 * 1024 * 1024),
+        }
+    }
+
+    /// Returns the on-chip VMEM capacity per `TensorCore` in bytes.
+    #[must_use]
+    pub const fn vmem_capacity_bytes_per_core(self) -> ByteSize {
+        self.vmem_capacity_bytes()
+    }
+
+    /// Returns the on-chip SMEM capacity per `TensorCore` in bytes.
+    #[must_use]
+    pub const fn smem_capacity_bytes_per_core(self) -> ByteSize {
+        self.smem_capacity_bytes()
+    }
+
+    /// Returns the default primary 2D minor-to-major tile shape `(second_minor, most_minor)` for this TPU generation.
+    #[must_use]
+    pub const fn default_minor_to_major_tile(self) -> TileShape {
+        match self {
+            Self::V2 | Self::V3 | Self::V4 | Self::V4Lite | Self::V5e | Self::V5p => (8, 128),
+            Self::V6e | Self::V7x => (16, 256),
         }
     }
 }
 
 /// Tensor element data type matching `PJRT_Buffer_Type`.
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, TryFromPrimitive, IntoPrimitive)]
 pub enum ElementType {
     /// Invalid or unspecified element type (`0`).
     #[display("INVALID")]
@@ -721,6 +1224,9 @@ pub enum ElementType {
     /// 8-bit block scaling exponent E8M0FNU (`27`).
     #[display("F8E8M0FNU")]
     F8E8M0Fnu = 27,
+    /// XLA tuple composite type (`28`).
+    #[display("TUPLE")]
+    Tuple = 28,
 }
 
 impl ElementType {
@@ -732,7 +1238,7 @@ impl ElementType {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::UnsupportedElementType`] if `raw` is outside `0..=27`.
+    /// Returns [`LibTpuError::UnsupportedElementType`] if `raw` is outside `0..=28`.
     pub const fn from_raw(raw: i32) -> LibTpuResult<Self> {
         match raw {
             0 => Ok(Self::Invalid),
@@ -763,6 +1269,7 @@ impl ElementType {
             25 => Ok(Self::U2),
             26 => Ok(Self::F4E2M1Fn),
             27 => Ok(Self::F8E8M0Fnu),
+            28 => Ok(Self::Tuple),
             _ => Err(LibTpuError::UnsupportedElementType { raw_type: raw }),
         }
     }
@@ -777,7 +1284,7 @@ impl ElementType {
     #[must_use]
     pub const fn bit_size(self) -> usize {
         match self {
-            Self::Invalid | Self::Token => 0,
+            Self::Invalid | Self::Token | Self::Tuple => 0,
             Self::S2 | Self::U2 => 2,
             Self::S4 | Self::U4 | Self::F4E2M1Fn => 4,
             Self::Pred
@@ -842,6 +1349,80 @@ impl ElementType {
         half::f16::from_bits(bits).to_f32()
     }
 
+    /// Converts an IEEE-754 `f32` to 8-bit `F8E4M3FN` bits using `float8::F8E4M3`.
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - 32-bit float value.
+    #[must_use]
+    pub const fn f32_to_f8e4m3_bits(val: f32) -> u8 {
+        float8::F8E4M3::from_f32(val).to_bits()
+    }
+
+    /// Converts 8-bit `F8E4M3FN` bits to an IEEE-754 `f32` using `float8::F8E4M3`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bits` - 8-bit `F8E4M3FN` bit pattern.
+    #[must_use]
+    pub const fn f8e4m3_bits_to_f32(bits: u8) -> f32 {
+        float8::F8E4M3::from_bits(bits).to_f32()
+    }
+
+    /// Converts an IEEE-754 `f32` to 8-bit `F8E5M2` bits using `float8::F8E5M2`.
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - 32-bit float value.
+    #[must_use]
+    pub const fn f32_to_f8e5m2_bits(val: f32) -> u8 {
+        float8::F8E5M2::from_f32(val).to_bits()
+    }
+
+    /// Converts 8-bit `F8E5M2` bits to an IEEE-754 `f32` using `float8::F8E5M2`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bits` - 8-bit `F8E5M2` bit pattern.
+    #[must_use]
+    pub const fn f8e5m2_bits_to_f32(bits: u8) -> f32 {
+        float8::F8E5M2::from_bits(bits).to_f32()
+    }
+
+    /// Packs a slice of `num_complex::Complex64` values into little-endian `C128` (`[f64; 2]`) bytes.
+    ///
+    /// # Arguments
+    ///
+    /// * `values` - Slice of complex double-precision numbers.
+    #[must_use]
+    pub fn pack_complex64_slice(values: &[num_complex::Complex64]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(values.len().saturating_mul(16));
+        for c in values {
+            out.extend_from_slice(&c.re.to_le_bytes());
+            out.extend_from_slice(&c.im.to_le_bytes());
+        }
+        out
+    }
+
+    /// Unpacks little-endian `C128` (`[f64; 2]`) bytes into a vector of `num_complex::Complex64`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Raw little-endian `C128` byte payload.
+    #[must_use]
+    pub fn unpack_to_complex64_vec(bytes: &[u8]) -> Vec<num_complex::Complex64> {
+        let scalars = Self::C128.unpack_to_f64_vec(bytes);
+        scalars
+            .chunks_exact(2)
+            .map(|pair| {
+                num_complex::Complex64::new(
+                    pair.first().copied().unwrap_or(0.0),
+                    pair.get(1).copied().unwrap_or(0.0),
+                )
+            })
+            .collect()
+    }
+
     /// Unpacks a raw little-endian byte buffer of this [`ElementType`] into `f64` scalar values
     /// (for `C64` and `C128`, unpacks interleaved `[re0, im0, re1, im1, ...]` scalars).
     ///
@@ -851,6 +1432,7 @@ impl ElementType {
     #[must_use]
     #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     pub fn unpack_to_f64_vec(self, bytes: &[u8]) -> Vec<f64> {
+        let aligned_len = |elem_size: usize| (bytes.len() / elem_size) * elem_size;
         match self {
             Self::Pred | Self::U8 => bytes
                 .iter()
@@ -862,90 +1444,93 @@ impl ElementType {
                     }
                 })
                 .collect(),
-            Self::S8 => bytes
+            Self::S8 | Self::S4 | Self::S2 => bytes
                 .iter()
-                .map(|&b| f64::from(i8::from_le_bytes([b])))
-                .collect(),
-            Self::S16 => bytes
-                .chunks_exact(2)
-                .map(|c| {
-                    let mut a = [0_u8; 2];
-                    a.copy_from_slice(c);
-                    f64::from(i16::from_le_bytes(a))
+                .map(|&b| {
+                    let raw = i8::from_le_bytes([b]);
+                    let clamped = match self {
+                        Self::S4 => raw.clamp(-8, 7),
+                        Self::S2 => raw.clamp(-2, 1),
+                        _ => raw,
+                    };
+                    f64::from(clamped)
                 })
                 .collect(),
-            Self::U16 => bytes
-                .chunks_exact(2)
-                .map(|c| {
-                    let mut a = [0_u8; 2];
-                    a.copy_from_slice(c);
-                    f64::from(u16::from_le_bytes(a))
+            Self::U4 | Self::U2 => bytes
+                .iter()
+                .map(|&b| {
+                    let masked = if self == Self::U4 { b & 0x0F } else { b & 0x03 };
+                    f64::from(masked)
                 })
                 .collect(),
-            Self::F16 => bytes
-                .chunks_exact(2)
-                .map(|c| {
-                    let mut a = [0_u8; 2];
-                    a.copy_from_slice(c);
-                    f64::from(Self::f16_bits_to_f32(u16::from_le_bytes(a)))
-                })
+            Self::F8E4M3Fn | Self::F8E4M3B11Fnuz | Self::F8E4M3Fnuz => bytes
+                .iter()
+                .map(|&b| f64::from(Self::f8e4m3_bits_to_f32(b)))
                 .collect(),
-            Self::Bf16 => bytes
-                .chunks_exact(2)
-                .map(|c| {
-                    let mut a = [0_u8; 2];
-                    a.copy_from_slice(c);
-                    f64::from(Self::bf16_bits_to_f32(u16::from_le_bytes(a)))
-                })
+            Self::F8E5M2 | Self::F8E5M2Fnuz => bytes
+                .iter()
+                .map(|&b| f64::from(Self::f8e5m2_bits_to_f32(b)))
                 .collect(),
-            Self::S32 => bytes
-                .chunks_exact(4)
-                .map(|c| {
-                    let mut a = [0_u8; 4];
-                    a.copy_from_slice(c);
-                    f64::from(i32::from_le_bytes(a))
-                })
-                .collect(),
-            Self::U32 => bytes
-                .chunks_exact(4)
-                .map(|c| {
-                    let mut a = [0_u8; 4];
-                    a.copy_from_slice(c);
-                    f64::from(u32::from_le_bytes(a))
-                })
-                .collect(),
-            Self::F32 | Self::C64 => bytes
-                .chunks_exact(4)
-                .map(|c| {
-                    let mut a = [0_u8; 4];
-                    a.copy_from_slice(c);
-                    f64::from(f32::from_le_bytes(a))
-                })
-                .collect(),
-            Self::S64 => bytes
-                .chunks_exact(8)
-                .map(|c| {
-                    let mut a = [0_u8; 8];
-                    a.copy_from_slice(c);
-                    i64::from_le_bytes(a) as f64
-                })
-                .collect(),
-            Self::U64 => bytes
-                .chunks_exact(8)
-                .map(|c| {
-                    let mut a = [0_u8; 8];
-                    a.copy_from_slice(c);
-                    u64::from_le_bytes(a) as f64
-                })
-                .collect(),
-            Self::F64 | Self::C128 => bytes
-                .chunks_exact(8)
-                .map(|c| {
-                    let mut a = [0_u8; 8];
-                    a.copy_from_slice(c);
-                    f64::from_le_bytes(a)
-                })
-                .collect(),
+            Self::S16 => bytemuck::pod_collect_to_vec::<u8, i16>(
+                bytes.get(..aligned_len(2)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| f64::from(i16::from_le(v)))
+            .collect(),
+            Self::U16 => bytemuck::pod_collect_to_vec::<u8, u16>(
+                bytes.get(..aligned_len(2)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| f64::from(u16::from_le(v)))
+            .collect(),
+            Self::F16 => bytemuck::pod_collect_to_vec::<u8, u16>(
+                bytes.get(..aligned_len(2)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| f64::from(F16Scalar::from_bits(u16::from_le(v)).to_f32()))
+            .collect(),
+            Self::Bf16 => bytemuck::pod_collect_to_vec::<u8, u16>(
+                bytes.get(..aligned_len(2)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| f64::from(Bf16Scalar::from_bits(u16::from_le(v)).to_f32()))
+            .collect(),
+            Self::S32 => bytemuck::pod_collect_to_vec::<u8, i32>(
+                bytes.get(..aligned_len(4)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| f64::from(i32::from_le(v)))
+            .collect(),
+            Self::U32 => bytemuck::pod_collect_to_vec::<u8, u32>(
+                bytes.get(..aligned_len(4)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| f64::from(u32::from_le(v)))
+            .collect(),
+            Self::F32 | Self::C64 => bytemuck::pod_collect_to_vec::<u8, u32>(
+                bytes.get(..aligned_len(4)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|bits| f64::from(f32::from_bits(u32::from_le(bits))))
+            .collect(),
+            Self::S64 => bytemuck::pod_collect_to_vec::<u8, i64>(
+                bytes.get(..aligned_len(8)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| i64::from_le(v) as f64)
+            .collect(),
+            Self::U64 => bytemuck::pod_collect_to_vec::<u8, u64>(
+                bytes.get(..aligned_len(8)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| u64::from_le(v) as f64)
+            .collect(),
+            Self::F64 | Self::C128 => bytemuck::pod_collect_to_vec::<u8, u64>(
+                bytes.get(..aligned_len(8)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|bits| f64::from_bits(u64::from_le(bits)))
+            .collect(),
             _ => bytes.iter().map(|&b| f64::from(b)).collect(),
         }
     }
@@ -969,9 +1554,36 @@ impl ElementType {
                     out.push(u8::from(v != 0.0));
                 }
             }
-            Self::S8 => {
+            Self::S8 | Self::S4 | Self::S2 => {
                 for &v in values {
-                    out.extend_from_slice(&(v as i8).to_le_bytes());
+                    let raw = v as i8;
+                    let clamped = match self {
+                        Self::S4 => raw.clamp(-8, 7),
+                        Self::S2 => raw.clamp(-2, 1),
+                        _ => raw,
+                    };
+                    out.extend_from_slice(&clamped.to_le_bytes());
+                }
+            }
+            Self::U4 | Self::U2 => {
+                for &v in values {
+                    let raw = v as u8;
+                    let masked = if self == Self::U4 {
+                        raw & 0x0F
+                    } else {
+                        raw & 0x03
+                    };
+                    out.push(masked);
+                }
+            }
+            Self::F8E4M3Fn | Self::F8E4M3B11Fnuz | Self::F8E4M3Fnuz => {
+                for &v in values {
+                    out.push(Self::f32_to_f8e4m3_bits(v as f32));
+                }
+            }
+            Self::F8E5M2 | Self::F8E5M2Fnuz => {
+                for &v in values {
+                    out.push(Self::f32_to_f8e5m2_bits(v as f32));
                 }
             }
             Self::S16 => {
@@ -1178,6 +1790,9 @@ pub enum RoutingStrategy {
     Minimal = 2,
 }
 
+/// Type alias for [`RoutingStrategy`] (`IciRoutingStrategy`).
+pub type IciRoutingStrategy = RoutingStrategy;
+
 /// Megascale multi-slice transport layer (`MegascaleTransportType`).
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
@@ -1273,7 +1888,7 @@ pub enum EmbeddingEnginePhase {
 
 /// TPU memory space classification (`PJRT_Memory_Kind`).
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, TryFromPrimitive, IntoPrimitive)]
 pub enum MemoryKind {
     /// High-Bandwidth Memory (`"device"`, ID `0`).
     #[display("device")]
@@ -1287,6 +1902,12 @@ pub enum MemoryKind {
     /// On-chip Vector Memory (`"vmem"`, ID `3`).
     #[display("vmem")]
     Vmem = 3,
+    /// On-chip Scalar Memory (`"smem"`, ID `4`).
+    #[display("smem")]
+    Smem = 4,
+    /// On-chip Collective Memory (`"cmem"`, ID `5`).
+    #[display("cmem")]
+    Cmem = 5,
 }
 
 impl MemoryKind {
@@ -1298,6 +1919,8 @@ impl MemoryKind {
             Self::PinnedHost => "pinned_host",
             Self::UnpinnedHost => "unpinned_host",
             Self::Vmem => "vmem",
+            Self::Smem => "smem",
+            Self::Cmem => "cmem",
         }
     }
 
@@ -1335,15 +1958,41 @@ impl MemoryLayout {
     /// * `rank` - Number of dimensions in the tensor.
     #[must_use]
     pub fn default_tpu_tiled(rank: usize) -> Self {
+        Self::default_tpu_tiled_for_type(rank, ElementType::F32)
+    }
+
+    /// Creates the canonical TPU physical tiled layout for a given `rank` and [`ElementType`],
+    /// including second-level sub-packing tiles (`(2, 1)` for 16-bit, `(4, 1)` for 8-bit, `(8, 1)` for 4-bit).
+    ///
+    /// # Arguments
+    ///
+    /// * `rank` - Number of dimensions in the tensor.
+    /// * `element_type` - Tensor element data type.
+    #[must_use]
+    pub fn default_tpu_tiled_for_type(rank: usize, element_type: ElementType) -> Self {
         let minor_to_major: Vec<i64> = (0..rank)
             .rev()
             .map(|idx| i64::try_from(idx).unwrap_or(0))
             .collect();
         if rank >= 2 {
-            Self::Tiled {
-                minor_to_major,
-                tile_dims: vec![8, 128],
-                tile_dim_sizes: vec![2],
+            let subtile = match element_type.bit_size() {
+                16 => Some([2_i64, 1]),
+                8 => Some([4_i64, 1]),
+                4 => Some([8_i64, 1]),
+                _ => None,
+            };
+            if let Some([s0, s1]) = subtile {
+                Self::Tiled {
+                    minor_to_major,
+                    tile_dims: vec![8, 128, s0, s1],
+                    tile_dim_sizes: vec![2, 2],
+                }
+            } else {
+                Self::Tiled {
+                    minor_to_major,
+                    tile_dims: vec![8, 128],
+                    tile_dim_sizes: vec![2],
+                }
             }
         } else if rank == 1 {
             Self::Tiled {
@@ -1490,6 +2139,18 @@ impl Shape {
     #[must_use]
     pub fn rank(&self) -> usize {
         self.dims.len()
+    }
+
+    /// Returns a stack-inlined [`DimVec`] (`SmallVec<[i64; 6]>`) copy of the logical dimensions.
+    #[must_use]
+    pub fn inline_dims(&self) -> DimVec {
+        DimVec::from_slice(&self.dims)
+    }
+
+    /// Returns a stack-inlined [`DynamicDimVec`] (`SmallVec<[bool; 6]>`) copy of the dynamic dimension flags.
+    #[must_use]
+    pub fn inline_dynamic_dims(&self) -> DynamicDimVec {
+        DynamicDimVec::from_slice(&self.dynamic_dims)
     }
 
     /// Computes the total number of scalar elements in this shape.
@@ -2035,6 +2696,33 @@ mod tests {
         assert_eq!(u64::from(iova), 0x3000);
         assert_eq!(iova.to_string(), "0x3000");
 
+        let vmem_addr = VmemAddress::from(0x400_u32) + VmemAddress(4) - VmemAddress(4);
+        assert_eq!(u32::from(vmem_addr), 0x400);
+        assert_eq!(vmem_addr.to_string(), "0x400");
+
+        let smem_addr = SmemAddress::from(0x80_u32) + SmemAddress(4) - SmemAddress(4);
+        assert_eq!(u32::from(smem_addr), 0x80);
+        assert_eq!(smem_addr.to_string(), "0x80");
+
+        let cmem_addr = CmemAddress::from(0x1000_u32) + CmemAddress(4) - CmemAddress(4);
+        assert_eq!(u32::from(cmem_addr), 0x1000);
+        assert_eq!(cmem_addr.to_string(), "0x1000");
+
+        let sflag = SyncFlagId::from(7_u32) + SyncFlagId(1) - SyncFlagId(1);
+        assert_eq!(u32::from(sflag), 7);
+        assert_eq!(sflag.to_string(), "7");
+
+        let bdf = BdfAddress::parse_bdf("0000:00:04.0");
+        assert_eq!(bdf, Some(BdfAddress::new(0, 0, 4, 0)));
+        assert_eq!(BdfAddress::new(0, 0, 4, 0).to_string(), "0000:00:04.0");
+        assert_eq!(BdfAddress::parse_bdf("invalid"), None);
+        assert_eq!(BdfAddress::parse_bdf("0000:00"), None);
+        assert_eq!(BdfAddress::parse_bdf("0000:00:04"), None);
+        assert_eq!(BdfAddress::parse_bdf("zzzz:00:04.0"), None);
+        assert_eq!(BdfAddress::parse_bdf("0000:zz:04.0"), None);
+        assert_eq!(BdfAddress::parse_bdf("0000:00:zz.0"), None);
+        assert_eq!(BdfAddress::parse_bdf("0000:00:04.z"), None);
+
         let mmio = MmioOffset::from(0x400_u64) + MmioOffset(4) - MmioOffset(4);
         assert_eq!(u64::from(mmio), 0x400);
         assert_eq!(mmio.to_string(), "0x400");
@@ -2071,6 +2759,56 @@ mod tests {
         assert_eq!(i32::from(efd), 4);
         assert_eq!(efd.to_string(), "4");
 
+        let dmabuf = DmaBufFd::from(5_i32);
+        assert_eq!(i32::from(dmabuf), 5);
+        assert_eq!(dmabuf.to_string(), "5");
+
+        let gchip = GlobalChipId::from(100_u64) + GlobalChipId(1) - GlobalChipId(1);
+        assert_eq!(u64::from(gchip), 100);
+        assert_eq!(gchip.to_string(), "100");
+
+        let bar_id = BarrierId::from(200_u64) + BarrierId(1) - BarrierId(1);
+        assert_eq!(u64::from(bar_id), 200);
+        assert_eq!(bar_id.to_string(), "200");
+
+        let pt_idx = PageTableIndex::from(7_u32) + PageTableIndex(1) - PageTableIndex(1);
+        assert_eq!(u32::from(pt_idx), 7);
+        assert_eq!(pt_idx.to_string(), "7");
+
+        let irq_vec = InterruptVector::from(3_u32) + InterruptVector(1) - InterruptVector(1);
+        assert_eq!(u32::from(irq_vec), 3);
+        assert_eq!(irq_vec.to_string(), "3");
+
+        let sreg = SregIndex::from(2_u8) + SregIndex(1) - SregIndex(1);
+        assert_eq!(u8::from(sreg), 2);
+        assert_eq!(sreg.to_string(), "s2");
+
+        let vreg = VregIndex::from(4_u8) + VregIndex(1) - VregIndex(1);
+        assert_eq!(u8::from(vreg), 4);
+        assert_eq!(vreg.to_string(), "v4");
+
+        let preg = PregIndex::from(1_u8) + PregIndex(1) - PregIndex(1);
+        assert_eq!(u8::from(preg), 1);
+        assert_eq!(preg.to_string(), "p1");
+
+        let vmask = VmaskBits::from(0xff_u8);
+        assert_eq!(u8::from(vmask), 0xff);
+        assert_eq!(vmask.to_string(), "0xff");
+
+        let vm_off = VmOffset::from(0x100_u32) + VmOffset(4) - VmOffset(4);
+        assert_eq!(u32::from(vm_off), 0x100);
+        assert_eq!(vm_off.to_string(), "0x100");
+
+        let sm_off = SmOffset::from(0x40_u32) + SmOffset(4) - SmOffset(4);
+        assert_eq!(u32::from(sm_off), 0x40);
+        assert_eq!(sm_off.to_string(), "0x40");
+
+        let b_pc = BundlePc::from(0x20_u32) + BundlePc(1) - BundlePc(1);
+        assert_eq!(u32::from(b_pc), 0x20);
+        assert_eq!(b_pc.to_string(), "0x20");
+
+        assert_eq!(TpuCoreType::TensorCore.as_raw(), 0);
+
         let ioctl_cmd = IoctlCommand::from(0x4020_dc08_u64);
         assert_eq!(u64::from(ioctl_cmd), 0x4020_dc08);
         assert_eq!(ioctl_cmd.to_string(), "0x4020dc08");
@@ -2087,6 +2825,67 @@ mod tests {
         assert_eq!(u32::from(iommu), 12);
         assert_eq!(iommu.to_string(), "12");
 
+        let pci_revision = PciRevisionId::from(1_u8) + PciRevisionId(1) - PciRevisionId(1);
+        assert_eq!(u8::from(pci_revision), 1);
+        assert_eq!(pci_revision.to_string(), "0x01");
+
+        let traceme_id = TraceMeContextId::from(77_i64) + TraceMeContextId(1) - TraceMeContextId(1);
+        assert_eq!(i64::from(traceme_id), 77);
+        assert_eq!(traceme_id.to_string(), "77");
+
+        let abi_ver = AbiVersionNumber::from(163_u64) + AbiVersionNumber(1) - AbiVersionNumber(1);
+        assert_eq!(u64::from(abi_ver), 163);
+        assert_eq!(abi_ver.to_string(), "163");
+
+        let sc_id = SparseCoreId::from(2_u32) + SparseCoreId(1) - SparseCoreId(1);
+        assert_eq!(u32::from(sc_id), 2);
+        assert_eq!(sc_id.to_string(), "2");
+
+        let csr_addr = CsrAddress::from(0x3000_u64) + CsrAddress(8) - CsrAddress(8);
+        assert_eq!(u64::from(csr_addr), 0x3000);
+        assert_eq!(csr_addr.to_string(), "0x3000");
+
+        let align_alias: Alignment = AlignmentBytes(256);
+        assert_eq!(usize::from(align_alias), 256);
+
+        let ov_id = OverlayId::from(5_u32) + OverlayId(1) - OverlayId(1);
+        assert_eq!(u32::from(ov_id), 5);
+        assert_eq!(ov_id.to_string(), "5");
+
+        let cont_id = ContinuationId::from(99_u64) + ContinuationId(1) - ContinuationId(1);
+        assert_eq!(u64::from(cont_id), 99);
+        assert_eq!(cont_id.to_string(), "99");
+
+        let run_id = RunId::from(1001_u64) + RunId(1) - RunId(1);
+        assert_eq!(u64::from(run_id), 1001);
+        assert_eq!(run_id.to_string(), "1001");
+
+        for sdk_code_raw in [0_i32, 3, 5, 9, 13, 14] {
+            let sdk_status = LibtpuSdkErrorCode::from(sdk_code_raw);
+            assert_eq!(sdk_status.as_raw(), sdk_code_raw);
+            assert_ne!(sdk_status.to_string(), "");
+            assert_ne!(format!("{sdk_status:?}"), "");
+        }
+
+        for hcmd_raw in 0..=8_i32 {
+            let parsed = HostCommandOpcode::try_from(hcmd_raw);
+            assert!(parsed.is_ok());
+            for op in parsed {
+                assert_eq!(i32::from(op), hcmd_raw);
+                assert_ne!(op.to_string(), "");
+                assert_ne!(format!("{op:?}"), "");
+            }
+        }
+        assert!(HostCommandOpcode::try_from(999_i32).is_err());
+
+        let bdf_alias: PciBdfAddress = BdfAddress::new(0, 0, 4, 0);
+        assert_eq!(bdf_alias.device, 4);
+        assert_eq!(TilingSpec::Tile8x128, TilingKind::Tile8x128);
+        assert_eq!(
+            IciRoutingStrategy::DimensionOrder,
+            RoutingStrategy::DimensionOrder
+        );
+
         assert_eq!(
             TpuCoreTypeEnum::from_raw(0).ok(),
             Some(TpuCoreTypeEnum::TensorCore)
@@ -2095,11 +2894,17 @@ mod tests {
             TpuCoreTypeEnum::from_raw(1).ok(),
             Some(TpuCoreTypeEnum::SparseCore)
         );
-        assert!(TpuCoreTypeEnum::from_raw(2).is_err());
+        assert_eq!(
+            TpuCoreTypeEnum::from_raw(2).ok(),
+            Some(TpuCoreTypeEnum::BarnaCore)
+        );
+        assert!(TpuCoreTypeEnum::from_raw(3).is_err());
         assert_eq!(TpuCoreTypeEnum::TensorCore.as_raw(), 0);
         assert_eq!(TpuCoreTypeEnum::SparseCore.as_raw(), 1);
+        assert_eq!(TpuCoreTypeEnum::BarnaCore.as_raw(), 2);
         assert_eq!(TpuCoreTypeEnum::TensorCore.to_string(), "TensorCore");
         assert_eq!(TpuCoreTypeEnum::SparseCore.to_string(), "SparseCore");
+        assert_eq!(TpuCoreTypeEnum::BarnaCore.to_string(), "BarnaCore");
         assert_ne!(format!("{:?}", TpuCoreTypeEnum::TensorCore), "");
 
         let c1 = ChipCoordinates::new(1, 2, 3);
@@ -2111,6 +2916,14 @@ mod tests {
         assert!(!c1.matches(c3));
         assert!(!c1.matches(c4));
         assert!(!c1.matches(c5));
+        assert_eq!(c1.manhattan_distance(c3), 1);
+        let bounds = ChipCoordinates::new(4, 4, 4);
+        assert_eq!(c1.row_major_index(bounds), 27);
+        let far = ChipCoordinates::new(3, 3, 3);
+        let origin = ChipCoordinates::new(0, 0, 0);
+        assert_eq!(origin.torus_distance(far, bounds, (true, true, true)), 3);
+        assert_eq!(origin.torus_distance(c1, bounds, (true, true, true)), 4);
+        assert_eq!(origin.torus_distance(far, bounds, (false, false, false)), 9);
         assert_eq!(c1.to_string(), "(1, 2, 3)");
         assert_ne!(format!("{c1:?}"), "");
     }
@@ -2162,6 +2975,21 @@ mod tests {
                 1200,
                 275,
                 6,
+            ),
+            (
+                "v4lite",
+                TpuGeneration::V4Lite,
+                16,
+                1,
+                0,
+                128,
+                0x005e,
+                16,
+                1,
+                128,
+                900,
+                138,
+                4,
             ),
             (
                 "v5e",
@@ -2237,12 +3065,22 @@ mod tests {
                 assert_eq!(g.hbm_capacity_bytes(), ByteSize(gib * 1024 * 1024 * 1024));
                 assert_eq!(g.vmem_capacity_bytes(), ByteSize(vmem_mib * 1024 * 1024));
                 assert_eq!(g.smem_capacity_bytes(), ByteSize(smem_mib * 1024 * 1024));
+                let _ = g.cmem_capacity_bytes();
                 assert_eq!(g.mxu_dimension(), mxu);
                 assert_eq!(g.hbm_bandwidth_gbps(), bw);
                 assert_eq!(g.peak_bf16_tflops(), tflops);
                 assert_eq!(g.ici_link_count(), ici);
                 assert_eq!(g.logical_devices_per_chip(), devs);
                 assert_eq!(g.sparse_cores_per_device(), sc);
+                assert_eq!(g.sparse_cores_per_chip(), sc);
+                let _ = g.tensor_cores_per_chip();
+                let _ = g.mxu_count_per_core();
+                assert_eq!(g.mxu_systolic_dim(), (mxu, mxu));
+                assert_eq!(g.vpu_lanes_and_sublanes(), (128, 8));
+                let _ = g.hbm_capacity_bytes_per_chip();
+                assert_eq!(g.vmem_capacity_bytes_per_core(), g.vmem_capacity_bytes());
+                assert_eq!(g.smem_capacity_bytes_per_core(), g.smem_capacity_bytes());
+                let _ = g.default_minor_to_major_tile();
                 assert_eq!(g.xla_pad_size(), pad);
                 assert_ne!(g.to_string(), "");
                 assert_ne!(format!("{g:?}"), "");
@@ -2253,7 +3091,7 @@ mod tests {
 
     #[test]
     fn test_element_types_and_memory_kinds() {
-        for raw in 0..=27 {
+        for raw in 0..=28 {
             let et = ElementType::from_raw(raw);
             assert!(et.is_ok());
             for t in et {
@@ -2270,10 +3108,14 @@ mod tests {
             (MemoryKind::PinnedHost, "pinned_host", 1),
             (MemoryKind::UnpinnedHost, "unpinned_host", 2),
             (MemoryKind::Vmem, "vmem", 3),
+            (MemoryKind::Smem, "smem", 4),
+            (MemoryKind::Cmem, "cmem", 5),
         ];
         for (k, s, id) in kinds {
             assert_eq!(k.as_str(), s);
             assert_eq!(k.kind_id(), id);
+            assert_eq!(i32::from(k), id);
+            assert_eq!(MemoryKind::try_from(id).ok(), Some(k));
             assert_eq!(k.to_string(), s);
             assert_ne!(format!("{k:?}"), "");
         }
@@ -2286,6 +3128,18 @@ mod tests {
         assert!((ElementType::f16_bits_to_f32(f16_one) - 1.5).abs() < 1e-3);
         let bf16_two = ElementType::f32_to_bf16_bits(2.5);
         assert!((ElementType::bf16_bits_to_f32(bf16_two) - 2.5).abs() < 1e-2);
+        let f8e4m3_val = ElementType::f32_to_f8e4m3_bits(1.5);
+        assert!((ElementType::f8e4m3_bits_to_f32(f8e4m3_val) - 1.5).abs() < 1e-1);
+        let f8e5m2_val = ElementType::f32_to_f8e5m2_bits(2.0);
+        assert!((ElementType::f8e5m2_bits_to_f32(f8e5m2_val) - 2.0).abs() < 1e-1);
+
+        let c_vals = [
+            num_complex::Complex64::new(1.5, -2.5),
+            num_complex::Complex64::new(3.25, 4.75),
+        ];
+        let c_packed = ElementType::pack_complex64_slice(&c_vals);
+        let c_unpacked = ElementType::unpack_to_complex64_vec(&c_packed);
+        assert_eq!(c_unpacked, c_vals);
 
         for et in [
             ElementType::Pred,
@@ -2303,7 +3157,16 @@ mod tests {
             ElementType::U64,
             ElementType::F64,
             ElementType::C128,
+            ElementType::F8E4M3Fn,
+            ElementType::F8E4M3B11Fnuz,
+            ElementType::F8E4M3Fnuz,
             ElementType::F8E5M2,
+            ElementType::F8E5M2Fnuz,
+            ElementType::S4,
+            ElementType::U4,
+            ElementType::S2,
+            ElementType::U2,
+            ElementType::F4E2M1Fn,
         ] {
             let packed = et.pack_from_f64_slice(&[0.0, 2.0, 3.0, 4.0]);
             let unpacked = et.unpack_to_f64_vec(&packed);
@@ -2338,6 +3201,16 @@ mod tests {
             ProfilerState::Recording,
         );
         assert_ne!(misc_enums, "");
+        for raw_dir in 0..=3_u32 {
+            let dir = DmaDirection::try_from(raw_dir);
+            assert!(dir.is_ok());
+            for d in dir {
+                assert_eq!(u32::from(d), raw_dir);
+                assert_ne!(d.to_string(), "");
+                assert_ne!(format!("{d:?}"), "");
+            }
+        }
+        assert!(DmaDirection::try_from(99_u32).is_err());
     }
 
     #[test]
@@ -2352,6 +3225,18 @@ mod tests {
             assert_eq!(s.unpadded_byte_size(), ByteSize(0));
             assert_eq!(s.on_device_byte_size(), ByteSize(256));
         }
+
+        let r0 = MemoryLayout::default_tpu_tiled(0);
+        let r1 = MemoryLayout::default_tpu_tiled(1);
+        let r2 = MemoryLayout::default_tpu_tiled(2);
+        let r2_bf16 = MemoryLayout::default_tpu_tiled_for_type(2, ElementType::Bf16);
+        let r2_s8 = MemoryLayout::default_tpu_tiled_for_type(2, ElementType::S8);
+        let r2_s4 = MemoryLayout::default_tpu_tiled_for_type(2, ElementType::S4);
+        assert_ne!(r0, r1);
+        assert_ne!(r1, r2);
+        assert_ne!(r2, r2_bf16);
+        assert_ne!(r2_bf16, r2_s8);
+        assert_ne!(r2_s8, r2_s4);
 
         let rank1 = Shape::new(
             ElementType::F32,
@@ -2405,6 +3290,8 @@ mod tests {
 
         for s in Shape::new(ElementType::F32, vec![2, 3], None, None) {
             assert_eq!(s.rank(), 2);
+            assert_eq!(s.inline_dims().as_slice(), &[2, 3]);
+            assert_eq!(s.inline_dynamic_dims().as_slice(), &[false, false]);
             assert_eq!(s.element_count(), 6);
             assert_eq!(s.linear_to_coords(4), vec![1, 1]);
             assert_eq!(s.coords_to_linear(&[1, 1]).ok(), Some(4));
@@ -2455,5 +3342,19 @@ mod tests {
                 }
             }
         }
+
+        let coords = ChipCoordinates::new(1, 2, 3);
+        let coord_bytes = bytemuck::bytes_of(&coords);
+        assert_eq!(coord_bytes.len(), 12);
+        assert_eq!(TpuGeneration::try_from(4_i32).ok(), Some(TpuGeneration::V4));
+        assert_eq!(i32::from(TpuGeneration::V7x), 8);
+        assert_eq!(ElementType::try_from(11_i32).ok(), Some(ElementType::F32));
+        assert_eq!(i32::from(ElementType::Bf16), 13);
+        assert_eq!(i32::from(TpuCoreTypeEnum::SparseCore), 1);
+
+        let f16_nan = F16Scalar::from_f32(f32::NAN);
+        assert!(ElementType::f16_bits_to_f32(f16_nan.to_bits()).is_nan());
+        let bf16_inf = Bf16Scalar::from_f32(f32::INFINITY);
+        assert!(ElementType::bf16_bits_to_f32(bf16_inf.to_bits()).is_infinite());
     }
 }

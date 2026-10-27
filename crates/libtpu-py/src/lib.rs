@@ -11,9 +11,84 @@ use libtpu_core::driver::{LibtpuSdkCoreClient, TpuCoreDriver, TpuCoreProfiler};
 use libtpu_core::error::LibTpuResult;
 use libtpu_core::pjrt::PjrtCoreClient;
 use libtpu_core::types::{DeviceId, ElementType, MemorySpaceId, Shape, TpuGeneration};
-use tpu::pjrt_types::PJRT_Api;
-use tpu::tpu_driver_types::LibtpuSdk_Api;
-use tpu::{GetLibtpuSdkApi, GetPjrtApi};
+
+/// `CPython` Stable ABI (`abi3`) object header (`PyObject`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CPythonObjectHead {
+    /// Reference count (`ob_refcnt`).
+    pub ob_refcnt: isize,
+    /// Object type pointer (`ob_type`, `0` before interpreter initialization).
+    pub ob_type: usize,
+}
+
+/// `CPython` Stable ABI (`abi3`) module definition base header (`PyModuleDef_Base`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CPythonModuleDefBase {
+    /// Embedded `PyObject` header (`PyObject_HEAD_INIT(NULL)`).
+    pub ob_base: CPythonObjectHead,
+    /// Module init function pointer (`m_init`, `0`).
+    pub m_init: usize,
+    /// Module state index (`m_index`, `0`).
+    pub m_index: isize,
+    /// Module copy dictionary pointer (`m_copy`, `0`).
+    pub m_copy: usize,
+}
+
+/// `CPython` Stable ABI (`abi3`) module definition (`PyModuleDef`) returned by [`PyInit_sdk`].
+#[repr(C)]
+#[derive(Debug)]
+pub struct PySdkAbiHeader {
+    /// Base `PyModuleDef_Base` header (`PyModuleDef_HEAD_INIT`).
+    pub m_base: CPythonModuleDefBase,
+    /// Null-terminated C module name (`"sdk\0"`).
+    pub m_name: *const std::os::raw::c_char,
+    /// Null-terminated C module docstring.
+    pub m_doc: *const std::os::raw::c_char,
+    /// Per-module state size in bytes (`-1` for stateless global module).
+    pub m_size: isize,
+    /// Method table pointer (`m_methods`, `0`).
+    pub m_methods: usize,
+    /// Multi-phase slot table pointer (`m_slots`, `0`).
+    pub m_slots: usize,
+    /// GC traverse callback (`m_traverse`, `0`).
+    pub m_traverse: usize,
+    /// GC clear callback (`m_clear`, `0`).
+    pub m_clear: usize,
+    /// Module free callback (`m_free`, `0`).
+    pub m_free: usize,
+    /// `LibtpuSdk_Api` struct size in bytes (`144`).
+    pub struct_size: usize,
+    /// PJRT ABI minor version (`116`).
+    pub abi_version: usize,
+}
+
+// SAFETY: `PySdkAbiHeader` contains only static `'static` C-string pointers and integer fields.
+unsafe impl Sync for PySdkAbiHeader {}
+
+/// Static [`PySdkAbiHeader`] (`PyModuleDef`) singleton exposed to C/Python extension loaders via [`PyInit_sdk`].
+static PY_SDK_ABI_HEADER: PySdkAbiHeader = PySdkAbiHeader {
+    m_base: CPythonModuleDefBase {
+        ob_base: CPythonObjectHead {
+            ob_refcnt: 1,
+            ob_type: 0,
+        },
+        m_init: 0,
+        m_index: 0,
+        m_copy: 0,
+    },
+    m_name: c"sdk".as_ptr(),
+    m_doc: c"libtpu.sdk CPython Stable ABI (abi3) module".as_ptr(),
+    m_size: -1,
+    m_methods: 0,
+    m_slots: 0,
+    m_traverse: 0,
+    m_clear: 0,
+    m_free: 0,
+    struct_size: 144,
+    abi_version: 116,
+};
 
 /// High-level Rust session backing the `libtpu` Python package (`PyTpuRuntime`).
 #[derive(Debug)]
@@ -47,16 +122,10 @@ impl PyTpuRuntime {
         (0, 116)
     }
 
-    /// Returns the raw `GetPjrtApi()` vtable pointer for Python `ctypes` / CFFI consumers.
+    /// Returns the raw [`PySdkAbiHeader`] vtable descriptor pointer for `libtpu.sdk` consumers.
     #[must_use]
-    pub fn pjrt_api_ptr() -> *const PJRT_Api {
-        GetPjrtApi()
-    }
-
-    /// Returns the raw `GetLibtpuSdkApi()` vtable pointer for `libtpu.sdk` consumers.
-    #[must_use]
-    pub fn sdk_api_ptr() -> *const LibtpuSdk_Api {
-        GetLibtpuSdkApi()
+    pub const fn sdk_api_ptr() -> *const PySdkAbiHeader {
+        &raw const PY_SDK_ABI_HEADER
     }
 
     /// Returns the active [`TpuGeneration`] of this runtime.
@@ -106,6 +175,22 @@ impl PyTpuRuntime {
         Ok(loaded.executable.program.fingerprint)
     }
 
+    /// Inspects a shared library binary image (`ELF` or `Mach-O`) via `goblin`
+    /// and returns its parsed [`libtpu_core::elf::BinarySymbolReport`].
+    ///
+    /// # Arguments
+    ///
+    /// * `binary_bytes` - Raw shared library binary bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`libtpu_core::error::LibTpuError`] if binary parsing fails.
+    pub fn inspect_binary_symbol_names(
+        binary_bytes: &[u8],
+    ) -> LibTpuResult<libtpu_core::elf::BinarySymbolReport> {
+        libtpu_core::elf::inspect_binary_symbols(binary_bytes)
+    }
+
     /// Compiles and executes an MLIR program on `device_id` doubling a 4-element `f32` input.
     ///
     /// # Arguments
@@ -129,10 +214,7 @@ impl PyTpuRuntime {
             dynamic_dims: vec![false],
             layout: libtpu_core::types::MemoryLayout::default_tpu_tiled(1),
         };
-        let mut b_in = Vec::with_capacity(16);
-        for &v in input {
-            b_in.extend_from_slice(&v.to_le_bytes());
-        }
+        let b_in: Vec<u8> = input.iter().flat_map(|&v| v.to_le_bytes()).collect();
         let loaded = self.client.compile_and_load("mlir", mlir_code, b"")?;
         let buf0 = self.client.buffer_from_host(device_id, shape, &b_in)?;
         let outs = loaded.execute_on_device(device_id, MemorySpaceId(0), &[&buf0, &buf0])?;
@@ -220,13 +302,51 @@ impl PySdkBridge {
     }
 }
 
+/// `CPython` Stable ABI (`abi3`) version constant (`1013`).
+pub const PYTHON_ABI3_VERSION: i32 = 1013;
+
+/// Function pointer type for `CPython`'s `Py_IsInitialized` (`() -> c_int`).
+pub type PyIsInitializedFn = unsafe extern "C" fn() -> i32;
+
+/// Function pointer type for `CPython`'s `PyModule_Create2` (`(*const PySdkAbiHeader, c_int) -> *const PySdkAbiHeader`).
+pub type PyModuleCreate2Fn =
+    unsafe extern "C" fn(*const PySdkAbiHeader, i32) -> *const PySdkAbiHeader;
+
+/// Initializes the `libtpu.sdk` `CPython` `abi3` module via `PyModule_Create2`.
+///
+/// When an active `CPython` interpreter is detected (`is_init_fn() != 0`), invokes
+/// `create_fn`, falling back to the static [`PySdkAbiHeader`] descriptor when invoked outside `CPython`.
+///
+/// # Arguments
+///
+/// * `is_init_fn` - Optional `Py_IsInitialized` function pointer.
+/// * `create_fn` - Optional `PyModule_Create2` function pointer.
+#[must_use]
+pub fn init_py_sdk_module(
+    is_init_fn: Option<PyIsInitializedFn>,
+    create_fn: Option<PyModuleCreate2Fn>,
+) -> *const PySdkAbiHeader {
+    if let (Some(is_init), Some(create)) = (is_init_fn, create_fn) {
+        // SAFETY: `is_init` is a valid C function pointer with no arguments.
+        let active = unsafe { is_init() };
+        if active != 0 {
+            // SAFETY: `PY_SDK_ABI_HEADER` is a valid static `PyModuleDef`-compatible structure.
+            let created = unsafe { create(&raw const PY_SDK_ABI_HEADER, PYTHON_ABI3_VERSION) };
+            if !created.is_null() {
+                return created;
+            }
+        }
+    }
+    &raw const PY_SDK_ABI_HEADER
+}
+
 /// Native C-ABI entrypoint matching `PyInit_sdk` in `libtpu/sdk.so` (`0x004198c0`).
 ///
-/// Returns the static [`LibtpuSdk_Api`] vtable pointer as an opaque C pointer so C/Python
+/// Returns the static [`PySdkAbiHeader`] descriptor pointer so C/Python
 /// extension loaders and `dlsym(..., "PyInit_sdk")` callers can inspect `libtpu.sdk`.
 #[unsafe(no_mangle)]
-pub extern "C" fn PyInit_sdk() -> *const LibtpuSdk_Api {
-    GetLibtpuSdkApi()
+pub const extern "C" fn PyInit_sdk() -> *const PySdkAbiHeader {
+    &raw const PY_SDK_ABI_HEADER
 }
 
 #[cfg(test)]
@@ -235,12 +355,87 @@ pub extern "C" fn PyInit_sdk() -> *const LibtpuSdk_Api {
 mod tests {
     use super::*;
 
+    /// Mock `Py_IsInitialized` returning `0` (not initialized).
+    unsafe extern "C" fn mock_py_not_initialized() -> i32 {
+        0
+    }
+
+    /// Mock `Py_IsInitialized` returning `1` (initialized).
+    unsafe extern "C" fn mock_py_initialized() -> i32 {
+        1
+    }
+
+    /// Mock `PyModule_Create2` returning `def` (`*const PySdkAbiHeader`).
+    ///
+    /// # Arguments
+    ///
+    /// * `def` - Module definition pointer.
+    /// * `_ver` - Module ABI version integer.
+    unsafe extern "C" fn mock_py_module_create_ok(
+        def: *const PySdkAbiHeader,
+        _ver: i32,
+    ) -> *const PySdkAbiHeader {
+        def
+    }
+
+    /// Mock `PyModule_Create2` returning `NULL`.
+    ///
+    /// # Arguments
+    ///
+    /// * `_def` - Module definition pointer.
+    /// * `_ver` - Module ABI version integer.
+    unsafe extern "C" fn mock_py_module_create_null(
+        _def: *const PySdkAbiHeader,
+        _ver: i32,
+    ) -> *const PySdkAbiHeader {
+        std::ptr::null()
+    }
+
     #[test]
     fn test_py_tpu_runtime() {
         assert_eq!(PyTpuRuntime::pjrt_api_version(), (0, 116));
-        assert!(!PyTpuRuntime::pjrt_api_ptr().is_null());
         assert!(!PyTpuRuntime::sdk_api_ptr().is_null());
         assert!(!PyInit_sdk().is_null());
+        assert_eq!(init_py_sdk_module(None, None), &raw const PY_SDK_ABI_HEADER);
+        assert_eq!(
+            init_py_sdk_module(Some(mock_py_not_initialized), None),
+            &raw const PY_SDK_ABI_HEADER
+        );
+        assert_eq!(
+            init_py_sdk_module(
+                Some(mock_py_not_initialized),
+                Some(mock_py_module_create_ok),
+            ),
+            &raw const PY_SDK_ABI_HEADER
+        );
+        assert_eq!(
+            init_py_sdk_module(Some(mock_py_initialized), Some(mock_py_module_create_ok)),
+            &raw const PY_SDK_ABI_HEADER
+        );
+        assert_eq!(
+            init_py_sdk_module(Some(mock_py_initialized), Some(mock_py_module_create_null)),
+            &raw const PY_SDK_ABI_HEADER
+        );
+        assert_eq!(PY_SDK_ABI_HEADER.struct_size, 144);
+        assert_eq!(PY_SDK_ABI_HEADER.abi_version, 116);
+        assert_eq!(PY_SDK_ABI_HEADER.m_size, -1);
+        assert_eq!(PY_SDK_ABI_HEADER.m_base.ob_base.ob_refcnt, 1);
+        assert_eq!(PY_SDK_ABI_HEADER.m_base.clone(), PY_SDK_ABI_HEADER.m_base);
+        assert_eq!(
+            PY_SDK_ABI_HEADER.m_base.ob_base.clone(),
+            PY_SDK_ABI_HEADER.m_base.ob_base
+        );
+        assert!(!PY_SDK_ABI_HEADER.m_name.is_null());
+        assert!(!PY_SDK_ABI_HEADER.m_doc.is_null());
+        assert_ne!(format!("{PY_SDK_ABI_HEADER:?}"), "");
+        assert!(PyTpuRuntime::inspect_binary_symbol_names(b"not_a_binary").is_err());
+        let mut macho_hdr = Vec::with_capacity(32);
+        macho_hdr.extend_from_slice(&0xfeed_facf_u32.to_le_bytes());
+        macho_hdr.extend_from_slice(&0x0100_0007_u32.to_le_bytes());
+        macho_hdr.extend_from_slice(&0_u32.to_le_bytes());
+        macho_hdr.extend_from_slice(&6_u32.to_le_bytes());
+        macho_hdr.resize(32, 0);
+        assert!(PyTpuRuntime::inspect_binary_symbol_names(&macho_hdr).is_ok());
         assert!(PyTpuRuntime::from_init_args("--tpu_generation=invalid").is_err());
 
         let rt_res = PyTpuRuntime::from_init_args("--tpu_generation=v6e");

@@ -823,6 +823,171 @@ pub struct PJRT_Triton_Compile_Args {
     pub out_smem_bytes: i64,
 }
 
+/// Collective reduction operation kind (`PJRT_Collectives_ReductionKind` in `pjrt_c_api_collectives_extension.h`).
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PJRT_Collectives_ReductionKind {
+    /// Element-wise summation (`0`).
+    #[default]
+    Sum = 0,
+    /// Element-wise product (`1`).
+    Product = 1,
+    /// Element-wise minimum (`2`).
+    Min = 2,
+    /// Element-wise maximum (`3`).
+    Max = 3,
+}
+
+/// Collective operation group mode (`PJRT_Collectives_CollectiveOpKind` in `pjrt_c_api_collectives_extension.h`).
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PJRT_Collectives_CollectiveOpKind {
+    /// Cross-module (SPMD partition) collective (`0`).
+    #[default]
+    CrossModule = 0,
+    /// Cross-replica (data-parallel) collective (`1`).
+    CrossReplica = 1,
+}
+
+/// Runtime callback category (`PJRT_Callback_Type` in `pjrt_c_api_callback_extension.h`).
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PJRT_Callback_Type {
+    /// Unknown callback type (`0`).
+    #[default]
+    Unknown = 0,
+    /// TPU slice builder failure callback (`1`).
+    TpuSliceBuilder = 1,
+    /// Pre-fatal error notification callback (`2`).
+    Prefatal = 2,
+}
+
+/// TPU slice builder failure classification (`PJRT_Callback_Tpu_SliceFailureType` in `pjrt_c_api_callback_extension.h`).
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PJRT_Callback_Tpu_SliceFailureType {
+    /// Unknown slice failure (`0`).
+    #[default]
+    SliceFailureUnknown = 0,
+    /// Initialization error (`1`).
+    InitError = 1,
+    /// Worker disconnected (`2`).
+    WorkerDisconnected = 2,
+    /// Heartbeat check failure (`3`).
+    HeartbeatCheckFailure = 3,
+    /// Fast-reroute ICI failure (`4`).
+    FastRerouteFailure = 4,
+    /// Chip driver error (`5`).
+    ChipDriverError = 5,
+}
+
+/// Payload passed to `PJRT_Callback_Type::TpuSliceBuilder` callbacks (`16` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Callback_Tpu_SliceBuilderArgs {
+    /// Size of this struct (`16`).
+    pub struct_size: usize,
+    /// Failure type (`PJRT_Callback_Tpu_SliceFailureType`).
+    pub failure_type: i32,
+    /// Explicit 4-byte alignment padding.
+    pub pad: i32,
+}
+
+/// Payload passed to `PJRT_Callback_Type::Prefatal` callbacks (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Callback_PrefatalArgs {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Error code (`PJRT_Error_Code`).
+    pub error_code: i32,
+    /// Explicit 4-byte alignment padding.
+    pub pad: i32,
+    /// Pointer to error message text.
+    pub error_message: *const std::os::raw::c_char,
+    /// Byte length of `error_message`.
+    pub error_message_size: usize,
+}
+
+/// Argument structure for `PJRT_HostMemoryAllocator_Allocate` (`56` bytes, `host_memory_allocator_extension.h`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_HostMemoryAllocator_Allocate_Args {
+    /// Size of this struct (`56`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Client handle.
+    pub client: *mut std::ffi::c_void,
+    /// Requested allocation size in bytes.
+    pub size: usize,
+    /// Preferred NUMA node index.
+    pub numa_node: i32,
+    /// Explicit 4-byte alignment padding.
+    pub pad: i32,
+    /// Output allocated host memory pointer.
+    pub ptr: *mut std::ffi::c_void,
+    /// Output deleter callback function pointer.
+    pub deleter: *const std::ffi::c_void,
+    /// Output deleter user argument.
+    pub deleter_arg: *mut std::ffi::c_void,
+}
+
+/// Serialized executable metadata structure (`PJRT_ExecutableMetadata` in `executable_metadata_extension.h`, `16` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_ExecutableMetadata {
+    /// Pointer to serialized `xla.PjRtExecutableMetadata` protobuf bytes.
+    pub serialized_metadata: *const std::os::raw::c_char,
+    /// Byte length of `serialized_metadata`.
+    pub serialized_metadata_size: usize,
+}
+
+/// Argument structure for `PJRT_DeviceDescription_MemoryDescriptions` (`48` bytes, `pjrt_c_api_memory_descriptions_extension.h`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_DeviceDescription_MemoryDescriptions_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Device description handle.
+    pub device_description: *const std::ffi::c_void,
+    /// Output array of `PJRT_MemoryDescription*` handles.
+    pub memory_descriptions: *const *const std::ffi::c_void,
+    /// Output number of memory descriptions (`4`: HBM, VMEM, SMEM, `pinned_host`).
+    pub num_memory_descriptions: usize,
+    /// Output index of default memory space (`0` = HBM, `-1` if none).
+    pub default_memory_index: isize,
+}
+
+/// Argument structure for `PJRT_MemoryDescription_Kind` (`48` bytes, `pjrt_c_api_memory_descriptions_extension.h`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_MemoryDescription_Kind_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Memory description handle.
+    pub memory_description: *const std::ffi::c_void,
+    /// Output memory space kind string pointer.
+    pub kind: *const std::os::raw::c_char,
+    /// Output memory space kind string byte length.
+    pub kind_size: usize,
+    /// Output numeric kind ID (`0` = device/HBM, `1` = vmem, `2` = smem, `3` = `pinned_host`).
+    pub kind_id: i32,
+    /// Explicit 4-byte alignment padding.
+    pub pad: i32,
+}
+
+const _: () = assert!(size_of::<PJRT_Callback_Tpu_SliceBuilderArgs>() == 16);
+const _: () = assert!(size_of::<PJRT_Callback_PrefatalArgs>() == 32);
+const _: () = assert!(size_of::<PJRT_HostMemoryAllocator_Allocate_Args>() == 64);
+const _: () = assert!(size_of::<PJRT_ExecutableMetadata>() == 16);
+const _: () = assert!(size_of::<PJRT_DeviceDescription_MemoryDescriptions_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_MemoryDescription_Kind_Args>() == 48);
+
 /// Argument structure for `PJRT_XlaTransform_Register` (`40` bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -1107,6 +1272,11 @@ fn extension_profiler() -> &'static Mutex<TpuCoreProfiler> {
 
 /// Invokes a strongly-typed `unsafe fn(&mut T)` from a type-erased reference.
 ///
+/// # Arguments
+///
+/// * `raw_args` - Raw pointer to the validated extension `_Args` structure of type `T`.
+/// * `handler_ref` - Type-erased pointer to the `unsafe fn(&mut T)` callback.
+///
 /// # Safety
 ///
 /// `raw_args` must point to a valid `T` and `handler_ref` must point to `unsafe fn(&mut T)`.
@@ -1123,6 +1293,12 @@ unsafe fn invoke_typed_extension_handler<T>(
 }
 
 /// Non-generic validation and invocation dispatcher backing [`dispatch_typed_extension_args`].
+///
+/// # Arguments
+///
+/// * `raw_args` - Raw pointer to the extension `_Args` structure.
+/// * `handler_ref` - Type-erased pointer to the strongly-typed callback.
+/// * `invoker` - Monomorphized trampoline invoking the strongly-typed callback.
 ///
 /// # Safety
 ///
@@ -1167,6 +1343,10 @@ unsafe fn dispatch_typed_extension_args<T>(
 
 /// Strongly-typed handler for [`PLUGIN_Profiler_Error_Destroy`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PLUGIN_Profiler_Error_Destroy_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PLUGIN_Profiler_Error_Destroy_Args`].
@@ -1197,6 +1377,10 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Error_Destroy(
 }
 
 /// Strongly-typed handler for [`PLUGIN_Profiler_Error_Message`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PLUGIN_Profiler_Error_Message_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1230,6 +1414,10 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Error_Message(
 
 /// Strongly-typed handler for [`PLUGIN_Profiler_Error_GetCode`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PLUGIN_Profiler_Error_GetCode_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PLUGIN_Profiler_Error_GetCode_Args`].
@@ -1260,6 +1448,10 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Error_GetCode(
 }
 
 /// Strongly-typed handler for [`PLUGIN_Profiler_Create`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PLUGIN_Profiler_Create_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1293,6 +1485,10 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Create(
 
 /// Strongly-typed handler for [`PLUGIN_Profiler_Destroy`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PLUGIN_Profiler_Destroy_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PLUGIN_Profiler_Destroy_Args`].
@@ -1324,6 +1520,10 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Destroy(
 
 /// Strongly-typed handler for [`PLUGIN_Profiler_Start`].
 ///
+/// # Arguments
+///
+/// * `_args` - Validated [`PLUGIN_Profiler_Start_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PLUGIN_Profiler_Start_Args`].
@@ -1351,6 +1551,10 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Start(raw_args: *mut std::ffi::c_void) 
 
 /// Strongly-typed handler for [`PLUGIN_Profiler_Stop`].
 ///
+/// # Arguments
+///
+/// * `_args` - Validated [`PLUGIN_Profiler_Stop_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PLUGIN_Profiler_Stop_Args`].
@@ -1377,6 +1581,10 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Stop(raw_args: *mut std::ffi::c_void) -
 }
 
 /// Strongly-typed handler for [`PLUGIN_Profiler_CollectData`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PLUGIN_Profiler_CollectData_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1422,6 +1630,10 @@ pub unsafe extern "C" fn PLUGIN_Profiler_CollectData(
 
 /// Strongly-typed handler for [`PJRT_XlaTransform_Register`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_XlaTransform_Register_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_XlaTransform_Register_Args`].
@@ -1464,6 +1676,10 @@ pub unsafe extern "C" fn PJRT_XlaTransform_Register(
 
 /// Strongly-typed handler for [`PJRT_XlaTransform_WaitForAll`].
 ///
+/// # Arguments
+///
+/// * `_args` - Validated [`PJRT_XlaTransform_WaitForAll_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_XlaTransform_WaitForAll_Args`].
@@ -1494,6 +1710,10 @@ pub unsafe extern "C" fn PJRT_XlaTransform_WaitForAll(
 }
 
 /// Strongly-typed handler for [`PJRT_XlaTransform_Unregister`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_XlaTransform_Unregister_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1535,6 +1755,10 @@ pub unsafe extern "C" fn PJRT_XlaTransform_Unregister(
 
 /// Strongly-typed handler for [`PJRT_XlaTransform_List`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_XlaTransform_List_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_XlaTransform_List_Args`].
@@ -1567,11 +1791,23 @@ pub unsafe extern "C" fn PJRT_XlaTransform_List(
 
 /// Strongly-typed handler for [`PJRT_HostMemoryAllocator_Get`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_HostMemoryAllocator_Get_Args`] structure.
+///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_HostMemoryAllocator_Get_Args`].
+/// `args` must be a valid [`PJRT_HostMemoryAllocator_Get_Args`] (or [`PJRT_HostMemoryAllocator_Allocate_Args`] when `struct_size >= 64`).
 unsafe fn handle_host_memory_allocator_get(args: &mut PJRT_HostMemoryAllocator_Get_Args) {
-    args.allocator_out = global_init_config().premapped_buffer_size.0;
+    let cap = global_init_config().premapped_buffer_size.0;
+    if args.struct_size >= size_of::<PJRT_HostMemoryAllocator_Allocate_Args>() {
+        // SAFETY: `args.struct_size >= 64` guarantees `args` is a valid `PJRT_HostMemoryAllocator_Allocate_Args`.
+        let alloc_args =
+            unsafe { &mut *ptr::from_mut(args).cast::<PJRT_HostMemoryAllocator_Allocate_Args>() };
+        alloc_args.ptr = cap as *mut std::ffi::c_void;
+    } else {
+        args.allocator_out = cap;
+    }
 }
 
 /// Returns the TPU DMA host memory allocator (`PJRT_HostMemoryAllocator_Get`).
@@ -1597,6 +1833,10 @@ pub unsafe extern "C" fn PJRT_HostMemoryAllocator_Get(
 }
 
 /// Strongly-typed handler for [`PJRT_MultiSlice_Config_Destroy`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_MultiSlice_Config_Destroy_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1629,6 +1869,10 @@ pub unsafe extern "C" fn PJRT_MultiSlice_Config_Destroy(
 
 /// Strongly-typed handler for [`PJRT_MultiSlice_Config_NumSlices`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_MultiSlice_Config_NumSlices_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_MultiSlice_Config_NumSlices_Args`].
@@ -1660,6 +1904,10 @@ pub unsafe extern "C" fn PJRT_MultiSlice_Config_NumSlices(
 }
 
 /// Strongly-typed handler for [`PJRT_MultiSlice_Config_NumDevicesPerSlice`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_MultiSlice_Config_NumDevicesPerSlice_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1695,6 +1943,10 @@ pub unsafe extern "C" fn PJRT_MultiSlice_Config_NumDevicesPerSlice(
 }
 
 /// Strongly-typed handler for [`PJRT_MultiSlice_Config_SliceId`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_MultiSlice_Config_SliceId_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1749,6 +2001,10 @@ pub unsafe extern "C" fn PJRT_MultiSlice_Config_SliceId(
 
 /// Strongly-typed handler for [`PJRT_MultiSlice_Config_Serialize`] and [`PJRT_Megascale_ConfigSerialize`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_MultiSlice_Config_Serialize_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_MultiSlice_Config_Serialize_Args`].
@@ -1769,6 +2025,10 @@ unsafe fn handle_multislice_config_serialize(args: &mut PJRT_MultiSlice_Config_S
 }
 
 /// Strongly-typed handler for [`PJRT_Collectives_Destroy`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Collectives_Destroy_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1800,6 +2060,10 @@ pub unsafe extern "C" fn PJRT_Collectives_Destroy(
 }
 
 /// Strongly-typed handler for [`PJRT_Collectives_CreateCommunicator`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Collectives_CreateCommunicator_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1835,6 +2099,10 @@ pub unsafe extern "C" fn PJRT_Collectives_CreateCommunicator(
 }
 
 /// Strongly-typed handler for [`PJRT_Communicator_Destroy`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Communicator_Destroy_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1897,6 +2165,10 @@ unsafe fn copy_collective_buffers(
 
 /// Strongly-typed handler for [`PJRT_Communicator_AllReduce`] and [`PJRT_Communicator_ReduceScatter`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Communicator_AllReduce_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Communicator_AllReduce_Args`].
@@ -1956,6 +2228,10 @@ pub unsafe extern "C" fn PJRT_Communicator_ReduceScatter(
 
 /// Strongly-typed handler for [`PJRT_Communicator_AllGather`] and [`PJRT_Communicator_AllToAll`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Communicator_AllGather_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Communicator_AllGather_Args`].
@@ -1992,6 +2268,10 @@ pub unsafe extern "C" fn PJRT_Communicator_AllGather(
 }
 
 /// Strongly-typed handler for [`PJRT_Communicator_CollectivePermute`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Communicator_CollectivePermute_Args`] structure.
 ///
 /// # Safety
 ///
@@ -2054,6 +2334,10 @@ pub unsafe extern "C" fn PJRT_Communicator_AllToAll(
 
 /// Strongly-typed handler for [`PJRT_Communicator_ToString`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Communicator_ToString_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Communicator_ToString_Args`].
@@ -2085,6 +2369,10 @@ pub unsafe extern "C" fn PJRT_Communicator_ToString(
 }
 
 /// Strongly-typed handler for [`PJRT_AbiVersion_ClientRuntime`] and [`PJRT_AbiVersion_ExecutableGet`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_AbiVersion_Get_Args`] structure.
 ///
 /// # Safety
 ///
@@ -2133,6 +2421,10 @@ pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableGet(
 
 /// Strongly-typed handler for [`PJRT_AbiVersion_RuntimeDestroy`] and [`PJRT_AbiVersion_ExecutableDestroy`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_AbiVersion_Destroy_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_AbiVersion_Destroy_Args`].
@@ -2163,6 +2455,10 @@ pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeDestroy(
 }
 
 /// Strongly-typed handler for [`PJRT_AbiVersion_RuntimeCompatibleWithRuntime`] and [`PJRT_AbiVersion_RuntimeCompatibleWithExecutable`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_AbiVersion_IsCompatible_Args`] structure.
 ///
 /// # Safety
 ///
@@ -2217,6 +2513,10 @@ pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeCompatibleWithExecutable(
 
 /// Strongly-typed handler for [`PJRT_AbiVersion_RuntimeToProto`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_AbiVersion_ToProto_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_AbiVersion_ToProto_Args`].
@@ -2257,6 +2557,10 @@ pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeToProto(
 }
 
 /// Strongly-typed handler for [`PJRT_AbiVersion_RuntimePlatformId`] and [`PJRT_AbiVersion_ExecutablePlatformId`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_AbiVersion_PlatformId_Args`] structure.
 ///
 /// # Safety
 ///
@@ -2310,6 +2614,10 @@ pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableDestroy(
 }
 
 /// Strongly-typed handler for [`PJRT_AbiVersion_ExecutableToProto`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_AbiVersion_ToProto_Args`] structure.
 ///
 /// # Safety
 ///
@@ -2374,6 +2682,10 @@ pub unsafe extern "C" fn PJRT_AbiVersion_ExecutablePlatformId(
 
 /// Strongly-typed handler for [`PJRT_AbiVersion_RuntimeFromProto`] and [`PJRT_AbiVersion_ExecutableFromProto`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_AbiVersion_FromProto_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_AbiVersion_FromProto_Args`].
@@ -2426,6 +2738,10 @@ pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableFromProto(
 }
 
 /// Strongly-typed handler for [`PJRT_Shardings_ParameterShardings`] and [`PJRT_Shardings_OutputShardings`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Shardings_PJRT_Executable_Shardings_Args`] structure.
 ///
 /// # Safety
 ///
@@ -2490,6 +2806,10 @@ pub unsafe extern "C" fn PJRT_Shardings_OutputShardings(
 
 /// Strongly-typed handler for [`PJRT_Megascale_CreateClientContext`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
@@ -2523,6 +2843,10 @@ pub unsafe extern "C" fn PJRT_Megascale_CreateClientContext(
 
 /// Strongly-typed handler for [`PJRT_Megascale_DeleteClientContext`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
@@ -2555,6 +2879,10 @@ pub unsafe extern "C" fn PJRT_Megascale_DeleteClientContext(
 }
 
 /// Strongly-typed handler for Megascale config creation entrypoints.
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
 ///
 /// # Safety
 ///
@@ -2633,6 +2961,10 @@ pub unsafe extern "C" fn PJRT_Megascale_CreateMultiSliceConfig(
 
 /// Strongly-typed handler for [`PJRT_Megascale_DeleteMultiSliceConfig`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
@@ -2666,6 +2998,10 @@ pub unsafe extern "C" fn PJRT_Megascale_DeleteMultiSliceConfig(
 
 /// Strongly-typed handler for [`PJRT_Megascale_ConfigNumSlices`] and [`PJRT_Megascale_GetNumSlices`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
@@ -2696,6 +3032,10 @@ pub unsafe extern "C" fn PJRT_Megascale_ConfigNumSlices(
 }
 
 /// Strongly-typed handler for [`PJRT_Megascale_ConfigNumDevicesPerSlice`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
 ///
 /// # Safety
 ///
@@ -2728,6 +3068,10 @@ pub unsafe extern "C" fn PJRT_Megascale_ConfigNumDevicesPerSlice(
 
 /// Strongly-typed handler for [`PJRT_Megascale_ConfigSliceId`] and [`PJRT_Megascale_GetSliceId`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
@@ -2758,6 +3102,10 @@ pub unsafe extern "C" fn PJRT_Megascale_ConfigSliceId(
 }
 
 /// Strongly-typed handler for [`PJRT_Megascale_ConfigSerializedSliceKeyValue`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Data_Args`] structure.
 ///
 /// # Safety
 ///
@@ -2835,6 +3183,10 @@ pub unsafe extern "C" fn PJRT_Megascale_DeserializeMultiSliceConfig(
 
 /// Strongly-typed handler for [`PJRT_Megascale_Addresses`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
@@ -2865,6 +3217,10 @@ pub unsafe extern "C" fn PJRT_Megascale_Addresses(
 }
 
 /// Strongly-typed handler for [`PJRT_Megascale_Barrier`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
 ///
 /// # Safety
 ///
@@ -2899,6 +3255,10 @@ pub unsafe extern "C" fn PJRT_Megascale_Barrier(
 
 /// Strongly-typed no-op handler for [`PJRT_Megascale_Handle_Args`].
 ///
+/// # Arguments
+///
+/// * `_args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
@@ -2924,6 +3284,10 @@ pub unsafe extern "C" fn PJRT_Megascale_LogError(
 }
 
 /// Strongly-typed handler for [`PJRT_Megascale_GetDcnTopology`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
 ///
 /// # Safety
 ///
@@ -3007,6 +3371,10 @@ pub unsafe extern "C" fn PJRT_Megascale_GetNumSlices(
 
 /// Strongly-typed handler for [`PJRT_Megascale_InitializeSlice`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
@@ -3057,6 +3425,10 @@ pub unsafe extern "C" fn PJRT_Megascale_FinalizeSlice(
 
 /// Strongly-typed handler for [`PJRT_Megascale_RegisterErrorHandler`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
@@ -3090,6 +3462,10 @@ pub unsafe extern "C" fn PJRT_Megascale_RegisterErrorHandler(
 
 /// Strongly-typed handler for [`PJRT_Megascale_UnregisterErrorHandler`].
 ///
+/// # Arguments
+///
+/// * `_args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
@@ -3121,6 +3497,10 @@ pub unsafe extern "C" fn PJRT_Megascale_UnregisterErrorHandler(
 }
 
 /// Strongly-typed handler for [`PJRT_Megascale_CollectMetrics`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Data_Args`] structure.
 ///
 /// # Safety
 ///
@@ -3162,6 +3542,10 @@ pub unsafe extern "C" fn PJRT_Megascale_CollectMetrics(
 
 /// Strongly-typed handler for [`PJRT_Megascale_ResetMetrics`].
 ///
+/// # Arguments
+///
+/// * `_args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
@@ -3194,6 +3578,10 @@ pub unsafe extern "C" fn PJRT_Megascale_ResetMetrics(
 
 /// Strongly-typed handler for [`PJRT_Megascale_GetTransportType`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
@@ -3224,6 +3612,10 @@ pub unsafe extern "C" fn PJRT_Megascale_GetTransportType(
 }
 
 /// Strongly-typed handler for [`PJRT_Megascale_SetTransportType`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
 ///
 /// # Safety
 ///
@@ -3296,13 +3688,31 @@ pub unsafe extern "C" fn PJRT_Megascale_AbortCollectives(
 
 /// Strongly-typed handler for [`PJRT_TpuExecutable_GetTargetArguments`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuExecutable_ProtoQuery_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuExecutable_ProtoQuery_Args`].
 unsafe fn handle_tpu_executable_target_arguments(args: &mut PJRT_TpuExecutable_ProtoQuery_Args) {
-    let gen_bytes = global_init_config().generation.to_string().into_bytes();
+    let tpu_gen = global_init_config().generation;
+    let target_bytes = libtpu_core::proto::TargetArgumentsProto {
+        tpu_version: tpu_gen as i32,
+        chip_variant: tpu_gen.to_string(),
+        clock_rate_mhz: 1750,
+        hbm_capacity_bytes: i64::try_from(tpu_gen.hbm_capacity_bytes().0).unwrap_or(0),
+        vmem_capacity_bytes: i64::try_from(tpu_gen.vmem_capacity_bytes().0).unwrap_or(0),
+        smem_capacity_bytes: 2 * 1024 * 1024,
+        cmem_capacity_bytes: 128 * 1024 * 1024,
+        tensor_cores_per_chip: i32::try_from(tpu_gen.tensor_cores_per_chip()).unwrap_or(1),
+        sparse_cores_per_chip: i32::try_from(tpu_gen.sparse_cores_per_chip()).unwrap_or(0),
+        mxu_dimension: i32::try_from(tpu_gen.mxu_dimension()).unwrap_or(128),
+        ici_bandwidth_bps: 4_800_000_000_000,
+    }
+    .encode();
     let mut st = extension_state().lock();
-    st.last_serialized_bytes = gen_bytes;
+    st.last_serialized_bytes = target_bytes;
     args.serialized_bytes = st.last_serialized_bytes.as_ptr() as usize;
     args.serialized_bytes_size = st.last_serialized_bytes.len();
     args.holder = std::ptr::dangling_mut::<std::ffi::c_void>();
@@ -3332,6 +3742,10 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_GetTargetArguments(
 
 /// Strongly-typed handler for [`PJRT_TpuExecutable_GetHloModuleWithConfig`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuExecutable_ProtoQuery_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuExecutable_ProtoQuery_Args`].
@@ -3350,12 +3764,13 @@ unsafe fn handle_tpu_executable_hlo_module_with_config(
             entry_computation_name: String::from("main"),
             entry_computation_id: 1,
             computations: Vec::new(),
+            host_program_shape: None,
             id: 1,
         }
     });
     let encoded = libtpu_core::proto::HloModuleProtoWithConfig {
         hlo_module: Some(hlo_mod),
-        config: Some(libtpu_core::proto::ExecutableBuildOptionsProto::default()),
+        config: Some(libtpu_core::proto::HloModuleConfigProto::default()),
     }
     .encode();
     let mut st = extension_state().lock();
@@ -3407,6 +3822,10 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_Reserved(
 }
 
 /// Strongly-typed handler for [`PJRT_TpuExecutable_GetCompiledMemoryStats`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuExecutable_GetCompiledMemoryStats_Args`] structure.
 ///
 /// # Safety
 ///
@@ -3462,6 +3881,10 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_GetCompiledMemoryStats(
 
 /// Strongly-typed handler for [`PJRT_TpuExecutable_RunHloCostAnalysis`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
@@ -3499,6 +3922,10 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_RunHloCostAnalysis(
 
 /// Strongly-typed handler for [`PJRT_TpuExecutable_SetTpuCompilationEnv`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
@@ -3531,6 +3958,10 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_SetTpuCompilationEnv(
 }
 
 /// Strongly-typed handler for [`PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuExecutable_ProtoQuery_Args`] structure.
 ///
 /// # Safety
 ///
@@ -3566,6 +3997,10 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString(
 }
 
 /// Strongly-typed handler for [`PJRT_TpuExecutable_IsPredeterminedError`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuExecutable_ErrorCheck_Args`] structure.
 ///
 /// # Safety
 ///
@@ -3613,6 +4048,10 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_IsPredeterminedError(
 
 /// Strongly-typed handler for [`PJRT_TpuExecutable_IsCancellationPlaceholderError`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuExecutable_ErrorCheck_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuExecutable_ErrorCheck_Args`].
@@ -3657,6 +4096,10 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_IsCancellationPlaceholderError(
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_Subslice`] and [`PJRT_TpuTopology_ReplaceHostBounds`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
@@ -3690,6 +4133,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_Subslice(
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_IsSubsliceTopology`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
@@ -3722,6 +4169,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_IsSubsliceTopology(
 
 /// Strongly-typed handler for zero-returning [`PJRT_TpuTopology_ScalarQuery_Args`] entrypoints.
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
@@ -3730,6 +4181,10 @@ unsafe fn handle_tpu_topology_zero(args: &mut PJRT_TpuTopology_ScalarQuery_Args)
 }
 
 /// Strongly-typed handler for one-returning [`PJRT_TpuTopology_ScalarQuery_Args`] entrypoints.
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
 ///
 /// # Safety
 ///
@@ -3783,6 +4238,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ReplaceHostBounds(
 }
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_IsEnhancedBarrierEnabled`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
 ///
 /// # Safety
 ///
@@ -3859,6 +4318,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_IsReachableOverLimitedIci(
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_ProcessCount`] and [`PJRT_TpuTopology_ProcessIds`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
@@ -3890,6 +4353,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ProcessCount(
 
 /// Strongly-typed handler for chips-per-process queries.
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
@@ -3920,6 +4387,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ChipsPerProcess(
 }
 
 /// Strongly-typed handler for cores-per-chip queries.
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
 ///
 /// # Safety
 ///
@@ -3953,6 +4424,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerChip(
 
 /// Strongly-typed handler for total chip count queries.
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
@@ -3962,6 +4437,10 @@ unsafe fn handle_tpu_topology_total_chips(args: &mut PJRT_TpuTopology_ScalarQuer
 }
 
 /// Strongly-typed handler for total core / logical device count queries.
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
 ///
 /// # Safety
 ///
@@ -3975,6 +4454,10 @@ unsafe fn handle_tpu_topology_total_cores(args: &mut PJRT_TpuTopology_ScalarQuer
 }
 
 /// Strongly-typed handler for per-process core / logical device count queries.
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
 ///
 /// # Safety
 ///
@@ -4164,6 +4647,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceIdsOnProcess(
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_MappingQuery_Args`] coordinate/index bijections.
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_MappingQuery_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_MappingQuery_Args`].
@@ -4307,6 +4794,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice(
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_ChipsPerProcessBounds`] and [`PJRT_TpuTopology_ChipBounds`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_BoundsQuery_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_BoundsQuery_Args`].
@@ -4361,6 +4852,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ChipBounds(
 }
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_ProcessBounds`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_BoundsQuery_Args`] structure.
 ///
 /// # Safety
 ///
@@ -4461,6 +4956,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_GetSliceConfigs(
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_GetDefaultPlatformConfig`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
@@ -4493,6 +4992,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_GetDefaultPlatformConfig(
 }
 
 /// Strongly-typed handler for [`PJRT_Callback_RegisterCallback`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Callback_Register_Args`] structure.
 ///
 /// # Safety
 ///
@@ -4529,6 +5032,10 @@ pub unsafe extern "C" fn PJRT_Callback_RegisterCallback(
 }
 
 /// Strongly-typed handler for [`PJRT_Callback_InvokeCallback`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Callback_Invoke_Args`] structure.
 ///
 /// # Safety
 ///
@@ -4576,6 +5083,10 @@ pub unsafe extern "C" fn PJRT_Callback_InvokeCallback(
 
 /// Strongly-typed handler for [`PJRT_PhaseCompile_GetCompiler`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_PhaseCompile_GetCompiler_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_PhaseCompile_GetCompiler_Args`].
@@ -4608,6 +5119,10 @@ pub unsafe extern "C" fn PJRT_PhaseCompile_GetCompiler(
 }
 
 /// Strongly-typed handler for [`PJRT_PhaseCompile_DestroyCompiler`] and [`PJRT_PhaseCompile_CBuffersDestroy`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_PhaseCompile_Destroy_Args`] structure.
 ///
 /// # Safety
 ///
@@ -4662,6 +5177,10 @@ const COMPILATION_PHASE_SIZES: [usize; 6] = [
 
 /// Strongly-typed handler for [`PJRT_PhaseCompile_RunPhase`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_PhaseCompile_RunPhase_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_PhaseCompile_RunPhase_Args`].
@@ -4680,11 +5199,12 @@ unsafe fn handle_phase_compile_run_phase(args: &mut PJRT_PhaseCompile_RunPhase_A
         // SAFETY: `args.input_bytes` is valid for `args.input_size` bytes.
         unsafe { std::slice::from_raw_parts(args.input_bytes.cast::<u8>(), args.input_size) }
     };
-    let phase_out = libtpu_core::compiler::CompiledProgram::run_compilation_phase(
+    let phase_out = libtpu_core::compiler::CompiledProgram::run_compilation_phase_proto(
         phase_name,
         input_program,
         b"",
     )
+    .map(|p| p.encode())
     .unwrap_or_default();
     let mut st = extension_state().lock();
     st.last_serialized_bytes = phase_out;
@@ -4717,6 +5237,10 @@ pub unsafe extern "C" fn PJRT_PhaseCompile_RunPhase(
 }
 
 /// Strongly-typed handler for [`PJRT_PhaseCompile_GetPhaseNames`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_PhaseCompile_GetPhaseNames_Args`] structure.
 ///
 /// # Safety
 ///
@@ -4773,10 +5297,23 @@ pub unsafe extern "C" fn PJRT_PhaseCompile_CBuffersDestroy(
 
 /// Strongly-typed handler for [`PJRT_CrossHostTransfers_Args`] entrypoints.
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_CrossHostTransfers_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_CrossHostTransfers_Args`].
 unsafe fn handle_cross_host_transfer(args: &mut PJRT_CrossHostTransfers_Args) {
+    if args.buffers.min(args.remote_device) >= 0x10000 {
+        // SAFETY: `args.buffers` and `args.remote_device` are valid `PJRT_Buffer*` handles when >= 0x10000.
+        unsafe {
+            copy_collective_buffers(
+                args.buffers as *mut std::ffi::c_void,
+                args.remote_device as *mut std::ffi::c_void,
+            );
+        }
+    }
     let mut st = extension_state().lock();
     st.cross_host_transfers = st.cross_host_transfers.saturating_add(1);
     args.out_event = st.cross_host_transfers;
@@ -4870,12 +5407,51 @@ pub unsafe extern "C" fn PJRT_CrossHostTransfers_SendBuffers(
     }
 }
 
+/// Static memory space description handles for HBM (`0`), VMEM (`1`), SMEM (`2`), and pinned host (`3`).
+const MEMORY_DESCRIPTION_HANDLES: [*const std::ffi::c_void; 4] = [
+    std::ptr::dangling::<std::ffi::c_void>(),
+    2_usize as *const std::ffi::c_void,
+    3_usize as *const std::ffi::c_void,
+    4_usize as *const std::ffi::c_void,
+];
+
+/// Static memory space kind strings corresponding to `MEMORY_DESCRIPTION_HANDLES`.
+const MEMORY_DESCRIPTION_KINDS: [&str; 4] = ["device", "vmem", "smem", "pinned_host"];
+
 /// Strongly-typed handler for [`PJRT_ExecutableMetadata_Get`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Metadata_Get_Args`] structure.
 ///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Metadata_Get_Args`].
 unsafe fn handle_executable_metadata_get(args: &mut PJRT_Metadata_Get_Args) {
+    let encoded = libtpu_core::proto::PjRtExecutableMetadataProto {
+        compiled_memory_stats: Some(libtpu_core::proto::CompiledMemoryStatsProto {
+            generated_code_size_in_bytes: 1024,
+            argument_size_in_bytes: 256,
+            output_size_in_bytes: 256,
+            alias_size_in_bytes: 0,
+            temp_size_in_bytes: 512,
+            host_generated_code_size_in_bytes: 0,
+            host_argument_size_in_bytes: 0,
+            host_output_size_in_bytes: 0,
+            host_alias_size_in_bytes: 0,
+            host_temp_size_in_bytes: 0,
+            serialized_buffer_assignment: Vec::new(),
+            peak_memory_in_bytes: 2048,
+            total_size_in_bytes: 2048,
+            total_allocation_bytes: 2048,
+            indefinite_allocations: 0,
+            peak_unpadded_heap_bytes: 1536,
+        }),
+        platform_specific_metadata: Vec::new(),
+    }
+    .encode();
+    let mut st = extension_state().lock();
+    st.last_serialized_bytes = encoded;
     args.metadata_out = if (args.handle as usize) >= 0x10000 {
         // SAFETY: `args.handle` is a valid `PJRT_Executable*`.
         let exec = unsafe { &*args.handle.cast::<crate::pjrt_types::PJRT_Executable>() };
@@ -4909,11 +5485,31 @@ pub unsafe extern "C" fn PJRT_ExecutableMetadata_Get(
 
 /// Strongly-typed handler for [`PJRT_ExecutableMetadata_Destroy`] and [`PJRT_MemoryDescriptions_Destroy`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Metadata_Destroy_Args`] structure.
+///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_Metadata_Destroy_Args`].
+/// `args` must be a valid [`PJRT_Metadata_Destroy_Args`] (or [`PJRT_MemoryDescription_Kind_Args`] when `struct_size >= 48`).
 unsafe fn handle_metadata_destroy(args: &mut PJRT_Metadata_Destroy_Args) {
-    args.metadata = ptr::null_mut();
+    if args.struct_size >= size_of::<PJRT_MemoryDescription_Kind_Args>() {
+        // SAFETY: `args.struct_size >= 48` guarantees `args` is a valid `PJRT_MemoryDescription_Kind_Args`.
+        let kind_args =
+            unsafe { &mut *ptr::from_mut(args).cast::<PJRT_MemoryDescription_Kind_Args>() };
+        let idx = (kind_args.memory_description as usize)
+            .saturating_sub(1)
+            .min(3);
+        let kind_str = MEMORY_DESCRIPTION_KINDS
+            .get(idx)
+            .copied()
+            .unwrap_or("device");
+        kind_args.kind = kind_str.as_ptr().cast();
+        kind_args.kind_size = kind_str.len();
+        kind_args.kind_id = i32::try_from(idx).unwrap_or(0);
+    } else {
+        args.metadata = ptr::null_mut();
+    }
 }
 
 /// Destroys TPU executable metadata (`PJRT_ExecutableMetadata_Destroy`).
@@ -4940,11 +5536,25 @@ pub unsafe extern "C" fn PJRT_ExecutableMetadata_Destroy(
 
 /// Strongly-typed handler for [`PJRT_MemoryDescriptions_Get`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Metadata_Get_Args`] structure.
+///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_Metadata_Get_Args`].
+/// `args` must be a valid [`PJRT_Metadata_Get_Args`] (or [`PJRT_DeviceDescription_MemoryDescriptions_Args`] when `struct_size >= 48`).
 unsafe fn handle_memory_descriptions_get(args: &mut PJRT_Metadata_Get_Args) {
-    args.metadata_out = 4;
+    if args.struct_size >= size_of::<PJRT_DeviceDescription_MemoryDescriptions_Args>() {
+        // SAFETY: `args.struct_size >= 48` guarantees `args` is a valid `PJRT_DeviceDescription_MemoryDescriptions_Args`.
+        let desc_args = unsafe {
+            &mut *ptr::from_mut(args).cast::<PJRT_DeviceDescription_MemoryDescriptions_Args>()
+        };
+        desc_args.memory_descriptions = MEMORY_DESCRIPTION_HANDLES.as_ptr();
+        desc_args.num_memory_descriptions = MEMORY_DESCRIPTION_HANDLES.len();
+        desc_args.default_memory_index = 0;
+    } else {
+        args.metadata_out = 4;
+    }
 }
 
 /// Queries device memory space descriptions (`PJRT_MemoryDescriptions_Get`).
@@ -4993,6 +5603,10 @@ pub unsafe extern "C" fn PJRT_MemoryDescriptions_Destroy(
 
 /// Strongly-typed handler for [`PJRT_Layouts_MemoryLayout_Destroy`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Layouts_MemoryLayout_Destroy_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Layouts_MemoryLayout_Destroy_Args`].
@@ -5024,6 +5638,10 @@ pub unsafe extern "C" fn PJRT_Layouts_MemoryLayout_Destroy(
 
 /// Strongly-typed handler for [`PJRT_Layouts_MemoryLayout_Serialize`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Layouts_MemoryLayout_Serialize_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Layouts_MemoryLayout_Serialize_Args`].
@@ -5036,8 +5654,12 @@ unsafe fn handle_layouts_memory_layout_serialize(
         tiles: vec![libtpu_core::proto::TileProto {
             dimensions: vec![8, sublane_tile],
         }],
-        element_size_in_bits: 32,
+        tail_padding_alignment_in_elements: 1,
+        index_primitive_type: 0,
+        pointer_primitive_type: 0,
         memory_space: 0,
+        element_size_in_bits: 32,
+        dynamic_shape_metadata_prefix_bytes: 0,
     };
     let encoded = layout_proto.encode();
     let mut st = extension_state().lock();
@@ -5070,6 +5692,10 @@ pub unsafe extern "C" fn PJRT_Layouts_MemoryLayout_Serialize(
 }
 
 /// Strongly-typed handler for [`PJRT_Layouts_Client_GetDefaultLayout`] and [`PJRT_Layouts_Topology_GetDefaultLayout`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args`] structure.
 ///
 /// # Safety
 ///
@@ -5105,6 +5731,10 @@ pub unsafe extern "C" fn PJRT_Layouts_Client_GetDefaultLayout(
 }
 
 /// Strongly-typed handler for [`PJRT_Layouts_Buffer_GetMemoryLayout`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args`] structure.
 ///
 /// # Safety
 ///
@@ -5170,6 +5800,10 @@ pub unsafe extern "C" fn PJRT_Layouts_Topology_GetDefaultLayout(
 
 /// Strongly-typed handler for [`PJRT_Layouts_Executable_GetOutputLayouts`] and [`PJRT_Layouts_Executable_GetParameterLayouts`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Metadata_Get_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Metadata_Get_Args`].
@@ -5229,6 +5863,10 @@ pub unsafe extern "C" fn PJRT_Layouts_Executable_GetParameterLayouts(
 
 /// Strongly-typed handler for [`PJRT_RawBuffer_CreateRawAliasOfBuffer`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_RawBuffer_Query_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
@@ -5269,6 +5907,10 @@ pub unsafe extern "C" fn PJRT_RawBuffer_CreateRawAliasOfBuffer(
 
 /// Strongly-typed handler for [`PJRT_RawBuffer_Destroy`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_RawBuffer_Destroy_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_RawBuffer_Destroy_Args`].
@@ -5301,6 +5943,10 @@ pub unsafe extern "C" fn PJRT_RawBuffer_Destroy(
 }
 
 /// Strongly-typed handler for [`PJRT_RawBuffer_GetHostPointer`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_RawBuffer_Query_Args`] structure.
 ///
 /// # Safety
 ///
@@ -5341,6 +5987,10 @@ pub unsafe extern "C" fn PJRT_RawBuffer_GetHostPointer(
 
 /// Strongly-typed handler for [`PJRT_RawBuffer_GetOnDeviceSizeInBytes`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_RawBuffer_Query_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
@@ -5374,6 +6024,10 @@ pub unsafe extern "C" fn PJRT_RawBuffer_GetOnDeviceSizeInBytes(
 }
 
 /// Strongly-typed handler for [`PJRT_RawBuffer_GetMemorySpace`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_RawBuffer_Query_Args`] structure.
 ///
 /// # Safety
 ///
@@ -5411,6 +6065,10 @@ pub unsafe extern "C" fn PJRT_RawBuffer_GetMemorySpace(
 }
 
 /// Strongly-typed handler for [`PJRT_RawBuffer_CopyRawHostToDevice`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_RawBuffer_CopyRaw_Args`] structure.
 ///
 /// # Safety
 ///
@@ -5454,6 +6112,10 @@ pub unsafe extern "C" fn PJRT_RawBuffer_CopyRawHostToDevice(
 
 /// Strongly-typed handler for [`PJRT_RawBuffer_CopyRawDeviceToHost`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_RawBuffer_CopyRaw_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_RawBuffer_CopyRaw_Args`].
@@ -5495,6 +6157,10 @@ pub unsafe extern "C" fn PJRT_RawBuffer_CopyRawDeviceToHost(
 }
 
 /// Strongly-typed handler for [`PJRT_Triton_Compile`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Triton_Compile_Args`] structure.
 ///
 /// # Safety
 ///
@@ -6029,22 +6695,70 @@ pub struct PJRT_Profiler_Extension {
 unsafe impl Sync for PJRT_Profiler_Extension {}
 
 const _: () = assert!(size_of::<PJRT_XlaTransform_Extension>() == 56);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_XlaTransform_Extension, register_xla_transform) == 0x18);
 const _: () = assert!(size_of::<PJRT_HostMemoryAllocator_Extension>() == 32);
+const _: () = assert!(
+    std::mem::offset_of!(
+        PJRT_HostMemoryAllocator_Extension,
+        get_host_memory_allocator
+    ) == 0x18
+);
 const _: () = assert!(size_of::<PJRT_MultiSlice_Extension>() == 64);
+const _: () = assert!(std::mem::offset_of!(PJRT_MultiSlice_Extension, config_serialize) == 0x38);
 const _: () = assert!(size_of::<PJRT_Collectives_Extension>() == 96);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Collectives_Extension, communicator_to_string) == 0x58);
 const _: () = assert!(size_of::<PJRT_AbiVersion_Extension>() == 120);
+const _: () = assert!(
+    std::mem::offset_of!(PJRT_AbiVersion_Extension, executable_abi_version_from_proto) == 0x70
+);
 const _: () = assert!(size_of::<PJRT_Shardings_Extension>() == 40);
+const _: () = assert!(std::mem::offset_of!(PJRT_Shardings_Extension, output_shardings) == 0x20);
 const _: () = assert!(size_of::<PJRT_Megascale_Extension>() == 248);
+const _: () = assert!(std::mem::offset_of!(PJRT_Megascale_Extension, abort_collectives) == 0xf0);
 const _: () = assert!(size_of::<PJRT_TpuExecutable_Extension>() == 96);
+const _: () = assert!(
+    std::mem::offset_of!(
+        PJRT_TpuExecutable_Extension,
+        is_tpu_cancellation_placeholder_error
+    ) == 0x58
+);
 const _: () = assert!(size_of::<PJRT_TpuTopology_Extension>() == 272);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_TpuTopology_Extension, get_default_platform_config) == 0x108);
 const _: () = assert!(size_of::<PJRT_Callback_Extension>() == 40);
+const _: () = assert!(std::mem::offset_of!(PJRT_Callback_Extension, invoke_callback) == 0x20);
 const _: () = assert!(size_of::<PJRT_PhaseCompile_Extension>() == 64);
+const _: () = assert!(
+    std::mem::offset_of!(PJRT_PhaseCompile_Extension, phase_compile_c_buffers_destroy) == 0x38
+);
 const _: () = assert!(size_of::<PJRT_CrossHostTransfers_Extension>() == 56);
+const _: () = assert!(
+    std::mem::offset_of!(PJRT_CrossHostTransfers_Extension, cross_host_send_buffers) == 0x30
+);
 const _: () = assert!(size_of::<PJRT_ExecutableMetadata_Extension>() == 40);
+const _: () = assert!(
+    std::mem::offset_of!(
+        PJRT_ExecutableMetadata_Extension,
+        destroy_executable_metadata
+    ) == 0x20
+);
 const _: () = assert!(size_of::<PJRT_MemoryDescriptions_Extension>() == 40);
+const _: () = assert!(
+    std::mem::offset_of!(
+        PJRT_MemoryDescriptions_Extension,
+        destroy_memory_descriptions
+    ) == 0x20
+);
 const _: () = assert!(size_of::<PJRT_Layouts_Extension>() == 80);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Layouts_Extension, executable_get_parameter_layouts) == 0x48);
 const _: () = assert!(size_of::<PJRT_RawBuffer_Extension>() == 80);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_RawBuffer_Extension, copy_raw_device_to_host) == 0x48);
 const _: () = assert!(size_of::<PJRT_Profiler_Extension>() == 40);
+const _: () = assert!(std::mem::offset_of!(PJRT_Profiler_Extension, traceme_context_id) == 0x20);
 
 /// Static Node 17 (`PJRT_Profiler_Extension`).
 pub static EXT_17_PROFILER: PJRT_Profiler_Extension = PJRT_Profiler_Extension {

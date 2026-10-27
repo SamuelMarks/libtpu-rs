@@ -76,6 +76,27 @@ enum class DataType : int32_t {
 };
 
 /**
+ * @brief Strongly-typed Cloud TPU generation enumeration matching
+ * `TpuVersionEnum`.
+ */
+enum class TpuVersion : int32_t {
+  /** @brief Unspecified TPU generation (`0`). */
+  Unspecified = 0,
+  /** @brief Cloud TPU v2 (`2`). */
+  V2 = 2,
+  /** @brief Cloud TPU v3 (`Jellyfish`, `3`). */
+  V3 = 3,
+  /** @brief Cloud TPU v4 (`Pufferfish`, `4`). */
+  V4 = 4,
+  /** @brief Cloud TPU v5e (`Viperfish`, `5`). */
+  V5e = 5,
+  /** @brief Cloud TPU v5p (`Ghostfish`, `6`). */
+  V5p = 6,
+  /** @brief Cloud TPU v6e (`Zebrafish` / Trillium, `7`). */
+  V6e = 7,
+};
+
+/**
  * @brief Zero-exception RAII status wrapper over `LibTpuCStatus`.
  */
 class Status {
@@ -789,6 +810,267 @@ private:
   const LibtpuSdk_Api *api_;
   /** @brief Owned `LibtpuSdk_Client*` handle. */
   LibtpuSdk_Client *handle_;
+};
+
+/**
+ * @brief Strongly-typed C++20 view over the static `PJRT_Api` (`1,144` bytes)
+ * vtable and its 17-node `PJRT_Extension_Base` linked list.
+ */
+class PjrtApiView {
+public:
+  /**
+   * @brief Constructs a `PjrtApiView` bound to `GetPjrtApi()`.
+   */
+  PjrtApiView() noexcept;
+
+  /**
+   * @brief Returns the `PJRT_Api` byte size (`1144`).
+   * @return Byte size of `PJRT_Api`.
+   */
+  [[nodiscard]] size_t struct_size() const noexcept;
+
+  /**
+   * @brief Returns the `PJRT_Api_Version` minor version (`116`).
+   * @return PJRT minor version number.
+   */
+  [[nodiscard]] int32_t minor_version() const noexcept;
+
+  /**
+   * @brief Counts the number of `PJRT_Extension_Base` nodes in the extension
+   * chain (`17`).
+   * @return Number of extensions linked from `extension_start`.
+   */
+  [[nodiscard]] size_t extension_count() const noexcept;
+
+  /**
+   * @brief Searches the `PJRT_Extension_Base` linked list for `ext_type`.
+   * @param ext_type Numeric `PJRT_Extension_Type` discriminant.
+   * @return Pointer to matching `PJRT_Extension_Base` or `nullptr` if not
+   * found.
+   */
+  [[nodiscard]] const PJRT_Extension_Base *
+  find_extension(int32_t ext_type) const noexcept;
+
+  /**
+   * @brief Queries the number of device memory descriptions (`4`: HBM, VMEM,
+   * SMEM, pinned_host) via `PJRT_MemoryDescriptions_Extension`.
+   * @return Number of device memory space descriptions (`4`).
+   */
+  [[nodiscard]] size_t memory_description_count() const noexcept;
+
+private:
+  /** @brief Non-owning pointer to static `PJRT_Api` vtable. */
+  const PJRT_Api *api_;
+};
+
+/**
+ * @brief Non-owning strongly-typed C++20 view over a `PJRT_Device*`.
+ */
+class Device {
+public:
+  /**
+   * @brief Constructs a `Device` view over `handle`.
+   * @param handle Raw `PJRT_Device*` pointer (defaults to `nullptr`).
+   */
+  explicit Device(PJRT_Device *handle = nullptr) noexcept;
+
+  /**
+   * @brief Returns the underlying raw `PJRT_Device*` pointer.
+   * @return Raw `PJRT_Device*` handle.
+   */
+  [[nodiscard]] PJRT_Device *raw() const noexcept;
+
+private:
+  /** @brief Non-owning C device handle. */
+  PJRT_Device *handle_;
+};
+
+/**
+ * @brief Non-owning strongly-typed C++20 view over a `PJRT_Memory*`.
+ */
+class Memory {
+public:
+  /**
+   * @brief Constructs a `Memory` view over `handle`.
+   * @param handle Raw `PJRT_Memory*` pointer (defaults to `nullptr`).
+   */
+  explicit Memory(PJRT_Memory *handle = nullptr) noexcept;
+
+  /**
+   * @brief Returns the underlying raw `PJRT_Memory*` pointer.
+   * @return Raw `PJRT_Memory*` handle.
+   */
+  [[nodiscard]] PJRT_Memory *raw() const noexcept;
+
+private:
+  /** @brief Non-owning C memory handle. */
+  PJRT_Memory *handle_;
+};
+
+/**
+ * @brief Non-owning strongly-typed C++20 view over a `PJRT_Executable*`.
+ */
+class Executable {
+public:
+  /**
+   * @brief Constructs an `Executable` view over `handle`.
+   * @param handle Raw `PJRT_Executable*` pointer (defaults to `nullptr`).
+   */
+  explicit Executable(PJRT_Executable *handle = nullptr) noexcept;
+
+  /**
+   * @brief Returns the underlying raw `PJRT_Executable*` pointer.
+   * @return Raw `PJRT_Executable*` handle.
+   */
+  [[nodiscard]] PJRT_Executable *raw() const noexcept;
+
+private:
+  /** @brief Non-owning C executable handle. */
+  PJRT_Executable *handle_;
+};
+
+/** @brief Type alias for `SdkClient` (`SdkMonitor`). */
+using SdkMonitor = SdkClient;
+
+/**
+ * @brief Strongly-typed C++20 RAII wrapper over `PJRT_PhaseCompile_Extension`.
+ */
+class PhaseCompiler {
+public:
+  /**
+   * @brief Acquires a `PhaseCompiler` handle via
+   * `PJRT_PhaseCompile_GetCompiler`.
+   */
+  PhaseCompiler() noexcept;
+
+  /**
+   * @brief Releases the `PhaseCompiler` handle via
+   * `PJRT_PhaseCompile_DestroyCompiler`.
+   */
+  ~PhaseCompiler() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other phase compiler.
+   */
+  PhaseCompiler(const PhaseCompiler &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other phase compiler.
+   * @return Reference to this phase compiler.
+   */
+  PhaseCompiler &operator=(const PhaseCompiler &other) = delete;
+
+  /**
+   * @brief Queries the number of supported compilation phases (`5`).
+   * @return Number of canonical compilation phases.
+   */
+  [[nodiscard]] size_t phase_count() const noexcept;
+
+  /**
+   * @brief Runs a named compilation phase on `input_bytes`.
+   * @param phase_name Null-terminated compilation phase name.
+   * @param input_bytes Pointer to MLIR or HLO program bytes.
+   * @param input_size Byte length of `input_bytes`.
+   * @return Output serialized partial program byte size (`> 0`).
+   */
+  [[nodiscard]] size_t run_phase(const char *phase_name,
+                                 const char *input_bytes,
+                                 size_t input_size) noexcept;
+
+private:
+  /** @brief Opaque phase compiler handle ID. */
+  size_t handle_;
+};
+
+/**
+ * @brief Strongly-typed C++20 RAII wrapper over `PJRT_Megascale_Extension`.
+ */
+class MegascaleContext {
+public:
+  /**
+   * @brief Creates a `MegascaleContext` via
+   * `PJRT_Megascale_CreateClientContext`.
+   */
+  MegascaleContext() noexcept;
+
+  /**
+   * @brief Deletes the `MegascaleContext` via
+   * `PJRT_Megascale_DeleteClientContext`.
+   */
+  ~MegascaleContext() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other Megascale context.
+   */
+  MegascaleContext(const MegascaleContext &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other Megascale context.
+   * @return Reference to this Megascale context.
+   */
+  MegascaleContext &operator=(const MegascaleContext &other) = delete;
+
+  /**
+   * @brief Executes a multi-slice Megascale barrier and returns the barrier
+   * count.
+   * @return Completed barrier count (`>= 1`).
+   */
+  [[nodiscard]] size_t barrier() noexcept;
+
+  /**
+   * @brief Queries the number of slices in the Megascale topology.
+   * @return Number of slices (`>= 1`).
+   */
+  [[nodiscard]] size_t num_slices() const noexcept;
+
+private:
+  /** @brief Opaque Megascale context handle ID. */
+  size_t handle_;
+};
+
+/**
+ * @brief Strongly-typed C++20 RAII wrapper over `TpuEmbeddingEngineState*`.
+ */
+class EmbeddingEngine {
+public:
+  /**
+   * @brief Allocates a `TpuEmbeddingEngineState` via
+   * `TpuEmbeddingEngineState_Create`.
+   */
+  EmbeddingEngine() noexcept;
+
+  /**
+   * @brief Frees the `TpuEmbeddingEngineState` via
+   * `TpuEmbeddingEngineState_Free`.
+   */
+  ~EmbeddingEngine() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other embedding engine.
+   */
+  EmbeddingEngine(const EmbeddingEngine &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other embedding engine.
+   * @return Reference to this embedding engine.
+   */
+  EmbeddingEngine &operator=(const EmbeddingEngine &other) = delete;
+
+  /**
+   * @brief Returns the internal `TpuEmbeddingEngineState` state pointer.
+   * @return Non-null internal state pointer.
+   */
+  [[nodiscard]] const void *raw_state() const noexcept;
+
+private:
+  /** @brief Owned `TpuEmbeddingEngineState*` handle. */
+  TpuEmbeddingEngineState *state_;
 };
 
 } // namespace libtpu

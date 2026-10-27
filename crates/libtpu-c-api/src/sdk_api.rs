@@ -643,3 +643,9 @@ static GLOBAL_SDK_API: LibtpuSdk_Api = LibtpuSdk_Api {
 pub extern "C" fn GetLibtpuSdkApi() -> *const LibtpuSdk_Api {
     ptr::addr_of!(GLOBAL_SDK_API)
 }
+
+/// Native `CPython` extension entrypoint exported by `sdk.so` (`PyInit_sdk`).
+#[unsafe(no_mangle)]
+pub extern "C" fn PyInit_sdk() -> *const LibtpuSdk_Api {
+    ptr::addr_of!(GLOBAL_SDK_API)
+}

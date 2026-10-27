@@ -12,13 +12,44 @@ categories.workspace = true
 
 [dependencies]
 bitflags.workspace = true
+blake3.workspace = true
+brotli.workspace = true
 bytemuck.workspace = true
+cpp_demangle.workspace = true
 derive_more.workspace = true
+float8.workspace = true
+gimli.workspace = true
+goblin.workspace = true
 half.workspace = true
+iced-x86.workspace = true
+indexmap.workspace = true
+lexopt.workspace = true
 libc.workspace = true
+memmap2.workspace = true
+nix.workspace = true
+num-complex.workspace = true
+num_enum.workspace = true
+object.workspace = true
 parking_lot.workspace = true
+petgraph.workspace = true
+prost.workspace = true
+prost-reflect.workspace = true
+prost-types.workspace = true
+rustix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
 smallvec.workspace = true
+winnow.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[build-dependencies]
+prost.workspace = true
+prost-build.workspace = true
+prost-types.workspace = true
+protox.workspace = true
 
 [lints]
 workspace = true

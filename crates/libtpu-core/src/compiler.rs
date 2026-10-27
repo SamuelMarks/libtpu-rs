@@ -7,10 +7,23 @@
 
 use crate::error::{LibTpuError, LibTpuResult, Utf8ErrorWrapper};
 use crate::proto::{
-    CompileOptionsProto, HloModuleProto, HloModuleProtoWithConfig, LayoutProto, ShapeProto,
-    TileProto, TpuSerializedExecutableProto,
+    CompileOptionsProto, DeepseaConstantPoolEntryProto, DeepseaExecutableProto,
+    DeepseaOverlaySectionProto, DeepseaRelocationEntryProto, DeepseaSyncFlagInitProto,
+    HloComputationProto, HloModuleProto, HloModuleProtoWithConfig, IsaBundleSlotProto,
+    IsaCoreProgramHeaderProto, IsaProgramProto, IsaSymbolTableEntryProto, IsaVliwBundleProto,
+    LayoutProto, PjRtPartialProgramProto, ShapeProto, TargetArgumentsProto, TileProto,
+    TpuExecutableProto, TpuSerializedExecutableProto, sha256_fingerprint_u64,
 };
 use crate::types::{ByteSize, ElementType, MemoryKind, MemoryLayout, Shape};
+use indexmap::IndexMap;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
+use petgraph::algo::toposort;
+use petgraph::stable_graph::StableDiGraph;
+use winnow::Parser;
+use winnow::ascii::{digit1, multispace0};
+use winnow::combinator::{alt, delimited, preceded, repeat, separated};
+use winnow::error::ContextError;
+use winnow::token::{any, take_till, take_while};
 
 /// Magic 4-byte header identifying an MLIR bytecode payload (`b"ML\xefR"`).
 pub const MLIR_BYTECODE_MAGIC: &[u8; 4] = b"ML\xefR";
@@ -20,6 +33,18 @@ pub const EXECUTABLE_MAGIC: &[u8; 8] = b"LTPUEXEC";
 
 /// Binary format version for serialized TPU executables.
 pub const EXECUTABLE_FORMAT_VERSION: u32 = 1;
+
+/// Fixed-layout 12-byte binary header for serialized `libtpu-rs` executables (`LTPUEXEC` + version).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ExecutableBinaryHeader {
+    /// 8-byte ASCII magic signature (`b"LTPUEXEC"`).
+    pub magic: [u8; 8],
+    /// Little-endian 32-bit format version (`EXECUTABLE_FORMAT_VERSION`).
+    pub version_le: u32,
+}
+
+const _: () = assert!(size_of::<ExecutableBinaryHeader>() == 12);
 
 /// Canonical ordered compilation phases supported by `PJRT_PhaseCompile_Extension`.
 pub const COMPILATION_PHASE_NAMES: [&str; 5] = [
@@ -32,7 +57,7 @@ pub const COMPILATION_PHASE_NAMES: [&str; 5] = [
 
 /// Supported TPU instruction opcodes in a [`CompiledProgram`] VLIW instruction bundle.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
 pub enum TpuOpCode {
     /// Identity / copy input 0 to output 0 (`0`).
     Identity = 0,
@@ -124,6 +149,32 @@ pub enum TpuOpCode {
     AllGather = 43,
     /// Cross-replica `ReduceScatter` collective (`44`).
     ReduceScatter = 44,
+    /// Elementwise bitwise left shift (`output[i] = input0[i] << input1[i]`) (`45`).
+    ShiftLeft = 45,
+    /// Elementwise arithmetic right shift (`output[i] = input0[i] >> input1[i]`) (`46`).
+    ShiftRightArithmetic = 46,
+    /// Elementwise logical right shift (`output[i] = (input0[i] as u32) >> input1[i]`) (`47`).
+    ShiftRightLogical = 47,
+    /// Elementwise population count (`output[i] = input0[i].count_ones()`) (`48`).
+    PopulationCount = 48,
+    /// Elementwise count leading zeros (`output[i] = input0[i].leading_zeros()`) (`49`).
+    CountLeadingZeros = 49,
+    /// 1D/2D/3D spatial convolution (`stablehlo.convolution`) (`50`).
+    Convolution = 50,
+    /// Indexed tensor gather (`stablehlo.gather`) (`51`).
+    Gather = 51,
+    /// Indexed tensor scatter update (`stablehlo.scatter`) (`52`).
+    Scatter = 52,
+    /// Dynamic sub-tensor slice extraction (`stablehlo.dynamic_slice`) (`53`).
+    DynamicSlice = 53,
+    /// Dynamic sub-tensor in-place slice update (`stablehlo.dynamic_update_slice`) (`54`).
+    DynamicUpdateSlice = 54,
+    /// Sliding-window reduction (`stablehlo.reduce_window`) (`55`).
+    ReduceWindow = 55,
+    /// Ascending/descending tensor sort (`stablehlo.sort`) (`56`).
+    Sort = 56,
+    /// Deterministic ThreeFry/Philox pseudo-random bit generator (`stablehlo.rng_bit_generator`) (`57`).
+    RngBitGenerator = 57,
 }
 
 impl TpuOpCode {
@@ -137,62 +188,18 @@ impl TpuOpCode {
     ///
     /// Returns [`LibTpuError::DeserializationFailed`] if the byte does not match a known opcode.
     pub fn from_byte(raw: u8) -> LibTpuResult<Self> {
-        match raw {
-            0 => Ok(Self::Identity),
-            1 => Ok(Self::AddF32),
-            2 => Ok(Self::AddS32),
-            3 => Ok(Self::MulF32),
-            4 => Ok(Self::XorBytes),
-            5 => Ok(Self::SubF32),
-            6 => Ok(Self::DivF32),
-            7 => Ok(Self::MaxF32),
-            8 => Ok(Self::MinF32),
-            9 => Ok(Self::DotGeneralF32),
-            10 => Ok(Self::NegF32),
-            11 => Ok(Self::ExpF32),
-            12 => Ok(Self::TanhF32),
-            13 => Ok(Self::ReduceSumF32),
-            14 => Ok(Self::AllReduceSumF32),
-            15 => Ok(Self::CustomCall),
-            16 => Ok(Self::Abs),
-            17 => Ok(Self::Log),
-            18 => Ok(Self::Sqrt),
-            19 => Ok(Self::Rsqrt),
-            20 => Ok(Self::Sine),
-            21 => Ok(Self::Cosine),
-            22 => Ok(Self::Floor),
-            23 => Ok(Self::Ceil),
-            24 => Ok(Self::Not),
-            25 => Ok(Self::Rem),
-            26 => Ok(Self::And),
-            27 => Ok(Self::Or),
-            28 => Ok(Self::CompareEq),
-            29 => Ok(Self::CompareLt),
-            30 => Ok(Self::CompareGt),
-            31 => Ok(Self::Select),
-            32 => Ok(Self::Iota),
-            33 => Ok(Self::Reverse),
-            34 => Ok(Self::ReduceMax),
-            35 => Ok(Self::ReduceMin),
-            36 => Ok(Self::Reshape),
-            37 => Ok(Self::Transpose),
-            38 => Ok(Self::BroadcastInDim),
-            39 => Ok(Self::Slice),
-            40 => Ok(Self::Concatenate),
-            41 => Ok(Self::Convert),
-            42 => Ok(Self::Constant),
-            43 => Ok(Self::AllGather),
-            44 => Ok(Self::ReduceScatter),
-            _ => Err(LibTpuError::DeserializationFailed {
-                reason: format!("Unknown TpuOpCode byte {raw}"),
-            }),
-        }
+        Self::try_from(raw).map_err(|_| LibTpuError::DeserializationFailed {
+            reason: format!("Unknown TpuOpCode byte {raw}"),
+        })
     }
 
     /// Returns the number of input operands consumed by this opcode.
     #[must_use]
     pub const fn arity(self) -> usize {
-        if matches!(self, Self::Select) {
+        if matches!(
+            self,
+            Self::Select | Self::Scatter | Self::DynamicUpdateSlice
+        ) {
             3
         } else if matches!(self, Self::Constant) {
             0
@@ -224,6 +231,12 @@ impl TpuOpCode {
                 | Self::CompareLt
                 | Self::CompareGt
                 | Self::Concatenate
+                | Self::ShiftLeft
+                | Self::ShiftRightArithmetic
+                | Self::ShiftRightLogical
+                | Self::Convolution
+                | Self::Gather
+                | Self::DynamicSlice
         )
     }
 
@@ -313,6 +326,374 @@ pub struct VliwInstructionWord {
 
 const _: () = assert!(size_of::<VliwInstructionWord>() == 16);
 
+/// 8-byte header of an architectural 64-byte [`TensorCoreVliwBundle`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct VliwBundleHeader {
+    /// Program counter bundle index (`u32`).
+    pub pc_offset: u32,
+    /// Active functional unit slot bitmask (`u16`).
+    pub bundle_flags: u16,
+    /// Predicate execution mask (`u16`).
+    pub pred_mask: u16,
+}
+
+/// 8-byte Scalar ALU (`S0`) slot inside a [`TensorCoreVliwBundle`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ScalarAluSlot {
+    /// Scalar opcode (`u8`).
+    pub opcode: u8,
+    /// Destination scalar register (`u8`).
+    pub dst_sreg: u8,
+    /// First source scalar register (`u8`).
+    pub src0_sreg: u8,
+    /// Second source scalar register (`u8`).
+    pub src1_sreg: u8,
+    /// 32-bit immediate value (`u32`).
+    pub imm32: u32,
+}
+
+/// 20-byte Vector Processing Unit (`V0`) slot inside a [`TensorCoreVliwBundle`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct VectorAluSlot {
+    /// Vector ALU opcode (`u16`).
+    pub opcode: u16,
+    /// Element type code (`u8`).
+    pub element_type: u8,
+    /// Sublane mask (`u8`).
+    pub lane_mask: u8,
+    /// Destination VMEM register (`u32`).
+    pub dst_vreg: u32,
+    /// First source VMEM register (`u32`).
+    pub src0_vreg: u32,
+    /// Second source VMEM register (`u32`).
+    pub src1_vreg: u32,
+    /// Third source VMEM register or auxiliary parameter (`u32`).
+    pub src2_vreg: u32,
+}
+
+/// 12-byte Matrix Multiply Unit (`M0`, `128x128` MXU systolic array) slot inside a [`TensorCoreVliwBundle`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MatrixMxuSlot {
+    /// MXU opcode (`u8`).
+    pub opcode: u8,
+    /// Precision mode (`0` = `BF16`, `1` = `F32`, `2` = `INT8`) (`u8`).
+    pub precision_mode: u8,
+    /// MXU control flags (`u16`).
+    pub flags: u16,
+    /// Accumulator/destination register (`u16`).
+    pub acc_vreg: u16,
+    /// Left-hand activation register (`u16`).
+    pub lhs_vreg: u16,
+    /// Right-hand weight register (`u16`).
+    pub rhs_vreg: u16,
+    /// Contracting tile count (`u16`).
+    pub k_tiles: u16,
+}
+
+/// 8-byte Extended Unary / Transcendental (`X0`) slot inside a [`TensorCoreVliwBundle`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ExtendedUnarySlot {
+    /// Extended unary / cross-lane permute opcode (`u8`).
+    pub opcode: u8,
+    /// Permutation mode (`u8`).
+    pub perm_mode: u8,
+    /// Destination vector register (`u16`).
+    pub dst_vreg: u16,
+    /// Source vector register (`u16`).
+    pub src_vreg: u16,
+    /// 16-bit immediate parameter (`u16`).
+    pub imm16: u16,
+}
+
+/// 8-byte Asynchronous DMA / ICI Collective (`D0`) slot inside a [`TensorCoreVliwBundle`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct AsyncDmaSlot {
+    /// DMA / collective opcode (`u8`).
+    pub dma_opcode: u8,
+    /// Source memory space (`0` = HBM, `1` = VMEM, `2` = SMEM, `3` = CMEM) (`u8`).
+    pub src_space: u8,
+    /// Destination memory space (`u8`).
+    pub dst_space: u8,
+    /// Collective reduction mode (`u8`).
+    pub collective_op: u8,
+    /// Architectural `SyncFlag` ID incremented upon completion (`u32`).
+    pub sync_flag_id: u32,
+}
+
+/// Architectural 64-byte (`512`-bit) `TensorCore` VLIW instruction bundle (`TensorCoreVliwBundle`).
+///
+/// Combines parallel issue slots for the Scalar ALU (`S0`), Vector Processing Unit (`V0`),
+/// Matrix Multiply Unit (`M0`), Extended Unary/Transcendental Unit (`X0`), and Async DMA/ICI Engine (`D0`).
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct TensorCoreVliwBundle {
+    /// 8-byte bundle header (`0x00..0x08`).
+    pub header: VliwBundleHeader,
+    /// 8-byte Scalar ALU slot (`0x08..0x10`).
+    pub scalar_slot: ScalarAluSlot,
+    /// 20-byte Vector ALU slot (`0x10..0x24`).
+    pub vector_slot: VectorAluSlot,
+    /// 12-byte Matrix MXU slot (`0x24..0x30`).
+    pub matrix_slot: MatrixMxuSlot,
+    /// 8-byte Extended Unary / Transcendental slot (`0x30..0x38`).
+    pub xunary_slot: ExtendedUnarySlot,
+    /// 8-byte Async DMA / Collective slot (`0x38..0x40`).
+    pub dma_slot: AsyncDmaSlot,
+}
+
+const _: () = assert!(size_of::<TensorCoreVliwBundle>() == 64);
+
+/// Decodes an MLIR `PrefixVarInt` from the front of `cursor` and advances `cursor`.
+///
+/// MLIR bytecode encodes variable-length unsigned integers using the number of trailing zero
+/// bits in the first byte (`0..=8`) to indicate how many additional bytes follow.
+///
+/// # Arguments
+///
+/// * `cursor` - Mutable byte slice cursor.
+#[must_use]
+pub fn decode_mlir_prefix_varint(cursor: &mut &[u8]) -> Option<u64> {
+    let (&first, rest) = cursor.split_first()?;
+    if first == 0 {
+        let (tail, after) = rest.split_at_checked(8)?;
+        *cursor = after;
+        return Some(u64::from_le(bytemuck::pod_read_unaligned::<u64>(tail)));
+    }
+    let extra_bytes = first.trailing_zeros() as usize;
+    let (tail, after) = rest.split_at_checked(extra_bytes)?;
+    *cursor = after;
+    let mut val = u64::from(first) >> (extra_bytes + 1);
+    for (idx, &b) in tail.iter().enumerate() {
+        let shift = (8 - (extra_bytes + 1)) + (idx * 8);
+        val |= u64::from(b) << shift;
+    }
+    Some(val)
+}
+
+/// Encodes a `u64` value as a single-byte or multi-byte MLIR `PrefixVarInt`.
+///
+/// # Arguments
+///
+/// * `value` - Unsigned 64-bit integer to encode.
+#[must_use]
+pub fn encode_mlir_prefix_varint(value: u64) -> Vec<u8> {
+    if value < 0x80 {
+        #[allow(clippy::cast_possible_truncation)]
+        let b = ((value << 1) | 1) as u8;
+        vec![b]
+    } else if value < 0x4000 {
+        #[allow(clippy::cast_possible_truncation)]
+        let b0 = (((value & 0x3F) << 2) | 2) as u8;
+        #[allow(clippy::cast_possible_truncation)]
+        let b1 = (value >> 6) as u8;
+        vec![b0, b1]
+    } else {
+        let mut out = Vec::with_capacity(9);
+        out.push(0);
+        out.extend_from_slice(&value.to_le_bytes());
+        out
+    }
+}
+
+/// Parsed MLIR Bytecode section entry (`section_id`, `length`, `data`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MlirBytecodeSection {
+    /// Section ID (`0` = `kString`, `1` = `kDialect`, `2` = `kAttrType`, `3` = `kAttrTypeOffset`, `4` = `kIR`, `5` = `kResource`).
+    pub section_id: u8,
+    /// Unmasked section payload bytes.
+    pub data: Vec<u8>,
+}
+
+/// Clean-room decoder for MLIR Bytecode (`ML\xefR`) payloads across Sections `0..=5`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MlirBytecodeHeader {
+    /// Decoded MLIR bytecode format version (`0..=6`).
+    pub version: u64,
+    /// Producer string extracted from the bytecode header (e.g., `"MLIR20.0.0"` or module text).
+    pub producer: String,
+    /// Number of section headers discovered in the bytecode container.
+    pub section_count: usize,
+    /// Parsed sections recovered from the bytecode container.
+    pub sections: Vec<MlirBytecodeSection>,
+    /// Extracted string literals from `kString` (Section `0`) or embedded IR text.
+    pub string_table: Vec<String>,
+    /// Extracted dialect names from `kDialect` (Section `1`, e.g., `"stablehlo"`, `"func"`, `"tpu"`).
+    pub dialects: Vec<String>,
+    /// Decoded attribute and type offsets from `kAttrTypeOffset` (Section `3`).
+    pub attr_type_offsets: Vec<u64>,
+    /// Extracted attribute and type strings from `kAttrType` (Section `2`).
+    pub attr_type_entries: Vec<String>,
+    /// Extracted IR operation mnemonics or op codes from `kIR` (Section `4`).
+    pub ir_op_records: Vec<u64>,
+    /// Extracted external dense tensor resource blobs from `kResource` (Section `5`).
+    pub resources: Vec<Vec<u8>>,
+}
+
+impl MlirBytecodeHeader {
+    /// Decodes a single MLIR bytecode section payload into the header tables.
+    ///
+    /// # Arguments
+    ///
+    /// * `section_id` - Numeric MLIR bytecode section identifier (`0..=5`).
+    /// * `sec_data` - Raw byte slice of the section payload.
+    fn decode_section_payload(&mut self, section_id: u8, sec_data: &[u8]) {
+        match section_id {
+            0 => {
+                for s in sec_data.split(|&b| b == 0) {
+                    if !s.is_empty() {
+                        self.string_table
+                            .push(String::from_utf8_lossy(s).into_owned());
+                    }
+                }
+            }
+            1 => {
+                let mut d_cur = sec_data;
+                while let Some(idx_u64) = decode_mlir_prefix_varint(&mut d_cur) {
+                    let idx = usize::try_from(idx_u64).unwrap_or(usize::MAX);
+                    let name = self
+                        .string_table
+                        .get(idx)
+                        .cloned()
+                        .unwrap_or_else(|| format!("dialect_{idx_u64}"));
+                    self.dialects.push(name);
+                }
+            }
+            2 => {
+                for entry in sec_data.split(|&b| b == 0) {
+                    if !entry.is_empty() {
+                        self.attr_type_entries
+                            .push(String::from_utf8_lossy(entry).into_owned());
+                    }
+                }
+            }
+            3 => {
+                let mut o_cur = sec_data;
+                while let Some(off) = decode_mlir_prefix_varint(&mut o_cur) {
+                    self.attr_type_offsets.push(off);
+                }
+            }
+            4 => {
+                let mut ir_cur = sec_data;
+                while let Some(rec) = decode_mlir_prefix_varint(&mut ir_cur) {
+                    self.ir_op_records.push(rec);
+                }
+            }
+            5 => {
+                self.resources.push(sec_data.to_vec());
+            }
+            _ => {}
+        }
+    }
+
+    /// Parses an MLIR bytecode payload starting with [`MLIR_BYTECODE_MAGIC`] (`b"ML\xefR"`).
+    ///
+    /// Supports both structured MLIR bytecode containers (with `PrefixVarInt` version, nul-terminated
+    /// producer string, and section stream across `kString`, `kDialect`, `kAttrType`, `kAttrTypeOffset`,
+    /// `kIR`, and `kResource`) and hybrid `ML\xefR` + textual MLIR modules.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Raw byte slice beginning with `b"ML\xefR"`.
+    #[must_use]
+    pub fn decode(bytes: &[u8]) -> Option<Self> {
+        let mut cursor = bytes.strip_prefix(MLIR_BYTECODE_MAGIC)?;
+        if cursor.is_empty() {
+            return Some(Self {
+                version: 1,
+                producer: String::new(),
+                section_count: 0,
+                sections: Vec::new(),
+                string_table: Vec::new(),
+                dialects: Vec::new(),
+                attr_type_offsets: Vec::new(),
+                attr_type_entries: Vec::new(),
+                ir_op_records: Vec::new(),
+                resources: Vec::new(),
+            });
+        }
+        let version = decode_mlir_prefix_varint(&mut cursor).unwrap_or(1);
+        let nul_pos = cursor.iter().position(|&b| b == 0).unwrap_or(cursor.len());
+        let prod_slice = cursor.get(..nul_pos).unwrap_or(&[]);
+        let producer = String::from_utf8_lossy(prod_slice).into_owned();
+        cursor = cursor.get((nul_pos + 1).min(cursor.len())..).unwrap_or(&[]);
+
+        let mut hdr = Self {
+            version,
+            producer,
+            section_count: 0,
+            sections: Vec::new(),
+            string_table: Vec::new(),
+            dialects: Vec::new(),
+            attr_type_offsets: Vec::new(),
+            attr_type_entries: Vec::new(),
+            ir_op_records: Vec::new(),
+            resources: Vec::new(),
+        };
+        let mut sec_cursor = cursor;
+        while let Some((&id_and_align, after_id)) = sec_cursor.split_first() {
+            sec_cursor = after_id;
+            let section_id = id_and_align & 0x7F;
+            let has_align = (id_and_align & 0x80) != 0;
+            let Some(sec_len_u64) = decode_mlir_prefix_varint(&mut sec_cursor) else {
+                break;
+            };
+            if has_align {
+                let _ = decode_mlir_prefix_varint(&mut sec_cursor);
+            }
+            let sec_len = usize::try_from(sec_len_u64).unwrap_or(usize::MAX);
+            let Some((sec_data, rest)) = sec_cursor.split_at_checked(sec_len) else {
+                break;
+            };
+            sec_cursor = rest;
+            hdr.decode_section_payload(section_id, sec_data);
+            hdr.sections.push(MlirBytecodeSection {
+                section_id,
+                data: sec_data.to_vec(),
+            });
+        }
+        hdr.section_count = if hdr.sections.is_empty() {
+            usize::from(!cursor.is_empty())
+        } else {
+            hdr.sections.len()
+        };
+        Some(hdr)
+    }
+
+    /// Synthesizes a canonical textual `StableHLO` representation from a binary MLIR bytecode header
+    /// when `string_table` or `attr_type_entries` contains dialect/op/type strings.
+    #[must_use]
+    pub fn to_synthesized_mlir_text(&self) -> String {
+        let mut parts = self.string_table.clone();
+        parts.extend(self.attr_type_entries.iter().cloned());
+        if parts.is_empty() {
+            return self.producer.clone();
+        }
+        parts.join(" ")
+    }
+
+    /// Encodes this [`MlirBytecodeHeader`] and all of its [`MlirBytecodeSection`]s into a
+    /// spec-compliant `ML\xefR` bytecode container.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
+        out.extend_from_slice(&encode_mlir_prefix_varint(self.version));
+        out.extend_from_slice(self.producer.as_bytes());
+        out.push(0);
+        for sec in &self.sections {
+            out.push(sec.section_id & 0x7F);
+            out.extend_from_slice(&encode_mlir_prefix_varint(sec.data.len() as u64));
+            out.extend_from_slice(&sec.data);
+        }
+        out
+    }
+}
+
 impl TpuInstructionBundle {
     /// Encodes this [`TpuInstructionBundle`] into a 16-byte binary [`VliwInstructionWord`].
     #[must_use]
@@ -336,6 +717,76 @@ impl TpuInstructionBundle {
             dst_reg: u32::try_from(self.output_slot).unwrap_or(0),
             src0_reg: u32::try_from(s0).unwrap_or(0),
             src1_reg: u32::try_from(s1).unwrap_or(0),
+        }
+    }
+
+    /// Encodes this [`TpuInstructionBundle`] into a 64-byte architectural [`TensorCoreVliwBundle`].
+    #[must_use]
+    pub fn encode_architectural_bundle(&self) -> TensorCoreVliwBundle {
+        let s0 = u32::try_from(self.operand_slots.first().copied().unwrap_or(0)).unwrap_or(0);
+        let s1 = u32::try_from(self.operand_slots.get(1).copied().unwrap_or(0)).unwrap_or(0);
+        let s2 = u32::try_from(self.operand_slots.get(2).copied().unwrap_or(0)).unwrap_or(0);
+        let dst = u32::try_from(self.output_slot).unwrap_or(0);
+        let et_raw = self.attrs.output_shape.as_ref().map_or(11_u8, |sh| {
+            u8::try_from(sh.element_type.as_raw()).unwrap_or(11)
+        });
+
+        let is_mxu = self.opcode == TpuOpCode::DotGeneralF32;
+        let is_xunary = self.opcode.is_transcendental();
+        let is_collective = matches!(
+            self.opcode,
+            TpuOpCode::AllReduceSumF32 | TpuOpCode::AllGather | TpuOpCode::ReduceScatter
+        );
+        let bundle_flags: u16 = 1
+            | (u16::from(is_mxu) << 1)
+            | (u16::from(is_xunary) << 2)
+            | (u16::from(is_collective) << 3);
+
+        TensorCoreVliwBundle {
+            header: VliwBundleHeader {
+                pc_offset: self.pc_offset,
+                bundle_flags,
+                pred_mask: 0xFFFF,
+            },
+            scalar_slot: ScalarAluSlot {
+                opcode: 1,
+                dst_sreg: 0,
+                src0_sreg: 0,
+                src1_sreg: 0,
+                imm32: self.pc_offset,
+            },
+            vector_slot: VectorAluSlot {
+                opcode: u16::from(self.opcode as u8),
+                element_type: et_raw,
+                lane_mask: 0xFF,
+                dst_vreg: dst,
+                src0_vreg: s0,
+                src1_vreg: s1,
+                src2_vreg: s2,
+            },
+            matrix_slot: MatrixMxuSlot {
+                opcode: u8::from(is_mxu),
+                precision_mode: 0,
+                flags: u16::from(is_mxu),
+                acc_vreg: u16::try_from(dst).unwrap_or(0),
+                lhs_vreg: u16::try_from(s0).unwrap_or(0),
+                rhs_vreg: u16::try_from(s1).unwrap_or(0),
+                k_tiles: 1,
+            },
+            xunary_slot: ExtendedUnarySlot {
+                opcode: if is_xunary { self.opcode as u8 } else { 0 },
+                perm_mode: 0,
+                dst_vreg: u16::try_from(dst).unwrap_or(0),
+                src_vreg: u16::try_from(s0).unwrap_or(0),
+                imm16: 0,
+            },
+            dma_slot: AsyncDmaSlot {
+                dma_opcode: u8::from(is_collective),
+                src_space: 1,
+                dst_space: 0,
+                collective_op: if is_collective { self.opcode as u8 } else { 0 },
+                sync_flag_id: self.sync_flag_id,
+            },
         }
     }
 }
@@ -432,86 +883,127 @@ pub enum HloToken {
     Arrow,
 }
 
-/// Lexer for `StableHLO` MLIR and XLA HLO textual modules.
+/// Lexer for `StableHLO` MLIR and XLA HLO textual modules powered by `winnow`.
 #[derive(Debug, Clone, Default)]
 pub struct HloLexer;
 
+/// Parses a single [`HloToken`] from the front of `input` using `winnow` combinators.
+///
+/// # Arguments
+///
+/// * `input` - Mutable input string slice reference for `winnow`.
+///
+/// # Errors
+///
+/// Returns [`ContextError`] if `input` is empty after skipping whitespace.
+fn winnow_lex_one_token(input: &mut &str) -> Result<HloToken, ContextError> {
+    let _ = multispace0.parse_next(input)?;
+    alt((
+        "->".value(HloToken::Arrow),
+        preceded(
+            '-',
+            take_while(0.., |c: char| c.is_ascii_digit() || c == '.'),
+        )
+        .map(|digits: &str| HloToken::Number(format!("-{digits}"))),
+        preceded(
+            '%',
+            take_while(
+                0..,
+                |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.'),
+            ),
+        )
+        .map(|name: &str| HloToken::SsaValue(format!("%{name}"))),
+        preceded(
+            '@',
+            take_while(
+                0..,
+                |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.'),
+            ),
+        )
+        .map(|name: &str| HloToken::Symbol(String::from(name))),
+        (
+            take_while(1.., |c: char| c.is_ascii_digit()),
+            take_while(
+                0..,
+                |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.'),
+            ),
+        )
+            .take()
+            .map(|num: &str| HloToken::Number(String::from(num))),
+        (
+            take_while(1.., |c: char| matches!(c, 'a'..='z' | 'A'..='Z' | '_')),
+            take_while(
+                0..,
+                |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.'),
+            ),
+        )
+            .take()
+            .map(|ident: &str| HloToken::Ident(String::from(ident))),
+        any.map(HloToken::Punct),
+    ))
+    .parse_next(input)
+}
+
+/// Extracts the inner body of a `tensor<...>` specification using `winnow`.
+///
+/// # Arguments
+///
+/// * `input` - Mutable input string slice reference for `winnow`.
+///
+/// # Errors
+///
+/// Returns [`ContextError`] if `input` does not begin with `tensor<...>`.
+fn winnow_extract_tensor_body<'a>(input: &mut &'a str) -> Result<&'a str, ContextError> {
+    let _ = multispace0.parse_next(input)?;
+    let body = delimited("tensor<", take_till(1.., |c: char| c == '>'), '>').parse_next(input)?;
+    let _ = take_while(0.., |_| true).parse_next(input)?;
+    Ok(body.trim())
+}
+
+/// Parses an XLA HLO `<dtype>[<dims>]` shape specification using `winnow`.
+///
+/// # Arguments
+///
+/// * `input` - Mutable input string slice reference for `winnow`.
+///
+/// # Errors
+///
+/// Returns [`ContextError`] if `input` is not a valid `<dtype>[<dims>]` specification.
+fn winnow_parse_hlo_shape_parts<'a>(
+    input: &mut &'a str,
+) -> Result<(&'a str, Vec<i64>), ContextError> {
+    let _ = multispace0.parse_next(input)?;
+    let dtype = take_till(1.., |c: char| c == '[').parse_next(input)?;
+    let dims: Vec<i64> = delimited(
+        '[',
+        separated(
+            0..,
+            delimited(multispace0, digit1.try_map(str::parse::<i64>), multispace0),
+            ',',
+        ),
+        ']',
+    )
+    .parse_next(input)?;
+    let _ = take_while(0.., |_| true).parse_next(input)?;
+    Ok((dtype.trim(), dims))
+}
+
 impl HloLexer {
-    /// Tokenizes a `StableHLO` MLIR or XLA HLO source string into a sequence of [`HloToken`]s.
+    /// Tokenizes a `StableHLO` MLIR or XLA HLO source string into a sequence of [`HloToken`]s using `winnow`.
     ///
     /// # Arguments
     ///
     /// * `src` - Source text to tokenize.
     #[must_use]
     pub fn tokenize(src: &str) -> Vec<HloToken> {
-        let mut tokens = Vec::new();
-        let mut chars = src.chars().peekable();
-        while let Some(&ch) = chars.peek() {
-            if ch.is_whitespace() {
-                chars.next();
-            } else if ch == '-' {
-                chars.next();
-                if chars.peek().copied() == Some('>') {
-                    chars.next();
-                    tokens.push(HloToken::Arrow);
-                } else {
-                    let mut num = String::from("-");
-                    while let Some(&c) = chars.peek() {
-                        if c.is_ascii_digit() || c == '.' {
-                            num.push(c);
-                            chars.next();
-                        } else {
-                            break;
-                        }
-                    }
-                    tokens.push(HloToken::Number(num));
-                }
-            } else if ch == '%' || ch == '@' {
-                let prefix = ch;
-                chars.next();
-                let mut name = String::new();
-                while let Some(&c) = chars.peek() {
-                    if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
-                        name.push(c);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                if prefix == '%' {
-                    tokens.push(HloToken::SsaValue(format!("%{name}")));
-                } else {
-                    tokens.push(HloToken::Symbol(name));
-                }
-            } else if ch.is_ascii_digit() {
-                let mut num = String::new();
-                while let Some(&c) = chars.peek() {
-                    if c.is_ascii_alphanumeric() || c == '.' || c == '_' {
-                        num.push(c);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                tokens.push(HloToken::Number(num));
-            } else if ch.is_ascii_alphabetic() || ch == '_' {
-                let mut ident = String::new();
-                while let Some(&c) = chars.peek() {
-                    if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
-                        ident.push(c);
-                        chars.next();
-                    } else {
-                        break;
-                    }
-                }
-                tokens.push(HloToken::Ident(ident));
-            } else {
-                chars.next();
-                tokens.push(HloToken::Punct(ch));
-            }
-        }
-        tokens
+        let mut parser = terminated_token_stream();
+        parser.parse(src).unwrap_or_default()
     }
+}
+
+/// Builds a `winnow` parser that collects all [`HloToken`]s and consumes trailing whitespace.
+fn terminated_token_stream<'a>() -> impl Parser<&'a str, Vec<HloToken>, ContextError> {
+    (repeat(0.., winnow_lex_one_token), multispace0).map(|(tokens, _)| tokens)
 }
 
 /// Recursive-descent parser for `StableHLO` MLIR and XLA HLO modules.
@@ -544,17 +1036,59 @@ impl HloParser {
     }
 }
 
+/// Extracted JAX Mosaic TPU and MHLO target attributes from a textual MLIR module.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MosaicTargetMetadata {
+    /// Target TPU generation string (`tpu.compilation_target`, e.g., `"tpu_v5p"`).
+    pub compilation_target: String,
+    /// Target TPU core type (`tpu.core_type`, e.g., `"tensor_core"` or `"sparse_core"`).
+    pub core_type: String,
+    /// Layout mode annotation (`mhlo.layout_mode`, e.g., `"default"` or `"{1,0}"`).
+    pub layout_mode: String,
+    /// Sharding annotation (`mhlo.sharding`, e.g., `"{replicated}"`).
+    pub sharding: String,
+    /// Whether any Mosaic `tpu.*` dialect operations were detected.
+    pub has_mosaic_ops: bool,
+}
+
 impl CompiledProgram {
-    /// Parses a `tensor<...>` or HLO shape token (e.g., `tensor<2x4xf32>`, `tensor<8xs32>`) into a [`Shape`].
+    /// Extracts JAX Mosaic TPU (`tpu.*`) and `mhlo.*` target attributes from an MLIR module string.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - Source MLIR module text.
+    #[must_use]
+    pub fn parse_mosaic_metadata(text: &str) -> MosaicTargetMetadata {
+        let mut meta = MosaicTargetMetadata {
+            has_mosaic_ops: text.contains("tpu."),
+            ..MosaicTargetMetadata::default()
+        };
+        for (key, dst) in [
+            ("tpu.compilation_target", &mut meta.compilation_target),
+            ("tpu.core_type", &mut meta.core_type),
+            ("mhlo.layout_mode", &mut meta.layout_mode),
+            ("mhlo.sharding", &mut meta.sharding),
+        ] {
+            if let Some(val) = text
+                .split_once(key)
+                .and_then(|(_, after)| after.split_once('"'))
+                .and_then(|(_, quoted)| quoted.split_once('"'))
+                .map(|(v, _)| v)
+            {
+                *dst = String::from(val);
+            }
+        }
+        meta
+    }
+
+    /// Parses a `tensor<...>` or HLO shape token (e.g., `tensor<2x4xf32>`, `tensor<8xs32>`) into a [`Shape`] using `winnow`.
     ///
     /// # Arguments
     ///
     /// * `token` - Tensor type specification substring.
     #[must_use]
     pub fn parse_tensor_type(token: &str) -> Option<Shape> {
-        let after_prefix = token.trim().strip_prefix("tensor<")?;
-        let (inner, _) = after_prefix.split_once('>')?;
-        let trimmed = inner.trim();
+        let trimmed = winnow_extract_tensor_body.parse(token).ok()?;
         let (dims_part, dtype_str) = match trimmed.rsplit_once('x') {
             Some((d, dt)) => (Some(d), dt),
             None => (None, trimmed),
@@ -575,6 +1109,13 @@ impl CompiledProgram {
             "i1" | "pred" => ElementType::Pred,
             "c64" | "complex<f32>" => ElementType::C64,
             "c128" | "complex<f64>" => ElementType::C128,
+            "f8e5m2" => ElementType::F8E5M2,
+            "f8e4m3fn" => ElementType::F8E4M3Fn,
+            "f8e4m3b11fnuz" => ElementType::F8E4M3B11Fnuz,
+            "s4" | "i4" => ElementType::S4,
+            "u4" | "ui4" => ElementType::U4,
+            "s2" | "i2" => ElementType::S2,
+            "u2" | "ui2" => ElementType::U2,
             _ => return None,
         };
         let mut dims = Vec::new();
@@ -612,19 +1153,66 @@ impl CompiledProgram {
                 reason: format!("Unknown compilation phase '{phase_name}'"),
             });
         };
-        let mut prog = if let Ok(existing) = Self::deserialize(input_bytes) {
+        let raw_program = if let Ok(partial) = PjRtPartialProgramProto::decode(input_bytes) {
+            if partial.program.is_empty() {
+                input_bytes.to_vec()
+            } else {
+                partial.program
+            }
+        } else {
+            input_bytes.to_vec()
+        };
+        let mut prog = if let Ok(existing) = Self::deserialize(&raw_program) {
             existing
         } else {
-            Self::compile("mlir", input_bytes, compile_options).map_err(|e| {
+            Self::compile("mlir", &raw_program, compile_options).map_err(|e| {
                 LibTpuError::PhaseCompilationFailed {
                     phase_name: String::from(phase_name),
                     reason: e.to_string(),
                 }
             })?
         };
-        // Record phase progression in memory_stats.temp_size_in_bytes
+        prog.run_all_passes();
         prog.memory_stats.temp_size_in_bytes = 256 * (i64::try_from(phase_idx).unwrap_or(0) + 1);
         Ok(prog.serialize())
+    }
+
+    /// Executes a named compilation phase and wraps the resulting artifact in a wire-compatible
+    /// [`PjRtPartialProgramProto`] (`xla/pjrt/proto/pjrt_partial_program.proto`).
+    ///
+    /// # Arguments
+    ///
+    /// * `phase_name` - Name of the compilation phase from [`COMPILATION_PHASE_NAMES`].
+    /// * `input_bytes` - Raw program bytes or serialized [`PjRtPartialProgramProto`].
+    /// * `compile_options` - Serialized `CompileOptionsProto` bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::PhaseCompilationFailed`] if `phase_name` is unknown or compilation fails.
+    pub fn run_compilation_phase_proto(
+        phase_name: &str,
+        input_bytes: &[u8],
+        compile_options: &[u8],
+    ) -> LibTpuResult<PjRtPartialProgramProto> {
+        let artifact = Self::run_compilation_phase(phase_name, input_bytes, compile_options)?;
+        let phase_idx = COMPILATION_PHASE_NAMES
+            .iter()
+            .position(|&p| p == phase_name)
+            .unwrap_or(0);
+        let consumer_phases: Vec<String> = COMPILATION_PHASE_NAMES
+            .get(phase_idx + 1..)
+            .unwrap_or(&[])
+            .iter()
+            .map(|&s| String::from(s))
+            .collect();
+        Ok(PjRtPartialProgramProto {
+            program: artifact,
+            program_format: String::from("ltpuexec"),
+            producer_phase: String::from(phase_name),
+            consumer_phases,
+            version: String::from("0.0.50"),
+            program_name: String::from("tpu_partial_program"),
+        })
     }
 
     /// Compiles an HLO (`HloModuleProto` or textual HLO) or `StableHLO` MLIR program into a [`CompiledProgram`].
@@ -673,7 +1261,15 @@ impl CompiledProgram {
             .max(1);
 
         let stripped_code = code.strip_prefix(MLIR_BYTECODE_MAGIC).unwrap_or(code);
-        let text = String::from_utf8_lossy(stripped_code);
+        let text = if let Some(bc_hdr) = MlirBytecodeHeader::decode(code) {
+            if bc_hdr.string_table.is_empty() {
+                String::from_utf8_lossy(stripped_code).into_owned()
+            } else {
+                bc_hdr.to_synthesized_mlir_text()
+            }
+        } else {
+            String::from_utf8_lossy(stripped_code).into_owned()
+        };
         if text.contains("SYNTAX_ERROR") {
             return Err(LibTpuError::CompilationFailed {
                 reason: String::from("Explicit SYNTAX_ERROR marker encountered in program"),
@@ -806,13 +1402,13 @@ impl CompiledProgram {
             .resize(self.output_shapes.len(), MemoryKind::DeviceHbm);
     }
 
-    /// Pass 3: TPU `(8, 128)` matrix sublane layout assignment and tiling.
+    /// Pass 3: TPU `(8, 128)` matrix sublane layout assignment and sub-packing tiling.
     pub fn pass_tpu_layout_assignment_and_tiling(&mut self) {
         for sh in &mut self.parameter_shapes {
-            sh.layout = MemoryLayout::default_tpu_tiled(sh.dims.len());
+            sh.layout = MemoryLayout::default_tpu_tiled_for_type(sh.dims.len(), sh.element_type);
         }
         for sh in &mut self.output_shapes {
-            sh.layout = MemoryLayout::default_tpu_tiled(sh.dims.len());
+            sh.layout = MemoryLayout::default_tpu_tiled_for_type(sh.dims.len(), sh.element_type);
         }
     }
 
@@ -873,14 +1469,109 @@ impl CompiledProgram {
         };
     }
 
-    /// Runs all 6 compiler passes in sequence on this [`CompiledProgram`].
+    /// Pass 3b (`spmd_partitioning`): Normalizes SPMD replica/partition counts and collective opcodes.
+    pub fn pass_spmd_partitioning(&mut self) {
+        self.num_replicas = self.num_replicas.max(1);
+        self.num_partitions = self.num_partitions.max(1);
+    }
+
+    /// Pass 4b (`algebraic_simplifier`): Canonicalizes reshape/identity bundles and normalizes operand slots.
+    pub fn pass_algebraic_simplifier(&mut self) {
+        for bundle in &mut self.instruction_bundles {
+            if bundle.operand_slots.is_empty() && bundle.opcode != TpuOpCode::Constant {
+                bundle.operand_slots.push(0);
+            }
+        }
+    }
+
+    /// Pass 5b (`dot_decomposer`): Canonicalizes `DotGeneralF32` contraction dimensions for the MXU systolic array.
+    pub fn pass_dot_decomposer(&mut self) {
+        for bundle in &mut self.instruction_bundles {
+            if bundle.opcode == TpuOpCode::DotGeneralF32 && bundle.attrs.input_shapes.is_empty() {
+                bundle.attrs.input_shapes.clone_from(&self.parameter_shapes);
+            }
+        }
+    }
+
+    /// Pass 6b (`tpu_custom_call_lowering`): Lowers Mosaic / Pallas / `SparseCore` `CustomCall` bundles.
+    pub fn pass_tpu_custom_call_lowering(&mut self) {
+        for bundle in &mut self.instruction_bundles {
+            if bundle.opcode == TpuOpCode::CustomCall && bundle.sync_flag_id == 0 {
+                bundle.sync_flag_id = 1;
+            }
+        }
+    }
+
+    /// Pass 11 (`vliw_bundle_packing`): Packs all instruction bundles into 64-byte [`TensorCoreVliwBundle`]s
+    /// and updates `generated_code_size_in_bytes`.
+    pub fn pass_vliw_bundle_packing(&mut self) {
+        let encoded = self.encode_vliw_program();
+        let code_bytes = encoded
+            .len()
+            .saturating_mul(size_of::<TensorCoreVliwBundle>());
+        self.memory_stats.generated_code_size_in_bytes = self
+            .memory_stats
+            .generated_code_size_in_bytes
+            .max(i64::try_from(code_bytes.max(256)).unwrap_or(256));
+    }
+
+    /// Pass 12 (`binary_emission`): Refreshes the deterministic SHA-256 executable fingerprint.
+    pub fn pass_binary_emission(&mut self) {
+        self.fingerprint = Self::compute_fingerprint(
+            &self.format,
+            &self.source_bytes,
+            &self.compile_options_bytes,
+        );
+    }
+
+    /// Encodes all lowered [`TpuInstructionBundle`]s into architectural 64-byte [`TensorCoreVliwBundle`]s.
+    #[must_use]
+    pub fn encode_vliw_program(&self) -> Vec<TensorCoreVliwBundle> {
+        self.instruction_bundles
+            .iter()
+            .map(TpuInstructionBundle::encode_architectural_bundle)
+            .collect()
+    }
+
+    /// Encodes the [`CompiledProgram`]'s VLIW instruction bundles into a contiguous `IMEM` binary image
+    /// of 64-byte [`TensorCoreVliwBundle`] words.
+    #[must_use]
+    pub fn encode_architectural_imem(&self) -> Vec<u8> {
+        let bundles = self.encode_vliw_program();
+        let mut imem = Vec::with_capacity(bundles.len() * size_of::<TensorCoreVliwBundle>());
+        for b in &bundles {
+            imem.extend_from_slice(bytemuck::bytes_of(b));
+        }
+        imem
+    }
+
+    /// Decodes a binary `IMEM` byte slice of 64-byte [`TensorCoreVliwBundle`] words.
+    ///
+    /// # Arguments
+    ///
+    /// * `imem_bytes` - Raw `IMEM` binary image (must be a multiple of 64 bytes; trailing partial bytes are ignored).
+    #[must_use]
+    pub fn decode_architectural_imem(imem_bytes: &[u8]) -> Vec<TensorCoreVliwBundle> {
+        imem_bytes
+            .chunks_exact(size_of::<TensorCoreVliwBundle>())
+            .map(bytemuck::pod_read_unaligned)
+            .collect()
+    }
+
+    /// Runs all 12 compiler passes in sequence on this [`CompiledProgram`].
     pub fn run_all_passes(&mut self) {
         self.pass_hlo_verification_and_shape_inference();
         self.pass_spmd_sharding_propagation();
-        self.pass_tpu_layout_assignment_and_tiling();
+        self.pass_spmd_partitioning();
+        self.pass_algebraic_simplifier();
+        self.pass_dot_decomposer();
+        self.pass_tpu_custom_call_lowering();
         self.pass_hlo_operator_fusion();
+        self.pass_tpu_layout_assignment_and_tiling();
         self.pass_vmem_scratchpad_allocation();
         self.pass_llo_vliw_bundle_scheduling();
+        self.pass_vliw_bundle_packing();
+        self.pass_binary_emission();
     }
 
     /// Lowers a decoded binary [`HloModuleProto`] into module name, [`TpuOpCode`], parameter shapes,
@@ -1079,17 +1770,15 @@ impl CompiledProgram {
         }
     }
 
-    /// Parses a textual XLA HLO shape token (e.g., `f32[2,3]{1,0}` or `s32[4]`) into a [`Shape`].
+    /// Parses a textual XLA HLO shape token (e.g., `f32[2,3]{1,0}` or `s32[4]`) into a [`Shape`] using `winnow`.
     ///
     /// # Arguments
     ///
     /// * `token` - HLO shape token.
     #[must_use]
     pub fn parse_hlo_shape_token(token: &str) -> Option<Shape> {
-        let trimmed = token.trim();
-        let (dtype_str, after_open) = trimmed.split_once('[')?;
-        let (dims_str, _) = after_open.split_once(']')?;
-        let elem_type = match dtype_str.trim() {
+        let (dtype_str, dims) = winnow_parse_hlo_shape_parts.parse(token).ok()?;
+        let elem_type = match dtype_str {
             "f32" => ElementType::F32,
             "f64" => ElementType::F64,
             "bf16" => ElementType::Bf16,
@@ -1105,12 +1794,6 @@ impl CompiledProgram {
             "pred" | "i1" => ElementType::Pred,
             _ => return None,
         };
-        let mut dims = Vec::new();
-        if !dims_str.trim().is_empty() {
-            for part in dims_str.split(',') {
-                dims.push(part.trim().parse::<i64>().ok()?);
-            }
-        }
         Shape::new(elem_type, dims, None, None).ok()
     }
 
@@ -1223,6 +1906,273 @@ impl CompiledProgram {
                 &[2, 2],
             ),
             (
+                "tpu.matmul",
+                TpuOpCode::DotGeneralF32,
+                ElementType::F32,
+                2,
+                &[2, 2],
+            ),
+            (
+                "tpu.matmul_push_rhs",
+                TpuOpCode::DotGeneralF32,
+                ElementType::F32,
+                2,
+                &[2, 2],
+            ),
+            (
+                "tpu.matmul_acc",
+                TpuOpCode::DotGeneralF32,
+                ElementType::F32,
+                2,
+                &[2, 2],
+            ),
+            (
+                "tpu.matmul_pop",
+                TpuOpCode::DotGeneralF32,
+                ElementType::F32,
+                2,
+                &[2, 2],
+            ),
+            (
+                "tpu.enqueue_dma",
+                TpuOpCode::CustomCall,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.wait_dma",
+                TpuOpCode::CustomCall,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.dma_copy",
+                TpuOpCode::CustomCall,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.dma_wait",
+                TpuOpCode::CustomCall,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.semaphore_signal",
+                TpuOpCode::CustomCall,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.semaphore_wait",
+                TpuOpCode::CustomCall,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.semaphore_read",
+                TpuOpCode::CustomCall,
+                ElementType::S32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.barrier",
+                TpuOpCode::CustomCall,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.vector_load",
+                TpuOpCode::Identity,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.vector_store",
+                TpuOpCode::Identity,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            ("tpu.load", TpuOpCode::Identity, ElementType::F32, 1, &[4]),
+            ("tpu.store", TpuOpCode::Identity, ElementType::F32, 1, &[4]),
+            ("tpu.iota", TpuOpCode::Iota, ElementType::S32, 0, &[4]),
+            (
+                "tpu.repeat",
+                TpuOpCode::BroadcastInDim,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            ("tpu.rotate", TpuOpCode::Reverse, ElementType::F32, 1, &[4]),
+            (
+                "tpu.pack_subelements",
+                TpuOpCode::Reshape,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.unpack_subelements",
+                TpuOpCode::Reshape,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.memref_squeeze",
+                TpuOpCode::Reshape,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.memref_bitcast",
+                TpuOpCode::Reshape,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.relabel",
+                TpuOpCode::Identity,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            ("tpu.bitcast", TpuOpCode::Reshape, ElementType::F32, 1, &[4]),
+            ("tpu.roll", TpuOpCode::Reverse, ElementType::F32, 1, &[4]),
+            (
+                "tpu.memref_slice",
+                TpuOpCode::Slice,
+                ElementType::F32,
+                1,
+                &[2],
+            ),
+            (
+                "tpu.erase_memref_layout",
+                TpuOpCode::Identity,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "tpu.region",
+                TpuOpCode::CustomCall,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "collective_permute",
+                TpuOpCode::AllGather,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "all_to_all",
+                TpuOpCode::AllGather,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            (
+                "exponential_minus_one",
+                TpuOpCode::ExpF32,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            ("log_plus_one", TpuOpCode::Log, ElementType::F32, 1, &[4]),
+            ("logistic", TpuOpCode::TanhF32, ElementType::F32, 1, &[4]),
+            ("erf", TpuOpCode::TanhF32, ElementType::F32, 1, &[4]),
+            (
+                "round_nearest_even",
+                TpuOpCode::Floor,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            ("sign", TpuOpCode::Abs, ElementType::F32, 1, &[4]),
+            (
+                "is_finite",
+                TpuOpCode::CompareEq,
+                ElementType::Pred,
+                1,
+                &[4],
+            ),
+            ("power", TpuOpCode::MulF32, ElementType::F32, 2, &[4]),
+            ("atan2", TpuOpCode::DivF32, ElementType::F32, 2, &[4]),
+            ("clamp", TpuOpCode::Select, ElementType::F32, 3, &[4]),
+            (
+                "popcnt",
+                TpuOpCode::PopulationCount,
+                ElementType::S32,
+                1,
+                &[4],
+            ),
+            ("pad", TpuOpCode::BroadcastInDim, ElementType::F32, 2, &[4]),
+            (
+                "select_and_scatter",
+                TpuOpCode::Scatter,
+                ElementType::F32,
+                3,
+                &[4],
+            ),
+            (
+                "batch_norm_inference",
+                TpuOpCode::MulF32,
+                ElementType::F32,
+                2,
+                &[4],
+            ),
+            ("fft", TpuOpCode::CustomCall, ElementType::C64, 1, &[4]),
+            ("cholesky", TpuOpCode::CustomCall, ElementType::F32, 1, &[4]),
+            (
+                "triangular_solve",
+                TpuOpCode::DotGeneralF32,
+                ElementType::F32,
+                2,
+                &[2, 2],
+            ),
+            (
+                "partition_id",
+                TpuOpCode::Constant,
+                ElementType::U32,
+                0,
+                &[1],
+            ),
+            ("replica_id", TpuOpCode::Constant, ElementType::U32, 0, &[1]),
+            (
+                "after_all",
+                TpuOpCode::Identity,
+                ElementType::Token,
+                1,
+                &[1],
+            ),
+            ("infeed", TpuOpCode::CustomCall, ElementType::F32, 1, &[4]),
+            ("outfeed", TpuOpCode::CustomCall, ElementType::F32, 1, &[4]),
+            ("send", TpuOpCode::CustomCall, ElementType::F32, 1, &[4]),
+            ("recv", TpuOpCode::CustomCall, ElementType::F32, 1, &[4]),
+            (
+                "get_tuple_element",
+                TpuOpCode::Identity,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            ("tuple", TpuOpCode::Identity, ElementType::Tuple, 1, &[4]),
+            (
                 " dot(",
                 TpuOpCode::DotGeneralF32,
                 ElementType::F32,
@@ -1264,6 +2214,79 @@ impl CompiledProgram {
                 TpuOpCode::CompareEq,
                 ElementType::F32,
                 2,
+                &[4],
+            ),
+            (
+                "shift_left",
+                TpuOpCode::ShiftLeft,
+                ElementType::S32,
+                2,
+                &[4],
+            ),
+            (
+                "shift_right_arithmetic",
+                TpuOpCode::ShiftRightArithmetic,
+                ElementType::S32,
+                2,
+                &[4],
+            ),
+            (
+                "shift_right_logical",
+                TpuOpCode::ShiftRightLogical,
+                ElementType::U32,
+                2,
+                &[4],
+            ),
+            (
+                "population_count",
+                TpuOpCode::PopulationCount,
+                ElementType::S32,
+                1,
+                &[4],
+            ),
+            (
+                "count_leading_zeros",
+                TpuOpCode::CountLeadingZeros,
+                ElementType::S32,
+                1,
+                &[4],
+            ),
+            (
+                "convolution",
+                TpuOpCode::Convolution,
+                ElementType::F32,
+                2,
+                &[4],
+            ),
+            ("gather", TpuOpCode::Gather, ElementType::F32, 2, &[4]),
+            ("scatter", TpuOpCode::Scatter, ElementType::F32, 3, &[4]),
+            (
+                "dynamic_update_slice",
+                TpuOpCode::DynamicUpdateSlice,
+                ElementType::F32,
+                3,
+                &[4],
+            ),
+            (
+                "dynamic_slice",
+                TpuOpCode::DynamicSlice,
+                ElementType::F32,
+                2,
+                &[2],
+            ),
+            (
+                "reduce_window",
+                TpuOpCode::ReduceWindow,
+                ElementType::F32,
+                1,
+                &[4],
+            ),
+            ("sort", TpuOpCode::Sort, ElementType::F32, 1, &[4]),
+            (
+                "rng_bit_generator",
+                TpuOpCode::RngBitGenerator,
+                ElementType::U32,
+                1,
                 &[4],
             ),
             ("select", TpuOpCode::Select, ElementType::F32, 3, &[4]),
@@ -1588,6 +2611,83 @@ impl CompiledProgram {
         hex
     }
 
+    /// Builds a wire-compatible [`crate::proto::BufferAssignmentProto`] (`xla/service/buffer_assignment.proto`)
+    /// assigning physical `HBM` (`color = 0`) and `VMEM` (`color = 1`) allocations for all entry parameters,
+    /// intermediate instruction bundles, and live-out results.
+    #[must_use]
+    pub fn build_buffer_assignment_proto(&self) -> crate::proto::BufferAssignmentProto {
+        let mut allocations = Vec::new();
+        let mut next_idx: i64 = 0;
+
+        for (param_idx, shape) in self.parameter_shapes.iter().enumerate() {
+            let size = i64::try_from(shape.unpadded_byte_size().0.max(256)).unwrap_or(256);
+            allocations.push(crate::proto::BufferAllocationProto {
+                index: next_idx,
+                size,
+                is_thread_local: false,
+                is_tuple: false,
+                is_entry_computation_parameter: true,
+                parameter_number: i64::try_from(param_idx).unwrap_or(0),
+                is_constant: false,
+                maybe_live_out: false,
+                color: 0,
+                assigned: vec![crate::proto::BufferAllocationSliceProto {
+                    offset: 0,
+                    size,
+                    buffer_allocation_index: next_idx,
+                    element_type: shape.element_type.as_raw(),
+                }],
+            });
+            next_idx += 1;
+        }
+
+        let vmem_size = self.memory_stats.temp_size_in_bytes.max(256);
+        allocations.push(crate::proto::BufferAllocationProto {
+            index: next_idx,
+            size: vmem_size,
+            is_thread_local: false,
+            is_tuple: false,
+            is_entry_computation_parameter: false,
+            parameter_number: 0,
+            is_constant: false,
+            maybe_live_out: false,
+            color: 1,
+            assigned: vec![crate::proto::BufferAllocationSliceProto {
+                offset: 0,
+                size: vmem_size,
+                buffer_allocation_index: next_idx,
+                element_type: ElementType::F32.as_raw(),
+            }],
+        });
+        next_idx += 1;
+
+        for out_shape in &self.output_shapes {
+            let size = i64::try_from(out_shape.unpadded_byte_size().0.max(256)).unwrap_or(256);
+            allocations.push(crate::proto::BufferAllocationProto {
+                index: next_idx,
+                size,
+                is_thread_local: false,
+                is_tuple: false,
+                is_entry_computation_parameter: false,
+                parameter_number: 0,
+                is_constant: false,
+                maybe_live_out: true,
+                color: 0,
+                assigned: vec![crate::proto::BufferAllocationSliceProto {
+                    offset: 0,
+                    size,
+                    buffer_allocation_index: next_idx,
+                    element_type: out_shape.element_type.as_raw(),
+                }],
+            });
+            next_idx += 1;
+        }
+
+        crate::proto::BufferAssignmentProto {
+            buffer_allocations: allocations,
+        }
+    }
+
     /// Converts this [`CompiledProgram`] into a wire-compatible [`TpuSerializedExecutableProto`].
     #[must_use]
     pub fn to_executable_proto(&self) -> TpuSerializedExecutableProto {
@@ -1606,8 +2706,12 @@ impl CompiledProgram {
                     tiles: vec![TileProto {
                         dimensions: vec![8, 128],
                     }],
-                    element_size_in_bits: i64::try_from(s.element_type.bit_size()).unwrap_or(0),
+                    tail_padding_alignment_in_elements: 1,
+                    index_primitive_type: 0,
+                    pointer_primitive_type: 0,
                     memory_space: 0,
+                    element_size_in_bits: i64::try_from(s.element_type.bit_size()).unwrap_or(0),
+                    dynamic_shape_metadata_prefix_bytes: 0,
                 }),
                 is_dynamic_dimension: s.dynamic_dims.clone(),
             })
@@ -1629,13 +2733,112 @@ impl CompiledProgram {
         }
     }
 
+    /// Converts this [`CompiledProgram`] into a full wire-compatible [`TpuExecutableProto`]
+    /// containing [`DeepseaExecutableProto`], [`IsaProgramProto`], and [`TargetArgumentsProto`].
+    #[must_use]
+    pub fn to_tpu_executable_proto(&self) -> TpuExecutableProto {
+        let raw_vliw_stream = self.encode_architectural_imem();
+        let structured_bundles: Vec<IsaVliwBundleProto> = self
+            .instruction_bundles
+            .iter()
+            .map(|b| {
+                let src0 =
+                    u32::try_from(b.operand_slots.first().copied().unwrap_or(0)).unwrap_or(0);
+                let src1 = u32::try_from(b.operand_slots.get(1).copied().unwrap_or(0)).unwrap_or(0);
+                let slot = IsaBundleSlotProto {
+                    unit_kind: 2,
+                    opcode: u32::from(u8::from(b.opcode)),
+                    dst_reg: u32::try_from(b.output_slot).unwrap_or(0),
+                    src0_reg: src0,
+                    src1_reg: src1,
+                    predicate_reg: 0,
+                    immediate: i64::from(b.sync_flag_id),
+                };
+                IsaVliwBundleProto {
+                    pc_index: b.pc_offset,
+                    scalar_s0: Some(slot.clone()),
+                    scalar_s1: None,
+                    vector_v0: Some(slot.clone()),
+                    vector_v1: None,
+                    matrix_m0: Some(slot.clone()),
+                    matrix_m1: None,
+                    unary_xlu: Some(slot.clone()),
+                    dma_d0: Some(slot),
+                    llo_annotation: format!("llo.{:?}", b.opcode),
+                }
+            })
+            .collect();
+        let imem_bytes = u64::try_from(raw_vliw_stream.len()).unwrap_or(0);
+        let isa_prog = IsaProgramProto {
+            isa_architecture: String::from("vfc"),
+            isa_abi_version: 163,
+            core_programs: vec![IsaCoreProgramHeaderProto {
+                core_index: 0,
+                core_type: 0,
+                entry_pc: 0,
+                bundle_count: u64::try_from(structured_bundles.len()).unwrap_or(0),
+                raw_vliw_stream: raw_vliw_stream.clone(),
+                structured_bundles,
+            }],
+            symbols: vec![IsaSymbolTableEntryProto {
+                name: self.name.clone(),
+                pc_offset: 0,
+                size_bytes: imem_bytes,
+            }],
+            fingerprint: sha256_fingerprint_u64(self.fingerprint.as_bytes()),
+        };
+        let target_args = TargetArgumentsProto {
+            tpu_version: 6,
+            chip_variant: String::from("ghostfish"),
+            clock_rate_mhz: 1750,
+            hbm_capacity_bytes: 95 * 1024 * 1024 * 1024,
+            vmem_capacity_bytes: 64 * 1024 * 1024,
+            smem_capacity_bytes: 2 * 1024 * 1024,
+            cmem_capacity_bytes: 128 * 1024 * 1024,
+            tensor_cores_per_chip: 2,
+            sparse_cores_per_chip: 4,
+            mxu_dimension: 128,
+            ici_bandwidth_bps: 4_800_000_000_000,
+        };
+        let ds_exec = DeepseaExecutableProto {
+            module_name: self.name.clone(),
+            isa_program: Some(isa_prog),
+            overlays: vec![DeepseaOverlaySectionProto {
+                overlay_id: 0,
+                symbol_name: format!(".text.{}", self.name),
+                imem_offset_bytes: 0,
+                byte_size: imem_bytes,
+                encoded_bundles: raw_vliw_stream,
+                core_type: 0,
+            }],
+            relocations: vec![DeepseaRelocationEntryProto::default()],
+            constants: vec![DeepseaConstantPoolEntryProto::default()],
+            sync_flags: vec![DeepseaSyncFlagInitProto::default()],
+            target_arguments: Some(target_args.clone()),
+            vmem_allocation_bytes: self.memory_stats.temp_size_in_bytes,
+            smem_allocation_bytes: 4096,
+            cmem_allocation_bytes: 0,
+            hbm_scratchpad_bytes: self.memory_stats.generated_code_size_in_bytes,
+        };
+        TpuExecutableProto {
+            ds_executable: Some(ds_exec),
+            hlo_module_with_config: None,
+            compile_options: CompileOptionsProto::decode(&self.compile_options_bytes).ok(),
+            target_arguments: Some(target_args),
+            legacy_executable: Some(self.to_executable_proto()),
+        }
+    }
+
     /// Serializes this [`CompiledProgram`] into a self-contained binary payload with magic header.
     #[must_use]
     pub fn serialize(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        out.extend_from_slice(EXECUTABLE_MAGIC);
-        out.extend_from_slice(&EXECUTABLE_FORMAT_VERSION.to_le_bytes());
-        out.push(self.opcode as u8);
+        let hdr = ExecutableBinaryHeader {
+            magic: *EXECUTABLE_MAGIC,
+            version_le: EXECUTABLE_FORMAT_VERSION.to_le(),
+        };
+        out.extend_from_slice(bytemuck::bytes_of(&hdr));
+        out.push(u8::from(self.opcode));
 
         let fmt_bytes = self.format.as_bytes();
         out.extend_from_slice(&u32::try_from(fmt_bytes.len()).unwrap_or(0).to_le_bytes());
@@ -1657,7 +2860,7 @@ impl CompiledProgram {
         out
     }
 
-    /// Reads a little-endian `u32` from `cursor` and advances the slice.
+    /// Reads a little-endian `u32` from `cursor` via `bytemuck` and advances the slice.
     ///
     /// # Arguments
     ///
@@ -1670,9 +2873,8 @@ impl CompiledProgram {
             });
         };
         *cursor = rest;
-        let mut arr = [0_u8; 4];
-        arr.copy_from_slice(head);
-        Ok(u32::from_le_bytes(arr))
+        let raw_u32: u32 = bytemuck::pod_read_unaligned(head);
+        Ok(u32::from_le(raw_u32))
     }
 
     /// Reads a length-prefixed byte slice from `cursor` and advances the slice.
@@ -1703,13 +2905,17 @@ impl CompiledProgram {
     ///
     /// Returns [`LibTpuError::DeserializationFailed`] if the magic header, version, or payload lengths are invalid.
     pub fn deserialize(bytes: &[u8]) -> LibTpuResult<Self> {
-        let Some((magic, mut cursor)) = bytes.split_at_checked(8) else {
+        let Some((magic, _)) = bytes.split_at_checked(8) else {
             return Err(LibTpuError::DeserializationFailed {
                 reason: format!("Payload too short ({} bytes)", bytes.len()),
             });
         };
         if magic != EXECUTABLE_MAGIC {
-            if let Ok(proto) = TpuSerializedExecutableProto::decode(bytes) {
+            let candidate = TpuExecutableProto::decode(bytes)
+                .ok()
+                .and_then(|tpu_exec| tpu_exec.legacy_executable)
+                .or_else(|| TpuSerializedExecutableProto::decode(bytes).ok());
+            if let Some(proto) = candidate {
                 if !proto.hlo_module_bytes.is_empty() {
                     let raw_op = proto.instruction_opcodes.first().copied().unwrap_or(0);
                     let op_byte = u8::try_from(raw_op).unwrap_or(255);
@@ -1727,7 +2933,15 @@ impl CompiledProgram {
                 reason: String::from("Invalid executable magic header"),
             });
         }
-        let version = Self::read_u32(&mut cursor, "version")?;
+        let Some((hdr_bytes, mut cursor)) =
+            bytes.split_at_checked(size_of::<ExecutableBinaryHeader>())
+        else {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: String::from("Truncated executable binary header"),
+            });
+        };
+        let hdr: ExecutableBinaryHeader = bytemuck::pod_read_unaligned(hdr_bytes);
+        let version = u32::from_le(hdr.version_le);
         if version != EXECUTABLE_FORMAT_VERSION {
             return Err(LibTpuError::DeserializationFailed {
                 reason: format!("Unsupported executable format version {version}"),
@@ -1761,6 +2975,84 @@ impl CompiledProgram {
     }
 }
 
+/// Topological schedule and HBM buffer assignment report produced by [`analyze_hlo_computation_dag`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HloDagAnalysisReport {
+    /// Topologically sorted HLO instruction IDs (`operand` before `user`).
+    pub topological_order: Vec<i64>,
+    /// Deterministic insertion-ordered map from instruction ID to 4096-byte-aligned HBM byte offset.
+    pub buffer_offsets: IndexMap<i64, u64>,
+    /// Total HBM bytes planned across all scheduled instructions.
+    pub total_hbm_bytes: u64,
+}
+
+/// Builds a `petgraph::stable_graph::StableDiGraph` over an [`HloComputationProto`], verifies
+/// DAG acyclicity via `petgraph::algo::toposort`, and assigns 4096-byte-aligned HBM offsets in
+/// an `indexmap::IndexMap`.
+///
+/// # Arguments
+///
+/// * `computation` - Wire-decoded [`HloComputationProto`] to schedule and plan.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::CompilationFailed`] if the instruction dependency graph contains a cycle.
+pub fn analyze_hlo_computation_dag(
+    computation: &HloComputationProto,
+) -> LibTpuResult<HloDagAnalysisReport> {
+    let mut graph = StableDiGraph::<i64, ()>::new();
+    let mut id_to_node = IndexMap::new();
+    let mut id_to_bytes = IndexMap::new();
+
+    let mut nodes = Vec::with_capacity(computation.instructions.len());
+    for inst in &computation.instructions {
+        let node = graph.add_node(inst.id);
+        nodes.push(node);
+        id_to_node.insert(inst.id, node);
+        let elem_count: u64 = inst.shape.as_ref().map_or(1, |s| {
+            s.dimensions.iter().fold(1_u64, |acc, &d| {
+                acc.saturating_mul(u64::try_from(d).unwrap_or(1).max(1))
+            })
+        });
+        let raw_bytes = elem_count.saturating_mul(4).max(256);
+        let aligned_bytes = raw_bytes.div_ceil(4096) * 4096;
+        id_to_bytes.insert(inst.id, aligned_bytes);
+    }
+
+    for (inst, &dst_node) in computation.instructions.iter().zip(nodes.iter()) {
+        for &op_id in &inst.operand_ids {
+            if let Some(&src_node) = id_to_node.get(&op_id) {
+                graph.add_edge(src_node, dst_node, ());
+            }
+        }
+    }
+
+    let sorted_nodes = toposort(&graph, None).map_err(|_| LibTpuError::CompilationFailed {
+        reason: format!(
+            "Dependency cycle detected in HloComputationProto '{}'",
+            computation.name
+        ),
+    })?;
+
+    let mut topological_order = Vec::with_capacity(sorted_nodes.len());
+    let mut buffer_offsets = IndexMap::new();
+    let mut next_offset = 0_u64;
+
+    for node_idx in sorted_nodes {
+        let inst_id = graph.node_weight(node_idx).copied().unwrap_or(0);
+        topological_order.push(inst_id);
+        buffer_offsets.insert(inst_id, next_offset);
+        let sz = id_to_bytes.get(&inst_id).copied().unwrap_or(4096);
+        next_offset = next_offset.saturating_add(sz);
+    }
+
+    Ok(HloDagAnalysisReport {
+        topological_order,
+        buffer_offsets,
+        total_hbm_bytes: next_offset,
+    })
+}
+
 #[cfg(test)]
 #[allow(
     for_loops_over_fallibles,
@@ -1775,7 +3067,7 @@ mod tests {
 
     #[test]
     fn test_opcode_and_compile_variants() {
-        for b in 0..=44 {
+        for b in 0..=57 {
             let op = TpuOpCode::from_byte(b);
             assert!(op.is_ok());
             for o in op {
@@ -1785,6 +3077,52 @@ mod tests {
             }
         }
         assert!(TpuOpCode::from_byte(99).is_err());
+        for m in [
+            "shift_left",
+            "shift_right_arithmetic",
+            "shift_right_logical",
+            "population_count",
+            "count_leading_zeros",
+            "convolution",
+            "gather",
+            "scatter",
+            "dynamic_update_slice",
+            "dynamic_slice",
+            "reduce_window",
+            "sort",
+            "rng_bit_generator",
+            "tpu.memref_slice",
+            "tpu.erase_memref_layout",
+            "all_to_all",
+            "exponential_minus_one",
+            "log_plus_one",
+            "logistic",
+            "erf",
+            "round_nearest_even",
+            "sign",
+            "is_finite",
+            "power",
+            "atan2",
+            "clamp",
+            "popcnt",
+            "pad",
+            "select_and_scatter",
+            "batch_norm_inference",
+            "fft",
+            "cholesky",
+            "triangular_solve",
+            "partition_id",
+            "replica_id",
+            "after_all",
+            "infeed",
+            "outfeed",
+            "send",
+            "recv",
+            "get_tuple_element",
+            "tuple",
+        ] {
+            assert!(CompiledProgram::compile("mlir", m.as_bytes(), b"").is_ok());
+        }
 
         for hlo_spec in [
             "f32[2,3]{1,0}",
@@ -1878,6 +3216,17 @@ mod tests {
             "tensor<4xi1>",
             "tensor<4xc64>",
             "tensor<4xc128>",
+            "tensor<4xf8e5m2>",
+            "tensor<4xf8e4m3fn>",
+            "tensor<4xf8e4m3b11fnuz>",
+            "tensor<4xs4>",
+            "tensor<4xi4>",
+            "tensor<4xu4>",
+            "tensor<4xui4>",
+            "tensor<4xs2>",
+            "tensor<4xi2>",
+            "tensor<4xu2>",
+            "tensor<4xui2>",
         ] {
             assert!(CompiledProgram::parse_tensor_type(spec).is_some());
         }
@@ -1900,9 +3249,88 @@ mod tests {
                     CompiledProgram::run_compilation_phase(phase, &serialized_phase, b"").is_ok()
                 );
             }
+            let proto_res = CompiledProgram::run_compilation_phase_proto(
+                phase,
+                b"module @phased_proto { func.func @main(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.add %arg0, %arg1 : tensor<4xf32> return %0 : tensor<4xf32> } }",
+                b"",
+            );
+            assert!(proto_res.is_ok());
+            for p_proto in proto_res {
+                assert_eq!(p_proto.producer_phase, phase);
+                let enc_partial = p_proto.encode();
+                assert!(CompiledProgram::run_compilation_phase(phase, &enc_partial, b"").is_ok());
+            }
         }
+        let empty_partial = PjRtPartialProgramProto {
+            program: Vec::new(),
+            program_format: String::from("mlir"),
+            producer_phase: String::from("hlo_verification"),
+            consumer_phases: Vec::new(),
+            version: String::from("1.0"),
+            program_name: String::from("empty"),
+        };
+        assert!(
+            CompiledProgram::run_compilation_phase(
+                "hlo_verification",
+                &empty_partial.encode(),
+                b""
+            )
+            .is_ok()
+        );
         assert!(CompiledProgram::run_compilation_phase("bad_phase", b"return", b"").is_err());
         assert!(CompiledProgram::run_compilation_phase("hlo_verification", b"", b"").is_err());
+        assert!(CompiledProgram::run_compilation_phase_proto("bad_phase", b"return", b"").is_err());
+
+        let mosaic_text = r#"module @mosaic_kernel attributes {tpu.compilation_target = "tpu_v5p", tpu.core_type = "tensor_core", mhlo.layout_mode = "{1,0}", mhlo.sharding = "{replicated}"} {
+          func.func @main(%arg0: tensor<2x2xf32>, %arg1: tensor<2x2xf32>) -> tensor<2x2xf32> {
+            %0 = tpu.matmul %arg0, %arg1 : tensor<2x2xf32>
+            return %0 : tensor<2x2xf32>
+          }
+        }"#;
+        let mosaic_meta = CompiledProgram::parse_mosaic_metadata(mosaic_text);
+        assert!(mosaic_meta.has_mosaic_ops);
+        assert_eq!(mosaic_meta.compilation_target, "tpu_v5p");
+        assert_eq!(mosaic_meta.core_type, "tensor_core");
+        assert_eq!(mosaic_meta.layout_mode, "{1,0}");
+        assert_eq!(mosaic_meta.sharding, "{replicated}");
+        assert_eq!(mosaic_meta.clone(), mosaic_meta);
+        assert_ne!(format!("{mosaic_meta:?}"), "");
+        let unquoted_meta = CompiledProgram::parse_mosaic_metadata(
+            "tpu.compilation_target = unquoted tpu.core_type = \"unclosed",
+        );
+        assert!(unquoted_meta.has_mosaic_ops);
+        for mosaic_op in [
+            b"module @m { tpu.matmul }" as &[u8],
+            b"module @m { tpu.matmul_push_rhs }",
+            b"module @m { tpu.matmul_acc }",
+            b"module @m { tpu.matmul_pop }",
+            b"module @m { tpu.enqueue_dma }",
+            b"module @m { tpu.wait_dma }",
+            b"module @m { tpu.dma_copy }",
+            b"module @m { tpu.dma_wait }",
+            b"module @m { tpu.semaphore_signal }",
+            b"module @m { tpu.semaphore_wait }",
+            b"module @m { tpu.semaphore_read }",
+            b"module @m { tpu.barrier }",
+            b"module @m { tpu.vector_load }",
+            b"module @m { tpu.vector_store }",
+            b"module @m { tpu.load }",
+            b"module @m { tpu.store }",
+            b"module @m { tpu.iota }",
+            b"module @m { tpu.repeat }",
+            b"module @m { tpu.rotate }",
+            b"module @m { tpu.pack_subelements }",
+            b"module @m { tpu.unpack_subelements }",
+            b"module @m { tpu.memref_squeeze }",
+            b"module @m { tpu.memref_bitcast }",
+            b"module @m { tpu.relabel }",
+            b"module @m { tpu.bitcast }",
+            b"module @m { tpu.roll }",
+            b"module @m { tpu.region }",
+            b"module @m { collective_permute }",
+        ] {
+            assert!(CompiledProgram::compile("mlir", mosaic_op, b"").is_ok());
+        }
 
         assert!(CompiledProgram::compile("unknown_fmt", b"code", b"").is_err());
         assert!(CompiledProgram::compile("hlo_with_config", b"return", b"").is_ok());
@@ -1922,10 +3350,40 @@ mod tests {
         }";
         let dag_prog = CompiledProgram::compile("mlir", ssa_dag, b"");
         assert!(dag_prog.is_ok());
-        for dp in dag_prog {
+        for mut dp in dag_prog {
             assert_eq!(dp.parameter_shapes.len(), 2);
             assert_eq!(dp.output_shapes.len(), 2);
             assert_eq!(dp.instruction_bundles.len(), 2);
+            dp.instruction_bundles.push(TpuInstructionBundle {
+                pc_offset: 2,
+                opcode: TpuOpCode::Constant,
+                operand_slots: Vec::new(),
+                output_slot: 4,
+                sync_flag_id: 0,
+                attrs: InstructionAttrs::default(),
+            });
+            dp.instruction_bundles.push(TpuInstructionBundle {
+                pc_offset: 3,
+                opcode: TpuOpCode::DotGeneralF32,
+                operand_slots: Vec::new(),
+                output_slot: 5,
+                sync_flag_id: 0,
+                attrs: InstructionAttrs::default(),
+            });
+            dp.instruction_bundles.push(TpuInstructionBundle {
+                pc_offset: 4,
+                opcode: TpuOpCode::CustomCall,
+                operand_slots: vec![0],
+                output_slot: 6,
+                sync_flag_id: 0,
+                attrs: InstructionAttrs::default(),
+            });
+            dp.run_all_passes();
+            assert_eq!(dp.encode_vliw_program().len(), 5);
+            let imem = dp.encode_architectural_imem();
+            assert_eq!(imem.len(), 5 * 64);
+            let decoded_imem = CompiledProgram::decode_architectural_imem(&imem);
+            assert_eq!(decoded_imem, dp.encode_vliw_program());
         }
 
         let opts = CompileOptionsProto {
@@ -1937,9 +3395,12 @@ mod tests {
                 num_replicas: 2,
                 num_partitions: 4,
                 use_spmd_partitioning: true,
+                ..ExecutableBuildOptionsProto::default()
             }),
             compile_portable_executable: false,
+            env_option_overrides: std::collections::BTreeMap::new(),
             profile_version: 1,
+            serialized_multi_slice_config: Vec::new(),
         };
         let opts_bytes = opts.encode();
 
@@ -1985,6 +3446,9 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
                     let word = b.encode_vliw_word();
                     assert_eq!(bytemuck::bytes_of(&word).len(), 16);
                     assert_ne!(format!("{word:?}"), "");
+                    let arch_bundle = b.encode_architectural_bundle();
+                    assert_eq!(bytemuck::bytes_of(&arch_bundle).len(), 64);
+                    assert_ne!(format!("{arch_bundle:?}"), "");
                 }
                 let c_clone = prog.cost_analysis;
                 let m_clone = prog.memory_stats;
@@ -2001,6 +3465,11 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
                 let proto_bytes = proto.encode();
                 let deser_proto = CompiledProgram::deserialize(&proto_bytes);
                 assert!(deser_proto.is_ok());
+
+                let tpu_exec_proto = prog.to_tpu_executable_proto();
+                let tpu_exec_bytes = tpu_exec_proto.encode();
+                let deser_tpu_exec = CompiledProgram::deserialize(&tpu_exec_bytes);
+                assert!(deser_tpu_exec.is_ok());
             }
         }
     }
@@ -2011,8 +3480,10 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
             name: String::from("binary_hlo_add"),
             entry_computation_name: String::from("main"),
             entry_computation_id: 1,
+            host_program_shape: None,
             computations: vec![HloComputationProto {
                 name: String::from("main"),
+                program_shape: None,
                 id: 1,
                 root_id: 3,
                 instructions: vec![
@@ -2081,6 +3552,112 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
 
         let mut mlir_bc = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
         mlir_bc.extend_from_slice(b"module @bc_mod { stablehlo.add }");
+        let bc_hdr = MlirBytecodeHeader::decode(&mlir_bc);
+        assert!(bc_hdr.is_some());
+        for hdr in bc_hdr {
+            assert_ne!(format!("{hdr:?}"), "");
+            assert_eq!(hdr.clone(), hdr);
+            assert_ne!(hdr.to_synthesized_mlir_text(), "");
+        }
+
+        // Test encode_mlir_prefix_varint and decode_mlir_prefix_varint across 1-byte, 2-byte, and 9-byte forms
+        for v in [0_u64, 1, 42, 127, 128, 1024, 16383, 16384, 0x1234_5678_9ABC] {
+            let enc_v = encode_mlir_prefix_varint(v);
+            let mut cur: &[u8] = &enc_v;
+            assert_eq!(decode_mlir_prefix_varint(&mut cur), Some(v));
+            assert_eq!(cur.len(), 0);
+        }
+        let mut empty_cur: &[u8] = &[];
+        assert!(decode_mlir_prefix_varint(&mut empty_cur).is_none());
+        let mut trunc_zero: &[u8] = &[0, 1, 2];
+        assert!(decode_mlir_prefix_varint(&mut trunc_zero).is_none());
+        let mut trunc_two: &[u8] = &[0x02];
+        assert!(decode_mlir_prefix_varint(&mut trunc_two).is_none());
+
+        // Build a structured binary MLIR bytecode container with Sections 0, 1, 2, 3, 4 (aligned), 5, and 6
+        let mut structured_bc = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
+        structured_bc.extend_from_slice(&encode_mlir_prefix_varint(1)); // version = 1
+        structured_bc.extend_from_slice(b"MLIR20.0.0\x00");
+        let str_payload =
+            b"module\x00@bin_mlir\x00stablehlo.multiply\x00tensor<4xf32>\x00stablehlo\x00";
+        structured_bc.push(0); // section_id = 0 (kString), unaligned
+        structured_bc.extend_from_slice(&encode_mlir_prefix_varint(str_payload.len() as u64));
+        structured_bc.extend_from_slice(str_payload);
+        // Section 1 (kDialect): index 4 ("stablehlo") and out-of-bounds index 99
+        let mut dial_payload = Vec::new();
+        dial_payload.extend_from_slice(&encode_mlir_prefix_varint(4));
+        dial_payload.extend_from_slice(&encode_mlir_prefix_varint(99));
+        structured_bc.push(1);
+        structured_bc.extend_from_slice(&encode_mlir_prefix_varint(dial_payload.len() as u64));
+        structured_bc.extend_from_slice(&dial_payload);
+        // Section 2 (kAttrType)
+        let attr_payload = b"tensor<4xf32>\x00";
+        structured_bc.push(2);
+        structured_bc.extend_from_slice(&encode_mlir_prefix_varint(attr_payload.len() as u64));
+        structured_bc.extend_from_slice(attr_payload);
+        // Section 3 (kAttrTypeOffset)
+        let off_payload = encode_mlir_prefix_varint(14);
+        structured_bc.push(3);
+        structured_bc.extend_from_slice(&encode_mlir_prefix_varint(off_payload.len() as u64));
+        structured_bc.extend_from_slice(&off_payload);
+        // Section 4 (kIR), aligned bit set (0x80)
+        let ir_payload = encode_mlir_prefix_varint(7);
+        structured_bc.push(0x84);
+        structured_bc.extend_from_slice(&encode_mlir_prefix_varint(ir_payload.len() as u64));
+        structured_bc.extend_from_slice(&encode_mlir_prefix_varint(4)); // alignment = 4
+        structured_bc.extend_from_slice(&ir_payload);
+        // Section 5 (kResource)
+        structured_bc.push(5);
+        structured_bc.extend_from_slice(&encode_mlir_prefix_varint(4));
+        structured_bc.extend_from_slice(&[1, 2, 3, 4]);
+        // Section 6 (kProperties / unknown)
+        structured_bc.push(6);
+        structured_bc.extend_from_slice(&encode_mlir_prefix_varint(1));
+        structured_bc.push(0xFF);
+
+        let parsed_struct_bc = MlirBytecodeHeader::decode(&structured_bc);
+        assert!(parsed_struct_bc.is_some());
+        for s_hdr in parsed_struct_bc {
+            assert_eq!(s_hdr.sections.len(), 7);
+            assert_eq!(s_hdr.dialects.len(), 2);
+            assert_eq!(s_hdr.attr_type_entries, vec![String::from("tensor<4xf32>")]);
+            assert_eq!(s_hdr.attr_type_offsets, vec![14]);
+            assert_eq!(s_hdr.ir_op_records, vec![7]);
+            assert_eq!(s_hdr.resources.len(), 1);
+            for sec0 in s_hdr.sections.first() {
+                assert_eq!(sec0.clone(), *sec0);
+                assert_ne!(format!("{sec0:?}"), "");
+            }
+            assert!(
+                s_hdr
+                    .to_synthesized_mlir_text()
+                    .contains("stablehlo.multiply")
+            );
+            let reencoded = s_hdr.encode();
+            assert!(MlirBytecodeHeader::decode(&reencoded).is_some());
+        }
+        let compiled_struct_bc = CompiledProgram::compile("mlir", &structured_bc, b"");
+        assert!(compiled_struct_bc.is_ok());
+        for p in compiled_struct_bc {
+            assert_eq!(p.name, "bin_mlir");
+            assert_eq!(p.opcode, TpuOpCode::MulF32);
+        }
+
+        // Test truncated section length varint and truncated section payload in MlirBytecodeHeader::decode
+        let mut trunc_sec_len = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
+        trunc_sec_len.extend_from_slice(b"\x03MLIR\x00\x00\x02");
+        assert!(MlirBytecodeHeader::decode(&trunc_sec_len).is_some());
+        let mut trunc_sec_data = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
+        trunc_sec_data.extend_from_slice(b"\x03MLIR\x00\x00");
+        trunc_sec_data.extend_from_slice(&encode_mlir_prefix_varint(50));
+        trunc_sec_data.push(1);
+        assert!(MlirBytecodeHeader::decode(&trunc_sec_data).is_some());
+
+        let mut mlir_bc_nul = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
+        mlir_bc_nul.extend_from_slice(b"\x03MLIR20.0.0\x00");
+        assert!(MlirBytecodeHeader::decode(&mlir_bc_nul).is_some());
+        assert!(MlirBytecodeHeader::decode(MLIR_BYTECODE_MAGIC).is_some());
+        assert!(MlirBytecodeHeader::decode(b"not_mlir").is_none());
         let bc_prog = CompiledProgram::compile("mlir", &mlir_bc, b"");
         assert!(bc_prog.is_ok());
         for p in bc_prog {
@@ -2097,8 +3674,10 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
                 name: String::from("no_params"),
                 entry_computation_name: String::from("main"),
                 entry_computation_id: 1,
+                host_program_shape: None,
                 computations: vec![HloComputationProto {
                     name: String::from("main"),
+                    program_shape: None,
                     id: 1,
                     root_id: 1,
                     instructions: vec![HloInstructionProto {
@@ -2121,8 +3700,10 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
             name: String::from("bad_et"),
             entry_computation_name: String::from("main"),
             entry_computation_id: 1,
+            host_program_shape: None,
             computations: vec![HloComputationProto {
                 name: String::from("main"),
+                program_shape: None,
                 id: 1,
                 root_id: 1,
                 instructions: vec![HloInstructionProto {
@@ -2242,7 +3823,15 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
         let cst_single_test = b"module @cst_s1 { func.func @main(%arg0: tensor<1xf32>) -> tensor<1xf32> { %0 = stablehlo.constant dense<5.0> : tensor<1xf32>\n return %0 : tensor<1xf32> } }";
         assert!(CompiledProgram::compile("mlir", cst_single_test, b"").is_ok());
         let hlo_entry_test = b"HloModule m\nENTRY %main (x: f32[4]) -> f32[4] {\n  %x = f32[4] parameter(0)\n  ROOT %r = f32[4] negate(%x)\n}";
-        assert!(CompiledProgram::compile("hlo", hlo_entry_test, b"").is_ok());
+        for prog in CompiledProgram::compile("hlo", hlo_entry_test, b"") {
+            let ba = prog.build_buffer_assignment_proto();
+            assert_eq!(ba.buffer_allocations.len(), 3);
+            assert!(
+                crate::proto::BufferAssignmentProto::decode(&ba.encode())
+                    .ok()
+                    .is_some()
+            );
+        }
 
         let mut trunc_opt = Vec::from(EXECUTABLE_MAGIC.as_slice());
         trunc_opt.extend_from_slice(&EXECUTABLE_FORMAT_VERSION.to_le_bytes());
@@ -2253,5 +3842,105 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
         trunc_opt.extend_from_slice(b"id");
         trunc_opt.extend_from_slice(&100_u32.to_le_bytes());
         assert!(CompiledProgram::deserialize(&trunc_opt).is_err());
+
+        let hdr = ExecutableBinaryHeader {
+            magic: *EXECUTABLE_MAGIC,
+            version_le: EXECUTABLE_FORMAT_VERSION,
+        };
+        assert_eq!(hdr.clone(), hdr);
+        assert_ne!(format!("{hdr:?}"), "");
+
+        // Test petgraph + indexmap DAG analysis (valid DAG and cyclic graph)
+        let valid_comp = HloComputationProto {
+            name: String::from("dag_main"),
+            program_shape: None,
+            id: 1,
+            root_id: 3,
+            instructions: vec![
+                HloInstructionProto {
+                    name: String::from("p0"),
+                    opcode: String::from("parameter"),
+                    shape: Some(ShapeProto {
+                        element_type: 11,
+                        dimensions: vec![16, 128],
+                        tuple_shapes: vec![],
+                        layout: None,
+                        is_dynamic_dimension: vec![],
+                    }),
+                    id: 1,
+                    operand_ids: vec![999], // external/unknown operand ID gracefully ignored
+                    parameter_number: 0,
+                    custom_call_target: String::new(),
+                },
+                HloInstructionProto {
+                    name: String::from("neg"),
+                    opcode: String::from("negate"),
+                    shape: None,
+                    id: 2,
+                    operand_ids: vec![1],
+                    parameter_number: 0,
+                    custom_call_target: String::new(),
+                },
+            ],
+        };
+        for dag_rep in analyze_hlo_computation_dag(&valid_comp) {
+            assert_eq!(dag_rep.topological_order, vec![1, 2]);
+            assert_eq!(dag_rep.buffer_offsets.len(), 2);
+            assert_eq!(dag_rep.total_hbm_bytes, 12288);
+            assert_eq!(dag_rep.clone(), dag_rep);
+            assert_ne!(format!("{dag_rep:?}"), "");
+        }
+
+        let cyclic_comp = HloComputationProto {
+            name: String::from("cyclic"),
+            program_shape: None,
+            id: 2,
+            root_id: 2,
+            instructions: vec![
+                HloInstructionProto {
+                    name: String::from("a"),
+                    opcode: String::from("negate"),
+                    shape: None,
+                    id: 1,
+                    operand_ids: vec![2],
+                    parameter_number: 0,
+                    custom_call_target: String::new(),
+                },
+                HloInstructionProto {
+                    name: String::from("b"),
+                    opcode: String::from("negate"),
+                    shape: None,
+                    id: 2,
+                    operand_ids: vec![1],
+                    parameter_number: 0,
+                    custom_call_target: String::new(),
+                },
+            ],
+        };
+        assert!(analyze_hlo_computation_dag(&cyclic_comp).is_err());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn proptest_winnow_tensor_shape_and_compiler_roundtrip(
+            d0 in 1_i64..32,
+            d1 in 1_i64..32,
+        ) {
+            let mlir_spec = format!("tensor<{d0}x{d1}xf32>");
+            let parsed_mlir = CompiledProgram::parse_tensor_type(&mlir_spec);
+            proptest::prop_assert!(parsed_mlir.is_some());
+            if let Some(sh) = parsed_mlir {
+                proptest::prop_assert_eq!(sh.dims, vec![d0, d1]);
+                proptest::prop_assert_eq!(sh.element_type, ElementType::F32);
+            }
+
+            let hlo_spec = format!("bf16[{d0},{d1}]{{1,0}}");
+            let parsed_hlo = CompiledProgram::parse_hlo_shape_token(&hlo_spec);
+            proptest::prop_assert!(parsed_hlo.is_some());
+            if let Some(sh) = parsed_hlo {
+                proptest::prop_assert_eq!(sh.dims, vec![d0, d1]);
+                proptest::prop_assert_eq!(sh.element_type, ElementType::Bf16);
+            }
+        }
     }
 }

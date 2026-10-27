@@ -4,12 +4,39 @@ use super::*;
 
 /// Strongly-typed handler for [`PJRT_Client_Create`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_Create_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Client_Create_Args`].
 unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(), LibTpuError> {
-    let cfg = libtpu_core::config::global_init_config();
-    let inner = PjrtCoreClient::from_simulated(&cfg);
+    let mut cfg = libtpu_core::config::global_init_config();
+    if !args.create_options.is_null() {
+        // SAFETY: `args.create_options` points to `args.num_options` elements of `PJRT_NamedValue`.
+        let opts = unsafe {
+            std::slice::from_raw_parts(
+                args.create_options
+                    .cast::<crate::pjrt_types::PJRT_NamedValue>(),
+                args.num_options,
+            )
+        };
+        for opt in opts {
+            if !opt.name.is_null() {
+                // SAFETY: `opt.name` points to `opt.name_size` UTF-8 bytes.
+                let name_bytes =
+                    unsafe { std::slice::from_raw_parts(opt.name.cast::<u8>(), opt.name_size) };
+                let name = String::from_utf8_lossy(name_bytes);
+                if matches!(name.as_ref(), "node_id" | "process_index") {
+                    let val = i64::from_ne_bytes(opt.value_payload.to_ne_bytes());
+                    cfg.process_index =
+                        libtpu_core::types::ProcessIndex(i32::try_from(val).unwrap_or(0));
+                }
+            }
+        }
+    }
+    let inner = PjrtCoreClient::from_config(&cfg);
     let platform_name = to_c_string(&inner.topology.spec.platform_name);
     let platform_version = to_c_string(&inner.topology.spec.platform_version);
 
@@ -55,6 +82,11 @@ unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(),
         desc_ptrs: topo_descs,
     }));
 
+    // SAFETY: `args.kv_put_callback` is null or a valid `PJRT_KeyValuePutCallback` pointer.
+    unsafe {
+        notify_kv_put_topology_ready(args.kv_put_callback, args.kv_put_user_arg);
+    }
+
     let client_box = Box::new(PJRT_Client {
         inner,
         platform_name,
@@ -63,9 +95,62 @@ unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(),
         addressable_device_ptrs,
         memory_ptrs,
         topology_ptr,
+        kv_get_callback: args.kv_get_callback,
+        kv_get_user_arg: args.kv_get_user_arg,
+        kv_put_callback: args.kv_put_callback,
+        kv_put_user_arg: args.kv_put_user_arg,
+        kv_try_get_callback: args.kv_try_get_callback,
+        kv_try_get_user_arg: args.kv_try_get_user_arg,
     });
     args.client = Box::into_raw(client_box);
     Ok(())
+}
+
+/// Invokes an optional `PJRT_KeyValuePutCallback` to publish `"tpu_topology_ready"` = `"1"`.
+///
+/// # Arguments
+///
+/// * `kv_put_callback` - Optional C callback pointer.
+/// * `kv_put_user_arg` - User argument pointer passed to `kv_put_callback`.
+///
+/// # Safety
+///
+/// If non-null, `kv_put_callback` must be a valid C function pointer matching `PJRT_KeyValuePutCallback`.
+unsafe fn notify_kv_put_topology_ready(
+    kv_put_callback: *const std::ffi::c_void,
+    kv_put_user_arg: *mut std::ffi::c_void,
+) {
+    /// C callback type for `PJRT_KeyValuePutCallback`.
+    type KvPutCallbackFn = unsafe extern "C" fn(
+        *const std::ffi::c_char,
+        usize,
+        *const std::ffi::c_char,
+        usize,
+        *mut std::ffi::c_void,
+    ) -> *mut PJRT_Error;
+    if kv_put_callback.is_null() {
+        return;
+    }
+    // SAFETY: `kv_put_callback` is a valid C function pointer supplied by the caller.
+    let kv_put: KvPutCallbackFn = unsafe { std::mem::transmute(kv_put_callback) };
+    let key = b"tpu_topology_ready";
+    let val = b"1";
+    // SAFETY: Invoking caller's KV put callback with static byte slices and `kv_put_user_arg`.
+    let kv_err = unsafe {
+        kv_put(
+            key.as_ptr().cast::<std::ffi::c_char>(),
+            key.len(),
+            val.as_ptr().cast::<std::ffi::c_char>(),
+            val.len(),
+            kv_put_user_arg,
+        )
+    };
+    if !kv_err.is_null() {
+        // SAFETY: `kv_err` is a heap-allocated `PJRT_Error` returned by the callback.
+        unsafe {
+            drop(Box::from_raw(kv_err));
+        }
+    }
 }
 
 /// Creates a new [`PJRT_Client`] (`PJRT_Client_Create`).
@@ -84,6 +169,10 @@ pub unsafe extern "C" fn PJRT_Client_Create(raw_args: *mut std::ffi::c_void) -> 
 }
 
 /// Strongly-typed handler for [`PJRT_Client_Destroy`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_Destroy_Args`] structure.
 ///
 /// # Safety
 ///
@@ -136,6 +225,10 @@ pub unsafe extern "C" fn PJRT_Client_Destroy(raw_args: *mut std::ffi::c_void) ->
 
 /// Strongly-typed handler for [`PJRT_Client_PlatformName`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_PlatformStr_Args`] structure.
+///
 /// # Safety
 ///
 /// `args.client` must be null or a valid [`PJRT_Client`].
@@ -175,6 +268,10 @@ pub unsafe extern "C" fn PJRT_Client_PlatformName(
 }
 
 /// Strongly-typed handler for [`PJRT_Client_PlatformVersion`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_PlatformStr_Args`] structure.
 ///
 /// # Safety
 ///
@@ -216,6 +313,10 @@ pub unsafe extern "C" fn PJRT_Client_PlatformVersion(
 
 /// Strongly-typed handler for [`PJRT_Client_ProcessIndex`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_ProcessIndex_Args`] structure.
+///
 /// # Safety
 ///
 /// `args.client` must be null or a valid [`PJRT_Client`].
@@ -254,6 +355,10 @@ pub unsafe extern "C" fn PJRT_Client_ProcessIndex(
 
 /// Strongly-typed handler for [`PJRT_Client_Devices`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_Devices_Args`] structure.
+///
 /// # Safety
 ///
 /// `args.client` must be null or a valid [`PJRT_Client`].
@@ -283,6 +388,10 @@ pub unsafe extern "C" fn PJRT_Client_Devices(raw_args: *mut std::ffi::c_void) ->
 }
 
 /// Strongly-typed handler for [`PJRT_Client_AddressableDevices`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_Devices_Args`] structure.
 ///
 /// # Safety
 ///
@@ -322,6 +431,10 @@ pub unsafe extern "C" fn PJRT_Client_AddressableDevices(
 }
 
 /// Strongly-typed handler for [`PJRT_Client_LookupDevice`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_LookupDevice_Args`] structure.
 ///
 /// # Safety
 ///
@@ -371,6 +484,10 @@ pub unsafe extern "C" fn PJRT_Client_LookupDevice(
 
 /// Strongly-typed handler for [`PJRT_Client_AddressableMemories`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_AddressableMemories_Args`] structure.
+///
 /// # Safety
 ///
 /// `args.client` must be null or a valid [`PJRT_Client`].
@@ -409,6 +526,10 @@ pub unsafe extern "C" fn PJRT_Client_AddressableMemories(
 }
 
 /// Strongly-typed handler for [`PJRT_Client_Compile`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_Compile_Args`] structure.
 ///
 /// # Safety
 ///
@@ -472,6 +593,10 @@ pub unsafe extern "C" fn PJRT_Client_Compile(raw_args: *mut std::ffi::c_void) ->
 }
 
 /// Strongly-typed handler for [`PJRT_Client_BufferFromHostBuffer`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args`] structure.
 ///
 /// # Safety
 ///
@@ -541,6 +666,10 @@ pub unsafe extern "C" fn PJRT_Client_BufferFromHostBuffer(
 
 /// Populates [`crate::pjrt_types::PJRT_Client_LookupDevice_Args`] for addressable device lookup.
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_LookupDevice_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Client_LookupDevice_Args`].
@@ -585,6 +714,10 @@ pub unsafe extern "C" fn PJRT_Client_LookupAddressableDevice(
 
 /// Populates [`crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args`].
@@ -626,6 +759,10 @@ pub unsafe extern "C" fn PJRT_Client_DefaultDeviceAssignment(
 
 /// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Create_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Create_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_Create_Args`].
@@ -659,6 +796,10 @@ pub unsafe extern "C" fn PJRT_TopologyDescription_Create(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args`] structure.
 ///
 /// # Safety
 ///
@@ -702,6 +843,10 @@ pub unsafe extern "C" fn PJRT_TopologyDescription_Destroy(
 
 /// Populates [`crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args`].
@@ -743,6 +888,10 @@ pub unsafe extern "C" fn PJRT_TopologyDescription_PlatformName(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args`] structure.
 ///
 /// # Safety
 ///
@@ -786,6 +935,10 @@ pub unsafe extern "C" fn PJRT_TopologyDescription_PlatformVersion(
 
 /// Populates [`crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args`].
@@ -823,6 +976,10 @@ pub unsafe extern "C" fn PJRT_TopologyDescription_GetDeviceDescriptions(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args`] structure.
 ///
 /// # Safety
 ///
@@ -877,6 +1034,10 @@ pub unsafe extern "C" fn PJRT_TopologyDescription_Serialize(
 
 /// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args`].
@@ -911,6 +1072,10 @@ pub unsafe extern "C" fn PJRT_TopologyDescription_Attributes(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args`] structure.
 ///
 /// # Safety
 ///
@@ -962,6 +1127,10 @@ pub unsafe extern "C" fn PJRT_Client_CreateViewOfDeviceBuffer(
 
 /// Populates [`crate::pjrt_types::PJRT_Client_TopologyDescription_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_TopologyDescription_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Client_TopologyDescription_Args`].
@@ -996,6 +1165,10 @@ pub unsafe extern "C" fn PJRT_Client_TopologyDescription(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_ExecuteContext_Create_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_ExecuteContext_Create_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1032,6 +1205,10 @@ pub unsafe extern "C" fn PJRT_ExecuteContext_Create(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_ExecuteContext_Destroy_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_ExecuteContext_Destroy_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1071,6 +1248,10 @@ pub unsafe extern "C" fn PJRT_ExecuteContext_Destroy(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Client_CreateBuffersForAsyncHostToDevice_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_CreateBuffersForAsyncHostToDevice_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1172,6 +1353,10 @@ pub unsafe extern "C" fn PJRT_Client_CreateBuffersForAsyncHostToDevice(
 
 /// Populates [`crate::pjrt_types::PJRT_Client_DmaMap_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_DmaMap_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Client_DmaMap_Args`].
@@ -1209,6 +1394,10 @@ pub unsafe extern "C" fn PJRT_Client_DmaMap(raw_args: *mut std::ffi::c_void) -> 
 
 /// Populates [`crate::pjrt_types::PJRT_Client_DmaUnmap_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_DmaUnmap_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Client_DmaUnmap_Args`].
@@ -1244,6 +1433,10 @@ pub unsafe extern "C" fn PJRT_Client_DmaUnmap(raw_args: *mut std::ffi::c_void) -
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Client_CreateAliasBuffer_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_CreateAliasBuffer_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1287,6 +1480,10 @@ pub unsafe extern "C" fn PJRT_Client_CreateAliasBuffer(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Client_FulfillAliasBuffer_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_FulfillAliasBuffer_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1349,6 +1546,10 @@ pub unsafe extern "C" fn PJRT_Client_FulfillAliasBuffer(
 
 /// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args`].
@@ -1396,6 +1597,10 @@ pub unsafe extern "C" fn PJRT_TopologyDescription_Deserialize(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Client_CreateErrorBuffer_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_CreateErrorBuffer_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1454,6 +1659,10 @@ pub unsafe extern "C" fn PJRT_Client_CreateErrorBuffer(
 
 /// Populates [`crate::pjrt_types::PJRT_Client_CreateUninitializedBuffer_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_CreateUninitializedBuffer_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Client_CreateUninitializedBuffer_Args`].
@@ -1494,6 +1703,10 @@ pub unsafe extern "C" fn PJRT_Client_CreateUninitializedBuffer(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Client_UpdateGlobalProcessInfo_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_UpdateGlobalProcessInfo_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1547,6 +1760,10 @@ pub unsafe extern "C" fn PJRT_Client_UpdateGlobalProcessInfo(
 }
 
 /// Strongly-typed handler for [`PJRT_Client_Load`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_Load_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1609,6 +1826,10 @@ pub unsafe extern "C" fn PJRT_Client_Load(raw_args: *mut std::ffi::c_void) -> *m
 
 /// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args`].
 ///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args`] structure.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args`].
@@ -1644,6 +1865,10 @@ pub unsafe extern "C" fn PJRT_TopologyDescription_Fingerprint(
 }
 
 /// Populates [`crate::pjrt_types::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args`] structure.
 ///
 /// # Safety
 ///
@@ -1705,6 +1930,10 @@ pub unsafe extern "C" fn PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpa
 }
 
 /// Populates [`crate::pjrt_types::PJRT_TopologyDescription_GetMemorySpaceKindIds_Args`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_GetMemorySpaceKindIds_Args`] structure.
 ///
 /// # Safety
 ///

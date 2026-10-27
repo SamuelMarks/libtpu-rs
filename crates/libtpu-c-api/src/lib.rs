@@ -153,6 +153,11 @@ pub unsafe extern "C" fn PJRT_CheckMatchingStructSizes(
 
 /// Invokes a strongly-typed `unsafe fn(&mut T)` from a type-erased reference.
 ///
+/// # Arguments
+///
+/// * `raw_args` - Raw pointer to the `T` argument structure.
+/// * `handler_ref` - Type-erased pointer to the `unsafe fn(&mut T)` callback.
+///
 /// # Safety
 ///
 /// `raw_args` must point to a valid `T` and `handler_ref` must point to `unsafe fn(&mut T)`.
@@ -169,6 +174,12 @@ unsafe fn invoke_typed_pjrt_void_handler<T>(
 }
 
 /// Non-generic void dispatcher backing [`dispatch_typed_pjrt_void_args`].
+///
+/// # Arguments
+///
+/// * `raw_args` - Raw pointer to the `PJRT_Error_*_Args` structure.
+/// * `handler_ref` - Type-erased pointer to the strongly-typed callback.
+/// * `invoker` - Monomorphized trampoline invoking the strongly-typed callback.
 ///
 /// # Safety
 ///
@@ -211,6 +222,11 @@ pub(crate) unsafe fn dispatch_typed_pjrt_void_args<T>(
 
 /// Invokes a strongly-typed `unsafe fn(&mut T) -> Result<(), LibTpuError>` from a type-erased reference.
 ///
+/// # Arguments
+///
+/// * `raw_args` - Raw pointer to the validated `T` argument structure.
+/// * `handler_ref` - Type-erased pointer to the `unsafe fn(&mut T) -> Result<(), LibTpuError>` callback.
+///
 /// # Safety
 ///
 /// `raw_args` must point to a valid `T` and `handler_ref` must point to `unsafe fn(&mut T) -> Result<(), LibTpuError>`.
@@ -225,6 +241,13 @@ unsafe fn invoke_typed_pjrt_handler<T>(
 }
 
 /// Non-generic validation and error-conversion dispatcher backing [`dispatch_typed_pjrt_args`].
+///
+/// # Arguments
+///
+/// * `raw_args` - Raw pointer to the `PJRT_*_Args` structure.
+/// * `expected_size` - Minimum required `struct_size` in bytes.
+/// * `handler_ref` - Type-erased pointer to the strongly-typed callback.
+/// * `invoker` - Monomorphized trampoline invoking the strongly-typed callback.
 ///
 /// # Safety
 ///
@@ -341,6 +364,10 @@ pub extern "C" fn pjrt_serialized_noop_deleter(holder: *mut std::ffi::c_void) {
 }
 
 /// Allocates a heap-owned [`crate::pjrt_types::PjrtSerializedArtifact`] and returns `(bytes_ptr, bytes_len, holder_ptr)`.
+///
+/// # Arguments
+///
+/// * `bytes` - Owned serialized byte buffer to wrap.
 fn box_serialized_artifact(
     bytes: Vec<u8>,
 ) -> (
@@ -1557,12 +1584,42 @@ mod tests {
                 names_out: ptr::null(),
                 num_names_out: 0,
             };
-            let host_alloc_args = crate::extensions::PJRT_HostMemoryAllocator_Get_Args {
+            let mut host_alloc_args = crate::extensions::PJRT_HostMemoryAllocator_Get_Args {
                 struct_size: 32,
                 extension_start: ptr::null_mut(),
                 client: ptr::null_mut(),
                 allocator_out: 0,
             };
+            assert!(
+                crate::extensions::PJRT_HostMemoryAllocator_Get(
+                    ptr::addr_of_mut!(host_alloc_args).cast()
+                )
+                .is_null()
+            );
+            assert!(host_alloc_args.allocator_out > 0);
+            let mut md_get32 = crate::extensions::PJRT_Metadata_Get_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                handle: ptr::null(),
+                metadata_out: 0,
+            };
+            assert!(
+                crate::extensions::PJRT_MemoryDescriptions_Get(ptr::addr_of_mut!(md_get32).cast())
+                    .is_null()
+            );
+            assert_eq!(md_get32.metadata_out, 4);
+            let mut md_del24 = crate::extensions::PJRT_Metadata_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                metadata: ptr::dangling_mut(),
+            };
+            assert!(
+                crate::extensions::PJRT_MemoryDescriptions_Destroy(
+                    ptr::addr_of_mut!(md_del24).cast()
+                )
+                .is_null()
+            );
+            assert!(md_del24.metadata.is_null());
             let ms_ser_args = crate::extensions::PJRT_MultiSlice_Config_Serialize_Args {
                 struct_size: 48,
                 extension_start: ptr::null_mut(),
@@ -1630,6 +1687,86 @@ mod tests {
             assert_ne!(
                 format!(
                     "{xla_reg_args:?}{xla_wait_args:?}{xla_unreg_args:?}{xla_list_args:?}{host_alloc_args:?}{ms_ser_args:?}{comm_ar_args:?}{abi_proto_args:?}{tpu_mem_stats_args:?}{cb_reg_args:?}{phase_run_args:?}{raw_copy_args:?}"
+                ),
+                ""
+            );
+            let mut host_alloc64 = crate::extensions::PJRT_HostMemoryAllocator_Allocate_Args {
+                struct_size: size_of::<crate::extensions::PJRT_HostMemoryAllocator_Allocate_Args>(),
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                size: 4096,
+                numa_node: 0,
+                pad: 0,
+                ptr: ptr::null_mut(),
+                deleter: ptr::null(),
+                deleter_arg: ptr::null_mut(),
+            };
+            assert!(
+                crate::extensions::PJRT_HostMemoryAllocator_Get(
+                    ptr::addr_of_mut!(host_alloc64).cast()
+                )
+                .is_null()
+            );
+            assert!(!host_alloc64.ptr.is_null());
+            let mut mem_desc48 =
+                crate::extensions::PJRT_DeviceDescription_MemoryDescriptions_Args {
+                    struct_size: size_of::<
+                        crate::extensions::PJRT_DeviceDescription_MemoryDescriptions_Args,
+                    >(),
+                    extension_start: ptr::null_mut(),
+                    device_description: ptr::null(),
+                    memory_descriptions: ptr::null(),
+                    num_memory_descriptions: 0,
+                    default_memory_index: -1,
+                };
+            assert!(
+                crate::extensions::PJRT_MemoryDescriptions_Get(
+                    ptr::addr_of_mut!(mem_desc48).cast()
+                )
+                .is_null()
+            );
+            assert_eq!(mem_desc48.num_memory_descriptions, 4);
+            assert_eq!(mem_desc48.default_memory_index, 0);
+            let mut mem_kind48 = crate::extensions::PJRT_MemoryDescription_Kind_Args {
+                struct_size: size_of::<crate::extensions::PJRT_MemoryDescription_Kind_Args>(),
+                extension_start: ptr::null_mut(),
+                memory_description: 2_usize as *const std::ffi::c_void,
+                kind: ptr::null(),
+                kind_size: 0,
+                kind_id: -1,
+                pad: 0,
+            };
+            assert!(
+                crate::extensions::PJRT_MemoryDescriptions_Destroy(
+                    ptr::addr_of_mut!(mem_kind48).cast()
+                )
+                .is_null()
+            );
+            assert_eq!(mem_kind48.kind_id, 1);
+            assert_eq!(mem_kind48.kind_size, 4);
+            let cb_sb = crate::extensions::PJRT_Callback_Tpu_SliceBuilderArgs {
+                struct_size: 16,
+                failure_type: crate::extensions::PJRT_Callback_Tpu_SliceFailureType::default()
+                    as i32,
+                pad: 0,
+            };
+            let cb_pf = crate::extensions::PJRT_Callback_PrefatalArgs {
+                struct_size: 32,
+                error_code: 0,
+                pad: 0,
+                error_message: ptr::null(),
+                error_message_size: 0,
+            };
+            let exec_md = crate::extensions::PJRT_ExecutableMetadata {
+                serialized_metadata: ptr::null(),
+                serialized_metadata_size: 0,
+            };
+            assert_ne!(
+                format!(
+                    "{host_alloc64:?}{mem_desc48:?}{mem_kind48:?}{cb_sb:?}{cb_pf:?}{exec_md:?}{:?}{:?}{:?}",
+                    crate::extensions::PJRT_Collectives_ReductionKind::default(),
+                    crate::extensions::PJRT_Collectives_CollectiveOpKind::default(),
+                    crate::extensions::PJRT_Callback_Type::default(),
                 ),
                 ""
             );
@@ -1717,6 +1854,121 @@ mod tests {
 
             let e_cc = PJRT_Client_Create(ptr::null_mut());
             drop(Box::from_raw(e_cc));
+            let create_opts = [
+                crate::pjrt_types::PJRT_NamedValue {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_NamedValue>(),
+                    extension_start: ptr::null_mut(),
+                    name: c"node_id".as_ptr(),
+                    name_size: 7,
+                    value_type_and_pad: 1,
+                    value_payload: 0,
+                    value_size: 1,
+                },
+                crate::pjrt_types::PJRT_NamedValue {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_NamedValue>(),
+                    extension_start: ptr::null_mut(),
+                    name: c"process_index".as_ptr(),
+                    name_size: 13,
+                    value_type_and_pad: 0,
+                    value_payload: 0,
+                    value_size: 1,
+                },
+                crate::pjrt_types::PJRT_NamedValue {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_NamedValue>(),
+                    extension_start: ptr::null_mut(),
+                    name: c"other".as_ptr(),
+                    name_size: 5,
+                    value_type_and_pad: 1,
+                    value_payload: 0,
+                    value_size: 1,
+                },
+                crate::pjrt_types::PJRT_NamedValue {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_NamedValue>(),
+                    extension_start: ptr::null_mut(),
+                    name: ptr::null(),
+                    name_size: 0,
+                    value_type_and_pad: 0,
+                    value_payload: 0,
+                    value_size: 0,
+                },
+            ];
+            /// Test callback for `kv_put_callback` returning null (`OK`).
+            ///
+            /// # Arguments
+            ///
+            /// * `_key` - Key string pointer.
+            /// * `_key_len` - Key byte length.
+            /// * `_val` - Value string pointer.
+            /// * `_val_len` - Value byte length.
+            /// * `user_arg` - User context pointer.
+            unsafe extern "C" fn mock_kv_put_ok(
+                _key: *const std::ffi::c_char,
+                _key_len: usize,
+                _val: *const std::ffi::c_char,
+                _val_len: usize,
+                user_arg: *mut std::ffi::c_void,
+            ) -> *mut PJRT_Error {
+                if !user_arg.is_null() {
+                    // SAFETY: `user_arg` points to `kv_called` in test stack frame.
+                    unsafe {
+                        *user_arg.cast::<usize>() += 1;
+                    }
+                }
+                ptr::null_mut()
+            }
+
+            /// Test callback for `kv_put_callback` returning a heap-allocated `PJRT_Error`.
+            ///
+            /// # Arguments
+            ///
+            /// * `_key` - Key string pointer.
+            /// * `_key_len` - Key byte length.
+            /// * `_val` - Value string pointer.
+            /// * `_val_len` - Value byte length.
+            /// * `_user_arg` - User context pointer.
+            unsafe extern "C" fn mock_kv_put_err(
+                _key: *const std::ffi::c_char,
+                _key_len: usize,
+                _val: *const std::ffi::c_char,
+                _val_len: usize,
+                _user_arg: *mut std::ffi::c_void,
+            ) -> *mut PJRT_Error {
+                box_pjrt_error(LibTpuError::InvalidArgument {
+                    parameter: "kv_put",
+                    reason: String::from("simulated kv_put failure"),
+                })
+            }
+
+            let mut kv_called: usize = 0;
+            let mut create_args_opts = PJRT_Client_Create_Args {
+                struct_size: size_of::<PJRT_Client_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                create_options: create_opts.as_ptr().cast(),
+                num_options: create_opts.len(),
+                kv_get_callback: ptr::null(),
+                kv_get_user_arg: ptr::null_mut(),
+                kv_put_callback: mock_kv_put_ok as *const std::ffi::c_void,
+                kv_put_user_arg: ptr::addr_of_mut!(kv_called).cast(),
+                kv_try_get_callback: ptr::null(),
+                kv_try_get_user_arg: ptr::null_mut(),
+                client: ptr::null_mut(),
+            };
+            assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args_opts).cast()).is_null());
+            assert_eq!(kv_called, 1);
+            let mut destroy_opts_client = PJRT_Client_Destroy_Args {
+                struct_size: size_of::<PJRT_Client_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                client: create_args_opts.client,
+            };
+            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_opts_client).cast()).is_null());
+
+            create_args_opts.kv_put_callback = mock_kv_put_err as *const std::ffi::c_void;
+            create_args_opts.kv_put_user_arg = ptr::null_mut();
+            create_args_opts.client = ptr::null_mut();
+            assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args_opts).cast()).is_null());
+            destroy_opts_client.client = create_args_opts.client;
+            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_opts_client).cast()).is_null());
+
             let mut create_args = PJRT_Client_Create_Args {
                 struct_size: size_of::<PJRT_Client_Create_Args>(),
                 extension_start: ptr::null_mut(),
@@ -4172,6 +4424,7 @@ mod tests {
     fn test_sdk_legacy_and_libtpu_rs_entrypoints() {
         let sdk_ptr = GetLibtpuSdkApi();
         assert!(!sdk_ptr.is_null());
+        assert_eq!(PyInit_sdk(), sdk_ptr);
         // SAFETY: Testing SDK, legacy TfTpu/TpuTopology/TpuProfiler/TpuEmbeddingEngine, and libtpu_rs_* functions.
         unsafe {
             let sdk = *sdk_ptr;
@@ -4507,6 +4760,45 @@ mod tests {
                 SetGlobalTPUArrayOp_DoWork(1, c"\xff".as_ptr(), ptr::null_mut()),
                 0
             );
+            assert_eq!(
+                InitializeCreateMeshGlobalState(0, ptr::null(), ptr::null_mut()),
+                0
+            );
+            assert_eq!(
+                ConfigureDistributedTpuOp_DoWork(
+                    2,
+                    ptr::null(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                -1
+            );
+            let cores_arr = [4_i32, 4_i32];
+            let mut dist_cfg_len: usize = 0;
+            let mut dist_cfg_ptr: *mut c_char = ptr::null_mut();
+            assert_eq!(
+                ConfigureDistributedTpuOp_DoWork(
+                    0,
+                    ptr::null(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                0
+            );
+            assert_eq!(
+                ConfigureDistributedTpuOp_DoWork(
+                    cores_arr.len(),
+                    cores_arr.as_ptr(),
+                    ptr::addr_of_mut!(dist_cfg_len),
+                    ptr::addr_of_mut!(dist_cfg_ptr),
+                    ptr::null_mut(),
+                ),
+                0
+            );
+            assert!(dist_cfg_len > 0);
+            TpuConfigurationApi_FreeCharArray(dist_cfg_ptr);
 
             assert_eq!(TfTpu_GetTpuPartitionedCallParams(ptr::null_mut()), -1);
             let mut pcall_params = TpuPartitionedCall_Params {
@@ -4527,6 +4819,7 @@ mod tests {
                 0
             );
             assert!(pcall_params.input_shape_opt);
+            assert!(pcall_params.enable_variable_deduplication());
 
             TpuConfigurationApi_FreeCharArray(ptr::null_mut());
             TpuConfigurationApi_FreeCharArray(to_c_string("abc").into_raw());
@@ -4828,9 +5121,10 @@ mod tests {
             let mut col_mem = TpuEmbeddingEngine_CollateMemory_Params {
                 struct_size: size_of::<TpuEmbeddingEngine_CollateMemory_Params>(),
                 priv_data: ptr::null_mut(),
-                memory_configs: ptr::null(),
                 memory_configs_size: 0,
+                memory_configs: ptr::null(),
                 collated_size: ptr::addr_of_mut!(col_sz),
+                merged_memory_config: ptr::null_mut(),
                 status: ptr::null_mut(),
             };
             assert_eq!(TpuEmbeddingEngine_CollateMemory(ptr::null_mut()), 0);
@@ -4860,6 +5154,8 @@ mod tests {
                 common_config_string_size: 0,
                 task_host_config: ptr::null(),
                 task_host_config_size: 0,
+                tpu_embedding_config_bytes: ptr::null(),
+                tpu_embedding_config_size: 0,
                 network_config_size: ptr::addr_of_mut!(net_sz),
                 network_config: ptr::addr_of_mut!(net_ptr),
                 status: ptr::null_mut(),
@@ -4925,6 +5221,7 @@ mod tests {
                 config_string: ptr::null(),
                 config_string_size: 0,
                 is_embedding_initialized: ptr::addr_of_mut!(is_init_bool),
+                status: ptr::null_mut(),
             };
             assert!(TpuEmbeddingEngine_IsInitialized(ptr::addr_of!(init_params)));
             assert!(is_init_bool);
@@ -4934,6 +5231,7 @@ mod tests {
                 config_string: ptr::null(),
                 config_string_size: 0,
                 is_embedding_initialized: ptr::null_mut(),
+                status: ptr::null_mut(),
             };
             assert!(TpuEmbeddingEngine_IsInitialized(ptr::addr_of!(
                 init_params_null_out
@@ -5028,10 +5326,6 @@ mod tests {
             let mut enq_params = TpuEmbeddingEngine_EnqueueTensorBatch_Params {
                 struct_size: size_of::<TpuEmbeddingEngine_EnqueueTensorBatch_Params>(),
                 priv_data: ptr::null_mut(),
-                mode_override: ptr::null(),
-                mode_override_size: 0,
-                device_ordinal: 0,
-                fixed_state: ptr::null_mut(),
                 sample_indices: ptr::null(),
                 embedding_indices: ptr::null(),
                 aggregation_weights: ptr::null(),
@@ -5959,6 +6253,23 @@ mod tests {
                 )
                 .is_null()
             );
+
+            let mut xh_args = crate::extensions::PJRT_CrossHostTransfers_Args {
+                struct_size: size_of::<crate::extensions::PJRT_CrossHostTransfers_Args>(),
+                extension_start: ptr::null_mut(),
+                client: rs_client.cast(),
+                buffers: b0 as usize,
+                num_buffers: 1,
+                remote_device: b1 as usize,
+                out_event: 0,
+            };
+            assert!(
+                crate::extensions::PJRT_CrossHostTransfers_CopyToRemoteDevice(
+                    ptr::addr_of_mut!(xh_args).cast()
+                )
+                .is_null()
+            );
+            assert!(xh_args.out_event > 0);
 
             let exec_inner = (*exec).executable_ptr;
             let mut meta_q = crate::extensions::PJRT_Metadata_Get_Args {

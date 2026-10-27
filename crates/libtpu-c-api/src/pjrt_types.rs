@@ -51,6 +51,18 @@ pub struct PJRT_Client {
     pub memory_ptrs: Vec<*mut PJRT_Memory>,
     /// Heap-allocated topology wrapper owned by this client.
     pub topology_ptr: *mut PJRT_TopologyDescription,
+    /// Optional distributed key-value store `kv_get` callback pointer.
+    pub kv_get_callback: *const std::ffi::c_void,
+    /// Optional distributed key-value store `kv_get` user argument.
+    pub kv_get_user_arg: *mut std::ffi::c_void,
+    /// Optional distributed key-value store `kv_put` callback pointer.
+    pub kv_put_callback: *const std::ffi::c_void,
+    /// Optional distributed key-value store `kv_put` user argument.
+    pub kv_put_user_arg: *mut std::ffi::c_void,
+    /// Optional distributed key-value store `kv_try_get` callback pointer.
+    pub kv_try_get_callback: *const std::ffi::c_void,
+    /// Optional distributed key-value store `kv_try_get` user argument.
+    pub kv_try_get_user_arg: *mut std::ffi::c_void,
 }
 
 /// Opaque C handle wrapping a [`PjrtCoreDeviceDescription`].
@@ -3489,9 +3501,157 @@ impl PjrtArgsStruct for PJRT_Device_ClearMemoryStats_Args {}
 impl PjrtArgsStruct for PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args {}
 impl PjrtArgsStruct for PJRT_TopologyDescription_GetMemorySpaceKindIds_Args {}
 
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, struct_size) == 0x000);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, extension_start) == 0x008);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_api_version) == 0x010);
 const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_error_destroy) == 0x028);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_error_message) == 0x030);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_error_get_code) == 0x038);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_plugin_initialize) == 0x040);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_plugin_attributes) == 0x048);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_event_destroy) == 0x050);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_event_is_ready) == 0x058);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_event_error) == 0x060);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_event_await) == 0x068);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_event_on_ready) == 0x070);
 const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_create) == 0x078);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_destroy) == 0x080);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_platform_name) == 0x088);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_process_index) == 0x090);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_platform_version) == 0x098);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_devices) == 0x0a0);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_addressable_devices) == 0x0a8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_lookup_device) == 0x0b0);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_lookup_addressable_device) == 0x0b8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_addressable_memories) == 0x0c0);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_compile) == 0x0c8);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_default_device_assignment) == 0x0d0);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_buffer_from_host_buffer) == 0x0d8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_description_id) == 0x0e0);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_description_process_index) == 0x0e8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_description_attributes) == 0x0f0);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_description_kind) == 0x0f8);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_description_debug_string) == 0x100);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_description_to_string) == 0x108);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_get_description) == 0x110);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_is_addressable) == 0x118);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_local_hardware_id) == 0x120);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_addressable_memories) == 0x128);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_default_memory) == 0x130);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_memory_stats) == 0x138);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_memory_id) == 0x140);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_memory_kind) == 0x148);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_memory_debug_string) == 0x150);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_memory_to_string) == 0x158);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_memory_addressable_by_devices) == 0x160);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_destroy) == 0x168);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_name) == 0x170);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_num_replicas) == 0x178);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_num_partitions) == 0x180);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_num_outputs) == 0x188);
+const _: () = assert!(
+    std::mem::offset_of!(PJRT_Api, pjrt_executable_size_of_generated_code_in_bytes) == 0x190
+);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_get_cost_analysis) == 0x198);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_output_memory_kinds) == 0x1a0);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_optimized_program) == 0x1a8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_serialize) == 0x1b0);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_loaded_executable_destroy) == 0x1b8);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_loaded_executable_get_executable) == 0x1c0);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_loaded_executable_addressable_devices) == 0x1c8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_loaded_executable_delete) == 0x1d0);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_loaded_executable_is_deleted) == 0x1d8);
 const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_loaded_executable_execute) == 0x1e0);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_deserialize_and_load) == 0x1e8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_loaded_executable_fingerprint) == 0x1f0);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_destroy) == 0x1f8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_element_type) == 0x200);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_dimensions) == 0x208);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_unpadded_dimensions) == 0x210);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_dynamic_dimension_indices) == 0x218);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_get_memory_layout) == 0x220);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_on_device_size_in_bytes) == 0x228);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_device) == 0x230);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_memory) == 0x238);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_delete) == 0x240);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_is_deleted) == 0x248);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_copy_to_device) == 0x250);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_to_host_buffer) == 0x258);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_is_on_cpu) == 0x260);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_ready_event) == 0x268);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_unsafe_pointer) == 0x270);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_increase_external_reference_count) == 0x278);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_decrease_external_reference_count) == 0x280);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_opaque_device_memory_data_pointer) == 0x288);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_copy_to_device_stream_destroy) == 0x290);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_copy_to_device_stream_add_chunk) == 0x298);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_copy_to_device_stream_total_bytes) == 0x2a0);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_copy_to_device_stream_granule_size) == 0x2a8);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_copy_to_device_stream_current_bytes) == 0x2b0);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_topology_description_create) == 0x2b8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_topology_description_destroy) == 0x2c0);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_topology_description_platform_name) == 0x2c8);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_topology_description_platform_version) == 0x2d0);
+const _: () = assert!(
+    std::mem::offset_of!(PJRT_Api, pjrt_topology_description_get_device_descriptions) == 0x2d8
+);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_topology_description_serialize) == 0x2e0);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_topology_description_attributes) == 0x2e8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_compile) == 0x2f0);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_output_element_types) == 0x2f8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_output_dimensions) == 0x300);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_copy_to_memory) == 0x308);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_create_view_of_device_buffer) == 0x310);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_fingerprint) == 0x318);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_topology_description) == 0x320);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_get_compiled_memory_stats) == 0x328);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_memory_kind_id) == 0x330);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_execute_context_create) == 0x338);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_execute_context_destroy) == 0x340);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_copy_raw_to_host) == 0x348);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_async_transfer_manager_destroy) == 0x350);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_async_transfer_manager_transfer_data) == 0x358);
+const _: () = assert!(
+    std::mem::offset_of!(
+        PJRT_Api,
+        pjrt_client_create_buffers_for_async_host_to_device
+    ) == 0x360
+);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_async_transfer_manager_retrieve_buffer) == 0x368);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_async_transfer_manager_device) == 0x370);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_async_transfer_manager_buffer_count) == 0x378);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_async_transfer_manager_buffer_size) == 0x380);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_async_transfer_manager_set_buffer_error) == 0x388);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_async_transfer_manager_add_metadata) == 0x390);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_dma_map) == 0x398);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_dma_unmap) == 0x3a0);
 const _: () =
     assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_create_uninitialized_buffer) == 0x3a8);
 const _: () =
@@ -3503,12 +3663,104 @@ const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_fulfill_alias_b
 const _: () =
     assert!(std::mem::offset_of!(PJRT_Api, pjrt_loaded_executable_get_device_assignment) == 0x3d0);
 const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_create_error_buffer) == 0x3d8);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_async_transfer_manager_transfer_literal) == 0x3e0);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_copy_raw_to_host_future) == 0x3e8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_poison_execution) == 0x3f0);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_create_async_tracking_event) == 0x3f8);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_async_tracking_event_destroy) == 0x400);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_get_compile_options) == 0x408);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_donate_with_control_dependency) == 0x410);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_event_create) == 0x418);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_event_set) == 0x420);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_get_attributes) == 0x428);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_client_load) == 0x430);
+const _: () = assert!(
+    std::mem::offset_of!(
+        PJRT_Api,
+        pjrt_loaded_executable_addressable_device_logical_ids
+    ) == 0x438
+);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_buffer_bitcast) == 0x440);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_error_for_each_payload) == 0x448);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_topology_description_fingerprint) == 0x450);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Api, pjrt_executable_parameter_memory_kinds) == 0x458);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api, pjrt_device_clear_memory_stats) == 0x460);
+const _: () = assert!(
+    std::mem::offset_of!(
+        PJRT_Api,
+        pjrt_topology_description_make_canonical_shape_for_memory_space
+    ) == 0x468
+);
 const _: () = assert!(
     std::mem::offset_of!(
         PJRT_Api,
         pjrt_topology_description_get_memory_space_kind_ids
     ) == 0x470
 );
+
+const _: () = assert!(std::mem::offset_of!(PJRT_Extension_Base, struct_size) == 0x00);
+const _: () = assert!(std::mem::offset_of!(PJRT_Extension_Base, ext_type) == 0x08);
+const _: () = assert!(std::mem::offset_of!(PJRT_Extension_Base, next) == 0x10);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api_Version, struct_size) == 0x00);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api_Version, extension_start) == 0x08);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api_Version, major_version) == 0x10);
+const _: () = assert!(std::mem::offset_of!(PJRT_Api_Version, minor_version) == 0x14);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, create_options) == 0x10);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, num_options) == 0x18);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, kv_get_callback) == 0x20);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, kv_put_callback) == 0x30);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, kv_try_get_callback) == 0x40);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, client) == 0x50);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Compile_Args, client) == 0x10);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Compile_Args, program) == 0x18);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Compile_Args, compile_options) == 0x20);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Compile_Args, compile_options_size) == 0x28);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Compile_Args, executable) == 0x30);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, client) == 0x10);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, data) == 0x18);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, element_type) == 0x20);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, dims) == 0x28);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, num_dims) == 0x30);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, byte_strides) == 0x38);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, device) == 0x50);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, memory) == 0x58);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, out_buffer) == 0x70);
+const _: () = assert!(std::mem::offset_of!(PJRT_LoadedExecutable_Execute_Args, executable) == 0x10);
+const _: () = assert!(std::mem::offset_of!(PJRT_LoadedExecutable_Execute_Args, options) == 0x18);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_LoadedExecutable_Execute_Args, argument_lists) == 0x20);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_LoadedExecutable_Execute_Args, num_devices) == 0x28);
+const _: () = assert!(std::mem::offset_of!(PJRT_LoadedExecutable_Execute_Args, num_args) == 0x30);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_LoadedExecutable_Execute_Args, output_lists) == 0x38);
+const _: () = assert!(
+    std::mem::offset_of!(PJRT_LoadedExecutable_Execute_Args, device_complete_events) == 0x40
+);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_LoadedExecutable_Execute_Args, execute_device) == 0x48);
+const _: () = assert!(std::mem::offset_of!(PJRT_Buffer_ToHostBuffer_Args, src) == 0x10);
+const _: () = assert!(std::mem::offset_of!(PJRT_Buffer_ToHostBuffer_Args, host_layout) == 0x18);
+const _: () = assert!(std::mem::offset_of!(PJRT_Buffer_ToHostBuffer_Args, dst) == 0x20);
+const _: () = assert!(std::mem::offset_of!(PJRT_Buffer_ToHostBuffer_Args, dst_size) == 0x28);
+const _: () = assert!(std::mem::offset_of!(PJRT_Buffer_ToHostBuffer_Args, event) == 0x30);
+const _: () = assert!(std::mem::offset_of!(PJRT_Device_PoisonExecution_Args, device) == 0x10);
+const _: () = assert!(std::mem::offset_of!(PJRT_Device_PoisonExecution_Args, launch_id) == 0x18);
+const _: () = assert!(std::mem::offset_of!(PJRT_Device_PoisonExecution_Args, error_code) == 0x1c);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Device_PoisonExecution_Args, error_message) == 0x20);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Device_PoisonExecution_Args, error_message_size) == 0x28);
+const _: () = assert!(std::mem::offset_of!(PJRT_Device_PoisonExecution_Args, poisoned) == 0x40);
 
 const _: () = assert!(size_of::<PJRT_Error_Destroy_Args>() == 24);
 const _: () = assert!(size_of::<PJRT_Error_Message_Args>() == 40);

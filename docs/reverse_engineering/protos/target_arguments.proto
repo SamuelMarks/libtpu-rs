@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: platforms/xla/service/jellyfish/target_arguments.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package xla;
+
+import "tpu_version.proto";
+
+message TargetArgumentsProto {
+  tpu.TpuVersionProto tpu_version = 1;
+  string chip_variant = 2;
+  int64 clock_rate_mhz = 3;
+  int64 hbm_capacity_bytes = 4;
+  int64 vmem_capacity_bytes = 5;
+  int64 smem_capacity_bytes = 6;
+  int64 cmem_capacity_bytes = 7;
+  int32 tensor_cores_per_chip = 8;
+  int32 sparse_cores_per_chip = 9;
+  int32 mxu_dimension = 10;
+  int64 ici_bandwidth_bps = 11;
+}

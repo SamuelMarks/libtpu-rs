@@ -94,7 +94,7 @@ def get_library_path() -> str:
 
 
 def configure_library_path() -> str:
-    """Sets `TPU_LIBRARY_PATH` in `os.environ` if not already set.
+    """Sets `TPU_LIBRARY_PATH` and `PJRT_NAMES_AND_LIBRARY_PATHS` in `os.environ`.
 
     Returns:
         The active `TPU_LIBRARY_PATH` value.
@@ -103,17 +103,18 @@ def configure_library_path() -> str:
     if not existing:
         path = get_library_path()
         os.environ["TPU_LIBRARY_PATH"] = path
+        os.environ.setdefault("PJRT_NAMES_AND_LIBRARY_PATHS", f"tpu:{path}")
         return path
     return existing
 
 
-def set_init_args(args: Sequence[str]) -> None:
-    """Configures the `LIBTPU_INIT_ARGS` environment variable from a sequence of flags.
+def set_init_args(args: str | Sequence[str]) -> None:
+    """Configures `LIBTPU_INIT_ARGS` from a string or sequence of CLI flags.
 
     Args:
-        args: Sequence of CLI flag strings (e.g., `["--tpu_generation=v6e"]`).
+        args: CLI flag string or sequence of flags (e.g., `["--tpu_generation=v6e"]`).
     """
-    os.environ["LIBTPU_INIT_ARGS"] = " ".join(args)
+    os.environ["LIBTPU_INIT_ARGS"] = args if isinstance(args, str) else " ".join(args)
 
 
 def get_init_args() -> list[str]:

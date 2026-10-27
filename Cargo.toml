@@ -18,15 +18,40 @@ keywords = ["tpu", "pjrt", "xla", "jax", "machine-learning"]
 categories = ["science", "api-bindings", "hardware-support"]
 
 [workspace.dependencies]
-bitflags = { version = "2.8", default-features = false, features = ["std"] }
-bytemuck = { version = "1.21", default-features = false, features = ["derive", "extern_crate_alloc"] }
-derive_more = { version = "2.1", default-features = false, features = ["add", "as_ref", "deref", "display", "error", "from", "into", "mul", "try_into"] }
-half = { version = "2.4", default-features = false, features = ["alloc", "bytemuck", "std"] }
-libc = { version = "0.2", default-features = false, features = ["std"] }
+bitflags = { version = "2.13", default-features = false }
+blake3 = { version = "1.8", default-features = false }
+brotli = { version = "9.1", default-features = false, features = ["std"] }
+bytemuck = { version = "1.25", default-features = false, features = ["derive", "extern_crate_alloc"] }
+cpp_demangle = { version = "0.5", default-features = false, features = ["alloc"] }
+derive_more = { version = "2.1", default-features = false, features = ["add", "display", "error", "from", "into"] }
+float8 = { version = "0.7", default-features = false }
+gimli = { version = "0.34", default-features = false, features = ["read"] }
+goblin = { version = "0.10", default-features = false, features = ["archive", "elf32", "elf64", "endian_fd", "mach32", "mach64", "pe32", "pe64", "te"] }
+half = { version = "2.7", default-features = false }
+iced-x86 = { version = "1.21", default-features = false, features = ["decoder", "instr_info", "std"] }
+indexmap = { version = "2.14", default-features = false, features = ["std"] }
+lexopt = { version = "0.3", default-features = false }
+libc = { version = "0.2", default-features = false }
 libtpu-core = { version = "0.0", path = "crates/libtpu-core" }
-parking_lot = { version = "0.12", default-features = false }
-sha2 = { version = "0.10", default-features = false, features = ["std"] }
-smallvec = { version = "1.13", default-features = false }
+memmap2 = { version = "0.9", default-features = false }
+nix = { version = "0.31", default-features = false }
+num-complex = { version = "0.4", default-features = false }
+num_enum = { version = "0.7", default-features = false }
+object = { version = "0.40", default-features = false, features = ["elf", "macho", "read_core"] }
+parking_lot = { version = "0.13", default-features = false }
+petgraph = { version = "0.8", default-features = false, features = ["stable_graph"] }
+proptest = { version = "1.12", default-features = false, features = ["std"] }
+prost = { version = "0.14", default-features = false, features = ["derive"] }
+prost-build = { version = "0.14", default-features = false }
+prost-reflect = { version = "0.16", default-features = false, features = ["serde"] }
+prost-types = { version = "0.14", default-features = false }
+protox = { version = "0.10", default-features = false }
+rustix = { version = "1.1", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.11", default-features = false }
+smallvec = { version = "1.16", default-features = false }
+winnow = { version = "1.0", default-features = false, features = ["alloc", "ascii"] }
 
 [workspace.lints.rust]
 missing_docs = "forbid"

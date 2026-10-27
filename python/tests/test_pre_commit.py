@@ -552,19 +552,27 @@ def test_abi_compatibility_hook(tmp_path: Path) -> None:
     ]
     c_src = tmp_path / "crates" / "libtpu-c-api" / "src"
     c_src.mkdir(parents=True, exist_ok=True)
-    (c_src / "lib.rs").write_text("// empty", encoding="utf-8")
+    (c_src / "lib.rs").write_text("// empty .unwrap()", encoding="utf-8")
     h_dir = tmp_path / "cpp" / "src"
     h_dir.mkdir(parents=True, exist_ok=True)
     (h_dir / "libtpu.h").write_text("/* empty */", encoding="utf-8")
     py_init = tmp_path / "python" / "libtpu"
     py_init.mkdir(parents=True, exist_ok=True)
     (py_init / "__init__.py").write_text("# empty", encoding="utf-8")
+    assert pc.verify_rust_and_c_abi_sources(tmp_path) != []
+    core_src = tmp_path / "crates" / "libtpu-core" / "src"
+    core_src.mkdir(parents=True, exist_ok=True)
+    (core_src / "error.rs").write_text("// missing enum", encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_text("anyhow = '1.0'", encoding="utf-8")
     src_errs = pc.verify_rust_and_c_abi_sources(tmp_path)
     assert any("missing from crates/libtpu-c-api/src" in e for e in src_errs)
     assert any("missing from cpp/src/libtpu.h" in e for e in src_errs)
     assert any("size_of assertion missing" in e for e in src_errs)
     assert any("Missing Python wheel API module" in e for e in src_errs)
     assert any("Python wheel API symbol" in e for e in src_errs)
+    assert any("Forbidden dependency anyhow/thiserror" in e for e in src_errs)
+    assert any("LibTpuError in error.rs must derive" in e for e in src_errs)
+    assert any("Forbidden .unwrap() or .expect()" in e for e in src_errs)
 
     # Test hook_abi source error branch
     assert pc.hook_abi(tmp_path) == 1
@@ -675,3 +683,397 @@ def test_github_actions_workflows_present_and_complete() -> None:
     readme_text = (root / "README.md").read_text(encoding="utf-8")
     assert "actions/workflows/ci.yml/badge.svg" in readme_text
     assert "actions/workflows/release.yml/badge.svg" in readme_text
+
+
+def _build_synthetic_elf64() -> bytes:
+    """Constructs a minimal valid 64-bit little-endian ELF image with `.dynsym` and `.rela.dyn`.
+
+    Returns:
+        Raw ELF64 byte payload containing an exported `GetPjrtApi` function symbol and relocations.
+    """
+    import struct
+
+    import scripts.re_extract as re_ext
+
+    shstrtab = b"\x00.shstrtab\x00.dynstr\x00.dynsym\x00.rela.dyn\x00"
+    dynstr = b"\x00GetPjrtApi\x00"
+    sym_null = struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)
+    sym_func = struct.pack(
+        "<IBBHQQ",
+        1,
+        (re_ext.STB_GLOBAL << 4) | re_ext.STT_FUNC,
+        0,
+        1,
+        0x0B4F9B90,
+        5,
+    )
+    sym_weak_empty = struct.pack(
+        "<IBBHQQ",
+        0,
+        (re_ext.STB_WEAK << 4) | re_ext.STT_FUNC,
+        0,
+        1,
+        0x1000,
+        4,
+    )
+    sym_not_func = struct.pack("<IBBHQQ", 1, 0, 0, 0, 0, 0)
+    dynsym = sym_null + sym_func + sym_weak_empty + sym_not_func
+
+    rela_rel = struct.pack("<QQQ", 0x3000, re_ext.R_X86_64_RELATIVE, 0x0B4F9B90)
+    rela_other = struct.pack("<QQQ", 0x3008, 1, 0)
+    rela_dyn = rela_rel + rela_other
+
+    ehdr_size = 64
+    off_shstrtab = ehdr_size
+    off_dynstr = off_shstrtab + len(shstrtab)
+    off_dynsym = off_dynstr + len(dynstr)
+    off_rela = off_dynsym + len(dynsym)
+    off_shdr = off_rela + len(rela_dyn)
+
+    sh_null = struct.pack("<IIQQQQIIQQ", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+    sh_shstr = struct.pack(
+        "<IIQQQQIIQQ",
+        1,
+        re_ext.SHT_STRTAB,
+        0,
+        0,
+        off_shstrtab,
+        len(shstrtab),
+        0,
+        0,
+        1,
+        0,
+    )
+    sh_dynstr = struct.pack(
+        "<IIQQQQIIQQ",
+        11,
+        re_ext.SHT_STRTAB,
+        0,
+        0,
+        off_dynstr,
+        len(dynstr),
+        0,
+        0,
+        1,
+        0,
+    )
+    sh_dynsym = struct.pack(
+        "<IIQQQQIIQQ",
+        19,
+        re_ext.SHT_DYNSYM,
+        0,
+        0,
+        off_dynsym,
+        len(dynsym),
+        2,
+        0,
+        8,
+        24,
+    )
+    sh_rela = struct.pack(
+        "<IIQQQQIIQQ",
+        27,
+        re_ext.SHT_RELA,
+        0,
+        0,
+        off_rela,
+        len(rela_dyn),
+        0,
+        0,
+        8,
+        24,
+    )
+
+    e_ident = (
+        re_ext.ELF_MAGIC + bytes([re_ext.ELFCLASS64, re_ext.ELFDATA2LSB, 1, 0]) + (b"\x00" * 8)
+    )
+    ehdr_tail = struct.pack(
+        "<HHIQQQIHHHHHH",
+        3,
+        62,
+        1,
+        0,
+        0,
+        off_shdr,
+        0,
+        ehdr_size,
+        0,
+        0,
+        64,
+        5,
+        1,
+    )
+    return (
+        e_ident
+        + ehdr_tail
+        + shstrtab
+        + dynstr
+        + dynsym
+        + rela_dyn
+        + sh_null
+        + sh_shstr
+        + sh_dynstr
+        + sh_dynsym
+        + sh_rela
+    )
+
+
+def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
+    """Tests `scripts/re_extract.py` ELF64 parsing, wheel inspection, and manifest validation.
+
+    Args:
+        tmp_path: Pytest temporary directory fixture.
+    """
+    import io
+    import struct
+    import urllib.request
+    import zipfile
+
+    import pytest
+
+    import scripts.re_extract as re_ext
+
+    assert re_ext.compute_sha256_bytes(b"abc") == (
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    )
+
+    class _FakeResp(io.BytesIO):
+        """Fake HTTP response context manager."""
+
+        def __enter__(self) -> _FakeResp:
+            """Enters context manager.
+
+            Returns:
+                Self.
+            """
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            """Exits context manager.
+
+            Args:
+                *_args: Exception arguments.
+            """
+
+    fake_pypi_json = json.dumps(
+        {
+            "urls": [
+                {"filename": "libtpu-0.0.50.tar.gz", "url": "https://x/sdist", "digests": {}},
+                {
+                    "filename": "libtpu-0.0.50-cp311-manylinux_2_31_x86_64.whl",
+                    "url": "https://files.pythonhosted.org/libtpu.whl",
+                    "digests": {"sha256": "deadbeef"},
+                },
+            ]
+        }
+    ).encode("utf-8")
+    with patch.object(
+        urllib.request, "urlopen", side_effect=lambda *_a, **_kw: _FakeResp(fake_pypi_json)
+    ):
+        url, sha = re_ext.fetch_pypi_wheel_url("0.0.50", "x86_64")
+        assert url == "https://files.pythonhosted.org/libtpu.whl"
+        assert sha == "deadbeef"
+        with pytest.raises(ValueError, match="No libtpu==0.0.50 wheel found"):
+            re_ext.fetch_pypi_wheel_url("0.0.50", "s390x")
+
+    with pytest.raises(ValueError, match="Invalid ELF header"):
+        re_ext.parse_elf64_sections_and_dynsym(b"not-an-elf")
+
+    bad_class = re_ext.ELF_MAGIC + bytes([1, 1]) + (b"\x00" * 58)
+    with pytest.raises(ValueError, match="Unsupported ELF class"):
+        re_ext.parse_elf64_sections_and_dynsym(bad_class)
+
+    no_shdr = (
+        re_ext.ELF_MAGIC
+        + bytes([re_ext.ELFCLASS64, re_ext.ELFDATA2LSB, 1, 0])
+        + (b"\x00" * 8)
+        + struct.pack("<HHIQQQIHHHHHH", 3, 62, 1, 0, 0, 0, 0, 64, 0, 0, 64, 0, 0)
+    )
+    assert re_ext.parse_elf64_sections_and_dynsym(no_shdr) == ([], [])
+
+    oob_shdr = (
+        re_ext.ELF_MAGIC
+        + bytes([re_ext.ELFCLASS64, re_ext.ELFDATA2LSB, 1, 0])
+        + (b"\x00" * 8)
+        + struct.pack("<HHIQQQIHHHHHH", 3, 62, 1, 0, 0, 4096, 0, 64, 0, 0, 64, 2, 99)
+    )
+    with pytest.raises(ValueError, match="Malformed ELF64 binary"):
+        re_ext.parse_elf64_sections_and_dynsym(oob_shdr)
+
+    elf_bytes = _build_synthetic_elf64()
+    sections, symbols = re_ext.parse_elf64_sections_and_dynsym(elf_bytes)
+    assert any(s.name == ".dynsym" for s in sections)
+    assert len(symbols) == 1
+    assert symbols[0].name == "GetPjrtApi"
+    assert symbols[0].vaddr == 0x0B4F9B90
+
+    relocs = re_ext.resolve_elf64_rela_relocations(elf_bytes)
+    assert len(relocs) == 1
+    assert relocs[0].offset == 0x3000
+    assert relocs[0].addend == 0x0B4F9B90
+
+    word_map = {
+        0x1000: 1144,
+        0x1008: 0x2000,
+        0x1010: 24,
+        0x1018: 116 << 32,
+        0x1028: 0x0C5A0F90,
+        0x2000: 32,
+        0x2008: 28,
+        0x2010: 0,
+        0x2018: 0x0C5B0000,
+    }
+    vtable = re_ext.reconstruct_pjrt_and_extension_vtables(word_map, 0x1000, num_slots=1)
+    assert vtable["struct_size"] == 1144
+    assert vtable["minor_version"] == 116
+    assert len(vtable["extensions"]) == 1  # type: ignore[arg-type]
+
+    ioc = re_ext.decode_linux_ioctl_command(0x4020DC08)
+    assert ioc == {"dir": 1, "size": 32, "type": 0xDC, "nr": 8}
+    cpp_vt = re_ext.reconstruct_itanium_vtable(
+        {0x5000: 0, 0x5008: 0x6000, 0x5010: 0x7000}, 0x5000, 1
+    )
+    assert cpp_vt["typeinfo_vaddr"] == 0x6000
+    assert cpp_vt["methods"] == [0x7000]
+
+    code1 = bytes(
+        [
+            0x48,
+            0x83,
+            0x3F,
+            0x28,
+            0x48,
+            0x8B,
+            0x07,
+            0x48,
+            0x8B,
+            0x47,
+            0x10,
+            0x48,
+            0x89,
+            0x47,
+            0x18,
+            0x8B,
+            0x47,
+            0x20,
+            0x0F,
+            0xB6,
+            0x47,
+            0x24,
+            0x90,
+            0xC3,
+        ]
+    )
+    rep1 = re_ext.disassemble_x86_64_prologue(code1)
+    assert rep1.expected_struct_size == 40
+    assert len(rep1.field_offsets) == 5
+
+    code2 = bytes(
+        [
+            0xBE,
+            0x58,
+            0x00,
+            0x00,
+            0x00,
+            0xBE,
+            0x60,
+            0x00,
+            0x00,
+            0x00,
+            0x48,
+            0x81,
+            0x3F,
+            0x90,
+            0x00,
+            0x00,
+            0x00,
+            0x48,
+            0x8B,
+            0x87,
+            0x00,
+            0x4C,
+            0x01,
+            0x00,
+            0x8B,
+            0x00,
+            0x0F,
+            0xB6,
+            0x00,
+            0x00,
+            0x0F,
+            0x1F,
+            0x00,
+            0x00,
+        ]
+    )
+    rep2 = re_ext.disassemble_x86_64_prologue(code2)
+    assert rep2.expected_struct_size == 144
+
+    proto_sec = (
+        b"\x00\x0a\x02ab\x0a\x0exla_data.proto\x12\x03xla"
+        b"\x0a\x09hlo.proto"
+        b"\x0a\x0dbad_pkg.proto\x12\xff"
+        b"\x0a\x08notproto\x00"
+    )
+    carved = re_ext.carve_protodesc_cold(proto_sec)
+    assert len(carved) == 3
+    assert carved[0] == {"name": "xla_data.proto", "package": "xla"}
+    assert carved[1] == {"name": "hlo.proto", "package": ""}
+
+    blob = b"\x00tpu_tiles.cfg\x00TILE_8x128"
+    toc = (
+        struct.pack("<QQQ", 0, 0, 0)
+        + struct.pack("<QQQ", 999, 0, 4)
+        + struct.pack("<QQQ", 1, 15, 10)
+        + struct.pack("<QQQ", 15, 15, 10)
+    )
+    toc_entries = re_ext.extract_filewrapper_toc(toc, blob)
+    assert len(toc_entries) == 2
+    assert toc_entries[0] == ("tpu_tiles.cfg", b"TILE_8x128")
+
+    whl_path = tmp_path / "libtpu-0.0.50.whl"
+    with zipfile.ZipFile(whl_path, "w") as zf:
+        zf.writestr("libtpu/__init__.py", "# init")
+        zf.writestr("libtpu/libtpu.so", elf_bytes)
+
+    summary = re_ext.inspect_wheel_archive(whl_path)
+    assert summary["wheel"] == "libtpu-0.0.50.whl"
+    assert "libtpu/libtpu.so" in summary["binaries"]  # type: ignore[operator]
+
+    real_root = pc.get_repo_root()
+    assert re_ext.validate_golden_manifests(real_root) == []
+    assert re_ext.main(["--repo-root", str(real_root), "--wheel", str(whl_path)]) == 0
+    assert re_ext.main(["--repo-root", str(real_root), "--verify-golden"]) == 0
+
+    assert re_ext.validate_golden_manifests(tmp_path) == [
+        "Missing golden_binary_manifest.json or golden_struct_layouts.json"
+    ]
+    assert re_ext.main(["--repo-root", str(tmp_path)]) == 1
+
+    bad_re = tmp_path / "docs" / "reverse_engineering"
+    bad_re.mkdir(parents=True)
+    (bad_re / "golden_binary_manifest.json").write_text("{}", encoding="utf-8")
+    (bad_re / "golden_struct_layouts.json").write_text("{}", encoding="utf-8")
+    bad_errs = re_ext.validate_golden_manifests(tmp_path)
+    assert len(bad_errs) >= 10
+
+    mismatch_manifest = {
+        "libtpu_so": {"pjrt_vtable_slots": [{"min_struct_size": 24}] * 138},
+    }
+    mismatch_layouts = {
+        "pjrt_slots": [{"min_struct_size": None}] * 138,
+    }
+    (bad_re / "golden_binary_manifest.json").write_text(
+        json.dumps(mismatch_manifest), encoding="utf-8"
+    )
+    (bad_re / "golden_struct_layouts.json").write_text(
+        json.dumps(mismatch_layouts), encoding="utf-8"
+    )
+    (bad_re / "golden_proto_descriptors.json").write_text(
+        json.dumps({"topologically_closed": False, "descriptors": []}), encoding="utf-8"
+    )
+    (bad_re / "csr_register_map.json").write_text(json.dumps({"generations": {}}), encoding="utf-8")
+    mismatch_errs = re_ext.validate_golden_manifests(tmp_path)
+    assert any("min_struct_size mismatch" in e for e in mismatch_errs)
+    assert any("incomplete descriptor closure" in e for e in mismatch_errs)
+    assert any("missing TPU generation CSR maps" in e for e in mismatch_errs)

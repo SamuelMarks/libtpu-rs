@@ -1,0 +1,116 @@
+{
+  "source_table": "filewrapper_toc",
+  "generations": {
+    "V3": {
+      "codename": "jellyfish",
+      "archive_name": "jxc_pf_csrs.br",
+      "compressed_bytes": 6069,
+      "total_csr_count": 507,
+      "bar0_span_bytes": 1073479680,
+      "registers": [
+        {"name": "tc_0.run_status", "offset": "0x00100000", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.pc", "offset": "0x00100008", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.vwait_sync_flag_state", "offset": "0x00100010", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.sync_flag_base", "offset": "0x00104000", "width_bits": 64, "access": "RW"},
+        {"name": "tc_1.run_status", "offset": "0x00200000", "width_bits": 64, "access": "RW"},
+        {"name": "tc_1.pc", "offset": "0x00200008", "width_bits": 64, "access": "RW"},
+        {"name": "hib.dma_h2d_ring_base", "offset": "0x00300000", "width_bits": 64, "access": "RW"},
+        {"name": "hib.dma_d2h_ring_base", "offset": "0x00300008", "width_bits": 64, "access": "RW"},
+        {"name": "hib.tn_queue_continuation_doorbell", "offset": "0x00300010", "width_bits": 64, "access": "RW"},
+        {"name": "ici.router_status", "offset": "0x00400000", "width_bits": 64, "access": "RO"},
+        {"name": "sc_0.run_status", "offset": "0x00500000", "width_bits": 64, "access": "RW"},
+        {"name": "telemetry.die_temp_millicelsius", "offset": "0x00600000", "width_bits": 64, "access": "RO"},
+        {"name": "telemetry.power_milliwatts", "offset": "0x00600008", "width_bits": 64, "access": "RO"},
+        {"name": "telemetry.duty_cycle_percent", "offset": "0x00600010", "width_bits": 64, "access": "RO"}
+      ]
+    },
+    "V4": {
+      "codename": "pufferfish",
+      "archive_name": "pxc_pf_csrs.br",
+      "compressed_bytes": 264538,
+      "total_csr_count": 65537,
+      "bar0_span_bytes": 54001660,
+      "registers": [
+        {"name": "tc_0.run_status", "offset": "0x00180000", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.pc", "offset": "0x00180008", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.vwait_sync_flag_state", "offset": "0x00180010", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.sync_flag_base", "offset": "0x00184000", "width_bits": 64, "access": "RW"},
+        {"name": "tc_1.run_status", "offset": "0x00280000", "width_bits": 64, "access": "RW"},
+        {"name": "tc_1.pc", "offset": "0x00280008", "width_bits": 64, "access": "RW"},
+        {"name": "hib.dma_h2d_ring_base", "offset": "0x00380000", "width_bits": 64, "access": "RW"},
+        {"name": "hib.dma_d2h_ring_base", "offset": "0x00380008", "width_bits": 64, "access": "RW"},
+        {"name": "hib.tn_queue_continuation_doorbell", "offset": "0x00380010", "width_bits": 64, "access": "RW"},
+        {"name": "ici.router_status", "offset": "0x00480000", "width_bits": 64, "access": "RO"},
+        {"name": "sc_0.run_status", "offset": "0x00580000", "width_bits": 64, "access": "RW"},
+        {"name": "telemetry.die_temp_millicelsius", "offset": "0x00680000", "width_bits": 64, "access": "RO"},
+        {"name": "telemetry.power_milliwatts", "offset": "0x00680008", "width_bits": 64, "access": "RO"},
+        {"name": "telemetry.duty_cycle_percent", "offset": "0x00680010", "width_bits": 64, "access": "RO"}
+      ]
+    },
+    "V5e": {
+      "codename": "viperfish",
+      "archive_name": "vfc_pf_csrs.br",
+      "compressed_bytes": 241115,
+      "total_csr_count": 52703,
+      "bar0_span_bytes": 256646144,
+      "registers": [
+        {"name": "tc_0.run_status", "offset": "0x00200000", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.pc", "offset": "0x00200008", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.vwait_sync_flag_state", "offset": "0x00200010", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.sync_flag_base", "offset": "0x00204000", "width_bits": 64, "access": "RW"},
+        {"name": "hib.dma_h2d_ring_base", "offset": "0x00400000", "width_bits": 64, "access": "RW"},
+        {"name": "hib.dma_d2h_ring_base", "offset": "0x00400008", "width_bits": 64, "access": "RW"},
+        {"name": "hib.tn_queue_continuation_doorbell", "offset": "0x00400010", "width_bits": 64, "access": "RW"},
+        {"name": "ici.router_status", "offset": "0x00500000", "width_bits": 64, "access": "RO"},
+        {"name": "sc_0.run_status", "offset": "0x00600000", "width_bits": 64, "access": "RW"},
+        {"name": "telemetry.die_temp_millicelsius", "offset": "0x00700000", "width_bits": 64, "access": "RO"},
+        {"name": "telemetry.power_milliwatts", "offset": "0x00700008", "width_bits": 64, "access": "RO"},
+        {"name": "telemetry.duty_cycle_percent", "offset": "0x00700010", "width_bits": 64, "access": "RO"}
+      ]
+    },
+    "V5p": {
+      "codename": "ghostfish",
+      "archive_name": "gfc_pf_csrs.br",
+      "compressed_bytes": 424782,
+      "total_csr_count": 126113,
+      "bar0_span_bytes": 138149888,
+      "registers": [
+        {"name": "tc_0.run_status", "offset": "0x00240000", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.pc", "offset": "0x00240008", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.vwait_sync_flag_state", "offset": "0x00240010", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.sync_flag_base", "offset": "0x00244000", "width_bits": 64, "access": "RW"},
+        {"name": "tc_1.run_status", "offset": "0x00340000", "width_bits": 64, "access": "RW"},
+        {"name": "tc_1.pc", "offset": "0x00340008", "width_bits": 64, "access": "RW"},
+        {"name": "hib.dma_h2d_ring_base", "offset": "0x00440000", "width_bits": 64, "access": "RW"},
+        {"name": "hib.dma_d2h_ring_base", "offset": "0x00440008", "width_bits": 64, "access": "RW"},
+        {"name": "hib.tn_queue_continuation_doorbell", "offset": "0x00440010", "width_bits": 64, "access": "RW"},
+        {"name": "ici.router_status", "offset": "0x00540000", "width_bits": 64, "access": "RO"},
+        {"name": "sc_0.run_status", "offset": "0x00640000", "width_bits": 64, "access": "RW"},
+        {"name": "telemetry.die_temp_millicelsius", "offset": "0x00740000", "width_bits": 64, "access": "RO"},
+        {"name": "telemetry.power_milliwatts", "offset": "0x00740008", "width_bits": 64, "access": "RO"},
+        {"name": "telemetry.duty_cycle_percent", "offset": "0x00740010", "width_bits": 64, "access": "RO"}
+      ]
+    },
+    "V6e": {
+      "codename": "zebrafish",
+      "archive_name": "zfc_pf_csrs.br",
+      "compressed_bytes": 628468,
+      "total_csr_count": 208658,
+      "bar0_span_bytes": 263460352,
+      "registers": [
+        {"name": "tc_0.run_status", "offset": "0x00300000", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.pc", "offset": "0x00300008", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.vwait_sync_flag_state", "offset": "0x00300010", "width_bits": 64, "access": "RW"},
+        {"name": "tc_0.sync_flag_base", "offset": "0x00304000", "width_bits": 64, "access": "RW"},
+        {"name": "hib.dma_h2d_ring_base", "offset": "0x00500000", "width_bits": 64, "access": "RW"},
+        {"name": "hib.dma_d2h_ring_base", "offset": "0x00500008", "width_bits": 64, "access": "RW"},
+        {"name": "hib.tn_queue_continuation_doorbell", "offset": "0x00500010", "width_bits": 64, "access": "RW"},
+        {"name": "ici.router_status", "offset": "0x00600000", "width_bits": 64, "access": "RO"},
+        {"name": "sc_0.run_status", "offset": "0x00700000", "width_bits": 64, "access": "RW"},
+        {"name": "telemetry.die_temp_millicelsius", "offset": "0x00800000", "width_bits": 64, "access": "RO"},
+        {"name": "telemetry.power_milliwatts", "offset": "0x00800008", "width_bits": 64, "access": "RO"},
+        {"name": "telemetry.duty_cycle_percent", "offset": "0x00800010", "width_bits": 64, "access": "RO"}
+      ]
+    }
+  }
+}

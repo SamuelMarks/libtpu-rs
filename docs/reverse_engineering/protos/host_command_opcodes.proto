@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: learning/45eac/tpu/runtime/host_commands/host_command_opcodes.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package tpu;
+
+enum HostCommandOpcodeProto {
+  HOST_COMMAND_OPCODE_UNSPECIFIED = 0;
+  HOST_COMMAND_OPCODE_HOST_CALLBACK = 1;
+  HOST_COMMAND_OPCODE_INFEED_DEQUEUE = 2;
+  HOST_COMMAND_OPCODE_OUTFEED_ENQUEUE = 3;
+  HOST_COMMAND_OPCODE_DEVICE_PRINT = 4;
+  HOST_COMMAND_OPCODE_DEVICE_ASSERT = 5;
+  HOST_COMMAND_OPCODE_RENDEZVOUS_BARRIER = 6;
+  HOST_COMMAND_OPCODE_DYNAMIC_SLICE_RESOLVE = 7;
+  HOST_COMMAND_OPCODE_QUEUE_CONTINUATION = 8;
+}
+
+message HostCommandEnvelopeProto {
+  HostCommandOpcodeProto opcode = 1;
+  uint64 continuation_id = 2;
+  uint32 device_id = 3;
+  uint32 core_index = 4;
+  uint64 handler_id = 5;
+  bytes payload = 6;
+}

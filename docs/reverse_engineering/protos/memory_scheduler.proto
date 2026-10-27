@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: third_party/tensorflow/compiler/xla/hlo/transforms/simplifiers/memory_scheduler.proto
+
+syntax = "proto3";
+
+package xla;
+
+enum MemorySchedulerAlgorithmProto {
+  MEMORY_SCHEDULER_DEFAULT = 0;
+  MEMORY_SCHEDULER_DFS = 1;
+  MEMORY_SCHEDULER_POST_ORDER = 2;
+  MEMORY_SCHEDULER_LIST = 3;
+}
+
+message MemorySchedulerProto {
+  MemorySchedulerAlgorithmProto algorithm = 1;
+  int64 memory_limit_bytes = 2;
+}

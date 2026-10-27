@@ -1,7 +1,7 @@
 # `libtpu.so` Exported ELF Symbol Specification (`libtpu-0.0.50`)
 
 ## 1. ELF Header & Dynamic Linking Profile
-- **Artifact**: `libtpu/libtpu.so` (`630,899,976` bytes, SHA-256 `ef2f7af1f1ca0f27db6a6a3adffdd2b275a3215b121c8f9bc3f6ce842fc7c7`)
+- **Artifact**: `libtpu/libtpu.so` (`630,899,976` bytes, SHA-256 `ef2f7af1f1ca0f27db6a6a3adffdd2b275a3215b121c8f9bc3f6ce842fc7c700`)
 - **Companion SDK Artifact**: `libtpu/sdk.so` (`37,821,432` bytes, SHA-256 `6d65c03e2b584eaa3b546b6b64931c4b153ad5c4e2b404f578ea548c0fb6d2a4`)
 - **Format**: `ELF64` (`e_type = ET_DYN (3)`, `e_machine = EM_X86_64 (62)`)
 - **Calling Convention**: System V AMD64 ABI (`rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` for the first 6 integer/pointer arguments; `rax` for return value)
@@ -18,7 +18,7 @@
 
 ## 2. Complete Exported Dynamic Function Symbols (`.dynsym`) & C Signatures
 
-`libtpu.so` exports 75 global function symbols (`STT_FUNC`) and 8 linker section boundary markers (`STT_NOTYPE`):
+`libtpu.so` exports 78 global function symbols (`STT_FUNC`) and 8 linker section boundary markers (`STT_NOTYPE`):
 
 ### 2.1 PJRT & SDK Entrypoints
 | Symbol Name | Virtual Address | C Signature | Description |
@@ -126,8 +126,9 @@
 ### 2.8 TPU Driver C API (`TpuDriver_*`)
 | Symbol Name | Virtual Address | C Signature | Description |
 | :--- | :--- | :--- | :--- |
-| `TpuDriver_Open` | `0x0c3d9a10` | `TpuDriver* TpuDriver_Open(const char* worker)` | Opens a `TpuDriver` instance with populated `TpuDriverFn*` vtable |
-| `TpuDriver_Close` | `0x0c3d9ae0` | `void TpuDriver_Close(TpuDriver* driver)` | Closes and frees a `TpuDriver` instance |
+| `TpuDriver_Initialize` | `0x0c633480` | `void TpuDriver_Initialize(TpuDriverFn* driver_fn, bool initialize)` | Populates a `TpuDriverFn` vtable and optionally initializes the driver |
+| `TpuDriver_Open` | `0x0c633600` | `TpuDriver* TpuDriver_Open(const char* worker)` | Opens a `TpuDriver` instance with populated `TpuDriverFn*` vtable |
+| `TpuDriver_Close` | `0x0c6337b0` | `void TpuDriver_Close(TpuDriver* driver)` | Closes and frees a `TpuDriver` instance |
 
 ## 3. Disassembled `#[repr(C)]` Parameter Structure Layouts
 

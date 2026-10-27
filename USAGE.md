@@ -120,11 +120,13 @@ import os
 import libtpu
 
 # Configure topology and flags before JAX initializes the PJRT plugin
-libtpu.initialize([
-    "--tpu_generation=v6e",
-    "--tpu_chips_per_host_bounds=2,2,1",
-    "--tpu_host_bounds=1,1,1",
-])
+libtpu.initialize(
+    [
+        "--tpu_generation=v6e",
+        "--tpu_chips_per_host_bounds=2,2,1",
+        "--tpu_host_bounds=1,1,1",
+    ]
+)
 os.environ["JAX_PLATFORMS"] = "tpu"
 
 import jax
@@ -158,6 +160,7 @@ xb.register_plugin(
 os.environ["JAX_PLATFORMS"] = "tpu"
 
 import jax
+
 print(jax.devices("tpu"))
 ```
 
@@ -498,11 +501,13 @@ os.environ.setdefault("TPU_SKIP_MDS_QUERY", "1")
 # 2. Monkeypatch os.path.exists for hardcoded /dev/accel0 or /lib/libtpu.so checks
 _orig_exists = os.path.exists
 
+
 def _spoofed_exists(path: object) -> bool:
     s = str(path)
     if s in ("/dev/accel0", "/dev/vfio/0", "/dev/vfio/vfio", "/lib/libtpu.so"):
         return True
     return _orig_exists(path)
+
 
 os.path.exists = _spoofed_exists
 ```
@@ -613,10 +618,12 @@ The `libtpu` Python package provides both the official Google Cloud `libtpu` API
 import libtpu
 
 # 1. Configure initialization flags
-libtpu.initialize([
-    "--tpu_generation=v6e",
-    "--tpu_chips_per_host_bounds=2,2,1",
-])
+libtpu.initialize(
+    [
+        "--tpu_generation=v6e",
+        "--tpu_chips_per_host_bounds=2,2,1",
+    ]
+)
 
 # 2. Create a PJRT TPU Client
 client = libtpu.TpuClient()
@@ -1127,6 +1134,7 @@ If you are unsure whether JAX, PyTorch/XLA, or TensorFlow loaded the official `l
    Both official `libtpu.so` and `libtpu-rs` export `GetPjrtApi`, `GetLibtpuSdkApi`, and `TfTpu_Initialize`, whereas only `libtpu-rs` exports `libtpu_rs_client_create`:
    ```python
    import ctypes, libtpu
+
    cdll = ctypes.CDLL(libtpu.get_library_path())
    is_rust_impl = hasattr(cdll, "libtpu_rs_client_create")
    print("Using libtpu-rs:", is_rust_impl)

@@ -41,15 +41,30 @@ All Google Cloud TPU PCIe endpoints share PCIe Vendor ID **`0x1AE0`** (`Google, 
 - **TPU7x (`Ironwood` / `iwc`, Device ID `0x0076`)**: 2 TensorCores/chip, 192 GiB HBM3e/chip, `256x256` MXU, SparseCore v3, 3D optical ICI.
 
 ## 4. BAR0 / BAR2 MMIO Control & Status Register (CSR) Map
-- **BAR0 (`0x0000_0000` .. `0x003F_FFFF`)**:
-  - `0x0000_1000`: `BAR0_CSR_TENSORCORE_RUN_CONTROL` (`0x1` = Start/Run, `0x2` = Halt, `0x4` = Reset)
-  - `0x0000_1008`: `BAR0_CSR_TENSORCORE_PC` (64-bit instruction bundle base address)
-  - `0x0000_1010`: `BAR0_CSR_TENSORCORE_STATUS` (`0x0` = Idle, `0x1` = Running, `0x2` = Completed)
-  - `0x0000_2000`: `BAR0_CSR_SYNC_FLAG_BASE` (4,096 32-bit architectural `SyncFlag` counters)
-  - `0x0000_4000`: `BAR0_CSR_SPARSECORE_RUN_CONTROL`
-  - `0x0000_8000`: `BAR0_CSR_HBM_DMA_RING_HEAD` / `0x0000_8008`: `BAR0_CSR_HBM_DMA_RING_TAIL`
-  - `0x0000_9000`: `BAR0_CSR_ICI_ROUTER_LINK_STATE`
-  - `0x0000_A000`: `BAR0_CSR_TELEMETRY_THERMAL_MILLICELSIUS`, `0x0000_A008`: `BAR0_CSR_TELEMETRY_POWER_MILLIWATTS`, `0x0000_A010`: `BAR0_CSR_TELEMETRY_DUTY_CYCLE_PCT`
+Decompression of the Brotli-encoded `asic_sw.tools.RegisterTranslatorData` tables embedded in `filewrapper_toc` (`vfc_pf_csrs.br` @ `0x03f93db0`, `gfc_pf_csrs.br` @ `0x056192e0`, `glc_pf_csrs.br` @ `0x05922810`, `vlc_pf_csrs.br` @ `0x09536fb0`) and `TpuChipConfigProto` (`pufferfish_chip_configs_megacore_dense.binarypb`, `viperfish_chip_configs_megacore.binarypb`, `6acc60406_chip_configs_torch.binarypb`) yields the exact per-generation hardware offsets:
+- **Viperfish Lite (`vlc` / TPU v5e)**:
+  - `vlc_tc_tcs_tc_main_tcs_core_state`: `RUN_STATUS = 0xA842_2018`, `PC = 0xA842_2058`, `PROGRAM_LOCATION = 0xA842_20A0`
+  - `vlc_tc_tcs_tc_main_status`: `SYNC_FLAG_OVERFLOW_REMOTE_ERROR_DATA = 0xA842_30B8`, `SCALAR_PROGRAM_ERROR_DATA = 0xA842_30C0`, `VECTOR_PROGRAM_ERROR_DATA = 0xA842_30C8`, `VWAIT_STATE = 0xA842_30F8`, `VWAIT_SYNC_FLAG_STATE = 0xA842_3100`, `VWAIT_COUNTER = 0xA842_3108`
+- **Viperfish (`vfc` / TPU v5p)**:
+  - `chip_tc_0_tcs_tc_main_tcs_core_state`: `RUN_STATUS = 0xC403_A018`, `PC = 0xC403_A058`, `PROGRAM_LOCATION = 0xC403_A0A0`
+  - `chip_tc_0_tcs_tc_main_status`: `VWAIT_STATE = 0xC403_B1B8`, `VWAIT_SYNC_FLAG_STATE = 0xC403_B1C0`, `VWAIT_COUNTER = 0xC403_B1C8`
+  - `chip_tc_1_tcs_tc_main_tcs_core_state`: `RUN_STATUS = 0xCC03_A018`, `PC = 0xCC03_A058`, `PROGRAM_LOCATION = 0xCC03_A0A0`
+  - `chip_sc_0_scs_sc_main_scs_core_state`: `RUN_STATUS = 0xD184_1018`, `PC = 0xD184_1058`, `PROGRAM_LOCATION = 0xD184_10A0`
+  - `completion_state_sync_flag_word_offset = 4089`, `hbm_reserved_word_offset = 3,187,408,896`
+- **Ghostlite (`glc` / TPU v6e Trillium)**:
+  - `chip_tc_tcs_tc_main_tcs_core_state`: `RUN_STATUS = 0xC220_2018`, `PC = 0xC220_2058`, `PROGRAM_LOCATION = 0xC220_20A0`
+  - `chip_tc_tcs_tc_main_status`: `VWAIT_STATE = 0xC220_3048`, `VWAIT_SYNC_FLAG_STATE = 0xC220_3050`, `VWAIT_COUNTER = 0xC220_3058`
+  - `chip_sc_0_scs_sc_main_scs_core_state`: `RUN_STATUS = 0xD284_1018`, `PC = 0xD284_1058`, `PROGRAM_LOCATION = 0xD284_10A0`
+- **Ghostfish / Ironwood (`gfc` / `6acc60406` / TPU7x)**:
+  - `chip_die0_oci_icr_0_global_config`: `GLOBAL_CHIP_ID = 0xA106_7000`
+  - `chip_die0_tc_tcs_tc_main_tcs_core_state`: `RUN_STATUS = 0xA667_FA18`, `PC = 0xA667_FA58`, `PROGRAM_LOCATION = 0xA667_FAA0`
+  - `chip_die0_tc_tcs_tc_main_status`: `VWAIT_STATE = 0xA667_F648`, `VWAIT_SYNC_FLAG_STATE = 0xA667_F650`, `VWAIT_COUNTER = 0xA667_F658`
+  - `chip_die0_sc_0_scs_sc_main_scs_core_state`: `RUN_STATUS = 0xA7F2_0118`, `PROGRAM_LOCATION = 0xA7F2_01A0`
+  - `completion_state_sync_flag_word_offset = 8185`, `hbm_reserved_word_offset = 3,187,408,896`
+- **Runtime ABI (`current_tpu_runtime_abi.binarypb` @ `0x0935dd90`, `975` bytes)**:
+  - `base_abi_version = 163`
+  - `compiler_hash = "00ef0b06b559d6911774f1854abee45cdcb62dc50b6c9535921e52231188d011"` (`deepsea_compiler_hash.txt` @ `0x0935e630`)
+  - `hardware_abi_versions`: `65537` (`0x10001` for `Jellyfish`/`Dragonfish`/`Pufferfish`/`Viperlite`) and `65539` (`0x10003` for `Viperfish`/`Ghostlite`/`6acc60406`).
 - **BAR2 (`0x0000_0000` ..)**: Direct HBM aperture / VMEM window mapping.
 
 ## 5. Embedded Protobuf Wire Schemas (`protodesc_cold`)

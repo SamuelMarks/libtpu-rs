@@ -598,10 +598,18 @@ pub struct TpuPartitionedCall_Params {
     pub pad1: [u8; 3],
     /// Automatic XLA input sharding dimension.
     pub auto_xla_input_sharding_dim: i32,
-    /// Scoped allocator flag.
+    /// Scoped allocator / variable deduplication flag (`enable_variable_deduplication` in `xla/tpu/tpu_ops_c_api.h`).
     pub scoped_allocator_for_tpu_anned_call: bool,
     /// Explicit 3-byte padding.
     pub pad2: [u8; 3],
+}
+
+impl TpuPartitionedCall_Params {
+    /// Returns the upstream `enable_variable_deduplication` flag (`xla/tpu/tpu_ops_c_api.h`).
+    #[must_use]
+    pub const fn enable_variable_deduplication(&self) -> bool {
+        self.scoped_allocator_for_tpu_anned_call
+    }
 }
 
 /// XLA shape structure for `TpuTransferManager_GetInfeedLayout` (`96` bytes).
@@ -677,29 +685,31 @@ pub struct TpuEmbeddingEngine_ConfigureMemory_Params {
     pub status: *mut TpuStatus,
 }
 
-/// Parameter structure for `TpuEmbeddingEngine_CollateMemory` (`48` bytes).
+/// Parameter structure for `TpuEmbeddingEngine_CollateMemory` (`56` bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct TpuEmbeddingEngine_CollateMemory_Params {
-    /// Size of this struct (`48`).
+    /// Size of this struct (`56`).
     pub struct_size: usize,
     /// Reserved private pointer (`NULL`).
     pub priv_data: *mut std::ffi::c_void,
+    /// Number of memory configurations (`memory_configs_count`).
+    pub memory_configs_size: usize,
     /// Array of `TpuSerializedProto` per-host memory configurations.
     pub memory_configs: *const TpuSerializedProto,
-    /// Number of memory configurations.
-    pub memory_configs_size: usize,
-    /// Output size or status pointer.
+    /// Output merged memory configuration size pointer (`merged_memory_config_size`).
     pub collated_size: *mut usize,
+    /// Output merged memory configuration buffer pointer (`merged_memory_config`).
+    pub merged_memory_config: *mut *mut c_char,
     /// Optional status pointer.
     pub status: *mut TpuStatus,
 }
 
-/// Parameter structure for `TpuEmbeddingEngine_ConfigureHost` (`80` bytes).
+/// Parameter structure for `TpuEmbeddingEngine_ConfigureHost` (`96` bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct TpuEmbeddingEngine_ConfigureHost_Params {
-    /// Size of this struct (`80`).
+    /// Size of this struct (`96`).
     pub struct_size: usize,
     /// Reserved private pointer (`NULL`).
     pub priv_data: *mut std::ffi::c_void,
@@ -711,10 +721,14 @@ pub struct TpuEmbeddingEngine_ConfigureHost_Params {
     pub common_config_string: *const c_char,
     /// Common configuration string byte length.
     pub common_config_string_size: usize,
-    /// Task host configuration bytes pointer.
+    /// Task host memory configuration bytes pointer.
     pub task_host_config: *const c_char,
-    /// Task host configuration byte length.
+    /// Task host memory configuration byte length.
     pub task_host_config_size: usize,
+    /// `TpuEmbeddingConfigurationProto` bytes pointer.
+    pub tpu_embedding_config_bytes: *const c_char,
+    /// `TpuEmbeddingConfigurationProto` byte length.
+    pub tpu_embedding_config_size: usize,
     /// Output network configuration size pointer.
     pub network_config_size: *mut usize,
     /// Output network configuration buffer pointer.
@@ -761,11 +775,11 @@ pub struct TpuEmbeddingEngine_Finalize_Params {
     pub status: *mut TpuStatus,
 }
 
-/// Parameter structure for `TpuEmbeddingEngine_IsInitialized` (`40` bytes).
+/// Parameter structure for `TpuEmbeddingEngine_IsInitialized` (`48` bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct TpuEmbeddingEngine_IsInitialized_Params {
-    /// Size of this struct (`40`).
+    /// Size of this struct (`48`).
     pub struct_size: usize,
     /// Reserved private pointer (`NULL`).
     pub priv_data: *mut std::ffi::c_void,
@@ -775,6 +789,8 @@ pub struct TpuEmbeddingEngine_IsInitialized_Params {
     pub config_string_size: usize,
     /// Output initialization flag pointer (`bool*`).
     pub is_embedding_initialized: *mut bool,
+    /// Optional status pointer.
+    pub status: *mut TpuStatus,
 }
 
 /// Parameter structure for `TpuEmbeddingEngine_WriteParameters` and `ReadParameters` (`72` bytes).
@@ -804,31 +820,23 @@ pub struct TpuEmbeddingEngine_WriteParameters_Params {
 /// Type alias for `TpuEmbeddingEngine_ReadParameters` parameter structure (`72` bytes).
 pub type TpuEmbeddingEngine_ReadParameters_Params = TpuEmbeddingEngine_WriteParameters_Params;
 
-/// Parameter structure for `TpuEmbeddingEngine_EnqueueTensorBatch` (`88` bytes).
+/// Parameter structure for `TpuEmbeddingEngine_EnqueueTensorBatch` (`56` bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct TpuEmbeddingEngine_EnqueueTensorBatch_Params {
-    /// Size of this struct (`88`).
+    /// Size of this struct (`56`).
     pub struct_size: usize,
     /// Reserved private pointer (`NULL`).
     pub priv_data: *mut std::ffi::c_void,
-    /// Mode override string pointer.
-    pub mode_override: *const c_char,
-    /// Mode override string length.
-    pub mode_override_size: usize,
-    /// Device ordinal (`i32`) and padding (`i32`).
-    pub device_ordinal: usize,
-    /// Fixed batch state pointer.
-    pub fixed_state: *mut std::ffi::c_void,
     /// Sample indices tensors pointer (`const int32_t*` or `const void*`).
     pub sample_indices: *const std::ffi::c_void,
     /// Embedding indices tensors pointer.
     pub embedding_indices: *const std::ffi::c_void,
     /// Aggregation weights tensors pointer.
     pub aggregation_weights: *const std::ffi::c_void,
-    /// Number of sparse samples in the batch (`0` defaults to `4` or `8`).
+    /// Packed mode override / fixed batch state / sample count metadata (`0` defaults to `4` or `8`).
     pub num_samples: usize,
-    /// Optional status pointer.
+    /// Optional status pointer (with local device ordinal encoded in `priv_data` or `0`).
     pub status: *mut TpuStatus,
 }
 
@@ -863,16 +871,39 @@ pub struct TpuEmbeddingEngine_Computation_Params {
 }
 
 const _: () = assert!(size_of::<TFNPD_PluginParams>() == 40);
+const _: () = assert!(std::mem::offset_of!(TFNPD_PluginParams, device_type) == 0x10);
+const _: () = assert!(std::mem::offset_of!(TFNPD_PluginParams, priority) == 0x20);
+const _: () = assert!(std::mem::offset_of!(TFNPD_PluginParams, is_pluggable_device) == 0x24);
+const _: () = assert!(std::mem::offset_of!(TFNPD_PluginParams, use_pjrt_on_demand_compile) == 0x25);
 const _: () = assert!(size_of::<TpuPartitionedCall_Params>() == 24);
 const _: () = assert!(size_of::<XLA_Shape>() == 96);
+const _: () = assert!(std::mem::offset_of!(XLA_Shape, minor_to_major) == 0x10);
+const _: () = assert!(std::mem::offset_of!(XLA_Shape, tile_dims) == 0x50);
 const _: () = assert!(size_of::<TpuSerializedProto>() == 16);
 const _: () = assert!(size_of::<TpuEmbeddingEngine_ExecutePartitioner_Params>() == 56);
+const _: () =
+    assert!(std::mem::offset_of!(TpuEmbeddingEngine_ExecutePartitioner_Params, status) == 0x30);
 const _: () = assert!(size_of::<TpuEmbeddingEngine_ConfigureMemory_Params>() == 64);
-const _: () = assert!(size_of::<TpuEmbeddingEngine_CollateMemory_Params>() == 48);
-const _: () = assert!(size_of::<TpuEmbeddingEngine_ConfigureHost_Params>() == 80);
+const _: () =
+    assert!(std::mem::offset_of!(TpuEmbeddingEngine_ConfigureMemory_Params, status) == 0x38);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_CollateMemory_Params>() == 56);
+const _: () =
+    assert!(std::mem::offset_of!(TpuEmbeddingEngine_CollateMemory_Params, status) == 0x30);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_ConfigureHost_Params>() == 96);
+const _: () =
+    assert!(std::mem::offset_of!(TpuEmbeddingEngine_ConfigureHost_Params, status) == 0x58);
 const _: () = assert!(size_of::<TpuEmbeddingEngine_ConnectHosts_Params>() == 40);
+const _: () = assert!(std::mem::offset_of!(TpuEmbeddingEngine_ConnectHosts_Params, status) == 0x20);
 const _: () = assert!(size_of::<TpuEmbeddingEngine_Finalize_Params>() == 64);
-const _: () = assert!(size_of::<TpuEmbeddingEngine_IsInitialized_Params>() == 40);
+const _: () = assert!(std::mem::offset_of!(TpuEmbeddingEngine_Finalize_Params, status) == 0x38);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_IsInitialized_Params>() == 48);
+const _: () =
+    assert!(std::mem::offset_of!(TpuEmbeddingEngine_IsInitialized_Params, status) == 0x28);
 const _: () = assert!(size_of::<TpuEmbeddingEngine_WriteParameters_Params>() == 72);
-const _: () = assert!(size_of::<TpuEmbeddingEngine_EnqueueTensorBatch_Params>() == 88);
+const _: () =
+    assert!(std::mem::offset_of!(TpuEmbeddingEngine_WriteParameters_Params, status) == 0x40);
+const _: () = assert!(size_of::<TpuEmbeddingEngine_EnqueueTensorBatch_Params>() == 56);
+const _: () =
+    assert!(std::mem::offset_of!(TpuEmbeddingEngine_EnqueueTensorBatch_Params, status) == 0x30);
 const _: () = assert!(size_of::<TpuEmbeddingEngine_Computation_Params>() == 96);
+const _: () = assert!(std::mem::offset_of!(TpuEmbeddingEngine_Computation_Params, status) == 0x58);
