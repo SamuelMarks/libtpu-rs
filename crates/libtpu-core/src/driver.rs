@@ -27,6 +27,8 @@ pub struct TpuCoreStatus {
     pub code: PjrtErrorCode,
     /// Human-readable error message (empty when `code == PjrtErrorCode::Ok`).
     pub message: String,
+    /// Optional structured [`LibTpuError`] preserved when constructed from a domain error.
+    pub error: Option<LibTpuError>,
 }
 
 impl TpuCoreStatus {
@@ -36,6 +38,23 @@ impl TpuCoreStatus {
         Self {
             code: PjrtErrorCode::Ok,
             message: String::new(),
+            error: None,
+        }
+    }
+
+    /// Creates a [`TpuCoreStatus`] directly from a [`LibTpuError`].
+    ///
+    /// # Arguments
+    ///
+    /// * `error` - Domain error to wrap.
+    #[must_use]
+    pub fn from_error(error: LibTpuError) -> Self {
+        let code = error.error_code();
+        let message = error.to_string();
+        Self {
+            code,
+            message,
+            error: Some(error),
         }
     }
 
@@ -46,10 +65,19 @@ impl TpuCoreStatus {
     /// * `raw_code` - Integer status code.
     /// * `message` - Error message string.
     #[must_use]
-    pub const fn new(raw_code: i32, message: String) -> Self {
+    pub fn new(raw_code: i32, message: String) -> Self {
+        let code = PjrtErrorCode::from_raw(raw_code);
+        let error = if code == PjrtErrorCode::Ok {
+            None
+        } else {
+            Some(LibTpuError::InternalError {
+                context: message.clone(),
+            })
+        };
         Self {
-            code: PjrtErrorCode::from_raw(raw_code),
+            code,
             message,
+            error,
         }
     }
 
@@ -61,6 +89,13 @@ impl TpuCoreStatus {
     /// * `message` - New error message string.
     pub fn set(&mut self, raw_code: i32, message: String) {
         self.code = PjrtErrorCode::from_raw(raw_code);
+        self.error = if self.code == PjrtErrorCode::Ok {
+            None
+        } else {
+            Some(LibTpuError::InternalError {
+                context: message.clone(),
+            })
+        };
         self.message = message;
     }
 
@@ -444,7 +479,7 @@ impl TpuCoreEmbeddingEngine {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::InvalidArgument`] if `table_name` does not exist in HBM.
+    /// Returns [`LibTpuError::EmbeddingTableNotFound`] if `table_name` does not exist in HBM.
     pub fn apply_optimizer_gradients(
         &mut self,
         table_name: &str,
@@ -455,9 +490,8 @@ impl TpuCoreEmbeddingEngine {
         let raw_bytes =
             self.tables
                 .get(table_name)
-                .ok_or_else(|| LibTpuError::InvalidArgument {
-                    parameter: "table_name",
-                    reason: format!("Embedding table '{table_name}' not found in HBM"),
+                .ok_or_else(|| LibTpuError::EmbeddingTableNotFound {
+                    table_name: String::from(table_name),
                 })?;
         let mut params: Vec<f32> = raw_bytes
             .chunks_exact(4)
@@ -811,13 +845,15 @@ impl LibtpuSdkCoreClient {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::DeviceNotFound`] if no chip exists at `coords`.
+    /// Returns [`LibTpuError::ChipNotFound`] if no chip exists at `coords`.
     pub fn chip_index_for_coords(&self, coords: ChipCoordinates) -> LibTpuResult<usize> {
         self.chip_coordinates
             .iter()
             .position(|&c| c.matches(coords))
-            .ok_or(LibTpuError::DeviceNotFound {
-                device_id: coords.x,
+            .ok_or(LibTpuError::ChipNotFound {
+                x: coords.x,
+                y: coords.y,
+                z: coords.z,
             })
     }
 
@@ -901,7 +937,11 @@ impl LibtpuSdkCoreClient {
 }
 
 #[cfg(test)]
-#[allow(for_loops_over_fallibles, clippy::cognitive_complexity)]
+#[allow(
+    for_loops_over_fallibles,
+    clippy::cognitive_complexity,
+    clippy::too_many_lines
+)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -910,8 +950,18 @@ mod tests {
     fn test_status_selector_profiler_and_embedding() {
         let mut st = TpuCoreStatus::ok();
         assert!(st.is_ok());
+        assert!(st.error.is_none());
         st.set(3, String::from("bad arg"));
         assert!(!st.is_ok());
+        assert!(st.error.is_some());
+        st.set(0, String::new());
+        assert!(st.is_ok());
+        assert!(st.error.is_none());
+        let st_ok_new = TpuCoreStatus::new(0, String::new());
+        assert!(st_ok_new.is_ok());
+        let st_from_err = TpuCoreStatus::from_error(LibTpuError::ProfilerNotActive);
+        assert_eq!(st_from_err.code, PjrtErrorCode::FailedPrecondition);
+        assert!(st_from_err.error.is_some());
         let st2 = TpuCoreStatus::new(5, String::from("not found"));
         let st2_cloned = st2.clone();
         assert!(!st2.is_ok());

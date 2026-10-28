@@ -302,6 +302,74 @@ def get_python_targets(repo_root: Path) -> list[str]:
     return targets
 
 
+def hook_cargo_fmt(repo_root: Path, check_only: bool = False) -> int:
+    """Runs `cargo fmt` auto-formatting (unless `check_only` is set) and rechecks Rust files.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+        check_only: If True, skip auto-formatting and only run the verification check.
+
+    Returns:
+        Zero on success.
+    """
+    if not check_only:
+        print("==> [fmt] Auto-fixing Rust formatting with cargo fmt...")
+        run_command(["cargo", "fmt", "--all"], cwd=repo_root)
+
+    print("==> [fmt] Rechecking Rust formatting (cargo fmt --all -- --check)...")
+    run_command(["cargo", "fmt", "--all", "--", "--check"], cwd=repo_root)
+    return 0
+
+
+def hook_ruff_format(repo_root: Path, check_only: bool = False) -> int:
+    """Runs `ruff format` auto-formatting (unless `check_only` is set) and rechecks Python files.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+        check_only: If True, skip auto-formatting and only run the verification check.
+
+    Returns:
+        Zero on success.
+    """
+    py_targets = get_python_targets(repo_root)
+    if not check_only:
+        print("==> [fmt] Auto-fixing Python formatting with ruff format...")
+        run_command(["ruff", "format", *py_targets], cwd=repo_root)
+
+    print("==> [fmt] Rechecking Python formatting (ruff format --check)...")
+    run_command(["ruff", "format", "--check", *py_targets], cwd=repo_root)
+    return 0
+
+
+def hook_clang_format(repo_root: Path, check_only: bool = False) -> int:
+    """Runs `clang-format --style=LLVM` auto-formatting and rechecks C/C++ files.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+        check_only: If True, skip auto-formatting and only run the verification check.
+
+    Returns:
+        Zero on success.
+    """
+    cpp_files = get_cpp_files(repo_root)
+    if not cpp_files:
+        return 0
+
+    if not check_only:
+        print("==> [fmt] Auto-fixing C/C++ formatting with clang-format --style=LLVM...")
+        run_command(
+            ["clang-format", "-i", "--style=LLVM", *cpp_files],
+            cwd=repo_root,
+        )
+
+    print("==> [fmt] Rechecking C/C++ formatting (clang-format --dry-run --Werror --style=LLVM)...")
+    run_command(
+        ["clang-format", "--dry-run", "--Werror", "--style=LLVM", *cpp_files],
+        cwd=repo_root,
+    )
+    return 0
+
+
 def hook_fmt(repo_root: Path, check_only: bool = False) -> int:
     """First runs auto-formatting fixes (unless `check_only` is set), then rechecks formatting.
 
@@ -312,35 +380,9 @@ def hook_fmt(repo_root: Path, check_only: bool = False) -> int:
     Returns:
         Zero on success.
     """
-    py_targets = get_python_targets(repo_root)
-    cpp_files = get_cpp_files(repo_root)
-
-    if not check_only:
-        print("==> [fmt] Auto-fixing Rust formatting with cargo fmt...")
-        run_command(["cargo", "fmt", "--all"], cwd=repo_root)
-
-        print("==> [fmt] Auto-fixing Python formatting with ruff format...")
-        run_command(["ruff", "format", *py_targets], cwd=repo_root)
-
-        if cpp_files:
-            print("==> [fmt] Auto-fixing C/C++ formatting with clang-format...")
-            run_command(
-                ["clang-format", "-i", "-style=LLVM", *cpp_files],
-                cwd=repo_root,
-            )
-
-    print("==> [fmt] Rechecking Rust formatting (cargo fmt --all -- --check)...")
-    run_command(["cargo", "fmt", "--all", "--", "--check"], cwd=repo_root)
-
-    print("==> [fmt] Rechecking Python formatting (ruff format --check)...")
-    run_command(["ruff", "format", "--check", *py_targets], cwd=repo_root)
-
-    if cpp_files:
-        print("==> [fmt] Rechecking C/C++ formatting (clang-format --dry-run --Werror)...")
-        run_command(
-            ["clang-format", "--dry-run", "--Werror", "-style=LLVM", *cpp_files],
-            cwd=repo_root,
-        )
+    hook_cargo_fmt(repo_root, check_only=check_only)
+    hook_ruff_format(repo_root, check_only=check_only)
+    hook_clang_format(repo_root, check_only=check_only)
 
     print("==> [fmt] Code formatting verified successfully.")
     return 0
@@ -1004,7 +1046,7 @@ def verify_rust_and_c_abi_sources(repo_root: Path) -> list[str]:
         errors.append("Missing crates/libtpu-c-api/src or cpp/src/libtpu.h")
         return errors
 
-    rs_combined = "\n".join(p.read_text(encoding="utf-8") for p in sorted(c_api_src.glob("*.rs")))
+    rs_combined = "\n".join(p.read_text(encoding="utf-8") for p in sorted(c_api_src.rglob("*.rs")))
     header_text = header_path.read_text(encoding="utf-8")
 
     for sym in GOOGLE_LIBTPU_EXPORTED_SYMBOLS:
@@ -1242,7 +1284,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "stage",
         nargs="?",
-        choices=["fmt", "build", "clippy", "lint", "abi", "test", "shields", "all"],
+        choices=[
+            "fmt",
+            "cargo-fmt",
+            "ruff-format",
+            "clang-format",
+            "build",
+            "clippy",
+            "lint",
+            "abi",
+            "test",
+            "shields",
+            "all",
+        ],
         default="all",
         help="Pipeline stage to execute (default: all)",
     )
@@ -1259,6 +1313,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if stage == "fmt":
             return hook_fmt(repo_root, check_only=check_only)
+        if stage == "cargo-fmt":
+            return hook_cargo_fmt(repo_root, check_only=check_only)
+        if stage == "ruff-format":
+            return hook_ruff_format(repo_root, check_only=check_only)
+        if stage == "clang-format":
+            return hook_clang_format(repo_root, check_only=check_only)
         if stage == "build":
             return hook_build(repo_root, check_only=check_only)
         if stage in ("clippy", "lint"):

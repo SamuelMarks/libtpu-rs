@@ -13,6 +13,7 @@ license = "Apache-2.0 OR MIT"
 [project.optional-dependencies]
 dev = [
     "mypy>=1.8",
+    "pre-commit>=3.7",
     "pyelftools>=0.31",
     "pytest>=8.0",
     "pytest-cov>=5.0",

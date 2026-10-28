@@ -43,5 +43,5 @@ message PjRtTopologyDescriptionProto {
 
   reserved 5 to 8;
 
-  google.protobuf.Any platform_specific_topology = 9;
+  bytes platform_specific_topology = 9;
 }

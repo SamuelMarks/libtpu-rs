@@ -1,1968 +1,870 @@
 //! PJRT client, topology description, and execution context C API entrypoints (`PJRT_Client_*`, `PJRT_TopologyDescription_*`).
 
+/// `PJRT_Client_*` C API entrypoints for buffer creation, aliases, async H2D, and DMA mapping.
+pub mod buffer_creation;
+/// `PJRT_Client_*` C API entrypoints for client lifecycle, device/memory queries, and compilation.
+pub mod client;
+/// `PJRT_ExecuteContext_*` C API entrypoints for execution context creation and destruction.
+pub mod execute_context;
+/// `PJRT_TopologyDescription_*` C API entrypoints for TPU topology inspection and serialization.
+pub mod topology_description;
+
 use super::*;
 
-/// Strongly-typed handler for [`PJRT_Client_Create`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Client_Create_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Client_Create_Args`].
-unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(), LibTpuError> {
-    let mut cfg = libtpu_core::config::global_init_config();
-    if !args.create_options.is_null() {
-        // SAFETY: `args.create_options` points to `args.num_options` elements of `PJRT_NamedValue`.
-        let opts = unsafe {
-            std::slice::from_raw_parts(
-                args.create_options
-                    .cast::<crate::pjrt_types::PJRT_NamedValue>(),
-                args.num_options,
-            )
-        };
-        for opt in opts {
-            if !opt.name.is_null() {
-                // SAFETY: `opt.name` points to `opt.name_size` UTF-8 bytes.
-                let name_bytes =
-                    unsafe { std::slice::from_raw_parts(opt.name.cast::<u8>(), opt.name_size) };
-                let name = String::from_utf8_lossy(name_bytes);
-                if matches!(name.as_ref(), "node_id" | "process_index") {
-                    let val = i64::from_ne_bytes(opt.value_payload.to_ne_bytes());
-                    cfg.process_index =
-                        libtpu_core::types::ProcessIndex(i32::try_from(val).unwrap_or(0));
+pub use buffer_creation::*;
+pub use client::*;
+pub use execute_context::*;
+pub use topology_description::*;
+
+#[cfg(test)]
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::similar_names,
+    clippy::items_after_statements
+)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::pjrt_buffer_api::{
+        PJRT_AsyncHostToDeviceTransferManager_Destroy, PJRT_Buffer_Destroy,
+    };
+    use crate::pjrt_executable_api::{PJRT_Executable_Destroy, PJRT_LoadedExecutable_Destroy};
+    use crate::pjrt_types::{
+        PJRT_AsyncHostToDeviceTransferManager_Destroy_Args, PJRT_Buffer_Destroy_Args,
+        PJRT_Executable_Destroy_Args, PJRT_LoadedExecutable_Destroy_Args, PJRT_Program,
+    };
+    use crate::rust_ergonomic_api::libtpu_rs_buffer_destroy;
+
+    #[test]
+    fn test_pjrt_client_topology_and_execute_context_api() {
+        // SAFETY: Testing PJRT client, topology description, compile, and execute context entrypoints.
+        unsafe {
+            let e_cc = PJRT_Client_Create(ptr::null_mut());
+            drop(Box::from_raw(e_cc));
+            let create_opts = [
+                crate::pjrt_types::PJRT_NamedValue {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_NamedValue>(),
+                    extension_start: ptr::null_mut(),
+                    name: c"node_id".as_ptr(),
+                    name_size: 7,
+                    value_type_and_pad: 1,
+                    value_payload: 0,
+                    value_size: 1,
+                },
+                crate::pjrt_types::PJRT_NamedValue {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_NamedValue>(),
+                    extension_start: ptr::null_mut(),
+                    name: c"process_index".as_ptr(),
+                    name_size: 13,
+                    value_type_and_pad: 0,
+                    value_payload: 0,
+                    value_size: 1,
+                },
+                crate::pjrt_types::PJRT_NamedValue {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_NamedValue>(),
+                    extension_start: ptr::null_mut(),
+                    name: c"other".as_ptr(),
+                    name_size: 5,
+                    value_type_and_pad: 1,
+                    value_payload: 0,
+                    value_size: 1,
+                },
+                crate::pjrt_types::PJRT_NamedValue {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_NamedValue>(),
+                    extension_start: ptr::null_mut(),
+                    name: ptr::null(),
+                    name_size: 0,
+                    value_type_and_pad: 0,
+                    value_payload: 0,
+                    value_size: 0,
+                },
+            ];
+
+            unsafe extern "C" fn mock_kv_put_ok(
+                _key: *const std::ffi::c_char,
+                _key_len: usize,
+                _val: *const std::ffi::c_char,
+                _val_len: usize,
+                user_arg: *mut std::ffi::c_void,
+            ) -> *mut PJRT_Error {
+                if !user_arg.is_null() {
+                    // SAFETY: `user_arg` points to `kv_called` in test stack frame.
+                    unsafe {
+                        *user_arg.cast::<usize>() += 1;
+                    }
+                }
+                ptr::null_mut()
+            }
+
+            unsafe extern "C" fn mock_kv_put_err(
+                _key: *const std::ffi::c_char,
+                _key_len: usize,
+                _val: *const std::ffi::c_char,
+                _val_len: usize,
+                _user_arg: *mut std::ffi::c_void,
+            ) -> *mut PJRT_Error {
+                box_pjrt_error(LibTpuError::InvalidArgument {
+                    parameter: "kv_put",
+                    reason: String::from("simulated kv_put failure"),
+                })
+            }
+
+            let mut kv_called: usize = 0;
+            let mut create_args_opts = PJRT_Client_Create_Args {
+                struct_size: size_of::<PJRT_Client_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                create_options: create_opts.as_ptr().cast(),
+                num_options: create_opts.len(),
+                kv_get_callback: ptr::null(),
+                kv_get_user_arg: ptr::null_mut(),
+                kv_put_callback: mock_kv_put_ok as *const std::ffi::c_void,
+                kv_put_user_arg: ptr::addr_of_mut!(kv_called).cast(),
+                kv_try_get_callback: ptr::null(),
+                kv_try_get_user_arg: ptr::null_mut(),
+                client: ptr::null_mut(),
+            };
+            assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args_opts).cast()).is_null());
+            assert_eq!(kv_called, 1);
+            let mut destroy_opts_client = PJRT_Client_Destroy_Args {
+                struct_size: size_of::<PJRT_Client_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                client: create_args_opts.client,
+            };
+            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_opts_client).cast()).is_null());
+
+            create_args_opts.kv_put_callback = mock_kv_put_err as *const std::ffi::c_void;
+            create_args_opts.kv_put_user_arg = ptr::null_mut();
+            create_args_opts.client = ptr::null_mut();
+            assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args_opts).cast()).is_null());
+            destroy_opts_client.client = create_args_opts.client;
+            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_opts_client).cast()).is_null());
+
+            let mut create_args = PJRT_Client_Create_Args {
+                struct_size: size_of::<PJRT_Client_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                create_options: ptr::null(),
+                num_options: 0,
+                kv_get_callback: ptr::null(),
+                kv_get_user_arg: ptr::null_mut(),
+                kv_put_callback: ptr::null(),
+                kv_put_user_arg: ptr::null_mut(),
+                kv_try_get_callback: ptr::null(),
+                kv_try_get_user_arg: ptr::null_mut(),
+                client: ptr::null_mut(),
+            };
+            assert_ne!(format!("{create_args:?}"), "");
+            assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args).cast()).is_null());
+            let client = create_args.client;
+            assert!(!client.is_null());
+            assert_ne!(format!("{:?}", *client), "");
+            assert_ne!(format!("{:?}", *(*client).topology_ptr), "");
+
+            drop(Box::from_raw(PJRT_Client_PlatformName(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Client_PlatformVersion(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Client_ProcessIndex(ptr::null_mut())));
+            let mut str_args = PJRT_Client_PlatformStr_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                platform_str: ptr::null(),
+                platform_str_size: 0,
+            };
+            assert_ne!(format!("{str_args:?}"), "");
+            drop(Box::from_raw(PJRT_Client_PlatformName(
+                ptr::addr_of_mut!(str_args).cast(),
+            )));
+            drop(Box::from_raw(PJRT_Client_PlatformVersion(
+                ptr::addr_of_mut!(str_args).cast(),
+            )));
+            str_args.client = client;
+            assert!(PJRT_Client_PlatformName(ptr::addr_of_mut!(str_args).cast()).is_null());
+            assert_eq!(str_args.platform_str_size, 3);
+            assert!(PJRT_Client_PlatformVersion(ptr::addr_of_mut!(str_args).cast()).is_null());
+            assert!(str_args.platform_str_size > 0);
+
+            let mut pi_args = PJRT_Client_ProcessIndex_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                process_index: -1,
+            };
+            assert_ne!(format!("{pi_args:?}"), "");
+            drop(Box::from_raw(PJRT_Client_ProcessIndex(
+                ptr::addr_of_mut!(pi_args).cast(),
+            )));
+            pi_args.client = client;
+            assert!(PJRT_Client_ProcessIndex(ptr::addr_of_mut!(pi_args).cast()).is_null());
+            assert_eq!(pi_args.process_index, 0);
+
+            drop(Box::from_raw(PJRT_Client_Devices(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Client_AddressableDevices(
+                ptr::null_mut(),
+            )));
+            let mut dev_args = PJRT_Client_Devices_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                devices: ptr::null(),
+                num_devices: 0,
+            };
+            assert_ne!(format!("{dev_args:?}"), "");
+            drop(Box::from_raw(PJRT_Client_Devices(
+                ptr::addr_of_mut!(dev_args).cast(),
+            )));
+            drop(Box::from_raw(PJRT_Client_AddressableDevices(
+                ptr::addr_of_mut!(dev_args).cast(),
+            )));
+            dev_args.client = client;
+            assert!(PJRT_Client_Devices(ptr::addr_of_mut!(dev_args).cast()).is_null());
+            assert_eq!(dev_args.num_devices, 4);
+            assert!(PJRT_Client_AddressableDevices(ptr::addr_of_mut!(dev_args).cast()).is_null());
+            assert_eq!(dev_args.num_devices, 4);
+
+            drop(Box::from_raw(PJRT_Client_LookupDevice(ptr::null_mut())));
+            let mut look_args = PJRT_Client_LookupDevice_Args {
+                struct_size: size_of::<PJRT_Client_LookupDevice_Args>(),
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                id: 0,
+                pad: 0,
+                device: ptr::null_mut(),
+            };
+            assert_ne!(format!("{look_args:?}"), "");
+            drop(Box::from_raw(PJRT_Client_LookupDevice(
+                ptr::addr_of_mut!(look_args).cast(),
+            )));
+            look_args.client = client;
+            assert!(PJRT_Client_LookupDevice(ptr::addr_of_mut!(look_args).cast()).is_null());
+            assert!(!look_args.device.is_null());
+            look_args.id = 999;
+            drop(Box::from_raw(PJRT_Client_LookupDevice(
+                ptr::addr_of_mut!(look_args).cast(),
+            )));
+
+            drop(Box::from_raw(PJRT_Client_LookupAddressableDevice(
+                ptr::null_mut(),
+            )));
+            let mut look_addr_args = PJRT_Client_LookupDevice_Args {
+                struct_size: size_of::<PJRT_Client_LookupDevice_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                id: 0,
+                pad: 0,
+                device: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_Client_LookupAddressableDevice(ptr::addr_of_mut!(look_addr_args).cast())
+                    .is_null()
+            );
+            assert!(!look_addr_args.device.is_null());
+            look_addr_args.id = 999;
+            assert!(
+                PJRT_Client_LookupAddressableDevice(ptr::addr_of_mut!(look_addr_args).cast())
+                    .is_null()
+            );
+
+            drop(Box::from_raw(PJRT_Client_DefaultDeviceAssignment(
+                ptr::null_mut(),
+            )));
+            let mut assign_buf = [-1_i32; 4];
+            let mut dda_args = crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                client,
+                num_replicas: 2,
+                num_partitions: 2,
+                default_assignment_size: assign_buf.len(),
+                default_assignment: assign_buf.as_mut_ptr(),
+            };
+            assert!(
+                PJRT_Client_DefaultDeviceAssignment(ptr::addr_of_mut!(dda_args).cast()).is_null()
+            );
+            assert_eq!(assign_buf, [0, 1, 2, 3]);
+
+            drop(Box::from_raw(PJRT_Client_AddressableMemories(
+                ptr::null_mut(),
+            )));
+            let mut mem_args = PJRT_Client_AddressableMemories_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                addressable_memories: ptr::null(),
+                num_addressable_memories: 0,
+            };
+            assert_ne!(format!("{mem_args:?}"), "");
+            drop(Box::from_raw(PJRT_Client_AddressableMemories(
+                ptr::addr_of_mut!(mem_args).cast(),
+            )));
+            mem_args.client = client;
+            assert!(PJRT_Client_AddressableMemories(ptr::addr_of_mut!(mem_args).cast()).is_null());
+            assert_eq!(mem_args.num_addressable_memories, 12);
+
+            drop(Box::from_raw(PJRT_Client_Compile(ptr::null_mut())));
+            let code_bytes = b"module @test { stablehlo.add }";
+            let fmt_bytes = b"mlir";
+            let mut prog = PJRT_Program {
+                struct_size: size_of::<PJRT_Program>(),
+                extension_start: ptr::null_mut(),
+                code: ptr::null(),
+                code_size: code_bytes.len(),
+                format: fmt_bytes.as_ptr().cast(),
+                format_size: fmt_bytes.len(),
+            };
+            assert_ne!(format!("{prog:?}"), "");
+            let mut comp_args = PJRT_Client_Compile_Args {
+                struct_size: size_of::<PJRT_Client_Compile_Args>(),
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                program: ptr::addr_of!(prog),
+                compile_options: ptr::null(),
+                compile_options_size: 0,
+                executable: ptr::null_mut(),
+            };
+            assert_ne!(format!("{comp_args:?}"), "");
+            drop(Box::from_raw(PJRT_Client_Compile(
+                ptr::addr_of_mut!(comp_args).cast(),
+            )));
+            comp_args.client = client;
+            drop(Box::from_raw(PJRT_Client_Compile(
+                ptr::addr_of_mut!(comp_args).cast(),
+            )));
+            prog.code = code_bytes.as_ptr().cast();
+            comp_args.program = ptr::addr_of!(prog);
+            assert!(PJRT_Client_Compile(ptr::addr_of_mut!(comp_args).cast()).is_null());
+            assert_ne!(
+                format!(
+                    "{:?}{:?}",
+                    *comp_args.executable,
+                    *(*comp_args.executable).executable_ptr
+                ),
+                ""
+            );
+
+            drop(Box::from_raw(PJRT_Client_Load(ptr::null_mut())));
+            let mut load_args = crate::pjrt_types::PJRT_Client_Load_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_Load_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                executable: (*comp_args.executable).executable_ptr,
+                compile_options: ptr::null(),
+                compile_options_size: 0,
+                loaded_executable: ptr::null_mut(),
+            };
+            assert!(PJRT_Client_Load(ptr::addr_of_mut!(load_args).cast()).is_null());
+            assert!(!load_args.loaded_executable.is_null());
+            let mut del_loaded2 = PJRT_LoadedExecutable_Destroy_Args {
+                struct_size: size_of::<PJRT_LoadedExecutable_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: load_args.loaded_executable,
+            };
+            assert!(PJRT_LoadedExecutable_Destroy(ptr::addr_of_mut!(del_loaded2).cast()).is_null());
+
+            drop(Box::from_raw(PJRT_Client_BufferFromHostBuffer(
+                ptr::null_mut(),
+            )));
+            let host_floats = [1.0_f32, 2.0, 3.0, 4.0];
+            let dims_arr = [4_i64];
+            let mut h2d_args = crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                data: host_floats.as_ptr().cast(),
+                element_type: 11,
+                pad0: 0,
+                dims: dims_arr.as_ptr(),
+                num_dims: 1,
+                byte_strides: ptr::null(),
+                num_byte_strides: 0,
+                host_buffer_semantics: 0,
+                pad1: 0,
+                device: look_args.device,
+                memory: ptr::null_mut(),
+                device_layout: ptr::null(),
+                done_with_host_buffer: ptr::null_mut(),
+                out_buffer: ptr::null_mut(),
+            };
+            assert!(PJRT_Client_BufferFromHostBuffer(ptr::addr_of_mut!(h2d_args).cast()).is_null());
+            let buf_in = h2d_args.out_buffer;
+            assert!(!buf_in.is_null());
+
+            let mut h2d_args_default_dev = h2d_args;
+            h2d_args_default_dev.device = ptr::null_mut();
+            h2d_args_default_dev.dims = ptr::null();
+            h2d_args_default_dev.num_dims = 0;
+            h2d_args_default_dev.out_buffer = ptr::null_mut();
+            assert!(
+                PJRT_Client_BufferFromHostBuffer(ptr::addr_of_mut!(h2d_args_default_dev).cast())
+                    .is_null()
+            );
+            let buf_in2 = h2d_args_default_dev.out_buffer;
+            assert!(!buf_in2.is_null());
+
+            let mut h2d_args_zero_ndims = h2d_args;
+            h2d_args_zero_ndims.num_dims = 0;
+            h2d_args_zero_ndims.out_buffer = ptr::null_mut();
+            assert!(
+                PJRT_Client_BufferFromHostBuffer(ptr::addr_of_mut!(h2d_args_zero_ndims).cast())
+                    .is_null()
+            );
+            libtpu_rs_buffer_destroy(h2d_args_zero_ndims.out_buffer);
+
+            let mut h2d_bad_et = h2d_args;
+            h2d_bad_et.element_type = 999;
+            drop(Box::from_raw(PJRT_Client_BufferFromHostBuffer(
+                ptr::addr_of_mut!(h2d_bad_et).cast(),
+            )));
+            let neg_dim_val = [-1_i64];
+            let mut h2d_bad_shape = h2d_args;
+            h2d_bad_shape.dims = neg_dim_val.as_ptr();
+            h2d_bad_shape.num_dims = 1;
+            drop(Box::from_raw(PJRT_Client_BufferFromHostBuffer(
+                ptr::addr_of_mut!(h2d_bad_shape).cast(),
+            )));
+            let mut bad_desc = (*look_args.device).inner.clone();
+            bad_desc.description.spec.device_id = DeviceId(99);
+            let mut fake_dev = PJRT_Device {
+                inner: bad_desc,
+                desc_ptr: ptr::null_mut(),
+                default_memory_ptr: ptr::null_mut(),
+                addressable_memory_ptrs: Vec::new(),
+                hal: std::sync::Arc::clone(&(*client).inner.hal),
+            };
+            let mut h2d_bad_dev = h2d_args;
+            h2d_bad_dev.device = ptr::addr_of_mut!(fake_dev);
+            drop(Box::from_raw(PJRT_Client_BufferFromHostBuffer(
+                ptr::addr_of_mut!(h2d_bad_dev).cast(),
+            )));
+
+            let mut aot_args = crate::pjrt_types::PJRT_Compile_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Compile_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr,
+                program: ptr::addr_of!(prog),
+                compile_options: c"opts".as_ptr(),
+                compile_options_size: 4,
+                client,
+                executable: ptr::null_mut(),
+            };
+            assert!(PJRT_Compile(ptr::addr_of_mut!(aot_args).cast()).is_null());
+            assert!(!aot_args.executable.is_null());
+            let mut aot_del = PJRT_Executable_Destroy_Args {
+                struct_size: size_of::<PJRT_Executable_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: aot_args.executable,
+            };
+            assert!(PJRT_Executable_Destroy(ptr::addr_of_mut!(aot_del).cast()).is_null());
+            let empty_prog = PJRT_Program {
+                struct_size: size_of::<PJRT_Program>(),
+                extension_start: ptr::null_mut(),
+                code: ptr::null(),
+                code_size: 0,
+                format: ptr::null(),
+                format_size: 0,
+            };
+            aot_args.program = ptr::addr_of!(empty_prog);
+            aot_args.compile_options = ptr::null();
+            aot_args.compile_options_size = 0;
+            aot_args.executable = ptr::null_mut();
+            assert!(PJRT_Compile(ptr::addr_of_mut!(aot_args).cast()).is_null());
+            aot_del.executable = aot_args.executable;
+            assert!(PJRT_Executable_Destroy(ptr::addr_of_mut!(aot_del).cast()).is_null());
+            let bad_aot_prog = PJRT_Program {
+                struct_size: size_of::<PJRT_Program>(),
+                extension_start: ptr::null_mut(),
+                code: b"SYNTAX_ERROR".as_ptr().cast(),
+                code_size: 12,
+                format: b"mlir".as_ptr().cast(),
+                format_size: 4,
+            };
+            aot_args.program = ptr::addr_of!(bad_aot_prog);
+            assert!(PJRT_Compile(ptr::addr_of_mut!(aot_args).cast()).is_null());
+            assert!(aot_args.executable.is_null());
+
+            unsafe extern "C" fn test_view_deleter(arg: *mut std::ffi::c_void) {
+                // SAFETY: `arg` points to a mutable `u32` counter.
+                unsafe {
+                    *arg.cast::<u32>() += 1;
                 }
             }
-        }
-    }
-    let inner = PjrtCoreClient::from_config(&cfg);
-    let platform_name = to_c_string(&inner.topology.spec.platform_name);
-    let platform_version = to_c_string(&inner.topology.spec.platform_version);
-
-    let mut memory_ptrs = Vec::with_capacity(inner.memories.len());
-    for m in &inner.memories {
-        memory_ptrs.push(Box::into_raw(Box::new(PJRT_Memory {
-            inner: m.clone(),
-            addressable_by_device_ptrs: Vec::new(),
-        })));
-    }
-
-    let mut device_ptrs = Vec::with_capacity(inner.devices.len());
-    let mut addressable_device_ptrs = Vec::new();
-    for (d, dev_mems) in inner.devices.iter().zip(memory_ptrs.chunks(3)) {
-        let desc_ptr = Box::into_raw(Box::new(PJRT_DeviceDescription::new(d.description.clone())));
-        let default_memory_ptr = dev_mems.first().copied().unwrap_or(ptr::null_mut());
-        let addressable_memory_ptrs = dev_mems.to_vec();
-        let dev_ptr = Box::into_raw(Box::new(PJRT_Device {
-            inner: d.clone(),
-            desc_ptr,
-            default_memory_ptr,
-            addressable_memory_ptrs,
-            hal: std::sync::Arc::clone(&inner.hal),
-        }));
-        for &m_ptr in dev_mems {
-            // SAFETY: `m_ptr` was allocated in `memory_ptrs` above.
-            unsafe {
-                (*m_ptr).addressable_by_device_ptrs.push(dev_ptr);
-            }
-        }
-        addressable_device_ptrs.push(dev_ptr);
-        device_ptrs.push(dev_ptr);
-    }
-
-    let mut topo_descs = Vec::with_capacity(inner.topology.device_descriptions.len());
-    for td in &inner.topology.device_descriptions {
-        topo_descs.push(Box::into_raw(Box::new(PJRT_DeviceDescription::new(
-            td.clone(),
-        ))));
-    }
-    let topology_ptr = Box::into_raw(Box::new(PJRT_TopologyDescription {
-        inner: inner.topology.clone(),
-        desc_ptrs: topo_descs,
-    }));
-
-    // SAFETY: `args.kv_put_callback` is null or a valid `PJRT_KeyValuePutCallback` pointer.
-    unsafe {
-        notify_kv_put_topology_ready(args.kv_put_callback, args.kv_put_user_arg);
-    }
-
-    let client_box = Box::new(PJRT_Client {
-        inner,
-        platform_name,
-        platform_version,
-        device_ptrs,
-        addressable_device_ptrs,
-        memory_ptrs,
-        topology_ptr,
-        kv_get_callback: args.kv_get_callback,
-        kv_get_user_arg: args.kv_get_user_arg,
-        kv_put_callback: args.kv_put_callback,
-        kv_put_user_arg: args.kv_put_user_arg,
-        kv_try_get_callback: args.kv_try_get_callback,
-        kv_try_get_user_arg: args.kv_try_get_user_arg,
-    });
-    args.client = Box::into_raw(client_box);
-    Ok(())
-}
-
-/// Invokes an optional `PJRT_KeyValuePutCallback` to publish `"tpu_topology_ready"` = `"1"`.
-///
-/// # Arguments
-///
-/// * `kv_put_callback` - Optional C callback pointer.
-/// * `kv_put_user_arg` - User argument pointer passed to `kv_put_callback`.
-///
-/// # Safety
-///
-/// If non-null, `kv_put_callback` must be a valid C function pointer matching `PJRT_KeyValuePutCallback`.
-unsafe fn notify_kv_put_topology_ready(
-    kv_put_callback: *const std::ffi::c_void,
-    kv_put_user_arg: *mut std::ffi::c_void,
-) {
-    /// C callback type for `PJRT_KeyValuePutCallback`.
-    type KvPutCallbackFn = unsafe extern "C" fn(
-        *const std::ffi::c_char,
-        usize,
-        *const std::ffi::c_char,
-        usize,
-        *mut std::ffi::c_void,
-    ) -> *mut PJRT_Error;
-    if kv_put_callback.is_null() {
-        return;
-    }
-    // SAFETY: `kv_put_callback` is a valid C function pointer supplied by the caller.
-    let kv_put: KvPutCallbackFn = unsafe { std::mem::transmute(kv_put_callback) };
-    let key = b"tpu_topology_ready";
-    let val = b"1";
-    // SAFETY: Invoking caller's KV put callback with static byte slices and `kv_put_user_arg`.
-    let kv_err = unsafe {
-        kv_put(
-            key.as_ptr().cast::<std::ffi::c_char>(),
-            key.len(),
-            val.as_ptr().cast::<std::ffi::c_char>(),
-            val.len(),
-            kv_put_user_arg,
-        )
-    };
-    if !kv_err.is_null() {
-        // SAFETY: `kv_err` is a heap-allocated `PJRT_Error` returned by the callback.
-        unsafe {
-            drop(Box::from_raw(kv_err));
-        }
-    }
-}
-
-/// Creates a new [`PJRT_Client`] (`PJRT_Client_Create`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Client_Create_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be either null or a valid pointer to [`PJRT_Client_Create_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_Create(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe { dispatch_typed_pjrt_args::<PJRT_Client_Create_Args>(raw_args, handle_client_create) }
-}
-
-/// Strongly-typed handler for [`PJRT_Client_Destroy`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Client_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args.client` must be null or a valid heap-allocated [`PJRT_Client`].
-unsafe fn handle_client_destroy(args: &mut PJRT_Client_Destroy_Args) -> Result<(), LibTpuError> {
-    if args.client.is_null() {
-        return Err(LibTpuError::NullPointer {
-            parameter: "client",
-        });
-    }
-    // SAFETY: `args.client` was allocated in `PJRT_Client_Create`.
-    let client = unsafe { Box::from_raw(args.client) };
-    for dev_ptr in client.device_ptrs {
-        // SAFETY: Owned by `client`.
-        unsafe {
-            let dev = Box::from_raw(dev_ptr);
-            drop(Box::from_raw(dev.desc_ptr));
-        }
-    }
-    for mem_ptr in client.memory_ptrs {
-        // SAFETY: Owned by `client`.
-        unsafe {
-            drop(Box::from_raw(mem_ptr));
-        }
-    }
-    // SAFETY: Owned by `client`.
-    unsafe {
-        let topo = Box::from_raw(client.topology_ptr);
-        for d_ptr in topo.desc_ptrs {
-            drop(Box::from_raw(d_ptr));
-        }
-    }
-    Ok(())
-}
-
-/// Destroys a [`PJRT_Client`] (`PJRT_Client_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Client_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be either null or a valid pointer to [`PJRT_Client_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_Destroy(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe { dispatch_typed_pjrt_args::<PJRT_Client_Destroy_Args>(raw_args, handle_client_destroy) }
-}
-
-/// Strongly-typed handler for [`PJRT_Client_PlatformName`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Client_PlatformStr_Args`] structure.
-///
-/// # Safety
-///
-/// `args.client` must be null or a valid [`PJRT_Client`].
-unsafe fn handle_client_platform_name(
-    args: &mut PJRT_Client_PlatformStr_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `args.client` is null or a valid `PJRT_Client*`.
-    let client = unsafe { args.client.as_ref() }.ok_or(LibTpuError::NullPointer {
-        parameter: "client",
-    })?;
-    let bytes = client.platform_name.as_bytes();
-    args.platform_str = client.platform_name.as_ptr();
-    args.platform_str_size = bytes.len();
-    Ok(())
-}
-
-/// Queries the platform name of a [`PJRT_Client`] (`PJRT_Client_PlatformName`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Client_PlatformStr_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Client_PlatformStr_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_PlatformName(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<PJRT_Client_PlatformStr_Args>(
-            raw_args,
-            handle_client_platform_name,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Client_PlatformVersion`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Client_PlatformStr_Args`] structure.
-///
-/// # Safety
-///
-/// `args.client` must be null or a valid [`PJRT_Client`].
-unsafe fn handle_client_platform_version(
-    args: &mut PJRT_Client_PlatformStr_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `args.client` is null or a valid `PJRT_Client*`.
-    let client = unsafe { args.client.as_ref() }.ok_or(LibTpuError::NullPointer {
-        parameter: "client",
-    })?;
-    let bytes = client.platform_version.as_bytes();
-    args.platform_str = client.platform_version.as_ptr();
-    args.platform_str_size = bytes.len();
-    Ok(())
-}
-
-/// Queries the platform version of a [`PJRT_Client`] (`PJRT_Client_PlatformVersion`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Client_PlatformStr_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Client_PlatformStr_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_PlatformVersion(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<PJRT_Client_PlatformStr_Args>(
-            raw_args,
-            handle_client_platform_version,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Client_ProcessIndex`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Client_ProcessIndex_Args`] structure.
-///
-/// # Safety
-///
-/// `args.client` must be null or a valid [`PJRT_Client`].
-unsafe fn handle_client_process_index(
-    args: &mut PJRT_Client_ProcessIndex_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `args.client` is null or a valid `PJRT_Client*`.
-    let client = unsafe { args.client.as_ref() }.ok_or(LibTpuError::NullPointer {
-        parameter: "client",
-    })?;
-    args.process_index = client.inner.process_index.0;
-    Ok(())
-}
-
-/// Queries the process index of a [`PJRT_Client`] (`PJRT_Client_ProcessIndex`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Client_ProcessIndex_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Client_ProcessIndex_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_ProcessIndex(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<PJRT_Client_ProcessIndex_Args>(
-            raw_args,
-            handle_client_process_index,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Client_Devices`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Client_Devices_Args`] structure.
-///
-/// # Safety
-///
-/// `args.client` must be null or a valid [`PJRT_Client`].
-unsafe fn handle_client_devices(args: &mut PJRT_Client_Devices_Args) -> Result<(), LibTpuError> {
-    // SAFETY: `args.client` is null or a valid `PJRT_Client*`.
-    let client = unsafe { args.client.as_ref() }.ok_or(LibTpuError::NullPointer {
-        parameter: "client",
-    })?;
-    args.devices = client.device_ptrs.as_ptr();
-    args.num_devices = client.device_ptrs.len();
-    Ok(())
-}
-
-/// Queries all devices of a [`PJRT_Client`] (`PJRT_Client_Devices`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Client_Devices_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Client_Devices_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_Devices(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe { dispatch_typed_pjrt_args::<PJRT_Client_Devices_Args>(raw_args, handle_client_devices) }
-}
-
-/// Strongly-typed handler for [`PJRT_Client_AddressableDevices`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Client_Devices_Args`] structure.
-///
-/// # Safety
-///
-/// `args.client` must be null or a valid [`PJRT_Client`].
-unsafe fn handle_client_addressable_devices(
-    args: &mut PJRT_Client_Devices_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `args.client` is null or a valid `PJRT_Client*`.
-    let client = unsafe { args.client.as_ref() }.ok_or(LibTpuError::NullPointer {
-        parameter: "client",
-    })?;
-    args.devices = client.addressable_device_ptrs.as_ptr();
-    args.num_devices = client.addressable_device_ptrs.len();
-    Ok(())
-}
-
-/// Queries addressable devices of a [`PJRT_Client`] (`PJRT_Client_AddressableDevices`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Client_Devices_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Client_Devices_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_AddressableDevices(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<PJRT_Client_Devices_Args>(
-            raw_args,
-            handle_client_addressable_devices,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Client_LookupDevice`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Client_LookupDevice_Args`] structure.
-///
-/// # Safety
-///
-/// `args.client` must be null or a valid [`PJRT_Client`].
-unsafe fn handle_client_lookup_device(
-    args: &mut PJRT_Client_LookupDevice_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `args.client` is null or a valid `PJRT_Client*`.
-    let client = unsafe { args.client.as_ref() }.ok_or(LibTpuError::NullPointer {
-        parameter: "client",
-    })?;
-    for &dev_ptr in &client.device_ptrs {
-        // SAFETY: `dev_ptr` is owned by `client`.
-        let dev_id =
-            unsafe { i32::try_from((*dev_ptr).inner.description.spec.device_id.0).unwrap_or(-1) };
-        if dev_id == args.id {
-            args.device = dev_ptr;
-            return Ok(());
-        }
-    }
-    Err(LibTpuError::DeviceNotFound {
-        device_id: u32::try_from(args.id).unwrap_or(u32::MAX),
-    })
-}
-
-/// Looks up a device by ID on a [`PJRT_Client`] (`PJRT_Client_LookupDevice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Client_LookupDevice_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Client_LookupDevice_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_LookupDevice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<PJRT_Client_LookupDevice_Args>(
-            raw_args,
-            handle_client_lookup_device,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Client_AddressableMemories`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Client_AddressableMemories_Args`] structure.
-///
-/// # Safety
-///
-/// `args.client` must be null or a valid [`PJRT_Client`].
-unsafe fn handle_client_addressable_memories(
-    args: &mut PJRT_Client_AddressableMemories_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `args.client` is null or a valid `PJRT_Client*`.
-    let client = unsafe { args.client.as_ref() }.ok_or(LibTpuError::NullPointer {
-        parameter: "client",
-    })?;
-    args.addressable_memories = client.memory_ptrs.as_ptr();
-    args.num_addressable_memories = client.memory_ptrs.len();
-    Ok(())
-}
-
-/// Queries addressable memory spaces of a [`PJRT_Client`] (`PJRT_Client_AddressableMemories`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Client_AddressableMemories_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Client_AddressableMemories_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_AddressableMemories(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<PJRT_Client_AddressableMemories_Args>(
-            raw_args,
-            handle_client_addressable_memories,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Client_Compile`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Client_Compile_Args`] structure.
-///
-/// # Safety
-///
-/// `args.client` and `args.program` must be null or valid pointers.
-unsafe fn handle_client_compile(args: &mut PJRT_Client_Compile_Args) -> Result<(), LibTpuError> {
-    if any_null(&[args.client as usize, args.program as usize]) {
-        return Err(LibTpuError::NullPointer {
-            parameter: "client_or_program",
-        });
-    }
-    // SAFETY: `args.client` and `args.program` are non-null.
-    let client = unsafe { &*args.client };
-    // SAFETY: `args.program` is non-null.
-    let prog = unsafe { &*args.program };
-    if any_null(&[prog.code as usize, prog.format as usize]) {
-        return Err(LibTpuError::NullPointer {
-            parameter: "program_code_or_format",
-        });
-    }
-    // SAFETY: `prog.code` and `prog.format` are non-null.
-    let code_slice = unsafe { std::slice::from_raw_parts(prog.code.cast::<u8>(), prog.code_size) };
-    // SAFETY: `prog.format` is non-null.
-    let fmt_slice =
-        unsafe { std::slice::from_raw_parts(prog.format.cast::<u8>(), prog.format_size) };
-    let fmt_str = String::from_utf8_lossy(fmt_slice);
-    let opts_slice = if args.compile_options.is_null() {
-        &[][..]
-    } else {
-        // SAFETY: `args.compile_options` is non-null with length `args.compile_options_size`.
-        unsafe {
-            std::slice::from_raw_parts(args.compile_options.cast::<u8>(), args.compile_options_size)
-        }
-    };
-
-    let loaded = client
-        .inner
-        .compile_and_load(&fmt_str, code_slice, opts_slice)?;
-    let exec_ptr = Box::into_raw(Box::new(PJRT_Executable::new(loaded.executable.clone())));
-    let loaded_ptr = Box::into_raw(Box::new(PJRT_LoadedExecutable::new(
-        loaded,
-        exec_ptr,
-        client.addressable_device_ptrs.clone(),
-    )));
-    args.executable = loaded_ptr;
-    Ok(())
-}
-
-/// Compiles a [`crate::pjrt_types::PJRT_Program`] on a [`PJRT_Client`] (`PJRT_Client_Compile`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Client_Compile_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Client_Compile_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_Compile(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe { dispatch_typed_pjrt_args::<PJRT_Client_Compile_Args>(raw_args, handle_client_compile) }
-}
-
-/// Strongly-typed handler for [`PJRT_Client_BufferFromHostBuffer`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args`].
-unsafe fn handle_client_buffer_from_host_buffer(
-    args: &mut crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args,
-) -> Result<(), LibTpuError> {
-    if !any_null(&[args.client as usize, args.data as usize]) {
-        let elem_type = ElementType::from_raw(args.element_type)?;
-        let dims_slice = if !args.dims.is_null() && args.num_dims > 0 {
-            // SAFETY: `args.dims` points to `args.num_dims` `i64` dimensions.
-            unsafe { std::slice::from_raw_parts(args.dims, args.num_dims) }
-        } else {
-            &[4_i64][..]
-        };
-        let shape = Shape::new(elem_type, dims_slice.to_vec(), None, None)?;
-        let byte_len = shape.unpadded_byte_size().0;
-        // SAFETY: `args.data` points to `byte_len` bytes of host data.
-        let host_bytes = unsafe { std::slice::from_raw_parts(args.data.cast::<u8>(), byte_len) };
-        // SAFETY: `args.client` is valid.
-        let client_ref = unsafe { &*args.client };
-        let dev_id = if !args.device.is_null() {
-            // SAFETY: `args.device` is a valid `PJRT_Device*`.
-            unsafe { (*args.device).inner.description.spec.device_id }
-        } else {
-            DeviceId(0)
-        };
-        let core_buf = client_ref
-            .inner
-            .buffer_from_host(dev_id, shape, host_bytes)?;
-        let dev_ptr = client_ref
-            .device_ptrs
-            .get(dev_id.0 as usize)
-            .copied()
-            .unwrap_or(ptr::null_mut());
-        let mem_ptr = client_ref
-            .memory_ptrs
-            .first()
-            .copied()
-            .unwrap_or(ptr::null_mut());
-        args.out_buffer = Box::into_raw(Box::new(PJRT_Buffer::new(core_buf, dev_ptr, mem_ptr)));
-    }
-    Ok(())
-}
-
-/// Creates a device buffer from a host memory buffer (`PJRT_Client_BufferFromHostBuffer`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_BufferFromHostBuffer(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args>(
-            raw_args,
-            handle_client_buffer_from_host_buffer,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_LookupDevice_Args`] for addressable device lookup.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_LookupDevice_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_LookupDevice_Args`].
-unsafe fn handle_client_lookup_addressable_device(
-    args: &mut crate::pjrt_types::PJRT_Client_LookupDevice_Args,
-) -> Result<(), LibTpuError> {
-    args.device = ptr::null_mut();
-    // SAFETY: `args.client` is null or a valid `PJRT_Client*`.
-    if let Some(client) = unsafe { args.client.as_ref() } {
-        for &dev_ptr in &client.addressable_device_ptrs {
-            // SAFETY: `dev_ptr` is owned by `client`.
-            let hw_id = unsafe { (*dev_ptr).inner.description.spec.local_hardware_id.0 };
-            if hw_id == args.id {
-                args.device = dev_ptr;
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Looks up an addressable device by local hardware ID (`PJRT_Client_LookupAddressableDevice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_LookupDevice_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_LookupDevice_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_LookupAddressableDevice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_LookupDevice_Args>(
-            raw_args,
-            handle_client_lookup_addressable_device,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args`].
-unsafe fn handle_client_default_device_assignment(
-    args: &mut crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args,
-) -> Result<(), LibTpuError> {
-    if !args.default_assignment.is_null() {
-        for idx in 0..args.default_assignment_size {
-            // SAFETY: `default_assignment` has capacity `default_assignment_size`.
-            unsafe {
-                *args.default_assignment.add(idx) = i32::try_from(idx).unwrap_or(0);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Computes default replica/partition device assignment (`PJRT_Client_DefaultDeviceAssignment`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_DefaultDeviceAssignment(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_DefaultDeviceAssignment_Args>(
-            raw_args,
-            handle_client_default_device_assignment,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Create_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Create_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_Create_Args`].
-unsafe fn handle_topology_create(
-    args: &mut crate::pjrt_types::PJRT_TopologyDescription_Create_Args,
-) -> Result<(), LibTpuError> {
-    args.topology = box_default_topology_description();
-    Ok(())
-}
-
-/// Creates a standalone `PJRT_TopologyDescription` (`PJRT_TopologyDescription_Create`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Create_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Create_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TopologyDescription_Create(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_TopologyDescription_Create_Args>(
-            raw_args,
-            handle_topology_create,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args`].
-unsafe fn handle_topology_destroy(
-    args: &mut crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args,
-) -> Result<(), LibTpuError> {
-    if !args.topology.is_null() {
-        // SAFETY: `args.topology` was allocated by `PJRT_TopologyDescription_Create` or `Deserialize`.
-        unsafe {
-            let topo = Box::from_raw(args.topology);
-            for d_ptr in topo.desc_ptrs {
-                drop(Box::from_raw(d_ptr));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Destroys a `PJRT_TopologyDescription` (`PJRT_TopologyDescription_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TopologyDescription_Destroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args>(
-            raw_args,
-            handle_topology_destroy,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args`].
-unsafe fn handle_topology_platform_name(
-    args: &mut crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `topology` is null or a valid `PJRT_TopologyDescription*`.
-    let (ptr, len) = unsafe { args.topology.as_ref() }.map_or((c"tpu".as_ptr(), 3), |t| {
-        (
-            t.inner.spec.platform_name.as_ptr().cast::<c_char>(),
-            t.inner.spec.platform_name.len(),
-        )
-    });
-    args.platform_name = ptr;
-    args.platform_name_size = len;
-    Ok(())
-}
-
-/// Queries the platform name of a `PJRT_TopologyDescription` (`PJRT_TopologyDescription_PlatformName`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TopologyDescription_PlatformName(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args>(
-            raw_args,
-            handle_topology_platform_name,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args`].
-unsafe fn handle_topology_platform_version(
-    args: &mut crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `topology` is null or a valid `PJRT_TopologyDescription*`.
-    let (ptr, len) = unsafe { args.topology.as_ref() }.map_or((c"0.0.50".as_ptr(), 6), |t| {
-        (
-            t.inner.spec.platform_version.as_ptr().cast::<c_char>(),
-            t.inner.spec.platform_version.len(),
-        )
-    });
-    args.platform_version = ptr;
-    args.platform_version_size = len;
-    Ok(())
-}
-
-/// Queries the platform version of a `PJRT_TopologyDescription` (`PJRT_TopologyDescription_PlatformVersion`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TopologyDescription_PlatformVersion(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args>(
-            raw_args,
-            handle_topology_platform_version,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args`].
-unsafe fn handle_topology_get_device_descriptions(
-    args: &mut crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `topology` is null or a valid `PJRT_TopologyDescription*`.
-    let (ptr, len) = unsafe { args.topology.as_ref() }.map_or((ptr::null(), 0), |t| {
-        (t.desc_ptrs.as_ptr(), t.desc_ptrs.len())
-    });
-    args.descriptions = ptr;
-    args.num_descriptions = len;
-    Ok(())
-}
-
-/// Queries all device descriptions in a `PJRT_TopologyDescription` (`PJRT_TopologyDescription_GetDeviceDescriptions`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TopologyDescription_GetDeviceDescriptions(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<
-            crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args,
-        >(raw_args, handle_topology_get_device_descriptions)
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args`].
-unsafe fn handle_topology_serialize(
-    args: &mut crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `topology` is null or a valid `PJRT_TopologyDescription*`.
-    let topo_bytes = unsafe { args.topology.as_ref() }.map_or_else(
-        || {
-            libtpu_core::proto::TpuTopologyArgsProto {
-                platform_version: String::from("0.0.50"),
-                mesh_bounds: vec![2, 2, 1],
-                chips_per_host: 4,
-                num_hosts: 1,
-                version: 5,
-                fingerprint: String::from("00001234"),
-            }
-            .encode()
-        },
-        |t| t.inner.serialize(),
-    );
-    let (ptr, len, holder) = crate::box_serialized_artifact(topo_bytes);
-    args.serialized_bytes = ptr;
-    args.serialized_bytes_size = len;
-    args.serialized_topology = holder.cast();
-    args.serialized_topology_deleter = Some(crate::pjrt_serialized_artifact_deleter);
-    Ok(())
-}
-
-/// Serializes a `PJRT_TopologyDescription` (`PJRT_TopologyDescription_Serialize`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TopologyDescription_Serialize(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args>(
-            raw_args,
-            handle_topology_serialize,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args`].
-unsafe fn handle_topology_attributes(
-    args: &mut crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args,
-) -> Result<(), LibTpuError> {
-    args.attributes = GLOBAL_PLUGIN_ATTRIBUTES.as_ptr();
-    args.num_attributes = GLOBAL_PLUGIN_ATTRIBUTES.len();
-    Ok(())
-}
-
-/// Queries topology attributes (`PJRT_TopologyDescription_Attributes`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TopologyDescription_Attributes(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args>(
-            raw_args,
-            handle_topology_attributes,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args`].
-unsafe fn handle_client_create_view_of_device_buffer(
-    args: &mut crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args,
-) -> Result<(), LibTpuError> {
-    if !args.on_delete_callback.is_null() {
-        // SAFETY: `on_delete_callback` is an `extern "C" fn(*mut c_void)`.
-        let cb: unsafe extern "C" fn(*mut std::ffi::c_void) =
-            unsafe { std::mem::transmute(args.on_delete_callback) };
-        // SAFETY: Invoking delete callback with `device_buffer_ptr`.
-        unsafe {
-            cb(args.device_buffer_ptr.cast_mut());
-        }
-    }
-    args.buffer = alloc_shaped_pjrt_buffer(
-        args.client,
-        args.device,
-        ptr::null_mut(),
-        args.element_type,
-        args.dims,
-        args.num_dims,
-    );
-    Ok(())
-}
-
-/// Creates a zero-copy buffer view over an external device pointer (`PJRT_Client_CreateViewOfDeviceBuffer`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_CreateViewOfDeviceBuffer(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args>(
-            raw_args,
-            handle_client_create_view_of_device_buffer,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_TopologyDescription_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_TopologyDescription_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_TopologyDescription_Args`].
-unsafe fn handle_client_topology_description(
-    args: &mut crate::pjrt_types::PJRT_Client_TopologyDescription_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `client` is null or a valid `PJRT_Client*`.
-    args.topology = unsafe { args.client.as_ref() }.map_or(ptr::null_mut(), |c| c.topology_ptr);
-    Ok(())
-}
-
-/// Queries the `PJRT_TopologyDescription` of a `PJRT_Client` (`PJRT_Client_TopologyDescription`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_TopologyDescription_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_TopologyDescription_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_TopologyDescription(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_TopologyDescription_Args>(
-            raw_args,
-            handle_client_topology_description,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_ExecuteContext_Create_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_ExecuteContext_Create_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_ExecuteContext_Create_Args`].
-unsafe fn handle_execute_context_create(
-    args: &mut crate::pjrt_types::PJRT_ExecuteContext_Create_Args,
-) -> Result<(), LibTpuError> {
-    args.context = Box::into_raw(Box::new(crate::pjrt_types::PJRT_ExecuteContext {
-        context_id: 1,
-    }));
-    Ok(())
-}
-
-/// Creates a `PJRT_ExecuteContext` (`PJRT_ExecuteContext_Create`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_ExecuteContext_Create_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_ExecuteContext_Create_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_ExecuteContext_Create(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_ExecuteContext_Create_Args>(
-            raw_args,
-            handle_execute_context_create,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_ExecuteContext_Destroy_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_ExecuteContext_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_ExecuteContext_Destroy_Args`].
-unsafe fn handle_execute_context_destroy(
-    args: &mut crate::pjrt_types::PJRT_ExecuteContext_Destroy_Args,
-) -> Result<(), LibTpuError> {
-    if !args.context.is_null() {
-        // SAFETY: `args.context` was allocated by `PJRT_ExecuteContext_Create`.
-        unsafe {
-            drop(Box::from_raw(args.context));
-        }
-    }
-    Ok(())
-}
-
-/// Destroys a `PJRT_ExecuteContext` (`PJRT_ExecuteContext_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_ExecuteContext_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_ExecuteContext_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_ExecuteContext_Destroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_ExecuteContext_Destroy_Args>(
-            raw_args,
-            handle_execute_context_destroy,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_CreateBuffersForAsyncHostToDevice_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_CreateBuffersForAsyncHostToDevice_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_CreateBuffersForAsyncHostToDevice_Args`].
-unsafe fn handle_client_create_buffers_for_async_h2d(
-    args: &mut crate::pjrt_types::PJRT_Client_CreateBuffersForAsyncHostToDevice_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `args.client` is null or a valid `PJRT_Client*`.
-    let (dev_ptr, mem_ptr, dev_id, mem_id, hal) = unsafe {
-        args.client.as_ref().map_or_else(
-            || {
-                let cfg = libtpu_core::config::global_init_config();
-                (
-                    ptr::null_mut(),
-                    args.memory,
-                    DeviceId(0),
-                    libtpu_core::types::MemorySpaceId(0),
-                    libtpu_core::hal::create_default_hal(&cfg),
-                )
-            },
-            |client_ref| {
-                let d_ptr = client_ref
-                    .addressable_device_ptrs
-                    .first()
-                    .copied()
-                    .unwrap_or(ptr::null_mut());
-                (
-                    d_ptr,
-                    args.memory,
-                    DeviceId(0),
-                    libtpu_core::types::MemorySpaceId(0),
-                    std::sync::Arc::clone(&client_ref.inner.hal),
-                )
-            },
-        )
-    };
-    let mut shapes = Vec::new();
-    if !args.shape_specs.is_null() {
-        // SAFETY: `args.shape_specs` points to `args.num_shape_specs` elements.
-        let specs = unsafe { std::slice::from_raw_parts(args.shape_specs, args.num_shape_specs) };
-        for spec in specs {
-            let elem = ElementType::from_raw(spec.element_type).unwrap_or(ElementType::F32);
-            let dims = if spec.dims.is_null() {
-                vec![4]
-            } else {
-                // SAFETY: `spec.dims` points to `spec.num_dims` `i64` elements.
-                unsafe { std::slice::from_raw_parts(spec.dims, spec.num_dims).to_vec() }
-            };
-            let s = Shape::new(elem, dims, None, None).unwrap_or_else(|_| Shape {
-                element_type: ElementType::F32,
-                dims: vec![4],
-                dynamic_dims: vec![false],
-                layout: libtpu_core::types::MemoryLayout::default_tpu_tiled(1),
-            });
-            shapes.push(s);
-        }
-    } else {
-        shapes.push(Shape {
-            element_type: ElementType::F32,
-            dims: vec![4],
-            dynamic_dims: vec![false],
-            layout: libtpu_core::types::MemoryLayout::default_tpu_tiled(1),
-        });
-    }
-    args.transfer_manager =
-        libtpu_core::pjrt::PjrtCoreAsyncTransferManager::create(dev_id, mem_id, shapes, &hal)
-            .map_or(ptr::null_mut(), |tm| {
-                Box::into_raw(Box::new(
-                    crate::pjrt_types::PJRT_AsyncHostToDeviceTransferManager {
-                        inner: tm,
-                        device_ptr: dev_ptr,
-                        memory_ptr: mem_ptr,
-                    },
-                ))
-            });
-    Ok(())
-}
-
-/// Creates an async host-to-device transfer manager (`PJRT_Client_CreateBuffersForAsyncHostToDevice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_CreateBuffersForAsyncHostToDevice_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_CreateBuffersForAsyncHostToDevice_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_CreateBuffersForAsyncHostToDevice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<
-            crate::pjrt_types::PJRT_Client_CreateBuffersForAsyncHostToDevice_Args,
-        >(raw_args, handle_client_create_buffers_for_async_h2d)
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_DmaMap_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_DmaMap_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_DmaMap_Args`].
-unsafe fn handle_client_dma_map(
-    args: &mut crate::pjrt_types::PJRT_Client_DmaMap_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `client` is null or a valid `PJRT_Client*`.
-    if let Some(client) = unsafe { args.client.as_ref() } {
-        let base_addr = (args.data as u64).max(0x1000);
-        let size = args.size.max(4096);
-        let _ = client.inner.dma_map(base_addr, size);
-    }
-    Ok(())
-}
-
-/// Pins and maps a host memory region for zero-copy DMA (`PJRT_Client_DmaMap`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_DmaMap_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_DmaMap_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_DmaMap(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_DmaMap_Args>(
-            raw_args,
-            handle_client_dma_map,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_DmaUnmap_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_DmaUnmap_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_DmaUnmap_Args`].
-unsafe fn handle_client_dma_unmap(
-    args: &mut crate::pjrt_types::PJRT_Client_DmaUnmap_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `client` is null or a valid `PJRT_Client*`.
-    if let Some(client) = unsafe { args.client.as_ref() } {
-        let base_addr = (args.data as u64).max(0x1000);
-        let _ = client.inner.dma_unmap(base_addr);
-    }
-    Ok(())
-}
-
-/// Unmaps a previously pinned DMA host memory region (`PJRT_Client_DmaUnmap`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_DmaUnmap_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_DmaUnmap_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_DmaUnmap(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_DmaUnmap_Args>(
-            raw_args,
-            handle_client_dma_unmap,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_CreateAliasBuffer_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_CreateAliasBuffer_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_CreateAliasBuffer_Args`].
-unsafe fn handle_client_create_alias_buffer(
-    args: &mut crate::pjrt_types::PJRT_Client_CreateAliasBuffer_Args,
-) -> Result<(), LibTpuError> {
-    let buf = alloc_shaped_pjrt_buffer(
-        args.client,
-        ptr::null_mut(),
-        args.memory,
-        args.element_type,
-        args.dims,
-        args.num_dims,
-    );
-    args.alias_buffer = buf;
-    args.fulfill_alias_buffer_cb = buf.cast();
-    Ok(())
-}
-
-/// Creates an unfulfilled alias buffer (`PJRT_Client_CreateAliasBuffer`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_CreateAliasBuffer_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_CreateAliasBuffer_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_CreateAliasBuffer(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_CreateAliasBuffer_Args>(
-            raw_args,
-            handle_client_create_alias_buffer,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_FulfillAliasBuffer_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_FulfillAliasBuffer_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_FulfillAliasBuffer_Args`].
-unsafe fn handle_client_fulfill_alias_buffer(
-    args: &mut crate::pjrt_types::PJRT_Client_FulfillAliasBuffer_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `fulfill_alias_buffer_cb` and `buffer` are null or valid `PJRT_Buffer*` handles.
-    let (alias_opt, real_opt) = unsafe {
-        (
-            args.fulfill_alias_buffer_cb.cast::<PJRT_Buffer>().as_ref(),
-            args.buffer.as_ref(),
-        )
-    };
-    if let Some(alias_buf) = alias_opt {
-        if args.status_code != 0 {
-            let msg = if args.error_message.is_null() {
-                format!("alias fulfillment failed with code {}", args.status_code)
-            } else {
-                // SAFETY: `error_message` points to `error_message_size` bytes.
-                let slice = unsafe {
-                    std::slice::from_raw_parts(
-                        args.error_message.cast::<u8>(),
-                        args.error_message_size,
-                    )
-                };
-                String::from_utf8_lossy(slice).into_owned()
-            };
-            alias_buf
-                .inner
-                .set_error(LibTpuError::EventFailed { reason: msg });
-        } else if let Some(real_buf) = real_opt {
-            let _ = alias_buf.inner.fulfill_from(&real_buf.inner);
-        }
-    }
-    Ok(())
-}
-
-/// Fulfills an alias buffer with a concrete backing buffer (`PJRT_Client_FulfillAliasBuffer`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_FulfillAliasBuffer_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_FulfillAliasBuffer_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_FulfillAliasBuffer(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_FulfillAliasBuffer_Args>(
-            raw_args,
-            handle_client_fulfill_alias_buffer,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args`].
-unsafe fn handle_topology_deserialize(
-    args: &mut crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args,
-) -> Result<(), LibTpuError> {
-    let bytes = if args.serialized_topology.is_null() {
-        &[][..]
-    } else {
-        // SAFETY: `serialized_topology` points to `serialized_topology_size` bytes.
-        unsafe {
-            std::slice::from_raw_parts(
-                args.serialized_topology.cast::<u8>(),
-                args.serialized_topology_size,
-            )
-        }
-    };
-    args.topology = libtpu_core::pjrt::PjrtCoreTopology::deserialize(bytes).map_or_else(
-        |_| box_default_topology_description(),
-        crate::box_topology_description,
-    );
-    Ok(())
-}
-
-/// Deserializes a `PJRT_TopologyDescription` (`PJRT_TopologyDescription_Deserialize`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TopologyDescription_Deserialize(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args>(
-            raw_args,
-            handle_topology_deserialize,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_CreateErrorBuffer_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_CreateErrorBuffer_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_CreateErrorBuffer_Args`].
-unsafe fn handle_client_create_error_buffer(
-    args: &mut crate::pjrt_types::PJRT_Client_CreateErrorBuffer_Args,
-) -> Result<(), LibTpuError> {
-    let buf = alloc_shaped_pjrt_buffer(
-        args.client,
-        args.device,
-        args.memory,
-        args.element_type,
-        args.dims,
-        args.num_dims,
-    );
-    let msg = if args.error_message.is_null() {
-        format!("error buffer code {}", args.error_code)
-    } else {
-        // SAFETY: `error_message` points to `error_message_size` bytes.
-        let slice = unsafe {
-            std::slice::from_raw_parts(args.error_message.cast::<u8>(), args.error_message_size)
-        };
-        String::from_utf8_lossy(slice).into_owned()
-    };
-    // SAFETY: `buf` is a valid heap-allocated `PJRT_Buffer*`.
-    unsafe {
-        (*buf)
-            .inner
-            .set_error(LibTpuError::EventFailed { reason: msg });
-    }
-    args.buffer = buf;
-    Ok(())
-}
-
-/// Creates a buffer in an error state (`PJRT_Client_CreateErrorBuffer`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_CreateErrorBuffer_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_CreateErrorBuffer_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_CreateErrorBuffer(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_CreateErrorBuffer_Args>(
-            raw_args,
-            handle_client_create_error_buffer,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_CreateUninitializedBuffer_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_CreateUninitializedBuffer_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_CreateUninitializedBuffer_Args`].
-unsafe fn handle_client_create_uninitialized_buffer(
-    args: &mut crate::pjrt_types::PJRT_Client_CreateUninitializedBuffer_Args,
-) -> Result<(), LibTpuError> {
-    args.buffer = alloc_shaped_pjrt_buffer(
-        args.client,
-        args.device,
-        args.memory,
-        args.element_type,
-        args.dims,
-        args.num_dims,
-    );
-    Ok(())
-}
-
-/// Creates an uninitialized device buffer (`PJRT_Client_CreateUninitializedBuffer`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_CreateUninitializedBuffer_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_CreateUninitializedBuffer_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_CreateUninitializedBuffer(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_CreateUninitializedBuffer_Args>(
-            raw_args,
-            handle_client_create_uninitialized_buffer,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_Client_UpdateGlobalProcessInfo_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_UpdateGlobalProcessInfo_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_UpdateGlobalProcessInfo_Args`].
-unsafe fn handle_client_update_global_process_info(
-    args: &mut crate::pjrt_types::PJRT_Client_UpdateGlobalProcessInfo_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `args.client` is null or a valid `PJRT_Client*`.
-    if let Some(client) = unsafe { args.client.as_ref() } {
-        let infos = if args.processes.is_null() {
-            Vec::new()
-        } else {
-            // SAFETY: `args.processes` points to `args.num_processes` `PJRT_ProcessInfo` elements.
-            let slice = unsafe { std::slice::from_raw_parts(args.processes, args.num_processes) };
-            slice
-                .iter()
-                .map(|p| libtpu_core::pjrt::ProcessInfoRecord {
-                    process_id: p.task_id,
-                    incarnation_id: p.incarnation_id,
-                    state: p.state,
-                    error_code: i32::try_from(p.error_code).unwrap_or(0),
-                    error_message: String::new(),
-                })
-                .collect()
-        };
-        client.inner.update_global_process_info(infos);
-    }
-    Ok(())
-}
-
-/// Updates global multi-host process state (`PJRT_Client_UpdateGlobalProcessInfo`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_UpdateGlobalProcessInfo_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_UpdateGlobalProcessInfo_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_UpdateGlobalProcessInfo(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_UpdateGlobalProcessInfo_Args>(
-            raw_args,
-            handle_client_update_global_process_info,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Client_Load`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_Client_Load_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_Client_Load_Args`].
-unsafe fn handle_client_load(
-    args: &mut crate::pjrt_types::PJRT_Client_Load_Args,
-) -> Result<(), LibTpuError> {
-    if !any_null(&[args.client as usize, args.executable as usize]) {
-        // SAFETY: `args.client` and `args.executable` are valid handles.
-        let client = unsafe { &*args.client };
-        // SAFETY: `args.executable` is a valid `PJRT_Executable*`.
-        let core_exec = unsafe { (*args.executable).inner.clone() };
-        let addr_devs: Vec<DeviceId> = client
-            .inner
-            .addressable_device_indices
-            .iter()
-            .filter_map(|&idx| {
-                client
-                    .inner
-                    .devices
-                    .get(idx)
-                    .map(|d| d.description.spec.device_id)
-            })
-            .collect();
-        let loaded_inner = libtpu_core::pjrt::PjrtCoreLoadedExecutable::new(
-            core_exec.clone(),
-            addr_devs,
-            std::sync::Arc::clone(&client.inner.hal),
-        );
-        let new_exec_ptr = Box::into_raw(Box::new(PJRT_Executable::new(core_exec)));
-        let loaded_ptr = Box::into_raw(Box::new(PJRT_LoadedExecutable::new(
-            loaded_inner,
-            new_exec_ptr,
-            client.addressable_device_ptrs.clone(),
-        )));
-        args.loaded_executable = loaded_ptr;
-    }
-    Ok(())
-}
-
-/// Loads an AOT-compiled `PJRT_Executable` onto a `PJRT_Client` (`PJRT_Client_Load`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_Client_Load_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_Client_Load_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Client_Load(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_Client_Load_Args>(
-            raw_args,
-            handle_client_load,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args`].
-unsafe fn handle_topology_fingerprint(
-    args: &mut crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `topology` is null or a valid `PJRT_TopologyDescription*`.
-    let top_opt = unsafe { args.topology.as_ref() };
-    args.fingerprint = top_opt.map_or(0x5450_555F_5635_4500, |t| t.inner.fingerprint);
-    Ok(())
-}
-
-/// Queries the 64-bit fingerprint of a `PJRT_TopologyDescription` (`PJRT_TopologyDescription_Fingerprint`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TopologyDescription_Fingerprint(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args>(
-            raw_args,
-            handle_topology_fingerprint,
-        )
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args`].
-unsafe fn handle_topology_make_canonical_shape(
-    args: &mut crate::pjrt_types::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args,
-) -> Result<(), LibTpuError> {
-    // SAFETY: `topology` is null or a valid `PJRT_TopologyDescription*`.
-    let _ = unsafe { args.topology.as_ref() }.map(|t| t.inner.fingerprint);
-    let elem = ElementType::from_raw(args.element_type).unwrap_or(ElementType::F32);
-    let dims = if args.dims.is_null() {
-        vec![8, 128]
-    } else {
-        // SAFETY: `args.dims` points to `args.num_dims` `i64` elements.
-        unsafe { std::slice::from_raw_parts(args.dims, args.num_dims).to_vec() }
-    };
-    let shape = Shape::new(elem, dims, None, None).unwrap_or_else(|_| Shape {
-        element_type: ElementType::F32,
-        dims: vec![8, 128],
-        dynamic_dims: vec![false, false],
-        layout: libtpu_core::types::MemoryLayout::default_tpu_tiled(2),
-    });
-    args.reserved = shape.on_device_byte_size().0;
-    if !args.layout.is_null() {
-        // SAFETY: `args.layout` is a valid mutable `PJRT_Buffer_MemoryLayout*`.
-        unsafe {
-            *args.layout = crate::pjrt_types::PJRT_Buffer_MemoryLayout {
-                struct_size: size_of::<crate::pjrt_types::PJRT_Buffer_MemoryLayout>(),
+            let mut view_del_hits: u32 = 0;
+            let mut view_args = crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args>(
+                ),
                 extension_start: ptr::null_mut(),
-                minor_to_major: ptr::null(),
-                minor_to_major_size: shape.dims.len(),
-                tile_dims: ptr::null(),
-                tile_dim_sizes: ptr::null(),
+                client,
+                device_buffer_ptr: ptr::addr_of_mut!(view_del_hits).cast(),
+                dims: dims_arr.as_ptr(),
+                num_dims: 1,
+                element_type: 11,
+                pad: 0,
+                layout: ptr::null(),
+                device: look_args.device,
+                on_delete_callback: test_view_deleter as *const std::ffi::c_void,
+                buffer: ptr::null_mut(),
             };
+            assert!(
+                PJRT_Client_CreateViewOfDeviceBuffer(ptr::addr_of_mut!(view_args).cast()).is_null()
+            );
+            assert_eq!(view_del_hits, 1);
+            libtpu_rs_buffer_destroy(view_args.buffer);
+            view_args.dims = neg_dim_val.as_ptr();
+            view_args.buffer = ptr::null_mut();
+            assert!(
+                PJRT_Client_CreateViewOfDeviceBuffer(ptr::addr_of_mut!(view_args).cast()).is_null()
+            );
+            libtpu_rs_buffer_destroy(view_args.buffer);
+
+            let mut ec_create = crate::pjrt_types::PJRT_ExecuteContext_Create_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_ExecuteContext_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                context: ptr::null_mut(),
+            };
+            assert!(PJRT_ExecuteContext_Create(ptr::addr_of_mut!(ec_create).cast()).is_null());
+            let mut ec_destroy = crate::pjrt_types::PJRT_ExecuteContext_Destroy_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_ExecuteContext_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                context: ec_create.context,
+            };
+            assert!(PJRT_ExecuteContext_Destroy(ptr::addr_of_mut!(ec_destroy).cast()).is_null());
+
+            let mut tp_pname = crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_TopologyDescription_PlatformName_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr,
+                platform_name: ptr::null(),
+                platform_name_size: 0,
+            };
+            assert!(
+                PJRT_TopologyDescription_PlatformName(ptr::addr_of_mut!(tp_pname).cast()).is_null()
+            );
+            assert_eq!(tp_pname.platform_name_size, 3);
+
+            let mut tp_pver = crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args {
+                struct_size: size_of::<
+                    crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args,
+                >(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr,
+                platform_version: ptr::null(),
+                platform_version_size: 0,
+            };
+            assert!(
+                PJRT_TopologyDescription_PlatformVersion(ptr::addr_of_mut!(tp_pver).cast())
+                    .is_null()
+            );
+            assert!(tp_pver.platform_version_size > 0);
+
+            let mut tp_descs =
+                crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args {
+                    struct_size: size_of::<
+                        crate::pjrt_types::PJRT_TopologyDescription_GetDeviceDescriptions_Args,
+                    >(),
+                    extension_start: ptr::null_mut(),
+                    topology: (*client).topology_ptr,
+                    descriptions: ptr::null(),
+                    num_descriptions: 0,
+                };
+            assert!(
+                PJRT_TopologyDescription_GetDeviceDescriptions(ptr::addr_of_mut!(tp_descs).cast())
+                    .is_null()
+            );
+            assert_eq!(tp_descs.num_descriptions, 4);
+            assert!(!tp_descs.descriptions.is_null());
+
+            let mut tp_ser = crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr,
+                serialized_bytes: ptr::null(),
+                serialized_bytes_size: 0,
+                serialized_topology: ptr::null_mut(),
+                serialized_topology_deleter: None,
+            };
+            assert!(PJRT_TopologyDescription_Serialize(ptr::addr_of_mut!(tp_ser).cast()).is_null());
+            assert!(tp_ser.serialized_bytes_size > 0);
+            assert!(!tp_ser.serialized_bytes.is_null());
+            let mut tp_deser = crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_TopologyDescription_Deserialize_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                serialized_topology: tp_ser.serialized_bytes,
+                serialized_topology_size: tp_ser.serialized_bytes_size,
+                topology: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_TopologyDescription_Deserialize(ptr::addr_of_mut!(tp_deser).cast()).is_null()
+            );
+            assert!(!tp_deser.topology.is_null());
+            let mut tp_del_deser = crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: tp_deser.topology,
+            };
+            assert!(
+                PJRT_TopologyDescription_Destroy(ptr::addr_of_mut!(tp_del_deser).cast()).is_null()
+            );
+            if let Some(del) = tp_ser.serialized_topology_deleter {
+                del(tp_ser.serialized_topology.cast());
+            }
+
+            let mut tp_attrs = crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_TopologyDescription_Attributes_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr,
+                attributes: ptr::null(),
+                num_attributes: 0,
+            };
+            assert!(
+                PJRT_TopologyDescription_Attributes(ptr::addr_of_mut!(tp_attrs).cast()).is_null()
+            );
+            assert_eq!(tp_attrs.num_attributes, 3);
+
+            let mut tp_fp = crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_TopologyDescription_Fingerprint_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr,
+                fingerprint: 0,
+            };
+            assert!(
+                PJRT_TopologyDescription_Fingerprint(ptr::addr_of_mut!(tp_fp).cast()).is_null()
+            );
+            assert_ne!(tp_fp.fingerprint, 0);
+
+            let mut tp_canon =
+                crate::pjrt_types::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args {
+                    struct_size: size_of::<
+                        crate::pjrt_types::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args,
+                    >(),
+                    extension_start: ptr::null_mut(),
+                    topology: (*client).topology_ptr,
+                    dims: ptr::null(),
+                    num_dims: 0,
+                    element_type: 11,
+                    memory_space_kind: 0,
+                    layout: ptr::null_mut(),
+                    reserved: 0,
+                    reserved1: 0,
+                    reserved2: 0,
+                    reserved3: 0,
+                };
+            assert!(
+                PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace(
+                    ptr::addr_of_mut!(tp_canon).cast()
+                )
+                .is_null()
+            );
+
+            let mut tp_kinds =
+                crate::pjrt_types::PJRT_TopologyDescription_GetMemorySpaceKindIds_Args {
+                    struct_size: size_of::<
+                        crate::pjrt_types::PJRT_TopologyDescription_GetMemorySpaceKindIds_Args,
+                    >(),
+                    extension_start: ptr::null_mut(),
+                    topology: (*client).topology_ptr,
+                    kind_ids: ptr::null(),
+                    num_kind_ids: 0,
+                };
+            assert!(
+                PJRT_TopologyDescription_GetMemorySpaceKindIds(ptr::addr_of_mut!(tp_kinds).cast())
+                    .is_null()
+            );
+            assert_eq!(tp_kinds.num_kind_ids, 4);
+
+            let mut tp_create = crate::pjrt_types::PJRT_TopologyDescription_Create_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_TopologyDescription_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                topology_name: c"tpu".as_ptr(),
+                topology_name_size: 3,
+                create_options: ptr::null(),
+                num_options: 0,
+                topology: ptr::null_mut(),
+            };
+            assert!(PJRT_TopologyDescription_Create(ptr::addr_of_mut!(tp_create).cast()).is_null());
+            let mut tp_del_standalone = crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_TopologyDescription_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: tp_create.topology,
+            };
+            assert!(
+                PJRT_TopologyDescription_Destroy(ptr::addr_of_mut!(tp_del_standalone).cast())
+                    .is_null()
+            );
+
+            let shape_spec_0 = crate::pjrt_types::PJRT_ShapeSpec {
+                struct_size: size_of::<crate::pjrt_types::PJRT_ShapeSpec>(),
+                extension_start: ptr::null_mut(),
+                dims: dims_arr.as_ptr(),
+                num_dims: 1,
+                element_type: 11,
+                pad: 0,
+            };
+            let shape_spec_empty = crate::pjrt_types::PJRT_ShapeSpec {
+                struct_size: size_of::<crate::pjrt_types::PJRT_ShapeSpec>(),
+                extension_start: ptr::null_mut(),
+                dims: ptr::null(),
+                num_dims: 0,
+                element_type: 11,
+                pad: 0,
+            };
+            let neg_dim_spec = crate::pjrt_types::PJRT_ShapeSpec {
+                struct_size: size_of::<crate::pjrt_types::PJRT_ShapeSpec>(),
+                extension_start: ptr::null_mut(),
+                dims: neg_dim_val.as_ptr(),
+                num_dims: 1,
+                element_type: 11,
+                pad: 0,
+            };
+            let specs_arr = [shape_spec_0, shape_spec_empty, neg_dim_spec];
+            let mut h2d_mgr_args =
+                crate::pjrt_types::PJRT_Client_CreateBuffersForAsyncHostToDevice_Args {
+                    struct_size: size_of::<
+                        crate::pjrt_types::PJRT_Client_CreateBuffersForAsyncHostToDevice_Args,
+                    >(),
+                    extension_start: ptr::null_mut(),
+                    client,
+                    shape_specs: specs_arr.as_ptr(),
+                    num_shape_specs: specs_arr.len(),
+                    device_layouts: ptr::null_mut(),
+                    num_device_layouts: 0,
+                    memory: (*client)
+                        .memory_ptrs
+                        .first()
+                        .copied()
+                        .unwrap_or(ptr::null_mut()),
+                    transfer_manager: ptr::null_mut(),
+                };
+            assert!(
+                PJRT_Client_CreateBuffersForAsyncHostToDevice(
+                    ptr::addr_of_mut!(h2d_mgr_args).cast()
+                )
+                .is_null()
+            );
+            assert!(!h2d_mgr_args.transfer_manager.is_null());
+            let mut h2d_mgr_del = PJRT_AsyncHostToDeviceTransferManager_Destroy_Args {
+                struct_size: size_of::<PJRT_AsyncHostToDeviceTransferManager_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                transfer_manager: h2d_mgr_args.transfer_manager,
+            };
+            assert!(
+                PJRT_AsyncHostToDeviceTransferManager_Destroy(
+                    ptr::addr_of_mut!(h2d_mgr_del).cast()
+                )
+                .is_null()
+            );
+            h2d_mgr_args.memory = ptr::null_mut();
+            h2d_mgr_args.shape_specs = ptr::null();
+            h2d_mgr_args.num_shape_specs = 0;
+            h2d_mgr_args.transfer_manager = ptr::null_mut();
+            assert!(
+                PJRT_Client_CreateBuffersForAsyncHostToDevice(
+                    ptr::addr_of_mut!(h2d_mgr_args).cast()
+                )
+                .is_null()
+            );
+            h2d_mgr_del.transfer_manager = h2d_mgr_args.transfer_manager;
+            assert!(
+                PJRT_AsyncHostToDeviceTransferManager_Destroy(
+                    ptr::addr_of_mut!(h2d_mgr_del).cast()
+                )
+                .is_null()
+            );
+
+            let mut cl_topo = crate::pjrt_types::PJRT_Client_TopologyDescription_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_TopologyDescription_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                topology: ptr::null_mut(),
+            };
+            assert!(PJRT_Client_TopologyDescription(ptr::addr_of_mut!(cl_topo).cast()).is_null());
+            assert_eq!(cl_topo.topology, (*client).topology_ptr);
+
+            let mut cl_dma_map = crate::pjrt_types::PJRT_Client_DmaMap_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_DmaMap_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                data: 0x2000 as *const std::ffi::c_void,
+                size: 4096,
+            };
+            assert!(PJRT_Client_DmaMap(ptr::addr_of_mut!(cl_dma_map).cast()).is_null());
+            let mut cl_dma_unmap = crate::pjrt_types::PJRT_Client_DmaUnmap_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_DmaUnmap_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                data: 0x2000 as *const std::ffi::c_void,
+            };
+            assert!(PJRT_Client_DmaUnmap(ptr::addr_of_mut!(cl_dma_unmap).cast()).is_null());
+
+            let mut cl_fulfill = crate::pjrt_types::PJRT_Client_FulfillAliasBuffer_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_FulfillAliasBuffer_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                buffer: buf_in,
+                status_code: 0,
+                pad: 0,
+                error_message: ptr::null(),
+                error_message_size: 0,
+                fulfill_alias_buffer_cb: ptr::null_mut(),
+            };
+            assert!(PJRT_Client_FulfillAliasBuffer(ptr::addr_of_mut!(cl_fulfill).cast()).is_null());
+
+            let mut cl_up_proc = crate::pjrt_types::PJRT_Client_UpdateGlobalProcessInfo_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_UpdateGlobalProcessInfo_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                client,
+                processes: ptr::null(),
+                num_processes: 0,
+            };
+            assert!(
+                PJRT_Client_UpdateGlobalProcessInfo(ptr::addr_of_mut!(cl_up_proc).cast()).is_null()
+            );
+
+            for b_del in [buf_in, buf_in2] {
+                let mut del_b_args = PJRT_Buffer_Destroy_Args {
+                    struct_size: size_of::<PJRT_Buffer_Destroy_Args>(),
+                    extension_start: ptr::null_mut(),
+                    buffer: b_del,
+                };
+                assert!(PJRT_Buffer_Destroy(ptr::addr_of_mut!(del_b_args).cast()).is_null());
+            }
+
+            let mut del_exec_args = PJRT_LoadedExecutable_Destroy_Args {
+                struct_size: size_of::<PJRT_LoadedExecutable_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: comp_args.executable,
+            };
+            assert!(
+                PJRT_LoadedExecutable_Destroy(ptr::addr_of_mut!(del_exec_args).cast()).is_null()
+            );
+
+            let opts = b"opts";
+            comp_args.compile_options = opts.as_ptr().cast();
+            comp_args.compile_options_size = opts.len();
+            prog.format = b"bad".as_ptr().cast();
+            prog.format_size = 3;
+            comp_args.program = ptr::addr_of!(prog);
+            drop(Box::from_raw(PJRT_Client_Compile(
+                ptr::addr_of_mut!(comp_args).cast(),
+            )));
+
+            drop(Box::from_raw(PJRT_Client_Destroy(ptr::null_mut())));
+            let mut destroy_client_args = PJRT_Client_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+            };
+            assert_ne!(format!("{destroy_client_args:?}"), "");
+            drop(Box::from_raw(PJRT_Client_Destroy(
+                ptr::addr_of_mut!(destroy_client_args).cast(),
+            )));
+            destroy_client_args.client = client;
+            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_client_args).cast()).is_null());
         }
-    }
-    Ok(())
-}
-
-/// Computes canonical tiled device shape for a memory space (`PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<
-            crate::pjrt_types::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace_Args,
-        >(raw_args, handle_topology_make_canonical_shape)
-    }
-}
-
-/// Populates [`crate::pjrt_types::PJRT_TopologyDescription_GetMemorySpaceKindIds_Args`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`crate::pjrt_types::PJRT_TopologyDescription_GetMemorySpaceKindIds_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`crate::pjrt_types::PJRT_TopologyDescription_GetMemorySpaceKindIds_Args`].
-unsafe fn handle_topology_get_memory_space_kind_ids(
-    args: &mut crate::pjrt_types::PJRT_TopologyDescription_GetMemorySpaceKindIds_Args,
-) -> Result<(), LibTpuError> {
-    args.kind_ids = GLOBAL_MEMORY_KIND_IDS.as_ptr();
-    args.num_kind_ids = GLOBAL_MEMORY_KIND_IDS.len();
-    Ok(())
-}
-
-/// Queries supported memory space kind IDs of a topology (`PJRT_TopologyDescription_GetMemorySpaceKindIds`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`crate::pjrt_types::PJRT_TopologyDescription_GetMemorySpaceKindIds_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`crate::pjrt_types::PJRT_TopologyDescription_GetMemorySpaceKindIds_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TopologyDescription_GetMemorySpaceKindIds(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Validated by `dispatch_typed_pjrt_args`.
-    unsafe {
-        dispatch_typed_pjrt_args::<
-            crate::pjrt_types::PJRT_TopologyDescription_GetMemorySpaceKindIds_Args,
-        >(raw_args, handle_topology_get_memory_space_kind_ids)
     }
 }

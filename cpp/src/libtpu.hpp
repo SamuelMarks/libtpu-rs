@@ -9,6 +9,7 @@
 #include "libtpu.h"
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 /**
  * @namespace libtpu
@@ -17,28 +18,48 @@
 namespace libtpu {
 
 /**
- * @brief Strongly-typed PJRT status code enumeration.
+ * @brief Strongly-typed PJRT status code enumeration (`PJRT_Error_Code`).
  */
 enum class ErrorCode : int32_t {
   /** @brief Operation succeeded (`0`). */
   Ok = 0,
+  /** @brief Operation was cancelled (`1`). */
+  Cancelled = 1,
+  /** @brief Unknown error (`2`). */
+  Unknown = 2,
   /** @brief Invalid argument (`3`). */
   InvalidArgument = 3,
+  /** @brief Deadline exceeded (`4`). */
+  DeadlineExceeded = 4,
   /** @brief Requested entity not found (`5`). */
   NotFound = 5,
   /** @brief Entity already exists (`6`). */
   AlreadyExists = 6,
+  /** @brief Permission denied (`7`). */
+  PermissionDenied = 7,
   /** @brief Resource exhausted (`8`). */
   ResourceExhausted = 8,
   /** @brief Failed precondition (`9`). */
   FailedPrecondition = 9,
+  /** @brief Operation aborted (`10`). */
+  Aborted = 10,
+  /** @brief Out of range (`11`). */
+  OutOfRange = 11,
+  /** @brief Unimplemented operation (`12`). */
+  Unimplemented = 12,
   /** @brief Internal runtime error (`13`). */
   Internal = 13,
+  /** @brief Service or device unavailable (`14`). */
+  Unavailable = 14,
+  /** @brief Unrecoverable data loss (`15`). */
+  DataLoss = 15,
+  /** @brief Unauthenticated request (`16`). */
+  Unauthenticated = 16,
 };
 
 /**
- * @brief Strongly-typed tensor element type enumeration matching
- * `PJRT_Buffer_Type`.
+ * @brief Strongly-typed tensor element type enumeration matching all 29
+ * `PJRT_Buffer_Type` variants.
  */
 enum class DataType : int32_t {
   /** @brief Invalid / unspecified element type (`0`). */
@@ -67,12 +88,38 @@ enum class DataType : int32_t {
   F32 = 11,
   /** @brief 64-bit IEEE floating-point (`12`). */
   F64 = 12,
+  /** @brief 16-bit brain floating-point (`13`). */
+  Bf16 = 13,
   /** @brief 64-bit complex floating-point (`14`). */
   C64 = 14,
   /** @brief 128-bit complex floating-point (`15`). */
   C128 = 15,
-  /** @brief 16-bit brain floating-point (`16`). */
-  Bf16 = 16,
+  /** @brief 8-bit floating-point E5M2 (`16`). */
+  F8E5M2 = 16,
+  /** @brief 8-bit floating-point E4M3FN (`17`). */
+  F8E4M3Fn = 17,
+  /** @brief 8-bit floating-point E4M3B11FNUZ (`18`). */
+  F8E4M3B11Fnuz = 18,
+  /** @brief 8-bit floating-point E5M2FNUZ (`19`). */
+  F8E5M2Fnuz = 19,
+  /** @brief 8-bit floating-point E4M3FNUZ (`20`). */
+  F8E4M3Fnuz = 20,
+  /** @brief 4-bit signed integer (`21`). */
+  S4 = 21,
+  /** @brief 4-bit unsigned integer (`22`). */
+  U4 = 22,
+  /** @brief Ordering token (`23`). */
+  Token = 23,
+  /** @brief 2-bit signed integer (`24`). */
+  S2 = 24,
+  /** @brief 2-bit unsigned integer (`25`). */
+  U2 = 25,
+  /** @brief 4-bit floating-point E2M1FN (`26`). */
+  F4E2M1Fn = 26,
+  /** @brief 8-bit block exponent E8M0FNU (`27`). */
+  F8E8M0Fnu = 27,
+  /** @brief Tuple composite type (`28`). */
+  Tuple = 28,
 };
 
 /**
@@ -82,18 +129,22 @@ enum class DataType : int32_t {
 enum class TpuVersion : int32_t {
   /** @brief Unspecified TPU generation (`0`). */
   Unspecified = 0,
-  /** @brief Cloud TPU v2 (`2`). */
+  /** @brief Cloud TPU v2 (`Jellyfish`, `2`). */
   V2 = 2,
-  /** @brief Cloud TPU v3 (`Jellyfish`, `3`). */
+  /** @brief Cloud TPU v3 (`Dragonfish`, `3`). */
   V3 = 3,
   /** @brief Cloud TPU v4 (`Pufferfish`, `4`). */
   V4 = 4,
-  /** @brief Cloud TPU v5e (`Viperfish`, `5`). */
+  /** @brief Cloud TPU v5e (`Viperfish Lite`, `5`). */
   V5e = 5,
-  /** @brief Cloud TPU v5p (`Ghostfish`, `6`). */
+  /** @brief Cloud TPU v5p (`Viperfish`, `6`). */
   V5p = 6,
-  /** @brief Cloud TPU v6e (`Zebrafish` / Trillium, `7`). */
+  /** @brief Cloud TPU v6e (`Ghostfish` / Trillium, `7`). */
   V6e = 7,
+  /** @brief Cloud TPU7x (`Ironwood`, `8`). */
+  V7x = 8,
+  /** @brief Cloud TPU v4 Lite (`Pufferfish Lite`, `9`). */
+  V4Lite = 9,
 };
 
 /**
@@ -103,12 +154,11 @@ class Status {
 public:
   /**
    * @brief Constructs a `Status` taking ownership of a raw `LibTpuCStatus` and
-   * an optional static/cached message pointer.
+   * an optional diagnostic message string.
    * @param raw Raw `LibTpuCStatus` returned from the C FFI.
-   * @param msg_str Cached null-terminated message string pointer (defaults to
-   * `""`).
+   * @param msg_str Diagnostic message string (defaults to `""`).
    */
-  explicit Status(LibTpuCStatus raw, const char *msg_str = "") noexcept;
+  explicit Status(LibTpuCStatus raw, std::string msg_str = "") noexcept;
 
   /**
    * @brief Destroys the `Status` and frees any owned error message.
@@ -165,8 +215,8 @@ public:
 private:
   /** @brief Underlying C status struct. */
   LibTpuCStatus raw_;
-  /** @brief Cached null-terminated diagnostic message string. */
-  const char *msg_str_;
+  /** @brief Owned diagnostic message string of arbitrary length. */
+  std::string msg_str_;
 };
 
 /**
@@ -1071,6 +1121,52 @@ public:
 private:
   /** @brief Owned `TpuEmbeddingEngineState*` handle. */
   TpuEmbeddingEngineState *state_;
+};
+
+/**
+ * @brief Strongly-typed C++20 RAII wrapper over `PJRT_Collectives_Extension`
+ * communicator handles.
+ */
+class Communicator {
+public:
+  /**
+   * @brief Creates an ICI/DCN `Communicator` via
+   * `PJRT_Collectives_CreateCommunicator`.
+   */
+  Communicator() noexcept;
+
+  /**
+   * @brief Destroys the `Communicator` via `PJRT_Communicator_Destroy`.
+   */
+  ~Communicator() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other communicator.
+   */
+  Communicator(const Communicator &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other communicator.
+   * @return Reference to this communicator.
+   */
+  Communicator &operator=(const Communicator &other) = delete;
+
+  /**
+   * @brief Executes an `AllReduce` operation copying/reducing from `send_buf`
+   * into `recv_buf`.
+   * @param send_buf Source on-device `Buffer`.
+   * @param recv_buf Destination on-device `Buffer`.
+   * @param count Number of elements to reduce.
+   * @return `Status` indicating completion status.
+   */
+  [[nodiscard]] Status all_reduce(const Buffer &send_buf, Buffer *recv_buf,
+                                  size_t count) noexcept;
+
+private:
+  /** @brief Owned opaque communicator handle. */
+  void *handle_;
 };
 
 } // namespace libtpu

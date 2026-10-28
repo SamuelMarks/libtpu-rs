@@ -266,11 +266,15 @@ pub struct LibtpuSdk_Client {
     pub host_names: Vec<CString>,
     /// Pre-allocated coordinate entries returned by `LibtpuSdk_GetChipCoordinates`.
     pub coords_entries: Vec<LibtpuSdk_ChipLocationToCoordinates>,
+    /// Owned [`LibtpuSdk_Metric`] instances allocated during `LibtpuSdk_GetMetric` calls.
+    pub metrics: Vec<Box<LibtpuSdk_Metric>>,
 }
 
 /// Opaque C handle representing a `LibtpuSdk_Error`.
 #[derive(Debug)]
 pub struct LibtpuSdk_Error {
+    /// Underlying [`libtpu_core::error::LibTpuError`] domain error.
+    pub error: libtpu_core::error::LibTpuError,
     /// Error status code.
     pub code: i32,
     /// Cached null-terminated message.

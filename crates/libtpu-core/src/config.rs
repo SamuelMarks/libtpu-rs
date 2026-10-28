@@ -166,7 +166,7 @@ impl TpuInitConfig {
             })
             .collect();
         let mut parser = lexopt::Parser::from_args(&normalized_tokens);
-        while let Some(arg) = parser.next()? {
+        while let Ok(Some(arg)) = parser.next() {
             let Arg::Long(raw_key) = arg else {
                 return Err(LibTpuError::InvalidArgument {
                     parameter: "LIBTPU_INIT_ARGS",

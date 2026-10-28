@@ -24,6 +24,7 @@ package tensorflow.tpu;
 
 import "xla/service/hlo.proto";
 import "xla/tsl/protobuf/error_codes.proto";
+import "xla/xla.proto";
 
 option cc_enable_arenas = true;
 
@@ -36,7 +37,7 @@ message CompilationResultProto {
   string status_error_message = 2;
 
   // HLO proto.
-  repeated xla.HloProto hlo_protos = 3;
+  repeated xla.HloModuleProtoWithConfig hlo_protos = 3;
 
   enum ErrorCode {
     UNKNOWN = 0;

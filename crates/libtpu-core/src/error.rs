@@ -1272,7 +1272,7 @@ impl LibTpuError {
     /// Returns structured diagnostic [`ErrorPayload`] entries for `PJRT_Error_ForEachPayload`.
     #[must_use]
     pub fn payloads(&self) -> Vec<ErrorPayload> {
-        vec![
+        let mut out = vec![
             ErrorPayload::new(
                 String::from("type.googleapis.com/xla.TpuErrorPayload"),
                 self.to_string().into_bytes(),
@@ -1281,7 +1281,78 @@ impl LibTpuError {
                 String::from("type.googleapis.com/xla.StatusCode"),
                 self.error_code().to_string().into_bytes(),
             ),
-        ]
+        ];
+        match self {
+            Self::MegascaleBarrierTimeout {
+                slice_id,
+                barrier_id,
+            } => {
+                out.push(ErrorPayload::new(
+                    String::from(
+                        "type.googleapis.com/xla.megascale.runtime.external.MegaScaleRuntimeError",
+                    ),
+                    format!("slice_id={slice_id},barrier_id={barrier_id}").into_bytes(),
+                ));
+            }
+            Self::CollectiveError {
+                communicator_id,
+                op_name,
+                reason,
+            } => {
+                out.push(ErrorPayload::new(
+                    String::from(
+                        "type.googleapis.com/xla.megascale.runtime.external.MegaScaleRuntimeError",
+                    ),
+                    format!("communicator_id={communicator_id},op={op_name},reason={reason}")
+                        .into_bytes(),
+                ));
+            }
+            Self::CompilationFailed { reason }
+            | Self::HloParseError { reason }
+            | Self::StableHloParseError { reason } => {
+                out.push(ErrorPayload::new(
+                    String::from("type.googleapis.com/tensorflow.tpu.CompilationResultProto"),
+                    reason.as_bytes().to_vec(),
+                ));
+            }
+            Self::PhaseCompilationFailed { phase_name, reason } => {
+                out.push(ErrorPayload::new(
+                    String::from("type.googleapis.com/tensorflow.tpu.CompilationResultProto"),
+                    format!("phase={phase_name}:{reason}").into_bytes(),
+                ));
+            }
+            Self::HloVerificationError {
+                instruction_name,
+                reason,
+            } => {
+                out.push(ErrorPayload::new(
+                    String::from("type.googleapis.com/tensorflow.tpu.CompilationResultProto"),
+                    format!("instruction={instruction_name}:{reason}").into_bytes(),
+                ));
+            }
+            Self::HardwareFault {
+                device_id,
+                status_csr,
+                fault_description,
+            } => {
+                out.push(ErrorPayload::new(
+                    String::from("type.googleapis.com/xla.TpuHardwareFaultPayload"),
+                    format!("device={device_id},csr={status_csr:#x},fault={fault_description}")
+                        .into_bytes(),
+                ));
+            }
+            Self::DmaAlignmentError {
+                address,
+                required_alignment,
+            } => {
+                out.push(ErrorPayload::new(
+                    String::from("type.googleapis.com/xla.TpuDmaErrorPayload"),
+                    format!("address={address:#x},align={required_alignment}").into_bytes(),
+                ));
+            }
+            _ => {}
+        }
+        out
     }
 
     /// Returns `true` if this error represents a predetermined device execution error
@@ -2019,7 +2090,15 @@ mod tests {
                 LibtpuSdkErrorCode::from_pjrt_code(expected_code)
             );
             let payloads = cloned.payloads();
-            assert_eq!(payloads.len(), 2);
+            assert!(payloads.len() >= 2);
+            assert_eq!(
+                payloads.first().map(|p| p.key.as_str()),
+                Some("type.googleapis.com/xla.TpuErrorPayload")
+            );
+            assert_eq!(
+                payloads.get(1).map(|p| p.key.as_str()),
+                Some("type.googleapis.com/xla.StatusCode")
+            );
             let _ = cloned.is_predetermined_error();
             let _ = cloned.is_cancellation_placeholder_error();
             let cloned_payload = payloads.clone();

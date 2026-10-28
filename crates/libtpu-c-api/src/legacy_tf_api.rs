@@ -2,3488 +2,1027 @@
 //!
 //! Exports `TfTpu_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*`, and `TpuDriver_*`.
 
+/// Low-level `TpuDriver_*` C API and 28-slot `TpuDriverFn` vtable entrypoints.
+pub mod driver;
+/// Legacy TensorFlow TPU embedding engine (`TpuEmbeddingEngine*`) C API entrypoints.
+pub mod embedding;
+/// Legacy TensorFlow TPU profiler (`TpuProfiler_*`) C API entrypoints.
+pub mod profiler;
+/// Legacy TensorFlow TPU runtime, status, and compilation C API entrypoints.
+pub mod runtime;
+/// Legacy TensorFlow TPU topology and mesh state C API entrypoints.
+pub mod topology;
+
 use super::*;
 
-/// Initializes the legacy TensorFlow TPU driver (`TfTpu_Initialize`).
-///
-/// # Arguments
-///
-/// * `init_library` - Whether to initialize the underlying driver library.
-/// * `num_args` - Number of CLI strings in `args`.
-/// * `args` - Optional array of CLI string pointers.
-///
-/// # Safety
-///
-/// `args` must be null or point to `num_args` null-terminated C strings.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TfTpu_Initialize(
-    init_library: bool,
-    num_args: i32,
-    args: *const *const c_char,
-) {
-    let count = usize::try_from(num_args).unwrap_or(0);
-    if !any_null(&[usize::from(init_library), count, args as usize]) {
-        // SAFETY: `args` is non-null and contains `count` string pointers.
-        let slice = unsafe { std::slice::from_raw_parts(args, count) };
-        let mut parsed = Vec::with_capacity(count);
-        for &ptr_c in slice {
-            if !ptr_c.is_null() {
-                // SAFETY: `ptr_c` is non-null and null-terminated.
-                parsed.push(unsafe { CStr::from_ptr(ptr_c).to_string_lossy().into_owned() });
-            }
-        }
-        let _ = libtpu_core::config::apply_global_cli_args(&parsed);
-        refresh_global_topology();
-    }
-}
+pub use driver::*;
+pub use embedding::*;
+pub use profiler::*;
+pub use runtime::*;
+pub use topology::*;
 
-/// TensorFlow kernel initialization hook (`TF_InitKernel`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TF_InitKernel() {}
+#[cfg(test)]
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::similar_names,
+    clippy::float_cmp
+)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
 
-/// TensorFlow `NextPluggableDevice` plugin initialization hook (`TFNPD_InitPlugin`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TFNPD_PluginParams`] (or null).
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `params` and `status` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TFNPD_InitPlugin(params: *mut TFNPD_PluginParams, status: *mut TpuStatus) {
-    if params.is_null() {
-        // SAFETY: `TpuStatus_Set` checks `status` for null.
+    #[test]
+    fn test_legacy_tf_and_tpu_driver_api_lifecycle() {
+        // SAFETY: Testing all legacy TensorFlow TPU and TpuDriver C API entrypoints.
         unsafe {
-            TpuStatus_Set(status, 3, c"TFNPD_PluginParams is null".as_ptr(), 26);
-        }
-        return;
-    }
-    // SAFETY: `params` is non-null.
-    unsafe {
-        (*params).device_type = c"TPU".as_ptr();
-        (*params).compilation_device_name = c"TPU_REPLICATED_CORE".as_ptr();
-        (*params).priority = 55;
-        (*params).is_pluggable_device = true;
-        (*params).use_pjrt_on_demand_compile = true;
-    }
-}
-
-/// Configures global TPU topology state (`SetGlobalTPUArrayOp_DoWork`).
-///
-/// # Arguments
-///
-/// * `topology_len` - Byte length of `topology_proto`.
-/// * `topology_proto` - Pointer to serialized `TpuTopologyArgsProto` bytes (or null).
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `topology_proto` and `status` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn SetGlobalTPUArrayOp_DoWork(
-    topology_len: usize,
-    topology_proto: *const c_char,
-    status: *mut TpuStatus,
-) -> i32 {
-    if topology_len > 0 && topology_proto.is_null() {
-        // SAFETY: `TpuStatus_Set` handles null `status`.
-        unsafe {
-            TpuStatus_Set(status, 3, c"topology_proto is null".as_ptr(), 22);
-        }
-        return -1;
-    }
-    if topology_len > 0 {
-        // SAFETY: `topology_proto` is non-null and `topology_len` bytes long.
-        let bytes =
-            unsafe { std::slice::from_raw_parts(topology_proto.cast::<u8>(), topology_len) };
-        if let Ok(proto) = libtpu_core::proto::TpuTopologyArgsProto::decode(bytes) {
-            let mut cfg = libtpu_core::config::global_init_config();
-            cfg.host_bounds.x = u32::try_from(proto.num_hosts.max(1)).unwrap_or(1);
-            let bx = proto.mesh_bounds.first().copied().unwrap_or(2).max(1);
-            let by = proto.mesh_bounds.get(1).copied().unwrap_or(2).max(1);
-            let bz = proto.mesh_bounds.get(2).copied().unwrap_or(1).max(1);
-            cfg.chips_per_host_bounds = libtpu_core::types::ChipCoordinates::new(
-                u32::try_from(bx).unwrap_or(2),
-                u32::try_from(by).unwrap_or(2),
-                u32::try_from(bz).unwrap_or(1),
-            );
-            libtpu_core::config::set_global_init_config(cfg);
-            refresh_global_topology();
-        }
-    }
-    0
-}
-
-/// Initializes global mesh state for distributed TensorFlow TPU execution (`InitializeCreateMeshGlobalState`).
-///
-/// # Arguments
-///
-/// * `mesh_state_len` - Byte length of `mesh_state_proto`.
-/// * `mesh_state_proto` - Pointer to serialized mesh state bytes (or null).
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `mesh_state_proto` and `status` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn InitializeCreateMeshGlobalState(
-    mesh_state_len: usize,
-    mesh_state_proto: *const c_char,
-    status: *mut TpuStatus,
-) -> i32 {
-    // SAFETY: Delegates to `SetGlobalTPUArrayOp_DoWork` with identical pointer contract.
-    unsafe { SetGlobalTPUArrayOp_DoWork(mesh_state_len, mesh_state_proto, status) }
-}
-
-/// Configures a distributed TensorFlow TPU cluster (`ConfigureDistributedTpuOp_DoWork`).
-///
-/// # Arguments
-///
-/// * `num_cores_per_host_len` - Number of elements in `num_cores_per_host`.
-/// * `num_cores_per_host` - Optional pointer to an array of core counts per host.
-/// * `output_config_len` - Optional output pointer receiving the serialized config byte length.
-/// * `output_config` - Optional output pointer receiving a heap-allocated serialized config string.
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// All pointer arguments must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ConfigureDistributedTpuOp_DoWork(
-    num_cores_per_host_len: usize,
-    num_cores_per_host: *const i32,
-    output_config_len: *mut usize,
-    output_config: *mut *mut c_char,
-    status: *mut TpuStatus,
-) -> i32 {
-    if num_cores_per_host_len > 0 && num_cores_per_host.is_null() {
-        // SAFETY: `TpuStatus_Set` checks `status` for null.
-        unsafe {
-            TpuStatus_Set(status, 3, c"num_cores_per_host is null".as_ptr(), 26);
-        }
-        return -1;
-    }
-    let topo_str = global_topology().hal.topology_spec().platform_version;
-    if !output_config_len.is_null() {
-        // SAFETY: `output_config_len` is non-null.
-        unsafe {
-            *output_config_len = topo_str.len();
-        }
-    }
-    if !output_config.is_null() {
-        let cstr = to_c_string(&topo_str);
-        // SAFETY: `output_config` is non-null.
-        unsafe {
-            *output_config = cstr.into_raw();
-        }
-    }
-    0
-}
-
-/// Queries TPU partitioned call runtime parameters (`TfTpu_GetTpuPartitionedCallParams`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuPartitionedCall_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid mutable pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TfTpu_GetTpuPartitionedCallParams(
-    params: *mut TpuPartitionedCall_Params,
-) -> i32 {
-    if params.is_null() {
-        return -1;
-    }
-    // SAFETY: `params` is non-null.
-    unsafe {
-        (*params).input_shape_opt = true;
-        (*params).group_tensors_for_packing = true;
-        (*params).minimum_input_tensors_packing = 4;
-        (*params).minimum_output_tensors_packing = 4;
-        (*params).enable_auto_xla_input_sharding = true;
-        (*params).auto_xla_input_sharding_dim = 0;
-        (*params).scoped_allocator_for_tpu_anned_call = true;
-    }
-    0
-}
-
-/// Frees a heap-allocated `char*` array (`TpuConfigurationApi_FreeCharArray`).
-///
-/// # Arguments
-///
-/// * `ptr` - Pointer previously returned by a configuration API, or null.
-///
-/// # Safety
-///
-/// `ptr` must be null or a valid `CString` raw pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuConfigurationApi_FreeCharArray(ptr: *mut c_char) {
-    if !ptr.is_null() {
-        // SAFETY: `ptr` was allocated via `CString::into_raw`.
-        unsafe {
-            drop(CString::from_raw(ptr));
-        }
-    }
-}
-
-/// Computes on-device infeed layout (`TpuTransferManager_GetInfeedLayout`).
-///
-/// # Arguments
-///
-/// * `host_shape` - Input host [`XLA_Shape`] pointer.
-/// * `infeed_shape` - Output on-device [`XLA_Shape`] pointer.
-///
-/// # Safety
-///
-/// `host_shape` and `infeed_shape` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTransferManager_GetInfeedLayout(
-    host_shape: *const XLA_Shape,
-    infeed_shape: *mut XLA_Shape,
-) -> i32 {
-    if any_null(&[host_shape as usize, infeed_shape as usize]) {
-        return -1;
-    }
-    // SAFETY: Both pointers are non-null.
-    unsafe {
-        let src = *host_shape;
-        let mut dst = src;
-        let rank = usize::try_from(src.rank.clamp(0, 8)).unwrap_or(0);
-        for (i, slot) in dst.minor_to_major.iter_mut().enumerate().take(rank) {
-            *slot = i64::try_from(rank - 1 - i).unwrap_or(0);
-        }
-        dst.tile_dims = [8, 128];
-        *infeed_shape = dst;
-    }
-    0
-}
-
-/// Queries `SparseCore` max IDs and uniques per partition (`SparseCore_GetMaxIdsAndUniques`).
-///
-/// # Arguments
-///
-/// * `table_name` - Null-terminated embedding table name.
-/// * `num_samples_per_sparse_core` - Batch samples per `SparseCore`.
-/// * `feature_width` - Embedding feature width.
-/// * `max_ids_per_partition` - Output pointer receiving max IDs per partition.
-/// * `max_unique_ids_per_partition` - Output pointer receiving max unique IDs per partition.
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// All pointers must be null or valid.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn SparseCore_GetMaxIdsAndUniques(
-    table_name: *const c_char,
-    num_samples_per_sparse_core: i64,
-    feature_width: i64,
-    max_ids_per_partition: *mut i64,
-    max_unique_ids_per_partition: *mut i64,
-    status: *mut TpuStatus,
-) -> i64 {
-    if any_null(&[
-        table_name as usize,
-        max_ids_per_partition as usize,
-        max_unique_ids_per_partition as usize,
-    ]) {
-        // SAFETY: `TpuStatus_Set` checks `status` for null.
-        unsafe {
-            TpuStatus_Set(status, 3, c"null SparseCore argument".as_ptr(), 24);
-        }
-        return -1;
-    }
-    let samples = num_samples_per_sparse_core.max(1);
-    let width = feature_width.max(1);
-    let max_ids = (samples.saturating_mul(4)).max(128);
-    let max_uniques = (samples.saturating_mul(2).min(width.saturating_mul(16))).max(64);
-    // SAFETY: Output pointers are non-null.
-    unsafe {
-        *max_ids_per_partition = max_ids;
-        *max_unique_ids_per_partition = max_uniques;
-    }
-    128
-}
-
-/// Allocates a new OK [`TpuStatus`] (`TpuStatus_New`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuStatus_New() -> *mut TpuStatus {
-    Box::into_raw(Box::new(TpuStatus {
-        inner: TpuCoreStatus::ok(),
-        c_message: to_c_string(""),
-    }))
-}
-
-/// Allocates a [`TpuStatus`] with explicit code and C message (`TpuStatus_Create`).
-///
-/// # Arguments
-///
-/// * `code` - Integer status code.
-/// * `msg` - Null-terminated UTF-8 error message pointer (or null).
-///
-/// # Safety
-///
-/// `msg` must be null or a valid null-terminated C string.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuStatus_Create(code: i32, msg: *const c_char) -> *mut TpuStatus {
-    let text = if msg.is_null() {
-        String::new()
-    } else {
-        // SAFETY: `msg` is non-null and null-terminated.
-        unsafe { CStr::from_ptr(msg).to_string_lossy().into_owned() }
-    };
-    let c_message = to_c_string(&text);
-    Box::into_raw(Box::new(TpuStatus {
-        inner: TpuCoreStatus::new(code, text),
-        c_message,
-    }))
-}
-
-/// Updates an existing [`TpuStatus`] (`TpuStatus_Set`).
-///
-/// # Arguments
-///
-/// * `status` - Mutable pointer to [`TpuStatus`].
-/// * `code` - New status code.
-/// * `msg` - Null-terminated error message pointer (or null).
-/// * `_len` - Length hint for `msg`.
-///
-/// # Safety
-///
-/// `status` and `msg` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuStatus_Set(
-    status: *mut TpuStatus,
-    code: i32,
-    msg: *const c_char,
-    _len: i32,
-) {
-    if status.is_null() {
-        return;
-    }
-    let text = if msg.is_null() {
-        String::new()
-    } else {
-        // SAFETY: `msg` is non-null.
-        unsafe { CStr::from_ptr(msg).to_string_lossy().into_owned() }
-    };
-    // SAFETY: `status` is non-null.
-    let st = unsafe { &mut *status };
-    st.c_message = to_c_string(&text);
-    st.inner.set(code, text);
-}
-
-/// Frees a [`TpuStatus`] (`TpuStatus_Free`).
-///
-/// # Arguments
-///
-/// * `status` - Pointer to [`TpuStatus`] to free, or null.
-///
-/// # Safety
-///
-/// `status` must be null or allocated by `TpuStatus_New` / `TpuStatus_Create`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuStatus_Free(status: *mut TpuStatus) {
-    if !status.is_null() {
-        // SAFETY: `status` is non-null and heap-allocated.
-        unsafe {
-            drop(Box::from_raw(status));
-        }
-    }
-}
-
-/// Returns the error message C string of a [`TpuStatus`] (`TpuStatus_Message`).
-///
-/// # Arguments
-///
-/// * `status` - Pointer to [`TpuStatus`].
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuStatus_Message(status: *const TpuStatus) -> *const c_char {
-    if status.is_null() {
-        return ptr::null();
-    }
-    // SAFETY: `status` is non-null.
-    unsafe { (*status).c_message.as_ptr() }
-}
-
-/// Returns the integer status code of a [`TpuStatus`] (`TpuStatus_Code`).
-///
-/// # Arguments
-///
-/// * `status` - Pointer to [`TpuStatus`].
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuStatus_Code(status: *const TpuStatus) -> i32 {
-    if status.is_null() {
-        return -1;
-    }
-    // SAFETY: `status` is non-null.
-    unsafe { (*status).inner.code.as_raw() }
-}
-
-/// Returns `true` if `status` is OK (`TpuStatus_Ok`).
-///
-/// # Arguments
-///
-/// * `status` - Pointer to [`TpuStatus`].
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuStatus_Ok(status: *const TpuStatus) -> bool {
-    if status.is_null() {
-        return false;
-    }
-    // SAFETY: `status` is non-null.
-    unsafe { (*status).inner.is_ok() }
-}
-
-/// Creates a new [`TfTpuOrdinalSelector`] (`TfTpuOrdinalSelector_Create`).
-///
-/// # Arguments
-///
-/// * `selector_out` - Output pointer to receive the new selector handle.
-/// * `num_cores` - Number of cores to cycle across.
-///
-/// # Safety
-///
-/// `selector_out` must be null or a valid mutable pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TfTpuOrdinalSelector_Create(
-    selector_out: *mut *mut TfTpuOrdinalSelector,
-    num_cores: i32,
-) {
-    if selector_out.is_null() {
-        return;
-    }
-    let handle = Box::into_raw(Box::new(TfTpuOrdinalSelector {
-        inner: TfTpuCoreOrdinalSelector::new(u32::try_from(num_cores.max(1)).unwrap_or(1)),
-    }));
-    // SAFETY: `selector_out` is non-null.
-    unsafe {
-        *selector_out = handle;
-    }
-}
-
-/// Destroys a [`TfTpuOrdinalSelector`] (`TfTpuOrdinalSelector_Destroy`).
-///
-/// # Arguments
-///
-/// * `selector` - Selector handle to destroy.
-///
-/// # Safety
-///
-/// `selector` must be null or allocated by `TfTpuOrdinalSelector_Create`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TfTpuOrdinalSelector_Destroy(selector: *mut TfTpuOrdinalSelector) {
-    if !selector.is_null() {
-        // SAFETY: `selector` is non-null.
-        unsafe {
-            drop(Box::from_raw(selector));
-        }
-    }
-}
-
-/// Selects the next device ordinal (`TfTpuOrdinalSelector_GetOrdinal`).
-///
-/// # Arguments
-///
-/// * `selector` - Pointer to [`TfTpuOrdinalSelector`].
-/// * `seed` - Optional request seed pointer.
-/// * `ordinal_out` - Output pointer for the selected ordinal / request ID.
-///
-/// # Safety
-///
-/// `selector`, `seed`, and `ordinal_out` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TfTpuOrdinalSelector_GetOrdinal(
-    selector: *const TfTpuOrdinalSelector,
-    seed: *mut u64,
-    ordinal_out: *mut i64,
-) -> i32 {
-    if any_null(&[selector as usize, ordinal_out as usize]) {
-        return -1;
-    }
-    // SAFETY: `selector` and `ordinal_out` are non-null.
-    let ord = unsafe { (*selector).inner.get_ordinal() };
-    // SAFETY: `ordinal_out` is non-null.
-    unsafe {
-        *ordinal_out = ord;
-        if !seed.is_null() {
-            *seed = (*seed).wrapping_add(1);
-        }
-    }
-    i32::try_from(ord).unwrap_or(0)
-}
-
-/// Dequeues a reserved ordinal from the core selector (`TfTpuOrdinalSelector_DequeueFromCoreSelector`).
-///
-/// # Arguments
-///
-/// * `selector` - Pointer to [`TfTpuOrdinalSelector`] (or null).
-/// * `device_ordinal` - Device ordinal to release.
-/// * `req_id` - Request identifier.
-///
-/// # Safety
-///
-/// `selector` must be null or a valid pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TfTpuOrdinalSelector_DequeueFromCoreSelector(
-    selector: *mut TfTpuOrdinalSelector,
-    device_ordinal: i32,
-    req_id: i64,
-) {
-    if !selector.is_null() && device_ordinal >= 0 && req_id >= 0 {
-        // SAFETY: `selector` is non-null.
-        unsafe {
-            (*selector).inner.dequeue_ordinal(device_ordinal, req_id);
-        }
-    }
-}
-
-/// Builds a [`TpuTopology`] from a [`TpuInitConfig`].
-///
-/// # Arguments
-///
-/// * `cfg` - Runtime configuration describing generation and host/chip bounds.
-fn build_topology_from_config(cfg: &TpuInitConfig) -> TpuTopology {
-    let hal = SimulatedTpuHal::new(cfg);
-    let spec = hal.topology_spec();
-    let core_locations = spec
-        .devices
-        .iter()
-        .map(|d| TpuCoreLocation {
-            core_id: i32::try_from(d.device_id.0).unwrap_or(0),
-            index_on_chip: i32::try_from(d.core_on_chip.0).unwrap_or(0),
-            chip_x: i32::try_from(d.chip_coords.x).unwrap_or(0),
-            chip_y: i32::try_from(d.chip_coords.y).unwrap_or(0),
-            chip_z: i32::try_from(d.chip_coords.z).unwrap_or(0),
-        })
-        .collect();
-    TpuTopology {
-        hal,
-        core_locations,
-    }
-}
-
-/// Global mutable `TpuTopology` pointer synchronized with `global_init_config`.
-static GLOBAL_TOPOLOGY: OnceLock<parking_lot::Mutex<usize>> = OnceLock::new();
-
-/// Returns a reference to the global [`TpuTopology`] pointer mutex.
-fn global_topology_mutex() -> &'static parking_lot::Mutex<usize> {
-    GLOBAL_TOPOLOGY.get_or_init(|| {
-        let cfg = libtpu_core::config::global_init_config();
-        let ptr_val = Box::into_raw(Box::new(build_topology_from_config(&cfg))) as usize;
-        parking_lot::Mutex::new(ptr_val)
-    })
-}
-
-/// Rebuilds the global [`TpuTopology`] from [`libtpu_core::config::global_init_config`].
-fn refresh_global_topology() {
-    let cfg = libtpu_core::config::global_init_config();
-    let ptr_val = Box::into_raw(Box::new(build_topology_from_config(&cfg))) as usize;
-    *global_topology_mutex().lock() = ptr_val;
-}
-
-/// Returns a static reference to the current global [`TpuTopology`].
-fn global_topology() -> &'static TpuTopology {
-    let addr = *global_topology_mutex().lock();
-    // SAFETY: `addr` points to a heap-allocated `TpuTopology` with static lifetime.
-    unsafe { &*(addr as *const TpuTopology) }
-}
-
-/// Resolves `topo` to either `&*topo` (if non-null) or `global_topology()`.
-///
-/// # Arguments
-///
-/// * `topo` - Optional [`TpuTopology`] pointer.
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[inline]
-unsafe fn resolve_topology<'a>(topo: *const TpuTopology) -> &'a TpuTopology {
-    if topo.is_null() {
-        global_topology()
-    } else {
-        // SAFETY: `topo` is non-null.
-        unsafe { &*topo }
-    }
-}
-
-/// Returns a pointer to the singleton [`TpuTopology`] (`TpuUtil_GetTopologyPtr`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuUtil_GetTopologyPtr() -> *const TpuTopology {
-    ptr::from_ref(global_topology())
-}
-
-/// Returns the XLA minor-dimension alignment pad size (`TpuUtil_GetXlaPadSizeFromTpuTopology`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuUtil_GetXlaPadSizeFromTpuTopology() -> i32 {
-    global_topology()
-        .hal
-        .topology_spec()
-        .generation
-        .xla_pad_size()
-}
-
-/// Returns the number of logical devices per host (`TpuTopology_LogicalDevicesPerHost`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_LogicalDevicesPerHost(
-    topo: *const TpuTopology,
-    core_type: i32,
-) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    unsafe { TpuTopology_NumCores(topo, core_type) }
-}
-
-/// Returns the number of logical devices per chip (`TpuTopology_LogicalDevicesPerChip`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_LogicalDevicesPerChip(
-    topo: *const TpuTopology,
-    core_type: i32,
-) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    let tc_per_chip =
-        i32::try_from(t.hal.topology_spec().generation.logical_devices_per_chip()).unwrap_or(1);
-    if core_type == 1 {
-        let sc_per_dev =
-            i32::try_from(t.hal.topology_spec().generation.sparse_cores_per_device()).unwrap_or(0);
-        tc_per_chip.saturating_mul(sc_per_dev.max(1))
-    } else {
-        tc_per_chip
-    }
-}
-
-/// Returns the total host count in the topology (`TpuTopology_HostCount`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_HostCount(topo: *const TpuTopology) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    let bounds = t.hal.topology_spec().host_bounds;
-    i32::try_from((bounds.x * bounds.y * bounds.z).max(1)).unwrap_or(1)
-}
-
-/// Returns the number of chips per host (`TpuTopology_ChipsPerHost`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_ChipsPerHost(topo: *const TpuTopology) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    i32::try_from(t.hal.topology_spec().chips_per_host).unwrap_or(1)
-}
-
-/// Returns the X mesh bound (`TpuTopology_ChipBounds_X`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_ChipBounds_X(topo: *const TpuTopology) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    i32::try_from(t.hal.topology_spec().chip_bounds.x).unwrap_or(1)
-}
-
-/// Returns the Y mesh bound (`TpuTopology_ChipBounds_Y`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_ChipBounds_Y(topo: *const TpuTopology) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    i32::try_from(t.hal.topology_spec().chip_bounds.y).unwrap_or(1)
-}
-
-/// Returns the Z mesh bound (`TpuTopology_ChipBounds_Z`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_ChipBounds_Z(topo: *const TpuTopology) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    i32::try_from(t.hal.topology_spec().chip_bounds.z).unwrap_or(1)
-}
-
-/// Checks whether chip `(x, y, z)` exists in the topology (`TpuTopology_HasChip`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `x` - Chip X coordinate.
-/// * `y` - Chip Y coordinate.
-/// * `z` - Chip Z coordinate.
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_HasChip(
-    topo: *const TpuTopology,
-    x: i32,
-    y: i32,
-    z: i32,
-) -> bool {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    let bounds = t.hal.topology_spec().chip_bounds;
-    let Ok(ux) = u32::try_from(x) else {
-        return false;
-    };
-    let Ok(uy) = u32::try_from(y) else {
-        return false;
-    };
-    let Ok(uz) = u32::try_from(z) else {
-        return false;
-    };
-    ux < bounds.x && uy < bounds.y && uz < bounds.z
-}
-
-/// Looks up a [`TpuCoreLocation`] by core ID (`TpuTopology_CoreForId`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `_core_type` - Core type discriminant.
-/// * `id` - Core ID.
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_CoreForId(
-    topo: *const TpuTopology,
-    _core_type: i32,
-    id: i32,
-) -> *const TpuCoreLocation {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    let idx = usize::try_from(id).unwrap_or(usize::MAX);
-    t.core_locations.get(idx).map_or(ptr::null(), ptr::from_ref)
-}
-
-/// Looks up a [`TpuCoreLocation`] by coordinates and index (`TpuTopology_Core`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `_core_type` - Core type discriminant.
-/// * `x` - Chip X coordinate.
-/// * `y` - Chip Y coordinate.
-/// * `z` - Chip Z coordinate.
-/// * `index` - Core index on chip.
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_Core(
-    topo: *const TpuTopology,
-    _core_type: i32,
-    x: i32,
-    y: i32,
-    z: i32,
-    index: i32,
-) -> *const TpuCoreLocation {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    t.core_locations
-        .iter()
-        .find(|c| (c.chip_x, c.chip_y, c.chip_z, c.index_on_chip) == (x, y, z, index))
-        .map_or(ptr::null(), ptr::from_ref)
-}
-
-/// Returns the total number of cores in the topology (`TpuTopology_NumCores`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_NumCores(topo: *const TpuTopology, core_type: i32) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    let tc_count = i32::try_from(t.core_locations.len()).unwrap_or(0);
-    if core_type == 1 {
-        let sc_per_dev =
-            i32::try_from(t.hal.topology_spec().generation.sparse_cores_per_device()).unwrap_or(0);
-        tc_count.saturating_mul(sc_per_dev.max(1))
-    } else {
-        tc_count
-    }
-}
-
-/// Copies pointers to all [`TpuCoreLocation`] entries into `cores_out` (`TpuTopology_Cores`).
-///
-/// # Arguments
-///
-/// * `topo` - Topology handle.
-/// * `_core_type` - Core type enum.
-/// * `cores_out` - Output array of `*const TpuCoreLocation`.
-///
-/// # Safety
-///
-/// `cores_out` must be null or point to an array of at least `TpuTopology_NumCores` pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_Cores(
-    topo: *const TpuTopology,
-    _core_type: i32,
-    cores_out: *mut *const TpuCoreLocation,
-) {
-    if cores_out.is_null() {
-        return;
-    }
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    for (idx, loc) in t.core_locations.iter().enumerate() {
-        // SAFETY: Caller guarantees capacity of `cores_out`.
-        unsafe {
-            *cores_out.add(idx) = ptr::from_ref(loc);
-        }
-    }
-}
-
-/// Returns host ID for host coordinates (`TpuTopology_IdForHost`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `x` - Host X coordinate.
-/// * `y` - Host Y coordinate.
-/// * `z` - Host Z coordinate.
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_IdForHost(
-    topo: *const TpuTopology,
-    x: i32,
-    y: i32,
-    z: i32,
-) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    let hb = t.hal.topology_spec().host_bounds;
-    let hx = i32::try_from(hb.x.max(1)).unwrap_or(1);
-    let hy = i32::try_from(hb.y.max(1)).unwrap_or(1);
-    x.max(0) + y.max(0) * hx + z.max(0) * hx * hy
-}
-
-/// Returns the `TpuVersionEnum` integer of the topology (`TpuTopology_Version`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_Version(topo: *const TpuTopology) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    t.hal.topology_spec().generation as i32
-}
-
-/// Queries available core count (`TpuTopology_AvailableCoreCount`).
-///
-/// # Arguments
-///
-/// * `_mesh_state` - Optional [`TpuMeshState`] pointer.
-/// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuTopology_AvailableCoreCount(
-    _mesh_state: *const TpuMeshState,
-    core_type: i32,
-) -> i32 {
-    // SAFETY: Passing null uses `global_topology()`.
-    unsafe { TpuTopology_NumCores(ptr::null(), core_type) }
-}
-
-/// Queries available cores per chip (`TpuTopology_AvailableCoresPerChip`).
-///
-/// # Arguments
-///
-/// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuTopology_AvailableCoresPerChip(core_type: i32) -> i32 {
-    // SAFETY: Passing null uses `global_topology()`.
-    unsafe { TpuTopology_LogicalDevicesPerChip(ptr::null(), core_type) }
-}
-
-/// Queries `SparseCores` per logical device (`TpuTopology_MaybeAvailableSparseCoresPerLogicalDevice`).
-///
-/// # Arguments
-///
-/// * `_core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuTopology_MaybeAvailableSparseCoresPerLogicalDevice(_core_type: i32) -> i32 {
-    i32::try_from(
-        global_topology()
-            .hal
-            .topology_spec()
-            .generation
-            .sparse_cores_per_device(),
-    )
-    .unwrap_or(0)
-}
-
-/// Writes the `(x, y, z)` chip coordinates of `core` (`TpuCoreLocation_ChipCoordinates`).
-///
-/// # Arguments
-///
-/// * `core` - Pointer to [`TpuCoreLocation`].
-/// * `x_out` - Output X coordinate pointer.
-/// * `y_out` - Output Y coordinate pointer.
-/// * `z_out` - Output Z coordinate pointer.
-///
-/// # Safety
-///
-/// All pointers must be null or valid.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuCoreLocation_ChipCoordinates(
-    core: *const TpuCoreLocation,
-    x_out: *mut i32,
-    y_out: *mut i32,
-    z_out: *mut i32,
-) {
-    if any_null(&[
-        core as usize,
-        x_out as usize,
-        y_out as usize,
-        z_out as usize,
-    ]) {
-        return;
-    }
-    // SAFETY: Validated non-null above.
-    unsafe {
-        *x_out = (*core).chip_x;
-        *y_out = (*core).chip_y;
-        *z_out = (*core).chip_z;
-    }
-}
-
-/// Writes the `(x, y, z)` host coordinates of `core` (`TpuCoreLocation_HostCoordinates`).
-///
-/// # Arguments
-///
-/// * `core` - Pointer to [`TpuCoreLocation`].
-/// * `x_out` - Output X coordinate pointer.
-/// * `y_out` - Output Y coordinate pointer.
-/// * `z_out` - Output Z coordinate pointer.
-///
-/// # Safety
-///
-/// All pointers must be null or valid.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuCoreLocation_HostCoordinates(
-    core: *const TpuCoreLocation,
-    x_out: *mut i32,
-    y_out: *mut i32,
-    z_out: *mut i32,
-) {
-    if any_null(&[
-        core as usize,
-        x_out as usize,
-        y_out as usize,
-        z_out as usize,
-    ]) {
-        return;
-    }
-    let hb = global_topology().hal.topology_spec().host_bounds;
-    // SAFETY: Validated non-null above.
-    unsafe {
-        *x_out = (*core).chip_x % i32::try_from(hb.x.max(1)).unwrap_or(1);
-        *y_out = (*core).chip_y % i32::try_from(hb.y.max(1)).unwrap_or(1);
-        *z_out = (*core).chip_z % i32::try_from(hb.z.max(1)).unwrap_or(1);
-    }
-}
-
-/// Returns the core index on chip (`TpuCoreLocation_Index`).
-///
-/// # Arguments
-///
-/// * `core` - Pointer to [`TpuCoreLocation`].
-///
-/// # Safety
-///
-/// `core` must be null or a valid pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuCoreLocation_Index(core: *const TpuCoreLocation) -> i32 {
-    if core.is_null() {
-        return -1;
-    }
-    // SAFETY: `core` is non-null.
-    unsafe { (*core).index_on_chip }
-}
-
-/// Returns the global core ID (`TpuCoreLocation_Id`).
-///
-/// # Arguments
-///
-/// * `core` - Pointer to [`TpuCoreLocation`].
-///
-/// # Safety
-///
-/// `core` must be null or a valid pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuCoreLocation_Id(core: *const TpuCoreLocation) -> i32 {
-    if core.is_null() {
-        return -1;
-    }
-    // SAFETY: `core` is non-null.
-    unsafe { (*core).core_id }
-}
-
-/// Returns the host ID of a host location (`TpuHostLocation_Id`).
-///
-/// # Arguments
-///
-/// * `host` - Pointer to [`TpuHostLocation`] (or null).
-///
-/// # Safety
-///
-/// `host` must be null or a valid pointer to [`TpuHostLocation`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuHostLocation_Id(host: *const TpuHostLocation) -> i32 {
-    if host.is_null() {
-        0
-    } else {
-        // SAFETY: `host` is non-null.
-        unsafe { (*host).host_id }
-    }
-}
-
-/// Returns the number of cores on a host location (`TpuHostLocation_NumCores`).
-///
-/// # Arguments
-///
-/// * `host` - Pointer to [`TpuHostLocation`] (or null).
-/// * `core_type` - Core type discriminant.
-///
-/// # Safety
-///
-/// `host` must be null or a valid pointer to [`TpuHostLocation`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuHostLocation_NumCores(
-    host: *const TpuHostLocation,
-    core_type: i32,
-) -> i32 {
-    if !host.is_null() {
-        // SAFETY: `host` is non-null.
-        let n = unsafe { (*host).num_cores };
-        if n > 0 {
-            return n;
-        }
-    }
-    // SAFETY: Passing null uses `global_topology()`.
-    unsafe { TpuTopology_NumCores(ptr::null(), core_type) }
-}
-
-/// Copies core pointers on a host location (`TpuHostLocation_Cores`).
-///
-/// # Arguments
-///
-/// * `_host` - Host location handle.
-/// * `core_type` - Core type enum.
-/// * `cores_out` - Output array of `*const TpuCoreLocation`.
-///
-/// # Safety
-///
-/// `cores_out` must be null or point to an array of sufficient size.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuHostLocation_Cores(
-    _host: *const TpuHostLocation,
-    core_type: i32,
-    cores_out: *mut *const TpuCoreLocation,
-) {
-    // SAFETY: Delegates to `TpuTopology_Cores`.
-    unsafe {
-        TpuTopology_Cores(ptr::null(), core_type, cores_out);
-    }
-}
-
-/// Creates a [`TpuMeshState`] (`TpuMeshState_Create`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuMeshState_Create() -> *mut TpuMeshState {
-    Box::into_raw(Box::new(TpuMeshState {
-        mesh_common_state: 1,
-    }))
-}
-
-/// Frees a [`TpuMeshState`] (`TpuMeshState_Free`).
-///
-/// # Arguments
-///
-/// * `state` - Pointer to [`TpuMeshState`].
-///
-/// # Safety
-///
-/// `state` must be null or allocated by `TpuMeshState_Create`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuMeshState_Free(state: *mut TpuMeshState) {
-    if !state.is_null() {
-        // SAFETY: `state` is non-null.
-        unsafe {
-            drop(Box::from_raw(state));
-        }
-    }
-}
-
-/// Returns the internal mesh common state pointer (`TpuMeshState_MeshCommonState`).
-///
-/// # Arguments
-///
-/// * `state` - Pointer to [`TpuMeshState`].
-///
-/// # Safety
-///
-/// `state` must be null or a valid pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuMeshState_MeshCommonState(
-    state: *const TpuMeshState,
-) -> *const std::ffi::c_void {
-    if state.is_null() {
-        return ptr::null();
-    }
-    state.cast::<std::ffi::c_void>()
-}
-
-/// Creates a [`TpuProfiler`] session (`TpuProfiler_Create`).
-///
-/// # Arguments
-///
-/// * `profiler_out` - Output pointer for the created [`TpuProfiler`].
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `profiler_out` must be null or a valid mutable pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuProfiler_Create(
-    profiler_out: *mut *mut TpuProfiler,
-    status: *mut TpuStatus,
-) {
-    if profiler_out.is_null() {
-        // SAFETY: `status` may be null; `TpuStatus_Set` checks for null.
-        unsafe {
-            TpuStatus_Set(status, 3, c"profiler_out is null".as_ptr(), 20);
-        }
-        return;
-    }
-    let handle = Box::into_raw(Box::new(TpuProfiler {
-        inner: TpuCoreProfiler::new(),
-    }));
-    // SAFETY: `profiler_out` is non-null.
-    unsafe {
-        *profiler_out = handle;
-    }
-}
-
-/// Destroys a [`TpuProfiler`] session (`TpuProfiler_Destroy`).
-///
-/// # Arguments
-///
-/// * `profiler` - Pointer to [`TpuProfiler`].
-///
-/// # Safety
-///
-/// `profiler` must be null or allocated by `TpuProfiler_Create`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuProfiler_Destroy(profiler: *mut TpuProfiler) {
-    if !profiler.is_null() {
-        // SAFETY: `profiler` is non-null.
-        unsafe {
-            drop(Box::from_raw(profiler));
-        }
-    }
-}
-
-/// Starts a [`TpuProfiler`] session (`TpuProfiler_Start`).
-///
-/// # Arguments
-///
-/// * `profiler` - Pointer to [`TpuProfiler`].
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `profiler` and `status` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuProfiler_Start(profiler: *mut TpuProfiler, status: *mut TpuStatus) {
-    if profiler.is_null() {
-        // SAFETY: `TpuStatus_Set` handles null `status`.
-        unsafe {
-            TpuStatus_Set(status, 3, c"profiler is null".as_ptr(), 16);
-        }
-        return;
-    }
-    // SAFETY: `profiler` is non-null.
-    if let Err(err) = unsafe { (*profiler).inner.start() } {
-        let msg = to_c_string(&err.to_string());
-        // SAFETY: `TpuStatus_Set` handles null `status`.
-        unsafe {
-            TpuStatus_Set(status, err.error_code().as_raw(), msg.as_ptr(), 0);
-        }
-    }
-}
-
-/// Stops a [`TpuProfiler`] session (`TpuProfiler_Stop`).
-///
-/// # Arguments
-///
-/// * `profiler` - Pointer to [`TpuProfiler`].
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `profiler` and `status` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuProfiler_Stop(profiler: *mut TpuProfiler, status: *mut TpuStatus) {
-    if profiler.is_null() {
-        // SAFETY: `TpuStatus_Set` handles null `status`.
-        unsafe {
-            TpuStatus_Set(status, 3, c"profiler is null".as_ptr(), 16);
-        }
-        return;
-    }
-    // SAFETY: `profiler` is non-null.
-    if let Err(err) = unsafe { (*profiler).inner.stop() } {
-        let msg = to_c_string(&err.to_string());
-        // SAFETY: `TpuStatus_Set` handles null `status`.
-        unsafe {
-            TpuStatus_Set(status, err.error_code().as_raw(), msg.as_ptr(), 0);
-        }
-    }
-}
-
-/// Collects serialized `XSpace` profiling data from `profiler` (`TpuProfiler_CollectData`).
-///
-/// # Arguments
-///
-/// * `profiler` - Pointer to [`TpuProfiler`].
-/// * `status` - Optional [`TpuStatus`] pointer.
-/// * `buffer` - Optional destination byte buffer (`NULL` to query required size).
-/// * `size_in_bytes` - In/out buffer byte size pointer.
-///
-/// # Safety
-///
-/// All pointers must be null or valid.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuProfiler_CollectData(
-    profiler: *mut TpuProfiler,
-    status: *mut TpuStatus,
-    buffer: *mut u8,
-    size_in_bytes: *mut usize,
-) {
-    if any_null(&[profiler as usize, size_in_bytes as usize]) {
-        // SAFETY: `TpuStatus_Set` handles null `status`.
-        unsafe {
-            TpuStatus_Set(status, 3, c"null profiler or size".as_ptr(), 21);
-        }
-        return;
-    }
-    // SAFETY: `profiler` is non-null.
-    let bytes = unsafe { (*profiler).inner.collect_xspace_bytes() };
-    // SAFETY: `size_in_bytes` is non-null.
-    unsafe {
-        *size_in_bytes = bytes.len();
-    }
-    if !buffer.is_null() {
-        // SAFETY: Caller guarantees `buffer` has at least `bytes.len()` capacity.
-        unsafe {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, bytes.len());
-        }
-    }
-}
-
-/// Creates a [`TpuEmbeddingEngineState`] (`TpuEmbeddingEngineState_Create`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuEmbeddingEngineState_Create() -> *mut TpuEmbeddingEngineState {
-    Box::into_raw(Box::new(TpuEmbeddingEngineState {
-        inner: TpuCoreEmbeddingEngine::new(),
-    }))
-}
-
-/// Frees a [`TpuEmbeddingEngineState`] (`TpuEmbeddingEngineState_Free`).
-///
-/// # Arguments
-///
-/// * `state` - Pointer to [`TpuEmbeddingEngineState`].
-///
-/// # Safety
-///
-/// `state` must be null or allocated by `TpuEmbeddingEngineState_Create`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngineState_Free(state: *mut TpuEmbeddingEngineState) {
-    if !state.is_null() {
-        // SAFETY: `state` is non-null.
-        unsafe {
-            drop(Box::from_raw(state));
-        }
-    }
-}
-
-/// Returns the internal pointer of a [`TpuEmbeddingEngineState`] (`TpuEmbeddingEngineState_GetState`).
-///
-/// # Arguments
-///
-/// * `state` - Pointer to [`TpuEmbeddingEngineState`].
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuEmbeddingEngineState_GetState(
-    state: *const TpuEmbeddingEngineState,
-) -> *const std::ffi::c_void {
-    state.cast::<std::ffi::c_void>()
-}
-
-/// Process-wide [`TpuCoreEmbeddingEngine`] backing `TpuEmbeddingEngine_*` C entrypoints.
-static GLOBAL_EMBEDDING_ENGINE: OnceLock<parking_lot::Mutex<TpuCoreEmbeddingEngine>> =
-    OnceLock::new();
-
-/// Returns a reference to the process-wide [`parking_lot::Mutex<TpuCoreEmbeddingEngine>`].
-fn global_embedding_engine() -> &'static parking_lot::Mutex<TpuCoreEmbeddingEngine> {
-    GLOBAL_EMBEDDING_ENGINE.get_or_init(|| parking_lot::Mutex::new(TpuCoreEmbeddingEngine::new()))
-}
-
-/// Executes the TPU embedding partitioner (`TpuEmbeddingEngine_ExecutePartitioner`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_ExecutePartitioner_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_ExecutePartitioner_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_ExecutePartitioner(
-    params: *mut TpuEmbeddingEngine_ExecutePartitioner_Params,
-) -> i32 {
-    if params.is_null() {
-        return 0;
-    }
-    // SAFETY: `params` is non-null.
-    let p = unsafe { &mut *params };
-    if p.struct_size == 0 {
-        // SAFETY: `TpuStatus_Set` checks `p.status` for null.
-        unsafe {
-            TpuStatus_Set(p.status, 3, c"invalid struct_size".as_ptr(), 19);
-        }
-        return -1;
-    }
-    let cfg_bytes = if p.tpu_embedding_config_bytes.is_null() {
-        b"default_table" as &[u8]
-    } else {
-        // SAFETY: `tpu_embedding_config_bytes` is non-null with `tpu_embedding_config_size` bytes.
-        unsafe {
-            std::slice::from_raw_parts(
-                p.tpu_embedding_config_bytes.cast::<u8>(),
-                p.tpu_embedding_config_size,
-            )
-        }
-    };
-    let mut eng = global_embedding_engine().lock();
-    let partitioned = eng.execute_partitioner(cfg_bytes);
-    drop(eng);
-    if !p.common_config_string_size.is_null() {
-        // SAFETY: `p.common_config_string_size` is non-null.
-        unsafe {
-            *p.common_config_string_size = partitioned.len();
-        }
-    }
-    if !p.common_config_string.is_null() {
-        let cstr = to_c_string(&String::from_utf8_lossy(&partitioned));
-        // SAFETY: `p.common_config_string` is non-null.
-        unsafe {
-            *p.common_config_string = cstr.into_raw();
-        }
-    }
-    0
-}
-
-/// Configures HBM memory for embedding tables (`TpuEmbeddingEngine_ConfigureMemory`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_ConfigureMemory_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_ConfigureMemory_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_ConfigureMemory(
-    params: *mut TpuEmbeddingEngine_ConfigureMemory_Params,
-) -> i32 {
-    if params.is_null() {
-        return 0;
-    }
-    // SAFETY: `params` is non-null.
-    let p = unsafe { &mut *params };
-    if p.struct_size == 0 {
-        // SAFETY: `TpuStatus_Set` checks `p.status` for null.
-        unsafe {
-            TpuStatus_Set(p.status, 3, c"invalid struct_size".as_ptr(), 19);
-        }
-        return -1;
-    }
-    let cfg_bytes = if p.common_config_string.is_null() {
-        Vec::from(b"hbm_memory_cfg" as &[u8])
-    } else {
-        // SAFETY: `p.common_config_string` is non-null with `p.common_config_string_size` bytes.
-        unsafe {
-            std::slice::from_raw_parts(
-                p.common_config_string.cast::<u8>(),
-                p.common_config_string_size,
-            )
-            .to_vec()
-        }
-    };
-    let mut eng = global_embedding_engine().lock();
-    eng.configure_memory(cfg_bytes.clone());
-    drop(eng);
-    if !p.task_host_config_size.is_null() {
-        // SAFETY: `p.task_host_config_size` is non-null.
-        unsafe {
-            *p.task_host_config_size = cfg_bytes.len();
-        }
-    }
-    if !p.task_host_config.is_null() {
-        // SAFETY: `p.task_host_config` is non-null.
-        unsafe {
-            *p.task_host_config = to_c_string(&String::from_utf8_lossy(&cfg_bytes)).into_raw();
-        }
-    }
-    0
-}
-
-/// Collates HBM memory across hosts (`TpuEmbeddingEngine_CollateMemory`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_CollateMemory_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_CollateMemory_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_CollateMemory(
-    params: *mut TpuEmbeddingEngine_CollateMemory_Params,
-) -> i32 {
-    if params.is_null() {
-        return 0;
-    }
-    // SAFETY: `params` is non-null.
-    let p = unsafe { &mut *params };
-    if p.struct_size == 0 {
-        // SAFETY: `TpuStatus_Set` checks `p.status` for null.
-        unsafe {
-            TpuStatus_Set(p.status, 3, c"invalid struct_size".as_ptr(), 19);
-        }
-        return -1;
-    }
-    let collated = global_embedding_engine().lock().collate_memory();
-    if !p.collated_size.is_null() {
-        // SAFETY: `p.collated_size` is non-null.
-        unsafe {
-            *p.collated_size = collated.len();
-        }
-    }
-    0
-}
-
-/// Configures host embedding state (`TpuEmbeddingEngine_ConfigureHost`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_ConfigureHost_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_ConfigureHost_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_ConfigureHost(
-    params: *mut TpuEmbeddingEngine_ConfigureHost_Params,
-) -> i32 {
-    if params.is_null() {
-        return 0;
-    }
-    // SAFETY: `params` is non-null.
-    let p = unsafe { &mut *params };
-    if p.struct_size == 0 {
-        // SAFETY: `TpuStatus_Set` checks `p.status` for null.
-        unsafe {
-            TpuStatus_Set(p.status, 3, c"invalid struct_size".as_ptr(), 19);
-        }
-        return -1;
-    }
-    let host_slice: &[u8] = if p.common_config_string.is_null() {
-        b"host_0"
-    } else {
-        // SAFETY: `p.common_config_string` is non-null with `p.common_config_string_size` bytes.
-        unsafe {
-            std::slice::from_raw_parts(
-                p.common_config_string.cast::<u8>(),
-                p.common_config_string_size,
-            )
-        }
-    };
-    let mut eng = global_embedding_engine().lock();
-    let net_cfg = eng.configure_host(host_slice);
-    drop(eng);
-    if !p.network_config_size.is_null() {
-        // SAFETY: `p.network_config_size` is non-null.
-        unsafe {
-            *p.network_config_size = net_cfg.len();
-        }
-    }
-    if !p.network_config.is_null() {
-        // SAFETY: `p.network_config` is non-null.
-        unsafe {
-            *p.network_config = to_c_string(&String::from_utf8_lossy(&net_cfg)).into_raw();
-        }
-    }
-    0
-}
-
-/// Connects inter-host embedding channels (`TpuEmbeddingEngine_ConnectHosts`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_ConnectHosts_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_ConnectHosts_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_ConnectHosts(
-    params: *mut TpuEmbeddingEngine_ConnectHosts_Params,
-) -> i32 {
-    if params.is_null() {
-        return 0;
-    }
-    // SAFETY: `params` is non-null.
-    let p = unsafe { &mut *params };
-    if p.struct_size == 0 {
-        // SAFETY: `TpuStatus_Set` checks `p.status` for null.
-        unsafe {
-            TpuStatus_Set(p.status, 3, c"invalid struct_size".as_ptr(), 19);
-        }
-        return -1;
-    }
-    global_embedding_engine().lock().connect_hosts();
-    0
-}
-
-/// Finalizes embedding engine initialization (`TpuEmbeddingEngine_Finalize`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_Finalize_Params`] or [`TpuEmbeddingEngineState`].
-///
-/// # Safety
-///
-/// `params` must be null or a valid mutable pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_Finalize(
-    params: *mut TpuEmbeddingEngine_Finalize_Params,
-) -> i32 {
-    if params.is_null() {
-        return -1;
-    }
-    global_embedding_engine().lock().finalize();
-    0
-}
-
-/// Checks if the embedding engine is initialized (`TpuEmbeddingEngine_IsInitialized`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_IsInitialized_Params`].
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_IsInitialized(
-    params: *const TpuEmbeddingEngine_IsInitialized_Params,
-) -> bool {
-    if params.is_null() {
-        return false;
-    }
-    let is_init = global_embedding_engine().lock().initialized;
-    // SAFETY: `params` is non-null; write `is_init` if `is_embedding_initialized` is non-null.
-    unsafe {
-        if !(*params).is_embedding_initialized.is_null() {
-            *(*params).is_embedding_initialized = is_init;
-        }
-    }
-    is_init
-}
-
-/// Writes embedding parameters (`TpuEmbeddingEngine_WriteParameters`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_WriteParameters_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_WriteParameters_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_WriteParameters(
-    params: *mut TpuEmbeddingEngine_WriteParameters_Params,
-) -> i32 {
-    if params.is_null() {
-        return 0;
-    }
-    // SAFETY: `params` is non-null.
-    let p = unsafe { &mut *params };
-    if p.struct_size == 0 {
-        // SAFETY: `TpuStatus_Set` checks `p.status` for null.
-        unsafe {
-            TpuStatus_Set(p.status, 3, c"invalid struct_size".as_ptr(), 19);
-        }
-        return -1;
-    }
-    let table_name = if !p.table_name.is_null() {
-        // SAFETY: `table_name` has `table_name_len` bytes.
-        String::from_utf8_lossy(unsafe {
-            std::slice::from_raw_parts(p.table_name.cast::<u8>(), p.table_name_len)
-        })
-        .into_owned()
-    } else if !p.priv_data.is_null() {
-        // SAFETY: When `priv_data` is non-null, treat as a null-terminated table name C-string.
-        unsafe { CStr::from_ptr(p.priv_data.cast::<c_char>()) }
-            .to_string_lossy()
-            .into_owned()
-    } else {
-        String::from("default_table")
-    };
-    let num_floats = p.num_parameters.max(4);
-    let byte_len = num_floats * 4;
-    let payload = if p.parameters.is_null() {
-        vec![0_u8; byte_len]
-    } else {
-        // SAFETY: Caller provides at least `byte_len` bytes at `p.parameters` when non-null.
-        unsafe { std::slice::from_raw_parts(p.parameters.cast::<u8>(), byte_len).to_vec() }
-    };
-    if !p.num_parameters_written_or_read.is_null() {
-        // SAFETY: Writing output count of float parameters written.
-        unsafe {
-            *p.num_parameters_written_or_read = num_floats;
-        }
-    }
-    global_embedding_engine()
-        .lock()
-        .write_parameters(table_name, payload);
-    0
-}
-
-/// Reads embedding parameters (`TpuEmbeddingEngine_ReadParameters`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_WriteParameters_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_WriteParameters_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_ReadParameters(
-    params: *mut TpuEmbeddingEngine_WriteParameters_Params,
-) -> i32 {
-    if params.is_null() {
-        return 0;
-    }
-    // SAFETY: `params` is non-null.
-    let p = unsafe { &mut *params };
-    if p.struct_size == 0 {
-        // SAFETY: `TpuStatus_Set` checks `p.status` for null.
-        unsafe {
-            TpuStatus_Set(p.status, 3, c"invalid struct_size".as_ptr(), 19);
-        }
-        return -1;
-    }
-    let table_name = if !p.table_name.is_null() {
-        // SAFETY: `table_name` has `table_name_len` bytes.
-        String::from_utf8_lossy(unsafe {
-            std::slice::from_raw_parts(p.table_name.cast::<u8>(), p.table_name_len)
-        })
-        .into_owned()
-    } else if !p.priv_data.is_null() {
-        // SAFETY: When `priv_data` is non-null, treat as a null-terminated table name C-string.
-        unsafe { CStr::from_ptr(p.priv_data.cast::<c_char>()) }
-            .to_string_lossy()
-            .into_owned()
-    } else {
-        String::from("default_table")
-    };
-    let eng = global_embedding_engine().lock();
-    let stored = eng.read_parameters(&table_name).unwrap_or_default();
-    let dst_ptr = if !p.parameters_out.is_null() {
-        p.parameters_out.cast::<u8>()
-    } else {
-        p.parameters.cast_mut().cast::<u8>()
-    };
-    if !dst_ptr.is_null() {
-        // SAFETY: Caller provides a mutable buffer of at least `stored.len()` bytes.
-        unsafe {
-            ptr::copy_nonoverlapping(stored.as_ptr(), dst_ptr, stored.len());
-        }
-    }
-    if !p.num_parameters_written_or_read.is_null() {
-        // SAFETY: Writing output count of float parameters read.
-        unsafe {
-            *p.num_parameters_written_or_read = stored.len() / 4;
-        }
-    }
-    0
-}
-
-/// Creates tensor batch fixed state (`TpuEmbeddingTensorBatchFixedState_Create`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuEmbeddingTensorBatchFixedState_Create() -> *mut std::ffi::c_void {
-    Box::into_raw(Box::new(1_u64)).cast::<std::ffi::c_void>()
-}
-
-/// Destroys tensor batch fixed state (`TpuEmbeddingTensorBatchFixedState_Destroy`).
-///
-/// # Arguments
-///
-/// * `ptr` - Pointer returned by `TpuEmbeddingTensorBatchFixedState_Create`.
-///
-/// # Safety
-///
-/// `ptr` must be null or allocated by `TpuEmbeddingTensorBatchFixedState_Create`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingTensorBatchFixedState_Destroy(ptr: *mut std::ffi::c_void) {
-    if !ptr.is_null() {
-        // SAFETY: `ptr` was allocated as `Box<u64>`.
-        unsafe {
-            drop(Box::from_raw(ptr.cast::<u64>()));
-        }
-    }
-}
-
-/// Enqueues an embedding lookup tensor batch (`TpuEmbeddingEngine_EnqueueTensorBatch`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_EnqueueTensorBatch_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_EnqueueTensorBatch_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_EnqueueTensorBatch(
-    params: *mut TpuEmbeddingEngine_EnqueueTensorBatch_Params,
-) -> i32 {
-    if params.is_null() {
-        return 0;
-    }
-    // SAFETY: `params` is non-null.
-    let p = unsafe { &mut *params };
-    if p.struct_size == 0 {
-        // SAFETY: `TpuStatus_Set` checks `p.status` for null.
-        unsafe {
-            TpuStatus_Set(p.status, 3, c"invalid struct_size".as_ptr(), 19);
-        }
-        return -1;
-    }
-    let sample_count = if p.num_samples > 0 {
-        p.num_samples
-    } else {
-        usize::from(!p.sample_indices.is_null()) * 4
-    };
-    let emb_count = usize::from(!p.embedding_indices.is_null()) * 4;
-    let num_indices = (sample_count + emb_count).max(4);
-    let num_weights = if p.aggregation_weights.is_null() {
-        4
-    } else {
-        8
-    };
-    let dev_ord = i32::try_from(p.priv_data as usize).unwrap_or(0);
-    global_embedding_engine()
-        .lock()
-        .enqueue_tensor_batch(dev_ord, num_indices, num_weights);
-    0
-}
-
-/// Populates a [`TpuEmbeddingEngine_Computation_Params`] output with a wire-encoded [`libtpu_core::proto::HloModuleProto`].
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_Computation_Params`] (or null).
-/// * `kind` - Computation identifier.
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_Computation_Params`].
-#[inline(never)]
-unsafe fn build_embedding_xla_computation(
-    params: *mut TpuEmbeddingEngine_Computation_Params,
-    kind: &str,
-) -> i32 {
-    if params.is_null() {
-        return 0;
-    }
-    // SAFETY: `params` is non-null.
-    let p = unsafe { &mut *params };
-    if p.struct_size == 0 {
-        // SAFETY: `TpuStatus_Set` checks `p.status` for null.
-        unsafe {
-            TpuStatus_Set(p.status, 3, c"invalid struct_size".as_ptr(), 19);
-        }
-        return -1;
-    }
-    let hlo_bytes = global_embedding_engine()
-        .lock()
-        .generate_xla_computation(kind);
-    if !p.xla_computation_out.is_null() {
-        let c_str = to_c_string(&String::from_utf8_lossy(&hlo_bytes));
-        let len = c_str.as_bytes().len();
-        // SAFETY: `p.xla_computation_out` is non-null.
-        unsafe {
-            (*p.xla_computation_out) = TpuSerializedProto {
-                bytes: c_str.into_raw(),
-                size: len,
+            TfTpu_Initialize(false, 0, ptr::null());
+            let cli_ptrs: [*const c_char; 2] = [c"--tpu_generation=v5e".as_ptr(), ptr::null()];
+            TfTpu_Initialize(true, 2, cli_ptrs.as_ptr());
+            TF_InitKernel();
+            TFNPD_InitPlugin(ptr::null_mut(), ptr::null_mut());
+            let mut tfnpd_params = TFNPD_PluginParams {
+                struct_size: size_of::<TFNPD_PluginParams>(),
+                priv_data: ptr::null_mut(),
+                device_type: ptr::null(),
+                compilation_device_name: ptr::null(),
+                priority: 0,
+                is_pluggable_device: false,
+                use_pjrt_on_demand_compile: false,
+                pad: 0,
             };
+            assert_ne!(format!("{tfnpd_params:?}"), "");
+            TFNPD_InitPlugin(ptr::addr_of_mut!(tfnpd_params), ptr::null_mut());
+            assert_eq!(tfnpd_params.priority, 55);
+            assert!(tfnpd_params.is_pluggable_device);
+
+            assert_eq!(
+                SetGlobalTPUArrayOp_DoWork(0, ptr::null(), ptr::null_mut()),
+                0
+            );
+            assert_eq!(
+                SetGlobalTPUArrayOp_DoWork(4, ptr::null(), ptr::null_mut()),
+                -1
+            );
+            let topo_proto = libtpu_core::proto::TpuTopologyArgsProto {
+                version: 5,
+                num_hosts: 1,
+                chips_per_host: 4,
+                mesh_bounds: vec![2, 2, 1],
+                platform_version: String::from("TPU v5 lite"),
+                fingerprint: String::from("1"),
+            }
+            .encode();
+            assert_eq!(
+                SetGlobalTPUArrayOp_DoWork(
+                    topo_proto.len(),
+                    topo_proto.as_ptr().cast(),
+                    ptr::null_mut()
+                ),
+                0
+            );
+            assert_eq!(
+                SetGlobalTPUArrayOp_DoWork(1, c"\xff".as_ptr(), ptr::null_mut()),
+                0
+            );
+            assert_eq!(
+                InitializeCreateMeshGlobalState(0, ptr::null(), ptr::null_mut()),
+                0
+            );
+            assert_eq!(
+                ConfigureDistributedTpuOp_DoWork(
+                    2,
+                    ptr::null(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                -1
+            );
+            let cores_arr = [4_i32, 4_i32];
+            let mut dist_cfg_len: usize = 0;
+            let mut dist_cfg_ptr: *mut c_char = ptr::null_mut();
+            assert_eq!(
+                ConfigureDistributedTpuOp_DoWork(
+                    0,
+                    ptr::null(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                ),
+                0
+            );
+            assert_eq!(
+                ConfigureDistributedTpuOp_DoWork(
+                    cores_arr.len(),
+                    cores_arr.as_ptr(),
+                    ptr::addr_of_mut!(dist_cfg_len),
+                    ptr::addr_of_mut!(dist_cfg_ptr),
+                    ptr::null_mut(),
+                ),
+                0
+            );
+            assert!(dist_cfg_len > 0);
+            TpuConfigurationApi_FreeCharArray(dist_cfg_ptr);
+
+            assert_eq!(TfTpu_GetTpuPartitionedCallParams(ptr::null_mut()), -1);
+            let mut pcall_params = TpuPartitionedCall_Params {
+                input_shape_opt: false,
+                group_tensors_for_packing: false,
+                pad0: 0,
+                minimum_input_tensors_packing: 0,
+                minimum_output_tensors_packing: 0,
+                enable_auto_xla_input_sharding: false,
+                pad1: [0; 3],
+                auto_xla_input_sharding_dim: -1,
+                scoped_allocator_for_tpu_anned_call: false,
+                pad2: [0; 3],
+            };
+            assert_ne!(format!("{pcall_params:?}"), "");
+            assert_eq!(
+                TfTpu_GetTpuPartitionedCallParams(ptr::addr_of_mut!(pcall_params)),
+                0
+            );
+            assert!(pcall_params.input_shape_opt);
+            assert!(pcall_params.enable_variable_deduplication());
+
+            TpuConfigurationApi_FreeCharArray(ptr::null_mut());
+            TpuConfigurationApi_FreeCharArray(to_c_string("abc").into_raw());
+
+            assert_eq!(
+                TpuTransferManager_GetInfeedLayout(ptr::null(), ptr::null_mut()),
+                -1
+            );
+            let shape_dims = [8_i64, 128];
+            let host_shape = XLA_Shape {
+                element_type: 11,
+                rank: 2,
+                dimensions: shape_dims.as_ptr(),
+                minor_to_major: [0; 8],
+                tile_dims: [0; 2],
+            };
+            let mut infeed_shape = host_shape;
+            assert_ne!(format!("{host_shape:?}"), "");
+            assert_eq!(
+                TpuTransferManager_GetInfeedLayout(
+                    ptr::addr_of!(host_shape),
+                    ptr::addr_of_mut!(infeed_shape),
+                ),
+                0
+            );
+            assert_eq!(infeed_shape.tile_dims, [8, 128]);
+            assert_eq!(infeed_shape.minor_to_major[0], 1);
+
+            let (mut max_ids, mut max_uniques) = (0_i64, 0_i64);
+            assert_eq!(
+                SparseCore_GetMaxIdsAndUniques(
+                    ptr::null(),
+                    32,
+                    16,
+                    ptr::addr_of_mut!(max_ids),
+                    ptr::addr_of_mut!(max_uniques),
+                    ptr::null_mut(),
+                ),
+                -1
+            );
+            assert_eq!(
+                SparseCore_GetMaxIdsAndUniques(
+                    c"table_0".as_ptr(),
+                    32,
+                    16,
+                    ptr::addr_of_mut!(max_ids),
+                    ptr::addr_of_mut!(max_uniques),
+                    ptr::null_mut(),
+                ),
+                128
+            );
+            assert!(max_ids >= 128 && max_uniques >= 64);
+
+            let st1 = TpuStatus_New();
+            assert_ne!(format!("{:?}", *st1), "");
+            assert!(TpuStatus_Ok(st1));
+            assert_eq!(TpuStatus_Code(st1), 0);
+            assert!(!TpuStatus_Message(st1).is_null());
+            TpuStatus_Set(ptr::null_mut(), 3, ptr::null(), 0);
+            TpuStatus_Set(st1, 3, ptr::null(), 0);
+            TpuStatus_Set(st1, 3, c"err".as_ptr(), 3);
+            assert!(!TpuStatus_Ok(st1));
+            TpuStatus_Free(st1);
+            TpuStatus_Free(ptr::null_mut());
+
+            let st2 = TpuStatus_Create(0, ptr::null());
+            TpuStatus_Free(st2);
+            let st3 = TpuStatus_Create(5, c"not found".as_ptr());
+            TpuStatus_Free(st3);
+            assert!(TpuStatus_Message(ptr::null()).is_null());
+            assert_eq!(TpuStatus_Code(ptr::null()), -1);
+            assert!(!TpuStatus_Ok(ptr::null()));
+
+            TfTpuOrdinalSelector_Create(ptr::null_mut(), 2);
+            let mut sel: *mut TfTpuOrdinalSelector = ptr::null_mut();
+            TfTpuOrdinalSelector_Create(ptr::addr_of_mut!(sel), 2);
+            assert_ne!(format!("{:?}", *sel), "");
+            let mut ord: i64 = -1;
+            let mut seed_val: u64 = 10;
+            assert_eq!(
+                TfTpuOrdinalSelector_GetOrdinal(
+                    ptr::null(),
+                    ptr::null_mut(),
+                    ptr::addr_of_mut!(ord)
+                ),
+                -1
+            );
+            assert_eq!(
+                TfTpuOrdinalSelector_GetOrdinal(sel, ptr::null_mut(), ptr::addr_of_mut!(ord)),
+                0
+            );
+            assert_eq!(
+                TfTpuOrdinalSelector_GetOrdinal(
+                    sel,
+                    ptr::addr_of_mut!(seed_val),
+                    ptr::addr_of_mut!(ord)
+                ),
+                1
+            );
+            assert_eq!(seed_val, 11);
+            TfTpuOrdinalSelector_DequeueFromCoreSelector(ptr::null_mut(), 0, 1);
+            TfTpuOrdinalSelector_DequeueFromCoreSelector(sel, -1, 1);
+            TfTpuOrdinalSelector_DequeueFromCoreSelector(sel, 0, -1);
+            TfTpuOrdinalSelector_DequeueFromCoreSelector(sel, 0, 1);
+            TfTpuOrdinalSelector_Destroy(sel);
+            TfTpuOrdinalSelector_Destroy(ptr::null_mut());
+
+            let topo = TpuUtil_GetTopologyPtr();
+            assert!(!topo.is_null());
+            assert_ne!(format!("{:?}", *topo), "");
+            assert_eq!(TpuUtil_GetXlaPadSizeFromTpuTopology(), 128);
+            assert_eq!(TpuTopology_LogicalDevicesPerHost(topo, 0), 4);
+            assert_eq!(TpuTopology_LogicalDevicesPerHost(ptr::null(), 0), 4);
+            assert_eq!(TpuTopology_LogicalDevicesPerChip(topo, 0), 1);
+            assert_eq!(TpuTopology_LogicalDevicesPerChip(topo, 1), 2);
+            assert_eq!(TpuTopology_HostCount(topo), 1);
+            assert_eq!(TpuTopology_ChipsPerHost(topo), 4);
+            assert_eq!(TpuTopology_ChipBounds_X(topo), 2);
+            assert_eq!(TpuTopology_ChipBounds_Y(topo), 2);
+            assert_eq!(TpuTopology_ChipBounds_Z(topo), 1);
+            assert!(TpuTopology_HasChip(topo, 0, 0, 0));
+            assert!(!TpuTopology_HasChip(topo, 9, 0, 0));
+            assert!(!TpuTopology_HasChip(topo, -1, 0, 0));
+            assert!(!TpuTopology_HasChip(topo, 0, -1, 0));
+            assert!(!TpuTopology_HasChip(topo, 0, 0, -1));
+            assert!(!TpuTopology_HasChip(topo, 0, 9, 0));
+            assert!(!TpuTopology_HasChip(topo, 0, 0, 9));
+
+            let c0 = TpuTopology_CoreForId(topo, 0, 0);
+            assert!(!c0.is_null());
+            assert_ne!(format!("{:?}", *c0), "");
+            assert!(TpuTopology_CoreForId(topo, 0, 99).is_null());
+            assert!(!TpuTopology_Core(topo, 0, 0, 0, 0, 0).is_null());
+            assert!(TpuTopology_Core(topo, 0, 9, 9, 9, 0).is_null());
+            assert_eq!(TpuTopology_NumCores(topo, 0), 4);
+            assert_eq!(TpuTopology_NumCores(topo, 1), 8);
+            TpuTopology_Cores(topo, 0, ptr::null_mut());
+            let mut core_arr: [*const TpuCoreLocation; 4] = [ptr::null(); 4];
+            TpuTopology_Cores(topo, 0, core_arr.as_mut_ptr());
+            assert!(!core_arr[0].is_null());
+            assert_eq!(TpuTopology_IdForHost(topo, 0, 0, 0), 0);
+            assert_eq!(TpuTopology_Version(topo), 5);
+            assert_eq!(TpuTopology_AvailableCoreCount(ptr::null(), 0), 4);
+            assert_eq!(TpuTopology_AvailableCoresPerChip(0), 1);
+            assert_eq!(TpuTopology_AvailableCoresPerChip(1), 2);
+            assert_eq!(TpuTopology_MaybeAvailableSparseCoresPerLogicalDevice(0), 2);
+
+            let (mut x, mut y, mut z) = (-1, -1, -1);
+            TpuCoreLocation_ChipCoordinates(
+                ptr::null(),
+                ptr::addr_of_mut!(x),
+                ptr::addr_of_mut!(y),
+                ptr::addr_of_mut!(z),
+            );
+            TpuCoreLocation_ChipCoordinates(
+                c0,
+                ptr::addr_of_mut!(x),
+                ptr::addr_of_mut!(y),
+                ptr::addr_of_mut!(z),
+            );
+            assert_eq!((x, y, z), (0, 0, 0));
+            TpuCoreLocation_HostCoordinates(
+                ptr::null(),
+                ptr::addr_of_mut!(x),
+                ptr::addr_of_mut!(y),
+                ptr::addr_of_mut!(z),
+            );
+            TpuCoreLocation_HostCoordinates(
+                c0,
+                ptr::addr_of_mut!(x),
+                ptr::addr_of_mut!(y),
+                ptr::addr_of_mut!(z),
+            );
+            assert_eq!(TpuCoreLocation_Index(ptr::null()), -1);
+            assert_eq!(TpuCoreLocation_Index(c0), 0);
+            assert_eq!(TpuCoreLocation_Id(ptr::null()), -1);
+            assert_eq!(TpuCoreLocation_Id(c0), 0);
+            let host_loc = TpuHostLocation {
+                host_id: 2,
+                host_coords: [0, 0, 0],
+                num_cores: 4,
+            };
+            assert_ne!(format!("{host_loc:?}"), "");
+            assert_eq!(TpuHostLocation_Id(ptr::null()), 0);
+            assert_eq!(TpuHostLocation_Id(ptr::addr_of!(host_loc)), 2);
+            assert_eq!(TpuHostLocation_NumCores(ptr::null(), 0), 4);
+            assert_eq!(TpuHostLocation_NumCores(ptr::addr_of!(host_loc), 0), 4);
+            let host_loc_zero = TpuHostLocation {
+                host_id: 0,
+                host_coords: [0, 0, 0],
+                num_cores: 0,
+            };
+            assert_eq!(TpuHostLocation_NumCores(ptr::addr_of!(host_loc_zero), 0), 4);
+            TpuHostLocation_Cores(ptr::null(), 0, core_arr.as_mut_ptr());
+
+            let ms = TpuMeshState_Create();
+            assert_ne!(format!("{:?}", *ms), "");
+            assert!(!TpuMeshState_MeshCommonState(ms).is_null());
+            assert!(TpuMeshState_MeshCommonState(ptr::null()).is_null());
+            TpuMeshState_Free(ms);
+            TpuMeshState_Free(ptr::null_mut());
+
+            let st_prof = TpuStatus_New();
+            TpuProfiler_Create(ptr::null_mut(), st_prof);
+            let mut prof: *mut TpuProfiler = ptr::null_mut();
+            TpuProfiler_Create(ptr::addr_of_mut!(prof), st_prof);
+            assert_ne!(format!("{:?}", *prof), "");
+            TpuProfiler_Start(ptr::null_mut(), st_prof);
+            TpuProfiler_Stop(ptr::null_mut(), st_prof);
+            TpuProfiler_Stop(prof, st_prof);
+            TpuProfiler_Start(prof, st_prof);
+            TpuProfiler_Start(prof, st_prof);
+            TpuProfiler_Stop(prof, st_prof);
+            let mut sz: usize = 0;
+            TpuProfiler_CollectData(
+                ptr::null_mut(),
+                st_prof,
+                ptr::null_mut(),
+                ptr::addr_of_mut!(sz),
+            );
+            TpuProfiler_CollectData(prof, st_prof, ptr::null_mut(), ptr::addr_of_mut!(sz));
+            assert!(sz > 0);
+            let mut prof_buf = vec![0_u8; sz];
+            TpuProfiler_CollectData(prof, st_prof, prof_buf.as_mut_ptr(), ptr::addr_of_mut!(sz));
+            TpuProfiler_Destroy(prof);
+            TpuProfiler_Destroy(ptr::null_mut());
+            TpuStatus_Free(st_prof);
+
+            let emb = TpuEmbeddingEngineState_Create();
+            assert_ne!(format!("{:?}", *emb), "");
+            assert!(!TpuEmbeddingEngineState_GetState(emb).is_null());
+            let mut emb_out_sz: usize = 0;
+            let mut emb_out_ptr: *mut c_char = ptr::null_mut();
+            let mut emb_params = TpuEmbeddingEngine_ExecutePartitioner_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_ExecutePartitioner_Params>(),
+                priv_data: ptr::null_mut(),
+                tpu_embedding_config_bytes: ptr::null(),
+                tpu_embedding_config_size: 0,
+                common_config_string_size: ptr::addr_of_mut!(emb_out_sz),
+                common_config_string: ptr::addr_of_mut!(emb_out_ptr),
+                status: ptr::null_mut(),
+            };
+            assert_ne!(format!("{emb_params:?}"), "");
+            assert_eq!(TpuEmbeddingEngine_ExecutePartitioner(ptr::null_mut()), 0);
+            assert_eq!(
+                TpuEmbeddingEngine_ExecutePartitioner(ptr::addr_of_mut!(emb_params)),
+                0
+            );
+            assert!(emb_out_sz > 0 && !emb_out_ptr.is_null());
+            TpuConfigurationApi_FreeCharArray(emb_out_ptr);
+            emb_params.tpu_embedding_config_bytes = c"tbl".as_ptr();
+            emb_params.tpu_embedding_config_size = 3;
+            emb_params.common_config_string_size = ptr::null_mut();
+            emb_params.common_config_string = ptr::null_mut();
+            assert_eq!(
+                TpuEmbeddingEngine_ExecutePartitioner(ptr::addr_of_mut!(emb_params)),
+                0
+            );
+            emb_params.struct_size = 0;
+            assert_eq!(
+                TpuEmbeddingEngine_ExecutePartitioner(ptr::addr_of_mut!(emb_params)),
+                -1
+            );
+
+            let mut mem_sz: usize = 0;
+            let mut mem_ptr: *mut c_char = ptr::null_mut();
+            let mut cfg_mem = TpuEmbeddingEngine_ConfigureMemory_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_ConfigureMemory_Params>(),
+                priv_data: ptr::null_mut(),
+                num_inputs: 1,
+                pad: 0,
+                common_config_string: ptr::null(),
+                common_config_string_size: 0,
+                task_host_config_size: ptr::addr_of_mut!(mem_sz),
+                task_host_config: ptr::addr_of_mut!(mem_ptr),
+                status: ptr::null_mut(),
+            };
+            assert_eq!(TpuEmbeddingEngine_ConfigureMemory(ptr::null_mut()), 0);
+            assert_eq!(
+                TpuEmbeddingEngine_ConfigureMemory(ptr::addr_of_mut!(cfg_mem)),
+                0
+            );
+            TpuConfigurationApi_FreeCharArray(mem_ptr);
+            cfg_mem.common_config_string = c"custom_mem".as_ptr();
+            cfg_mem.common_config_string_size = 10;
+            cfg_mem.task_host_config_size = ptr::null_mut();
+            cfg_mem.task_host_config = ptr::null_mut();
+            assert_eq!(
+                TpuEmbeddingEngine_ConfigureMemory(ptr::addr_of_mut!(cfg_mem)),
+                0
+            );
+            cfg_mem.struct_size = 0;
+            assert_eq!(
+                TpuEmbeddingEngine_ConfigureMemory(ptr::addr_of_mut!(cfg_mem)),
+                -1
+            );
+
+            let mut col_sz: usize = 0;
+            let mut col_mem = TpuEmbeddingEngine_CollateMemory_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_CollateMemory_Params>(),
+                priv_data: ptr::null_mut(),
+                memory_configs_size: 0,
+                memory_configs: ptr::null(),
+                collated_size: ptr::addr_of_mut!(col_sz),
+                merged_memory_config: ptr::null_mut(),
+                status: ptr::null_mut(),
+            };
+            assert_eq!(TpuEmbeddingEngine_CollateMemory(ptr::null_mut()), 0);
+            assert_eq!(
+                TpuEmbeddingEngine_CollateMemory(ptr::addr_of_mut!(col_mem)),
+                0
+            );
+            col_mem.collated_size = ptr::null_mut();
+            assert_eq!(
+                TpuEmbeddingEngine_CollateMemory(ptr::addr_of_mut!(col_mem)),
+                0
+            );
+            col_mem.struct_size = 0;
+            assert_eq!(
+                TpuEmbeddingEngine_CollateMemory(ptr::addr_of_mut!(col_mem)),
+                -1
+            );
+
+            let mut net_sz: usize = 0;
+            let mut net_ptr: *mut c_char = ptr::null_mut();
+            let mut cfg_host = TpuEmbeddingEngine_ConfigureHost_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_ConfigureHost_Params>(),
+                priv_data: ptr::null_mut(),
+                num_inputs: 1,
+                pad: 0,
+                common_config_string: ptr::null(),
+                common_config_string_size: 0,
+                task_host_config: ptr::null(),
+                task_host_config_size: 0,
+                tpu_embedding_config_bytes: ptr::null(),
+                tpu_embedding_config_size: 0,
+                network_config_size: ptr::addr_of_mut!(net_sz),
+                network_config: ptr::addr_of_mut!(net_ptr),
+                status: ptr::null_mut(),
+            };
+            assert_eq!(TpuEmbeddingEngine_ConfigureHost(ptr::null_mut()), 0);
+            assert_eq!(
+                TpuEmbeddingEngine_ConfigureHost(ptr::addr_of_mut!(cfg_host)),
+                0
+            );
+            TpuConfigurationApi_FreeCharArray(net_ptr);
+            cfg_host.common_config_string = c"host_1".as_ptr();
+            cfg_host.common_config_string_size = 6;
+            cfg_host.network_config_size = ptr::null_mut();
+            cfg_host.network_config = ptr::null_mut();
+            assert_eq!(
+                TpuEmbeddingEngine_ConfigureHost(ptr::addr_of_mut!(cfg_host)),
+                0
+            );
+            cfg_host.struct_size = 0;
+            assert_eq!(
+                TpuEmbeddingEngine_ConfigureHost(ptr::addr_of_mut!(cfg_host)),
+                -1
+            );
+
+            let mut conn_hosts = TpuEmbeddingEngine_ConnectHosts_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_ConnectHosts_Params>(),
+                priv_data: ptr::null_mut(),
+                network_configs: ptr::null(),
+                network_configs_size: 0,
+                status: ptr::null_mut(),
+            };
+            assert_eq!(TpuEmbeddingEngine_ConnectHosts(ptr::null_mut()), 0);
+            assert_eq!(
+                TpuEmbeddingEngine_ConnectHosts(ptr::addr_of_mut!(conn_hosts)),
+                0
+            );
+            conn_hosts.struct_size = 0;
+            assert_eq!(
+                TpuEmbeddingEngine_ConnectHosts(ptr::addr_of_mut!(conn_hosts)),
+                -1
+            );
+
+            let mut fin_params = TpuEmbeddingEngine_Finalize_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_Finalize_Params>(),
+                priv_data: ptr::null_mut(),
+                common_config_string: ptr::null(),
+                common_config_string_size: 0,
+                task_host_config: ptr::null(),
+                task_host_config_size: 0,
+                mesh_common_state: ptr::null(),
+                status: ptr::null_mut(),
+            };
+            assert_eq!(TpuEmbeddingEngine_Finalize(ptr::null_mut()), -1);
+            assert!(!TpuEmbeddingEngine_IsInitialized(ptr::null()));
+            assert_eq!(
+                TpuEmbeddingEngine_Finalize(ptr::addr_of_mut!(fin_params)),
+                0
+            );
+            let mut is_init_bool = false;
+            let init_params = TpuEmbeddingEngine_IsInitialized_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_IsInitialized_Params>(),
+                priv_data: ptr::null_mut(),
+                config_string: ptr::null(),
+                config_string_size: 0,
+                is_embedding_initialized: ptr::addr_of_mut!(is_init_bool),
+                status: ptr::null_mut(),
+            };
+            assert!(TpuEmbeddingEngine_IsInitialized(ptr::addr_of!(init_params)));
+            assert!(is_init_bool);
+            let init_params_null_out = TpuEmbeddingEngine_IsInitialized_Params {
+                struct_size: 0,
+                priv_data: ptr::null_mut(),
+                config_string: ptr::null(),
+                config_string_size: 0,
+                is_embedding_initialized: ptr::null_mut(),
+                status: ptr::null_mut(),
+            };
+            assert!(TpuEmbeddingEngine_IsInitialized(ptr::addr_of!(
+                init_params_null_out
+            )));
+
+            let mut wr_buf = [7_u8; 16];
+            let mut rd_buf = [0_u8; 16];
+            let mut rd_floats = [0.0_f32; 4];
+            let mut num_rw: usize = 0;
+            let mut wr_params = TpuEmbeddingEngine_WriteParameters_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_WriteParameters_Params>(),
+                priv_data: ptr::null_mut(),
+                table_name: ptr::null(),
+                table_name_len: 0,
+                parameters: ptr::null(),
+                parameters_out: ptr::null_mut(),
+                num_parameters: 4,
+                num_parameters_written_or_read: ptr::addr_of_mut!(num_rw),
+                status: ptr::null_mut(),
+            };
+            assert_eq!(TpuEmbeddingEngine_WriteParameters(ptr::null_mut()), 0);
+            assert_eq!(
+                TpuEmbeddingEngine_WriteParameters(ptr::addr_of_mut!(wr_params)),
+                0
+            );
+            assert_eq!(num_rw, 4);
+            wr_params.parameters = wr_buf.as_mut_ptr().cast();
+            wr_params.num_parameters_written_or_read = ptr::null_mut();
+            assert_eq!(
+                TpuEmbeddingEngine_WriteParameters(ptr::addr_of_mut!(wr_params)),
+                0
+            );
+            wr_params.struct_size = 0;
+            assert_eq!(
+                TpuEmbeddingEngine_WriteParameters(ptr::addr_of_mut!(wr_params)),
+                -1
+            );
+            wr_params.struct_size = size_of::<TpuEmbeddingEngine_WriteParameters_Params>();
+            wr_params.parameters = ptr::null();
+            assert_eq!(TpuEmbeddingEngine_ReadParameters(ptr::null_mut()), 0);
+            assert_eq!(
+                TpuEmbeddingEngine_ReadParameters(ptr::addr_of_mut!(wr_params)),
+                0
+            );
+            wr_params.parameters = rd_buf.as_mut_ptr().cast();
+            assert_eq!(
+                TpuEmbeddingEngine_ReadParameters(ptr::addr_of_mut!(wr_params)),
+                0
+            );
+            assert_eq!(rd_buf, [7_u8; 16]);
+            wr_params.priv_data = c"custom_table".as_ptr().cast_mut().cast();
+            wr_params.parameters = wr_buf.as_mut_ptr().cast();
+            assert_eq!(
+                TpuEmbeddingEngine_WriteParameters(ptr::addr_of_mut!(wr_params)),
+                0
+            );
+            rd_buf = [0_u8; 16];
+            wr_params.parameters = rd_buf.as_mut_ptr().cast();
+            assert_eq!(
+                TpuEmbeddingEngine_ReadParameters(ptr::addr_of_mut!(wr_params)),
+                0
+            );
+            assert_eq!(rd_buf, [7_u8; 16]);
+            wr_params.priv_data = ptr::null_mut();
+            wr_params.table_name = c"named_table".as_ptr();
+            wr_params.table_name_len = 11;
+            wr_params.parameters = wr_buf.as_mut_ptr().cast();
+            wr_params.num_parameters_written_or_read = ptr::addr_of_mut!(num_rw);
+            assert_eq!(
+                TpuEmbeddingEngine_WriteParameters(ptr::addr_of_mut!(wr_params)),
+                0
+            );
+            wr_params.parameters = ptr::null();
+            wr_params.parameters_out = rd_floats.as_mut_ptr();
+            assert_eq!(
+                TpuEmbeddingEngine_ReadParameters(ptr::addr_of_mut!(wr_params)),
+                0
+            );
+            assert_eq!(num_rw, 4);
+            wr_params.struct_size = 0;
+            assert_eq!(
+                TpuEmbeddingEngine_ReadParameters(ptr::addr_of_mut!(wr_params)),
+                -1
+            );
+
+            let fixed = TpuEmbeddingTensorBatchFixedState_Create();
+            TpuEmbeddingTensorBatchFixedState_Destroy(fixed);
+            TpuEmbeddingTensorBatchFixedState_Destroy(ptr::null_mut());
+
+            let dummy_indices = [0_i32; 4];
+            let dummy_weights = [1.0_f32; 4];
+            let mut enq_params = TpuEmbeddingEngine_EnqueueTensorBatch_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_EnqueueTensorBatch_Params>(),
+                priv_data: ptr::null_mut(),
+                sample_indices: ptr::null(),
+                embedding_indices: ptr::null(),
+                aggregation_weights: ptr::null(),
+                num_samples: 0,
+                status: ptr::null_mut(),
+            };
+            assert_eq!(TpuEmbeddingEngine_EnqueueTensorBatch(ptr::null_mut()), 0);
+            assert_eq!(
+                TpuEmbeddingEngine_EnqueueTensorBatch(ptr::addr_of_mut!(enq_params)),
+                0
+            );
+            enq_params.sample_indices = dummy_indices.as_ptr().cast();
+            enq_params.embedding_indices = dummy_indices.as_ptr().cast();
+            enq_params.aggregation_weights = dummy_weights.as_ptr().cast();
+            assert_eq!(
+                TpuEmbeddingEngine_EnqueueTensorBatch(ptr::addr_of_mut!(enq_params)),
+                0
+            );
+            enq_params.num_samples = 8;
+            assert_eq!(
+                TpuEmbeddingEngine_EnqueueTensorBatch(ptr::addr_of_mut!(enq_params)),
+                0
+            );
+            enq_params.struct_size = 0;
+            assert_eq!(
+                TpuEmbeddingEngine_EnqueueTensorBatch(ptr::addr_of_mut!(enq_params)),
+                -1
+            );
+
+            let mut xla_out = TpuSerializedProto {
+                bytes: ptr::null_mut(),
+                size: 0,
+            };
+            let mut comp_params = TpuEmbeddingEngine_Computation_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_Computation_Params>(),
+                priv_data: ptr::null_mut(),
+                tpu_embedding_config_bytes: ptr::null(),
+                tpu_embedding_config_size: 0,
+                deduplication_tuple_mask_bytes: ptr::null(),
+                deduplication_tuple_mask_size: 0,
+                hbm_buffers_config_bytes: ptr::null(),
+                hbm_buffers_config_size: 0,
+                tpu_topology_bytes: ptr::null(),
+                tpu_topology_size: 0,
+                xla_computation_out: ptr::addr_of_mut!(xla_out),
+                status: ptr::null_mut(),
+            };
+            assert_eq!(
+                TpuEmbeddingEngine_RecvActivationsComputation(ptr::null_mut()),
+                0
+            );
+            assert_eq!(
+                TpuEmbeddingEngine_RecvActivationsComputation(ptr::addr_of_mut!(comp_params)),
+                0
+            );
+            assert!(!xla_out.bytes.is_null() && xla_out.size > 0);
+            TpuConfigurationApi_FreeCharArray(xla_out.bytes);
+            comp_params.xla_computation_out = ptr::null_mut();
+            assert_eq!(
+                TpuEmbeddingEngine_RecvTPUEmbeddingDeduplicationDataComputation(ptr::addr_of_mut!(
+                    comp_params
+                )),
+                0
+            );
+            assert_eq!(
+                TpuEmbeddingEngine_SendTPUEmbeddingGradientsComputation(ptr::addr_of_mut!(
+                    comp_params
+                )),
+                0
+            );
+            assert_eq!(
+                TpuEmbeddingEngine_DedupDataSizeComputation(ptr::addr_of_mut!(comp_params)),
+                0
+            );
+            assert_eq!(
+                TpuEmbeddingEngine_DedupDataTupleMaskComputation(ptr::addr_of_mut!(comp_params)),
+                0
+            );
+            comp_params.struct_size = 0;
+            assert_eq!(
+                TpuEmbeddingEngine_DedupDataTupleMaskComputation(ptr::addr_of_mut!(comp_params)),
+                -1
+            );
+            TpuEmbeddingEngineState_Free(emb);
+            TpuEmbeddingEngineState_Free(ptr::null_mut());
+
+            TpuDriver_Initialize(ptr::null_mut(), false);
+            let mut drv_fn_init: TpuDriverFn = std::mem::zeroed();
+            TpuDriver_Initialize(ptr::addr_of_mut!(drv_fn_init), true);
+            assert!(!drv_fn_init.open.is_null());
+
+            let drv = TpuDriver_Open(c"local://".as_ptr());
+            assert!(!(*drv).fn_table.is_null());
+            assert_ne!(format!("{:?}{:?}", *drv, *(*drv).fn_table), "");
+            assert_eq!(
+                TpuDriver_ComputeLinearizedBytesFromShape(ptr::null_mut(), 16),
+                0
+            );
+            assert_eq!(TpuDriver_ComputeLinearizedBytesFromShape(drv, 16), 256);
+            assert!(
+                TpuDriver_CompileProgramFromText(ptr::null_mut(), ptr::null(), 1, 0, ptr::null())
+                    .is_null()
+            );
+            let cp_text = TpuDriver_CompileProgramFromText(
+                drv,
+                c"HloModule text_add".as_ptr(),
+                1,
+                0,
+                ptr::null(),
+            );
+            assert!(!cp_text.is_null());
+            assert!(TpuDriver_GetCompiledProgramShape(ptr::null_mut(), cp_text).is_null());
+            assert_eq!(TpuDriver_GetCompiledProgramShape(drv, cp_text), cp_text);
+            TpuDriver_FreeCompiledProgramHandle(cp_text);
+            let cp_text_null =
+                TpuDriver_CompileProgramFromText(drv, ptr::null(), 1, 0, ptr::null());
+            TpuDriver_FreeCompiledProgramHandle(cp_text_null);
+            TpuDriver_AddCallback(drv, ptr::null_mut(), ptr::null(), ptr::null_mut());
+            assert!(!TpuDriver_Version().is_null());
+
+            let st_reset_ok = TpuDriver_Reset(drv);
+            assert!(TpuStatus_Ok(st_reset_ok));
+            TpuStatus_Free(st_reset_ok);
+            let st_reset_err = TpuDriver_Reset(ptr::null_mut());
+            assert!(!TpuStatus_Ok(st_reset_err));
+            TpuStatus_Free(st_reset_err);
+
+            assert!(TpuDriver_QuerySystemInfo(ptr::null_mut()).is_null());
+            TpuDriver_FreeSystemInfo(ptr::null_mut());
+            let sys_info = TpuDriver_QuerySystemInfo(drv);
+            assert!(!sys_info.is_null());
+            assert_ne!(format!("{:?}", *sys_info), "");
+            TpuDriver_FreeSystemInfo(sys_info);
+
+            assert!(TpuDriver_Compile(ptr::null_mut(), ptr::null(), 1, 0, ptr::null()).is_null());
+            TpuDriver_FreeCompiledProgramHandle(ptr::null_mut());
+            let hlo_src_bytes = b"module @add { stablehlo.add }";
+            let hlo_proto = crate::tpu_driver_types::HloProto {
+                buffer: hlo_src_bytes.as_ptr().cast(),
+                size: i64::try_from(hlo_src_bytes.len()).unwrap_or(0),
+            };
+            assert_ne!(format!("{hlo_proto:?}"), "");
+            let cp_default = TpuDriver_Compile(drv, ptr::null(), 1, 0, ptr::null());
+            assert!(!cp_default.is_null());
+            assert_ne!(format!("{:?}", *cp_default), "");
+            TpuDriver_FreeCompiledProgramHandle(cp_default);
+            let bad_hlo = crate::tpu_driver_types::HloProto {
+                buffer: b"".as_ptr().cast(),
+                size: 0,
+            };
+            let cp_bad = TpuDriver_Compile(drv, ptr::addr_of!(bad_hlo), 1, 0, ptr::null());
+            TpuDriver_FreeCompiledProgramHandle(cp_bad);
+            let cp_handle = TpuDriver_Compile(drv, ptr::addr_of!(hlo_proto), 1, 0, ptr::null());
+            assert!(!cp_handle.is_null());
+
+            assert!(TpuDriver_LoadProgram(ptr::null_mut(), 0, cp_handle, 0, ptr::null()).is_null());
+            let lp_default = TpuDriver_LoadProgram(drv, 0, ptr::null(), 0, ptr::null());
+            let unl_ev0 = TpuDriver_UnloadProgram(drv, lp_default, 0, ptr::null());
+            TpuDriver_FreeEvent(unl_ev0);
+            let lp_handle = TpuDriver_LoadProgram(drv, 0, cp_handle, 0, ptr::null());
+            assert!(!lp_handle.is_null());
+            assert_ne!(format!("{:?}", *lp_handle), "");
+
+            assert!(TpuDriver_Allocate(ptr::null_mut(), 0, 0, 16, 0, ptr::null()).is_null());
+            let drv_b0 = TpuDriver_Allocate(drv, 0, 0, 16, 0, ptr::null());
+            let drv_b1 = TpuDriver_AllocateShape(drv, 0, 0, 16, 0, ptr::null());
+            let drv_b_out = TpuDriver_AllocateTuple(drv, 0, 0, 2, ptr::null(), 0, ptr::null());
+            assert!(!drv_b0.is_null() && !drv_b1.is_null() && !drv_b_out.is_null());
+            assert_ne!(format!("{:?}", *drv_b0), "");
+
+            let h2d_src = [1_u8; 16];
+            let mut d2h_dst = [0_u8; 16];
+            TpuDriver_FreeEvent(TpuDriver_TransferToDevice(
+                ptr::null_mut(),
+                ptr::null(),
+                ptr::null_mut(),
+                0,
+                ptr::null(),
+            ));
+            let ev_h2d =
+                TpuDriver_TransferToDevice(drv, h2d_src.as_ptr().cast(), drv_b0, 0, ptr::null());
+            TpuDriver_FreeEvent(ev_h2d);
+
+            TpuDriver_FreeEvent(TpuDriver_TransferFromDeviceToDevice(
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                ptr::null(),
+            ));
+            let ev_d2d = TpuDriver_TransferFromDeviceToDevice(drv, drv_b0, drv_b1, 0, ptr::null());
+            TpuDriver_FreeEvent(ev_d2d);
+
+            TpuDriver_FreeEvent(TpuDriver_TransferFromDevice(
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                ptr::null(),
+            ));
+            let ev_d2h = TpuDriver_TransferFromDevice(
+                drv,
+                drv_b1,
+                d2h_dst.as_mut_ptr().cast(),
+                0,
+                ptr::null(),
+            );
+            assert_eq!(d2h_dst, h2d_src);
+
+            let da = crate::tpu_driver_types::DeviceAssignment {
+                replica_count: 1,
+                computation_count: 1,
+            };
+            assert_ne!(format!("{da:?}"), "");
+            let in_bufs = [drv_b0, drv_b1];
+            let out_bufs = [drv_b_out];
+            TpuDriver_FreeEvent(TpuDriver_ExecuteProgram(
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                ptr::null(),
+                0,
+                ptr::null(),
+                da,
+                0,
+                ptr::null(),
+            ));
+            let ev_exec = TpuDriver_ExecuteProgram(
+                drv,
+                lp_handle,
+                2,
+                in_bufs.as_ptr(),
+                1,
+                out_bufs.as_ptr(),
+                da,
+                0,
+                ptr::null(),
+            );
+            assert_ne!(format!("{:?}", *ev_exec), "");
+
+            let wait_events = [ev_d2h, ev_exec];
+            let st_wait_ok = TpuDriver_WaitForEvents(drv, 2, wait_events.as_ptr(), 1000);
+            assert!(TpuStatus_Ok(st_wait_ok));
+            TpuStatus_Free(st_wait_ok);
+            let st_wait_err = TpuDriver_WaitForEvents(ptr::null_mut(), 0, ptr::null(), 0);
+            assert!(!TpuStatus_Ok(st_wait_err));
+            TpuStatus_Free(st_wait_err);
+            TpuDriver_FreeEvent(ev_d2h);
+            TpuDriver_FreeEvent(ev_exec);
+            TpuDriver_FreeEvent(ptr::null_mut());
+
+            let mut lin_dst = [0_u8; 16];
+            let st_lin_err =
+                TpuDriver_LinearizeShape(ptr::null_mut(), ptr::null_mut(), ptr::null(), 16);
+            assert!(!TpuStatus_Ok(st_lin_err));
+            TpuStatus_Free(st_lin_err);
+            let st_lin_ok = TpuDriver_LinearizeShape(
+                drv,
+                lin_dst.as_mut_ptr().cast(),
+                h2d_src.as_ptr().cast(),
+                16,
+            );
+            assert!(TpuStatus_Ok(st_lin_ok));
+            TpuStatus_Free(st_lin_ok);
+            let st_delin_err =
+                TpuDriver_DelinearizeShape(ptr::null_mut(), ptr::null_mut(), ptr::null(), 16);
+            assert!(!TpuStatus_Ok(st_delin_err));
+            TpuStatus_Free(st_delin_err);
+            let st_delin_ok = TpuDriver_DelinearizeShape(
+                drv,
+                d2h_dst.as_mut_ptr().cast(),
+                lin_dst.as_ptr().cast(),
+                16,
+            );
+            assert!(TpuStatus_Ok(st_delin_ok));
+            TpuStatus_Free(st_delin_ok);
+
+            TpuDriver_FreeEvent(TpuDriver_Deallocate(
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                ptr::null(),
+            ));
+            for b_ptr in [drv_b0, drv_b1, drv_b_out] {
+                let ev_dealloc = TpuDriver_Deallocate(drv, b_ptr, 0, ptr::null());
+                TpuDriver_FreeEvent(ev_dealloc);
+            }
+            TpuDriver_FreeEvent(TpuDriver_UnloadProgram(
+                ptr::null_mut(),
+                ptr::null_mut(),
+                0,
+                ptr::null(),
+            ));
+            let ev_unload = TpuDriver_UnloadProgram(drv, lp_handle, 0, ptr::null());
+            TpuDriver_FreeEvent(ev_unload);
+            TpuDriver_FreeCompiledProgramHandle(cp_handle);
+
+            // Exercise all 21 C ABI alias entrypoints
+            let st_alias = TpuStatus_New();
+            TpuStatus_Destroy(st_alias);
+            let st_drv_alias = TpuStatus_New();
+            TpuDriver_FreeStatus(st_drv_alias);
+            let cp_prog_alias =
+                TpuDriver_CompileProgram(drv, ptr::addr_of!(hlo_proto), 1, 0, ptr::null());
+            assert!(!cp_prog_alias.is_null());
+            TpuDriver_FreeCompiledProgramShape(cp_prog_alias);
+            let st_wait_ev_alias = TpuDriver_WaitForEvent(drv, 0, ptr::null(), 100);
+            assert!(TpuStatus_Ok(st_wait_ev_alias));
+            TpuDriver_FreeStatus(st_wait_ev_alias);
+
+            let topo_ptr = TpuUtil_GetTopologyPtr();
+            let avail_core0 = TpuTopology_AnAvailableCore(topo_ptr, 0);
+            assert!(!avail_core0.is_null());
+            let mut avail_cores: [*const TpuCoreLocation; 16] = [ptr::null(); 16];
+            TpuTopology_AvailableCores(topo_ptr, 0, avail_cores.as_mut_ptr());
+            assert_eq!(avail_cores[0], avail_core0);
+            let avail_cnt = TpuTopology_AvailableCoresCount(topo_ptr, 0);
+            assert!(avail_cnt > 0);
+            let mut cx = 0;
+            let mut cy = 0;
+            let mut cz = 0;
+            TpuTopology_ChipCoordinates(
+                avail_core0,
+                ptr::addr_of_mut!(cx),
+                ptr::addr_of_mut!(cy),
+                ptr::addr_of_mut!(cz),
+            );
+            assert!(TpuTopology_ChipCount(topo_ptr) > 0);
+            assert_eq!(TpuTopology_CoreCount(topo_ptr, 0), avail_cnt);
+            assert_eq!(TpuTopology_CoreId(avail_core0), 0);
+            assert_eq!(TpuTopology_CoreIndexOnChip(avail_core0), 0);
+            TpuTopology_CoreLocations(topo_ptr, 0, avail_cores.as_mut_ptr());
+            assert_eq!(TpuTopology_CurrentHost(topo_ptr), 0);
+            assert!(TpuTopology_HostBounds_X(topo_ptr) >= 1);
+            assert!(TpuTopology_HostBounds_Y(topo_ptr) >= 1);
+            assert!(TpuTopology_HostBounds_Z(topo_ptr) >= 1);
+            TpuTopology_HostLocations(ptr::null(), 0, avail_cores.as_mut_ptr());
+
+            let st_dist = TpuStatus_New();
+            assert_eq!(WaitForDistributedTpuOp_DoWork(0, 1, st_dist), -1);
+            assert_eq!(WaitForDistributedTpuOp_DoWork(1, 0, st_dist), -1);
+            assert_eq!(WaitForDistributedTpuOp_DoWork(1, 4, st_dist), 0);
+            assert_eq!(InitializeHostForDistributedTpuOp_DoWork(-1, st_dist), -1);
+            assert_eq!(InitializeHostForDistributedTpuOp_DoWork(0, st_dist), 0);
+            assert_eq!(SetGlobalTPUArrayOp(0, ptr::null(), st_dist), 0);
+            assert_eq!(DisconnectDistributedTpuChipsOp_DoWork(st_dist), 0);
+            assert_eq!(ShutdownDistributedTpuOp_DoWork(st_dist), 0);
+            assert_eq!(TpuNodeContext_Initialize(-1, st_dist), -1);
+            assert_eq!(TpuNodeContext_Initialize(0, st_dist), 0);
+            assert!(TpuNodeContext_Create(-1, st_dist).is_null());
+            let node_ctx = TpuNodeContext_Create(0, st_dist);
+            assert!(!node_ctx.is_null());
+            TpuMeshState_Free(node_ctx);
+            assert_eq!(TpuNodeContext_CloseTpuHost(st_dist), 0);
+            assert_eq!(TpuNodeContext_StopChipHeartbeats(st_dist), 0);
+            assert!(!TpuNodeContext_CompilationsDisabled());
+            assert_eq!(TpuCompile_CompileAndBuild(ptr::null(), 0, st_dist), -1);
+            assert_eq!(TpuCompile_CompileAndBuild(ptr::null(), 4, st_dist), -1);
+            assert_eq!(TpuCompile_CompileAndBuild(c"mlir".as_ptr(), 4, st_dist), 0);
+            assert_eq!(
+                TpuCompile_XrtCompileAndBuild(c"mlir".as_ptr(), 4, st_dist),
+                0
+            );
+            assert_eq!(TpuExecutable_LoadProgramAndEnqueueToStream(-1, st_dist), -1);
+            assert_eq!(TpuExecutable_LoadProgramAndEnqueueToStream(0, st_dist), 0);
+            let res_mgr = TpuResourceMgr_Create();
+            assert!(!res_mgr.is_null());
+            TpuResourceMgr_Destroy(res_mgr);
+            TpuStatus_Destroy(st_dist);
+
+            TpuDriver_Close(drv);
+            TpuDriver_Close(ptr::null_mut());
         }
     }
-    0
-}
-
-/// Builds XLA computation for receiving embedding activations (`TpuEmbeddingEngine_RecvActivationsComputation`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_Computation_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_Computation_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_RecvActivationsComputation(
-    params: *mut TpuEmbeddingEngine_Computation_Params,
-) -> i32 {
-    // SAFETY: Delegated to `build_embedding_xla_computation`.
-    unsafe { build_embedding_xla_computation(params, "recv_activations") }
-}
-
-/// Builds XLA computation for receiving deduplication data (`TpuEmbeddingEngine_RecvTPUEmbeddingDeduplicationDataComputation`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_Computation_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_Computation_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_RecvTPUEmbeddingDeduplicationDataComputation(
-    params: *mut TpuEmbeddingEngine_Computation_Params,
-) -> i32 {
-    // SAFETY: Delegated to `build_embedding_xla_computation`.
-    unsafe { build_embedding_xla_computation(params, "recv_dedup_data") }
-}
-
-/// Builds XLA computation for sending embedding gradients (`TpuEmbeddingEngine_SendTPUEmbeddingGradientsComputation`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_Computation_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_Computation_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_SendTPUEmbeddingGradientsComputation(
-    params: *mut TpuEmbeddingEngine_Computation_Params,
-) -> i32 {
-    // SAFETY: Delegated to `build_embedding_xla_computation`.
-    unsafe { build_embedding_xla_computation(params, "send_gradients") }
-}
-
-/// Builds XLA computation for deduplication data byte size (`TpuEmbeddingEngine_DedupDataSizeComputation`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_Computation_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_Computation_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_DedupDataSizeComputation(
-    params: *mut TpuEmbeddingEngine_Computation_Params,
-) -> i32 {
-    // SAFETY: Delegated to `build_embedding_xla_computation`.
-    unsafe { build_embedding_xla_computation(params, "dedup_data_size") }
-}
-
-/// Builds XLA computation for deduplication tuple mask (`TpuEmbeddingEngine_DedupDataTupleMaskComputation`).
-///
-/// # Arguments
-///
-/// * `params` - Pointer to [`TpuEmbeddingEngine_Computation_Params`] (or null).
-///
-/// # Safety
-///
-/// `params` must be null or a valid pointer to [`TpuEmbeddingEngine_Computation_Params`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuEmbeddingEngine_DedupDataTupleMaskComputation(
-    params: *mut TpuEmbeddingEngine_Computation_Params,
-) -> i32 {
-    // SAFETY: Delegated to `build_embedding_xla_computation`.
-    unsafe { build_embedding_xla_computation(params, "dedup_tuple_mask") }
-}
-
-/// Computes the 256-byte-aligned linearized byte size of a shape (`TpuDriver_ComputeLinearizedBytesFromShape`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `num_bytes` - Unpadded byte count.
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuDriver_ComputeLinearizedBytesFromShape(
-    driver: *mut TpuDriver,
-    num_bytes: i64,
-) -> i64 {
-    if driver.is_null() {
-        return 0;
-    }
-    ((num_bytes.max(1) + 255) / 256) * 256
-}
-
-/// Compiles a textual HLO program on a [`TpuDriver`] (`TpuDriver_CompileProgramFromText`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `hlo_text` - Null-terminated HLO text string.
-/// * `num_replicas` - Number of replicas.
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver`, `hlo_text`, and `ains` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_CompileProgramFromText(
-    driver: *mut TpuDriver,
-    hlo_text: *const c_char,
-    num_replicas: i32,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuCompiledProgramHandle {
-    let text_bytes: &[u8] = if hlo_text.is_null() {
-        b"HloModule text_prog"
-    } else {
-        // SAFETY: `hlo_text` is a valid null-terminated C-string when non-null.
-        unsafe { CStr::from_ptr(hlo_text).to_bytes() }
-    };
-    let proto = crate::tpu_driver_types::HloProto {
-        buffer: text_bytes.as_ptr().cast::<std::ffi::c_void>(),
-        size: i64::try_from(text_bytes.len()).unwrap_or(0),
-    };
-    // SAFETY: Delegated to `TpuDriver_Compile`.
-    unsafe { TpuDriver_Compile(driver, ptr::addr_of!(proto), num_replicas, num_ains, ains) }
-}
-
-/// Queries the shape of a compiled program (`TpuDriver_GetCompiledProgramShape`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `handle` - Pointer to [`crate::tpu_driver_types::TpuCompiledProgramHandle`].
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuDriver_GetCompiledProgramShape(
-    driver: *mut TpuDriver,
-    handle: *mut crate::tpu_driver_types::TpuCompiledProgramHandle,
-) -> *mut crate::tpu_driver_types::TpuCompiledProgramHandle {
-    if driver.is_null() {
-        return ptr::null_mut();
-    }
-    handle
-}
-
-/// Registers an event completion callback on a [`TpuDriver`] (`TpuDriver_AddCallback`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `event` - Pointer to [`crate::tpu_driver_types::TpuEvent`].
-/// * `callback_fn` - Callback function pointer.
-/// * `user_arg` - User context pointer.
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuDriver_AddCallback(
-    driver: *mut TpuDriver,
-    event: *mut crate::tpu_driver_types::TpuEvent,
-    callback_fn: *const std::ffi::c_void,
-    user_arg: *mut std::ffi::c_void,
-) {
-    let _ = (driver, event, callback_fn, user_arg);
-}
-
-/// Returns the `TpuDriver` API version string (`TpuDriver_Version`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuDriver_Version() -> *const c_char {
-    c"0.0.50".as_ptr()
-}
-
-/// Static [`TpuDriverFn`] vtable stored at offset `0x00` of [`TpuDriver`] (`224` bytes, 28 slots).
-static GLOBAL_TPU_DRIVER_FN_TABLE: TpuDriverFn = TpuDriverFn {
-    open: TpuDriver_Open as *const std::ffi::c_void,
-    close: TpuDriver_Close as *const std::ffi::c_void,
-    compute_linearized_bytes_from_shape: TpuDriver_ComputeLinearizedBytesFromShape
-        as *const std::ffi::c_void,
-    linearize_shape: TpuDriver_LinearizeShape as *const std::ffi::c_void,
-    delinearize_shape: TpuDriver_DelinearizeShape as *const std::ffi::c_void,
-    compile_program: TpuDriver_Compile as *const std::ffi::c_void,
-    compile_program_from_text: TpuDriver_CompileProgramFromText as *const std::ffi::c_void,
-    get_compiled_program_shape: TpuDriver_GetCompiledProgramShape as *const std::ffi::c_void,
-    load_program: TpuDriver_LoadProgram as *const std::ffi::c_void,
-    unload_program: TpuDriver_UnloadProgram as *const std::ffi::c_void,
-    execute_program: TpuDriver_ExecuteProgram as *const std::ffi::c_void,
-    allocate_tuple: TpuDriver_AllocateTuple as *const std::ffi::c_void,
-    allocate: TpuDriver_Allocate as *const std::ffi::c_void,
-    allocate_shape: TpuDriver_AllocateShape as *const std::ffi::c_void,
-    deallocate: TpuDriver_Deallocate as *const std::ffi::c_void,
-    transfer_to_device: TpuDriver_TransferToDevice as *const std::ffi::c_void,
-    transfer_from_device: TpuDriver_TransferFromDevice as *const std::ffi::c_void,
-    transfer_from_device_to_device: TpuDriver_TransferFromDeviceToDevice as *const std::ffi::c_void,
-    create_event: TpuDriver_CreateEvent as *const std::ffi::c_void,
-    free_event: TpuDriver_FreeEvent as *const std::ffi::c_void,
-    add_callback: TpuDriver_AddCallback as *const std::ffi::c_void,
-    wait_for_event: TpuDriver_WaitForEvents as *const std::ffi::c_void,
-    free_status: TpuStatus_Free as *const std::ffi::c_void,
-    reset: TpuDriver_Reset as *const std::ffi::c_void,
-    query_system_info: TpuDriver_QuerySystemInfo as *const std::ffi::c_void,
-    free_system_info: TpuDriver_FreeSystemInfo as *const std::ffi::c_void,
-    free_compiled_program_shape: TpuDriver_FreeCompiledProgramHandle as *const std::ffi::c_void,
-    version: TpuDriver_Version as *const std::ffi::c_void,
-};
-
-/// Populates a [`TpuDriverFn`] vtable and optionally initializes the TPU driver (`TpuDriver_Initialize`).
-///
-/// # Arguments
-///
-/// * `driver_fn` - Output pointer to [`TpuDriverFn`] to populate.
-/// * `initialize` - Whether to initialize the global TPU runtime.
-///
-/// # Safety
-///
-/// `driver_fn` must be null or a valid pointer to [`TpuDriverFn`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_Initialize(driver_fn: *mut TpuDriverFn, initialize: bool) {
-    let _ = initialize;
-    if !driver_fn.is_null() {
-        // SAFETY: `driver_fn` is non-null and points to a valid `TpuDriverFn`.
-        unsafe {
-            *driver_fn = GLOBAL_TPU_DRIVER_FN_TABLE;
-        }
-    }
-}
-
-/// Opens a low-level [`TpuDriver`] instance (`TpuDriver_Open`).
-///
-/// # Arguments
-///
-/// * `_worker` - Null-terminated worker specification string (e.g., `"local://"` or null).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuDriver_Open(_worker: *const c_char) -> *mut TpuDriver {
-    Box::into_raw(Box::new(TpuDriver {
-        fn_table: ptr::addr_of!(GLOBAL_TPU_DRIVER_FN_TABLE),
-        inner: TpuCoreDriver::open(libtpu_core::config::global_init_config()),
-    }))
-}
-
-/// Closes and frees a [`TpuDriver`] instance (`TpuDriver_Close`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-///
-/// # Safety
-///
-/// `driver` must be null or allocated by `TpuDriver_Open`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_Close(driver: *mut TpuDriver) {
-    if !driver.is_null() {
-        // SAFETY: `driver` is non-null.
-        unsafe {
-            drop(Box::from_raw(driver));
-        }
-    }
-}
-
-/// Resets a [`TpuDriver`] instance (`TpuDriver_Reset`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-///
-/// # Safety
-///
-/// `driver` must be null or a valid pointer to [`TpuDriver`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_Reset(driver: *mut TpuDriver) -> *mut TpuStatus {
-    if driver.is_null() {
-        // SAFETY: Static CStr literal is valid and null-terminated.
-        return unsafe { TpuStatus_Create(3, c"driver is null".as_ptr()) };
-    }
-    // SAFETY: `driver` is non-null.
-    let _ = unsafe { (*driver).inner.reset(DeviceId(0)) };
-    TpuStatus_New()
-}
-
-/// Queries system information from a [`TpuDriver`] (`TpuDriver_QuerySystemInfo`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-///
-/// # Safety
-///
-/// `driver` must be null or a valid pointer to [`TpuDriver`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_QuerySystemInfo(
-    driver: *mut TpuDriver,
-) -> *mut crate::tpu_driver_types::TpuSystemInfo {
-    if driver.is_null() {
-        return ptr::null_mut();
-    }
-    // SAFETY: `driver` is non-null.
-    let info = unsafe { (*driver).inner.query_system_info() };
-    Box::into_raw(Box::new(crate::tpu_driver_types::TpuSystemInfo {
-        num_chips: 4,
-        num_cores: 4,
-        info_str: to_c_string(&info),
-    }))
-}
-
-/// Frees a [`crate::tpu_driver_types::TpuSystemInfo`] (`TpuDriver_FreeSystemInfo`).
-///
-/// # Arguments
-///
-/// * `info` - Pointer returned by [`TpuDriver_QuerySystemInfo`].
-///
-/// # Safety
-///
-/// `info` must be null or allocated by [`TpuDriver_QuerySystemInfo`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_FreeSystemInfo(
-    info: *mut crate::tpu_driver_types::TpuSystemInfo,
-) {
-    if !info.is_null() {
-        // SAFETY: `info` was allocated via `Box::into_raw`.
-        unsafe {
-            drop(Box::from_raw(info));
-        }
-    }
-}
-
-/// Compiles an HLO program on a [`TpuDriver`] (`TpuDriver_Compile`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `source` - Pointer to [`crate::tpu_driver_types::HloProto`].
-/// * `num_replicas` - Number of replicas.
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver`, `source`, and `ains` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_Compile(
-    driver: *mut TpuDriver,
-    source: *const crate::tpu_driver_types::HloProto,
-    num_replicas: i32,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuCompiledProgramHandle {
-    let _ = (num_replicas, num_ains, ains);
-    if driver.is_null() {
-        return ptr::null_mut();
-    }
-    // SAFETY: `source` is null or a valid `HloProto*`.
-    let src_opt = unsafe { source.as_ref() };
-    let code_bytes: &[u8] = src_opt.map_or(b"HloModule driver_compile" as &[u8], |src| {
-        // SAFETY: `src.buffer` has `src.size` bytes when non-null.
-        unsafe {
-            std::slice::from_raw_parts(
-                src.buffer.cast::<u8>(),
-                usize::try_from(src.size.max(0)).unwrap_or(0),
-            )
-        }
-    });
-    // SAFETY: `driver` is non-null.
-    let Ok(prog) = (unsafe { (*driver).inner.compile(code_bytes) }) else {
-        return ptr::null_mut();
-    };
-    Box::into_raw(Box::new(
-        crate::tpu_driver_types::TpuCompiledProgramHandle { program: prog },
-    ))
-}
-
-/// Frees a [`crate::tpu_driver_types::TpuCompiledProgramHandle`] (`TpuDriver_FreeCompiledProgramHandle`).
-///
-/// # Arguments
-///
-/// * `handle` - Pointer returned by [`TpuDriver_Compile`].
-///
-/// # Safety
-///
-/// `handle` must be null or allocated by [`TpuDriver_Compile`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_FreeCompiledProgramHandle(
-    handle: *mut crate::tpu_driver_types::TpuCompiledProgramHandle,
-) {
-    if !handle.is_null() {
-        // SAFETY: `handle` was allocated via `Box::into_raw`.
-        unsafe {
-            drop(Box::from_raw(handle));
-        }
-    }
-}
-
-/// Loads a compiled program onto a core of a [`TpuDriver`] (`TpuDriver_LoadProgram`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `core_id` - Target core ordinal.
-/// * `compiled_program_handle` - Pointer to [`crate::tpu_driver_types::TpuCompiledProgramHandle`].
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver` and `compiled_program_handle` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_LoadProgram(
-    driver: *mut TpuDriver,
-    core_id: i32,
-    compiled_program_handle: *const crate::tpu_driver_types::TpuCompiledProgramHandle,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuLoadedProgramHandle {
-    let _ = (num_ains, ains);
-    if driver.is_null() || compiled_program_handle.is_null() {
-        return ptr::null_mut();
-    }
-    // SAFETY: `compiled_program_handle` is non-null.
-    let prog = unsafe { (*compiled_program_handle).program.clone() };
-    Box::into_raw(Box::new(crate::tpu_driver_types::TpuLoadedProgramHandle {
-        core_id,
-        program: prog,
-    }))
-}
-
-/// Unloads a loaded program from a [`TpuDriver`] (`TpuDriver_UnloadProgram`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `loaded_program_handle` - Loaded program handle to unload and free.
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver` and `loaded_program_handle` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_UnloadProgram(
-    driver: *mut TpuDriver,
-    loaded_program_handle: *mut crate::tpu_driver_types::TpuLoadedProgramHandle,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuEvent {
-    let _ = (num_ains, ains);
-    if !loaded_program_handle.is_null() {
-        // SAFETY: `loaded_program_handle` was allocated by `TpuDriver_LoadProgram`.
-        unsafe {
-            drop(Box::from_raw(loaded_program_handle));
-        }
-    }
-    // SAFETY: Delegated to `TpuDriver_CreateEvent`.
-    unsafe { TpuDriver_CreateEvent(driver) }
-}
-
-/// Executes a loaded program on a [`TpuDriver`] (`TpuDriver_ExecuteProgram`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `handle` - Pointer to [`crate::tpu_driver_types::TpuLoadedProgramHandle`].
-/// * `num_inputs` - Number of input buffers.
-/// * `inputs` - Array of input `*mut TpuBufferHandle` pointers.
-/// * `num_outputs` - Number of output buffers.
-/// * `outputs` - Array of output `*mut TpuBufferHandle` pointers.
-/// * `device_assignment` - Logical device assignment.
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// All pointer arguments must be null or valid pointers.
-#[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn TpuDriver_ExecuteProgram(
-    driver: *mut TpuDriver,
-    handle: *mut crate::tpu_driver_types::TpuLoadedProgramHandle,
-    num_inputs: i32,
-    inputs: *const *mut crate::tpu_driver_types::TpuBufferHandle,
-    num_outputs: i32,
-    outputs: *const *mut crate::tpu_driver_types::TpuBufferHandle,
-    device_assignment: crate::tpu_driver_types::DeviceAssignment,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuEvent {
-    let _ = (device_assignment, num_ains, ains);
-    if !any_null(&[driver as usize, handle as usize]) {
-        // SAFETY: `driver` and `handle` are non-null.
-        let (drv, lp) = unsafe { (&(*driver).inner, &*handle) };
-        let dev_id = DeviceId(u32::try_from(lp.core_id.max(0)).unwrap_or(0));
-        let mut in_addrs = Vec::new();
-        for idx in 0..usize::try_from(num_inputs.max(0)).unwrap_or(0) {
-            // SAFETY: `inputs` has `num_inputs` elements.
-            let b_ptr = unsafe { *inputs.add(idx) };
-            // SAFETY: `b_ptr` is non-null.
-            in_addrs.push(libtpu_core::types::DeviceAddress(unsafe {
-                (*b_ptr).address
-            }));
-        }
-        let mut out_addrs = Vec::new();
-        for idx in 0..usize::try_from(num_outputs.max(0)).unwrap_or(0) {
-            // SAFETY: `outputs` has `num_outputs` elements.
-            let b_ptr = unsafe { *outputs.add(idx) };
-            // SAFETY: `b_ptr` is non-null.
-            out_addrs.push(libtpu_core::types::DeviceAddress(unsafe {
-                (*b_ptr).address
-            }));
-        }
-        let _ = drv.execute_program(dev_id, &lp.program, &in_addrs, &out_addrs);
-    }
-    // SAFETY: Delegated to `TpuDriver_CreateEvent`.
-    unsafe { TpuDriver_CreateEvent(driver) }
-}
-
-/// Allocates a device buffer handle on a [`TpuDriver`] (`TpuDriver_Allocate`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `core_id` - Target core ordinal.
-/// * `memory_region` - Memory region (`0` = HBM, `1` = VMEM).
-/// * `num_bytes` - Allocation byte size.
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver` and `ains` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_Allocate(
-    driver: *mut TpuDriver,
-    core_id: i32,
-    memory_region: i32,
-    num_bytes: i64,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuBufferHandle {
-    let _ = (num_ains, ains);
-    if driver.is_null() {
-        return ptr::null_mut();
-    }
-    let dev_id = DeviceId(u32::try_from(core_id.max(0)).unwrap_or(0));
-    let byte_sz = libtpu_core::types::ByteSize(usize::try_from(num_bytes.max(16)).unwrap_or(16));
-    // SAFETY: `driver` is non-null.
-    let addr = unsafe {
-        (*driver)
-            .inner
-            .allocate(dev_id, byte_sz)
-            .unwrap_or(libtpu_core::types::DeviceAddress(0))
-            .0
-    };
-    // SAFETY: `driver` is non-null.
-    let ev = unsafe { TpuDriver_CreateEvent(driver) };
-    Box::into_raw(Box::new(crate::tpu_driver_types::TpuBufferHandle {
-        address: addr,
-        size_in_bytes: num_bytes.max(16),
-        core_id,
-        memory_region,
-        event: ev,
-    }))
-}
-
-/// Allocates a tuple buffer handle on a [`TpuDriver`] (`TpuDriver_AllocateTuple`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `core_id` - Target core ordinal.
-/// * `memory_region` - Memory region.
-/// * `num_children` - Number of child buffers.
-/// * `children` - Array of child buffer handles.
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver`, `children`, and `ains` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_AllocateTuple(
-    driver: *mut TpuDriver,
-    core_id: i32,
-    memory_region: i32,
-    num_children: i32,
-    children: *const *mut crate::tpu_driver_types::TpuBufferHandle,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuBufferHandle {
-    let _ = children;
-    let tuple_bytes = i64::from(num_children.max(1)) * 8;
-    // SAFETY: Delegated to `TpuDriver_Allocate`.
-    unsafe { TpuDriver_Allocate(driver, core_id, memory_region, tuple_bytes, num_ains, ains) }
-}
-
-/// Allocates a shaped buffer handle on a [`TpuDriver`] (`TpuDriver_AllocateShape`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `core_id` - Target core ordinal.
-/// * `memory_region` - Memory region.
-/// * `num_bytes` - Byte size of the shape.
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver` and `ains` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_AllocateShape(
-    driver: *mut TpuDriver,
-    core_id: i32,
-    memory_region: i32,
-    num_bytes: i64,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuBufferHandle {
-    // SAFETY: Delegated to `TpuDriver_Allocate`.
-    unsafe { TpuDriver_Allocate(driver, core_id, memory_region, num_bytes, num_ains, ains) }
-}
-
-/// Deallocates a device buffer handle on a [`TpuDriver`] (`TpuDriver_Deallocate`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `buf` - Buffer handle returned by [`TpuDriver_Allocate`].
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver` and `buf` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_Deallocate(
-    driver: *mut TpuDriver,
-    buf: *mut crate::tpu_driver_types::TpuBufferHandle,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuEvent {
-    let _ = (num_ains, ains);
-    if !any_null(&[driver as usize, buf as usize]) {
-        // SAFETY: `buf` was allocated by `TpuDriver_Allocate`.
-        let handle = unsafe { Box::from_raw(buf) };
-        // SAFETY: `handle.event` was allocated by `TpuDriver_CreateEvent`.
-        unsafe {
-            TpuDriver_FreeEvent(handle.event);
-        }
-        let dev_id = DeviceId(u32::try_from(handle.core_id.max(0)).unwrap_or(0));
-        // SAFETY: `driver` is non-null.
-        let _ = unsafe {
-            (*driver)
-                .inner
-                .deallocate(dev_id, libtpu_core::types::DeviceAddress(handle.address))
-        };
-    }
-    // SAFETY: Delegated to `TpuDriver_CreateEvent`.
-    unsafe { TpuDriver_CreateEvent(driver) }
-}
-
-/// Transfers host memory to a device buffer (`TpuDriver_TransferToDevice`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `src` - Source host buffer pointer.
-/// * `dst` - Destination [`crate::tpu_driver_types::TpuBufferHandle`].
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver`, `src`, `dst`, and `ains` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_TransferToDevice(
-    driver: *mut TpuDriver,
-    src: *const std::ffi::c_void,
-    dst: *mut crate::tpu_driver_types::TpuBufferHandle,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuEvent {
-    let _ = (num_ains, ains);
-    if !any_null(&[driver as usize, src as usize, dst as usize]) {
-        // SAFETY: `dst` is non-null.
-        let d = unsafe { &*dst };
-        let dev_id = DeviceId(u32::try_from(d.core_id.max(0)).unwrap_or(0));
-        let len = usize::try_from(d.size_in_bytes.max(0)).unwrap_or(0);
-        // SAFETY: `src` has at least `len` bytes.
-        let slice = unsafe { std::slice::from_raw_parts(src.cast::<u8>(), len) };
-        // SAFETY: `driver` is non-null.
-        let _ = unsafe {
-            (*driver).inner.transfer_to_device(
-                dev_id,
-                libtpu_core::types::DeviceAddress(d.address),
-                slice,
-            )
-        };
-    }
-    // SAFETY: Delegated to `TpuDriver_CreateEvent`.
-    unsafe { TpuDriver_CreateEvent(driver) }
-}
-
-/// Transfers device buffer memory to host (`TpuDriver_TransferFromDevice`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `src` - Source [`crate::tpu_driver_types::TpuBufferHandle`].
-/// * `dst` - Destination host buffer pointer.
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver`, `src`, `dst`, and `ains` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_TransferFromDevice(
-    driver: *mut TpuDriver,
-    src: *mut crate::tpu_driver_types::TpuBufferHandle,
-    dst: *mut std::ffi::c_void,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuEvent {
-    let _ = (num_ains, ains);
-    if !any_null(&[driver as usize, src as usize, dst as usize]) {
-        // SAFETY: `src` is non-null.
-        let s = unsafe { &*src };
-        let dev_id = DeviceId(u32::try_from(s.core_id.max(0)).unwrap_or(0));
-        let len = usize::try_from(s.size_in_bytes.max(0)).unwrap_or(0);
-        // SAFETY: `dst` has at least `len` bytes.
-        let slice = unsafe { std::slice::from_raw_parts_mut(dst.cast::<u8>(), len) };
-        // SAFETY: `driver` is non-null.
-        let _ = unsafe {
-            (*driver).inner.transfer_from_device(
-                dev_id,
-                libtpu_core::types::DeviceAddress(s.address),
-                slice,
-            )
-        };
-    }
-    // SAFETY: Delegated to `TpuDriver_CreateEvent`.
-    unsafe { TpuDriver_CreateEvent(driver) }
-}
-
-/// Transfers memory between two device buffers (`TpuDriver_TransferFromDeviceToDevice`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `src` - Source [`crate::tpu_driver_types::TpuBufferHandle`].
-/// * `dst` - Destination [`crate::tpu_driver_types::TpuBufferHandle`].
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver`, `src`, `dst`, and `ains` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_TransferFromDeviceToDevice(
-    driver: *mut TpuDriver,
-    src: *mut crate::tpu_driver_types::TpuBufferHandle,
-    dst: *mut crate::tpu_driver_types::TpuBufferHandle,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuEvent {
-    let _ = (num_ains, ains);
-    if !any_null(&[driver as usize, src as usize, dst as usize]) {
-        // SAFETY: `src` and `dst` are non-null.
-        let (s, d) = unsafe { (&*src, &*dst) };
-        let src_dev = DeviceId(u32::try_from(s.core_id.max(0)).unwrap_or(0));
-        let dst_dev = DeviceId(u32::try_from(d.core_id.max(0)).unwrap_or(0));
-        let len = usize::try_from(s.size_in_bytes.min(d.size_in_bytes).max(0)).unwrap_or(0);
-        // SAFETY: `driver` is non-null.
-        let _ = unsafe {
-            (*driver).inner.transfer_device_to_device(
-                src_dev,
-                libtpu_core::types::DeviceAddress(s.address),
-                dst_dev,
-                libtpu_core::types::DeviceAddress(d.address),
-                libtpu_core::types::ByteSize(len),
-            )
-        };
-    }
-    // SAFETY: Delegated to `TpuDriver_CreateEvent`.
-    unsafe { TpuDriver_CreateEvent(driver) }
-}
-
-/// Linearizes a host tensor shape into tiled TPU buffer bytes (`TpuDriver_LinearizeShape`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `dst` - Destination tiled byte buffer.
-/// * `src` - Source linear byte buffer.
-/// * `num_bytes` - Number of bytes to linearize.
-///
-/// # Safety
-///
-/// `driver`, `dst`, and `src` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_LinearizeShape(
-    driver: *mut TpuDriver,
-    dst: *mut std::ffi::c_void,
-    src: *const std::ffi::c_void,
-    num_bytes: i64,
-) -> *mut TpuStatus {
-    if any_null(&[driver as usize, dst as usize, src as usize]) {
-        // SAFETY: Static CStr literal is valid.
-        return unsafe { TpuStatus_Create(3, c"null argument".as_ptr()) };
-    }
-    let len = usize::try_from(num_bytes.max(0)).unwrap_or(0);
-    // SAFETY: Caller guarantees `src` has at least `len` bytes.
-    let src_slice = unsafe { std::slice::from_raw_parts(src.cast::<u8>(), len) };
-    let num_f32 = i64::try_from((len / 4).max(1)).unwrap_or(1);
-    let shape = libtpu_core::types::Shape::new(ElementType::F32, vec![1, num_f32], None, None);
-    let tiled = shape
-        .and_then(|s| s.linearize_to_tpu_tiles(src_slice))
-        .unwrap_or_default();
-    // SAFETY: Caller guarantees `dst` has at least `len` bytes.
-    unsafe {
-        ptr::copy_nonoverlapping(tiled.as_ptr(), dst.cast::<u8>(), len.min(tiled.len()));
-    }
-    TpuStatus_New()
-}
-
-/// Delinearizes tiled TPU buffer bytes back into host tensor layout (`TpuDriver_DelinearizeShape`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `dst` - Destination linear byte buffer.
-/// * `src` - Source tiled byte buffer.
-/// * `num_bytes` - Number of bytes to delinearize.
-///
-/// # Safety
-///
-/// `driver`, `dst`, and `src` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_DelinearizeShape(
-    driver: *mut TpuDriver,
-    dst: *mut std::ffi::c_void,
-    src: *const std::ffi::c_void,
-    num_bytes: i64,
-) -> *mut TpuStatus {
-    if any_null(&[driver as usize, dst as usize, src as usize]) {
-        // SAFETY: Static CStr literal is valid.
-        return unsafe { TpuStatus_Create(3, c"null argument".as_ptr()) };
-    }
-    let len = usize::try_from(num_bytes.max(0)).unwrap_or(0);
-    // SAFETY: Caller guarantees `src` has at least `len` bytes.
-    let src_slice = unsafe { std::slice::from_raw_parts(src.cast::<u8>(), len) };
-    let num_f32 = i64::try_from((len / 4).max(1)).unwrap_or(1);
-    let untiled = libtpu_core::types::Shape::new(ElementType::F32, vec![1, num_f32], None, None)
-        .and_then(|s| {
-            let mut padded = vec![0_u8; s.on_device_byte_size().0.max(len)];
-            padded
-                .iter_mut()
-                .zip(src_slice.iter())
-                .for_each(|(d, &v)| *d = v);
-            s.delinearize_from_tpu_tiles(&padded)
-        })
-        .unwrap_or_default();
-    // SAFETY: Caller guarantees `dst` has at least `len` bytes.
-    unsafe {
-        ptr::copy_nonoverlapping(untiled.as_ptr(), dst.cast::<u8>(), len.min(untiled.len()));
-    }
-    TpuStatus_New()
-}
-
-/// Creates a [`TpuDriver`] synchronization event (`TpuDriver_CreateEvent`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-///
-/// # Safety
-///
-/// `driver` must be null or a valid pointer to [`TpuDriver`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_CreateEvent(
-    driver: *mut TpuDriver,
-) -> *mut crate::tpu_driver_types::TpuEvent {
-    if driver.is_null() {
-        return ptr::null_mut();
-    }
-    Box::into_raw(Box::new(crate::tpu_driver_types::TpuEvent {
-        event_id: 1,
-        status: TpuStatus_New(),
-    }))
-}
-
-/// Frees a [`TpuDriver`] synchronization event (`TpuDriver_FreeEvent`).
-///
-/// # Arguments
-///
-/// * `event` - Pointer to [`crate::tpu_driver_types::TpuEvent`].
-///
-/// # Safety
-///
-/// `event` must be null or allocated by [`TpuDriver_CreateEvent`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_FreeEvent(event: *mut crate::tpu_driver_types::TpuEvent) {
-    if !event.is_null() {
-        // SAFETY: `event` was allocated by `TpuDriver_CreateEvent`.
-        unsafe {
-            let ev = Box::from_raw(event);
-            TpuStatus_Free(ev.status);
-        }
-    }
-}
-
-/// Waits for [`TpuDriver`] synchronization events (`TpuDriver_WaitForEvents`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `num_events` - Number of events in `events`.
-/// * `events` - Array of `*mut TpuEvent` pointers.
-/// * `timeout_us` - Timeout in microseconds.
-///
-/// # Safety
-///
-/// `driver` and `events` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_WaitForEvents(
-    driver: *mut TpuDriver,
-    num_events: i32,
-    events: *const *mut crate::tpu_driver_types::TpuEvent,
-    timeout_us: i64,
-) -> *mut TpuStatus {
-    let _ = (num_events, events, timeout_us);
-    if driver.is_null() {
-        // SAFETY: Static CStr literal is valid and null-terminated.
-        return unsafe { TpuStatus_Create(3, c"driver is null".as_ptr()) };
-    }
-    TpuStatus_New()
-}
-
-/// Alias for [`TpuStatus_Free`] (`TpuStatus_Destroy`).
-///
-/// # Arguments
-///
-/// * `status` - Pointer to [`TpuStatus`] to destroy, or null.
-///
-/// # Safety
-///
-/// `status` must be null or allocated by `TpuStatus_New` / `TpuStatus_Create`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuStatus_Destroy(status: *mut TpuStatus) {
-    // SAFETY: Delegates directly to `TpuStatus_Free`.
-    unsafe { TpuStatus_Free(status) }
-}
-
-/// Alias for [`TpuStatus_Free`] in `TpuDriverFn` (`TpuDriver_FreeStatus`).
-///
-/// # Arguments
-///
-/// * `status` - Pointer to [`TpuStatus`] to free, or null.
-///
-/// # Safety
-///
-/// `status` must be null or allocated by `TpuStatus_New` / `TpuStatus_Create`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_FreeStatus(status: *mut TpuStatus) {
-    // SAFETY: Delegates directly to `TpuStatus_Free`.
-    unsafe { TpuStatus_Free(status) }
-}
-
-/// Alias for [`TpuDriver_Compile`] (`TpuDriver_CompileProgram`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `source` - Pointer to [`crate::tpu_driver_types::HloProto`].
-/// * `num_replicas` - Number of replicas.
-/// * `num_ains` - Number of prerequisite events.
-/// * `ains` - Array of prerequisite event pointers.
-///
-/// # Safety
-///
-/// `driver`, `source`, and `ains` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_CompileProgram(
-    driver: *mut TpuDriver,
-    source: *const crate::tpu_driver_types::HloProto,
-    num_replicas: i32,
-    num_ains: i32,
-    ains: *const *mut crate::tpu_driver_types::TpuEvent,
-) -> *mut crate::tpu_driver_types::TpuCompiledProgramHandle {
-    // SAFETY: Delegates directly to `TpuDriver_Compile`.
-    unsafe { TpuDriver_Compile(driver, source, num_replicas, num_ains, ains) }
-}
-
-/// Alias for [`TpuDriver_FreeCompiledProgramHandle`] (`TpuDriver_FreeCompiledProgramShape`).
-///
-/// # Arguments
-///
-/// * `handle` - Pointer returned by [`TpuDriver_GetCompiledProgramShape`] or [`TpuDriver_Compile`].
-///
-/// # Safety
-///
-/// `handle` must be null or a valid compiled program handle.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_FreeCompiledProgramShape(
-    handle: *mut crate::tpu_driver_types::TpuCompiledProgramHandle,
-) {
-    // SAFETY: Delegates directly to `TpuDriver_FreeCompiledProgramHandle`.
-    unsafe { TpuDriver_FreeCompiledProgramHandle(handle) }
-}
-
-/// Alias for [`TpuDriver_WaitForEvents`] (`TpuDriver_WaitForEvent`).
-///
-/// # Arguments
-///
-/// * `driver` - Pointer to [`TpuDriver`].
-/// * `num_events` - Number of events in `events`.
-/// * `events` - Array of `*mut TpuEvent` pointers.
-/// * `timeout_us` - Timeout in microseconds.
-///
-/// # Safety
-///
-/// `driver` and `events` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuDriver_WaitForEvent(
-    driver: *mut TpuDriver,
-    num_events: i32,
-    events: *const *mut crate::tpu_driver_types::TpuEvent,
-    timeout_us: i64,
-) -> *mut TpuStatus {
-    // SAFETY: Delegates directly to `TpuDriver_WaitForEvents`.
-    unsafe { TpuDriver_WaitForEvents(driver, num_events, events, timeout_us) }
-}
-
-/// Returns the first available [`TpuCoreLocation`] in `topo` (`TpuTopology_AnAvailableCore`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_AnAvailableCore(
-    topo: *const TpuTopology,
-    core_type: i32,
-) -> *const TpuCoreLocation {
-    // SAFETY: Delegates to `TpuTopology_CoreForId` with core 0.
-    unsafe { TpuTopology_CoreForId(topo, core_type, 0) }
-}
-
-/// Alias for [`TpuTopology_Cores`] (`TpuTopology_AvailableCores`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `core_type` - Core type discriminant.
-/// * `cores_out` - Output array of `*const TpuCoreLocation`.
-///
-/// # Safety
-///
-/// `topo` and `cores_out` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_AvailableCores(
-    topo: *const TpuTopology,
-    core_type: i32,
-    cores_out: *mut *const TpuCoreLocation,
-) {
-    // SAFETY: Delegates directly to `TpuTopology_Cores`.
-    unsafe { TpuTopology_Cores(topo, core_type, cores_out) }
-}
-
-/// Alias for [`TpuTopology_NumCores`] (`TpuTopology_AvailableCoresCount`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `core_type` - Core type discriminant.
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_AvailableCoresCount(
-    topo: *const TpuTopology,
-    core_type: i32,
-) -> i32 {
-    // SAFETY: Delegates directly to `TpuTopology_NumCores`.
-    unsafe { TpuTopology_NumCores(topo, core_type) }
-}
-
-/// Alias for [`TpuCoreLocation_ChipCoordinates`] (`TpuTopology_ChipCoordinates`).
-///
-/// # Arguments
-///
-/// * `core` - Pointer to [`TpuCoreLocation`].
-/// * `x_out` - Output X coordinate pointer.
-/// * `y_out` - Output Y coordinate pointer.
-/// * `z_out` - Output Z coordinate pointer.
-///
-/// # Safety
-///
-/// All pointers must be null or valid.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_ChipCoordinates(
-    core: *const TpuCoreLocation,
-    x_out: *mut i32,
-    y_out: *mut i32,
-    z_out: *mut i32,
-) {
-    // SAFETY: Delegates directly to `TpuCoreLocation_ChipCoordinates`.
-    unsafe { TpuCoreLocation_ChipCoordinates(core, x_out, y_out, z_out) }
-}
-
-/// Returns the total number of chips in `topo` (`TpuTopology_ChipCount`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_ChipCount(topo: *const TpuTopology) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let hosts = unsafe { TpuTopology_HostCount(topo) };
-    // SAFETY: `topo` is null or valid.
-    let chips_per_host = unsafe { TpuTopology_ChipsPerHost(topo) };
-    hosts.saturating_mul(chips_per_host)
-}
-
-/// Alias for [`TpuTopology_NumCores`] (`TpuTopology_CoreCount`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `core_type` - Core type discriminant.
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_CoreCount(topo: *const TpuTopology, core_type: i32) -> i32 {
-    // SAFETY: Delegates directly to `TpuTopology_NumCores`.
-    unsafe { TpuTopology_NumCores(topo, core_type) }
-}
-
-/// Alias for [`TpuCoreLocation_Id`] (`TpuTopology_CoreId`).
-///
-/// # Arguments
-///
-/// * `core` - Pointer to [`TpuCoreLocation`].
-///
-/// # Safety
-///
-/// `core` must be null or a valid pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_CoreId(core: *const TpuCoreLocation) -> i32 {
-    // SAFETY: Delegates directly to `TpuCoreLocation_Id`.
-    unsafe { TpuCoreLocation_Id(core) }
-}
-
-/// Alias for [`TpuCoreLocation_Index`] (`TpuTopology_CoreIndexOnChip`).
-///
-/// # Arguments
-///
-/// * `core` - Pointer to [`TpuCoreLocation`].
-///
-/// # Safety
-///
-/// `core` must be null or a valid pointer.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_CoreIndexOnChip(core: *const TpuCoreLocation) -> i32 {
-    // SAFETY: Delegates directly to `TpuCoreLocation_Index`.
-    unsafe { TpuCoreLocation_Index(core) }
-}
-
-/// Alias for [`TpuTopology_Cores`] (`TpuTopology_CoreLocations`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `core_type` - Core type discriminant.
-/// * `cores_out` - Output array of `*const TpuCoreLocation`.
-///
-/// # Safety
-///
-/// `topo` and `cores_out` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_CoreLocations(
-    topo: *const TpuTopology,
-    core_type: i32,
-    cores_out: *mut *const TpuCoreLocation,
-) {
-    // SAFETY: Delegates directly to `TpuTopology_Cores`.
-    unsafe { TpuTopology_Cores(topo, core_type, cores_out) }
-}
-
-/// Returns the current host ID (`TpuTopology_CurrentHost`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_CurrentHost(topo: *const TpuTopology) -> i32 {
-    // SAFETY: Delegates to `TpuTopology_IdForHost` at origin `(0, 0, 0)`.
-    unsafe { TpuTopology_IdForHost(topo, 0, 0, 0) }
-}
-
-/// Returns the X host bound (`TpuTopology_HostBounds_X`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_HostBounds_X(topo: *const TpuTopology) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    i32::try_from(t.hal.topology_spec().host_bounds.x).unwrap_or(1)
-}
-
-/// Returns the Y host bound (`TpuTopology_HostBounds_Y`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_HostBounds_Y(topo: *const TpuTopology) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    i32::try_from(t.hal.topology_spec().host_bounds.y).unwrap_or(1)
-}
-
-/// Returns the Z host bound (`TpuTopology_HostBounds_Z`).
-///
-/// # Arguments
-///
-/// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-///
-/// # Safety
-///
-/// `topo` must be null or a valid pointer to [`TpuTopology`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_HostBounds_Z(topo: *const TpuTopology) -> i32 {
-    // SAFETY: `topo` is null or valid.
-    let t = unsafe { resolve_topology(topo) };
-    i32::try_from(t.hal.topology_spec().host_bounds.z).unwrap_or(1)
-}
-
-/// Alias for [`TpuHostLocation_Cores`] (`TpuTopology_HostLocations`).
-///
-/// # Arguments
-///
-/// * `host` - Pointer to [`TpuHostLocation`] (or null).
-/// * `core_type` - Core type discriminant.
-/// * `cores_out` - Output array of `*const TpuCoreLocation`.
-///
-/// # Safety
-///
-/// `host` and `cores_out` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuTopology_HostLocations(
-    host: *const TpuHostLocation,
-    core_type: i32,
-    cores_out: *mut *const TpuCoreLocation,
-) {
-    // SAFETY: Delegates directly to `TpuHostLocation_Cores`.
-    unsafe { TpuHostLocation_Cores(host, core_type, cores_out) }
-}
-
-/// Waits for distributed TPU host initialization (`WaitForDistributedTpuOp_DoWork`).
-///
-/// # Arguments
-///
-/// * `num_hosts` - Number of hosts in the cluster.
-/// * `num_cores_per_host` - Number of cores per host.
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn WaitForDistributedTpuOp_DoWork(
-    num_hosts: i32,
-    num_cores_per_host: i32,
-    status: *mut TpuStatus,
-) -> i32 {
-    if num_hosts <= 0 || num_cores_per_host <= 0 {
-        // SAFETY: `TpuStatus_Set` checks `status` for null.
-        unsafe {
-            TpuStatus_Set(status, 3, c"invalid host or core count".as_ptr(), 26);
-        }
-        return -1;
-    }
-    0
-}
-
-/// Initializes a host for distributed TPU execution (`InitializeHostForDistributedTpuOp_DoWork`).
-///
-/// # Arguments
-///
-/// * `host_id` - Zero-based host index.
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn InitializeHostForDistributedTpuOp_DoWork(
-    host_id: i32,
-    status: *mut TpuStatus,
-) -> i32 {
-    if host_id < 0 {
-        // SAFETY: `TpuStatus_Set` checks `status` for null.
-        unsafe {
-            TpuStatus_Set(status, 3, c"negative host_id".as_ptr(), 16);
-        }
-        return -1;
-    }
-    0
-}
-
-/// Alias for [`SetGlobalTPUArrayOp_DoWork`] (`SetGlobalTPUArrayOp`).
-///
-/// # Arguments
-///
-/// * `topology_len` - Byte length of `topology_proto`.
-/// * `topology_proto` - Pointer to serialized `TpuTopologyArgsProto` bytes (or null).
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `topology_proto` and `status` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn SetGlobalTPUArrayOp(
-    topology_len: usize,
-    topology_proto: *const c_char,
-    status: *mut TpuStatus,
-) -> i32 {
-    // SAFETY: Delegates directly to `SetGlobalTPUArrayOp_DoWork`.
-    unsafe { SetGlobalTPUArrayOp_DoWork(topology_len, topology_proto, status) }
-}
-
-/// Disconnects distributed TPU chips (`DisconnectDistributedTpuChipsOp_DoWork`).
-///
-/// # Arguments
-///
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn DisconnectDistributedTpuChipsOp_DoWork(status: *mut TpuStatus) -> i32 {
-    let _ = status;
-    0
-}
-
-/// Shuts down distributed TPU cluster state (`ShutdownDistributedTpuOp_DoWork`).
-///
-/// # Arguments
-///
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn ShutdownDistributedTpuOp_DoWork(status: *mut TpuStatus) -> i32 {
-    let _ = status;
-    0
-}
-
-/// Initializes a TPU node context (`TpuNodeContext_Initialize`).
-///
-/// # Arguments
-///
-/// * `device_ordinal` - Zero-based device ordinal.
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuNodeContext_Initialize(
-    device_ordinal: i32,
-    status: *mut TpuStatus,
-) -> i32 {
-    if device_ordinal < 0 {
-        // SAFETY: `TpuStatus_Set` checks `status` for null.
-        unsafe {
-            TpuStatus_Set(status, 3, c"negative device_ordinal".as_ptr(), 23);
-        }
-        return -1;
-    }
-    0
-}
-
-/// Creates a [`TpuMeshState`] node context handle (`TpuNodeContext_Create`).
-///
-/// # Arguments
-///
-/// * `device_ordinal` - Zero-based device ordinal.
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuNodeContext_Create(
-    device_ordinal: i32,
-    status: *mut TpuStatus,
-) -> *mut TpuMeshState {
-    if device_ordinal < 0 {
-        // SAFETY: `TpuStatus_Set` checks `status` for null.
-        unsafe {
-            TpuStatus_Set(status, 3, c"negative device_ordinal".as_ptr(), 23);
-        }
-        return ptr::null_mut();
-    }
-    TpuMeshState_Create()
-}
-
-/// Closes a TPU node context host (`TpuNodeContext_CloseTpuHost`).
-///
-/// # Arguments
-///
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuNodeContext_CloseTpuHost(status: *mut TpuStatus) -> i32 {
-    let _ = status;
-    0
-}
-
-/// Stops background chip heartbeats (`TpuNodeContext_StopChipHeartbeats`).
-///
-/// # Arguments
-///
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuNodeContext_StopChipHeartbeats(status: *mut TpuStatus) -> i32 {
-    let _ = status;
-    0
-}
-
-/// Returns `true` if TPU compilations are currently disabled (`TpuNodeContext_CompilationsDisabled`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuNodeContext_CompilationsDisabled() -> bool {
-    false
-}
-
-/// Compiles and builds a TensorFlow TPU program (`TpuCompile_CompileAndBuild`).
-///
-/// # Arguments
-///
-/// * `program_bytes` - Input MLIR/HLO program bytes pointer.
-/// * `program_len` - Length of `program_bytes`.
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `program_bytes` and `status` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuCompile_CompileAndBuild(
-    program_bytes: *const c_char,
-    program_len: usize,
-    status: *mut TpuStatus,
-) -> i32 {
-    if program_len == 0 || program_bytes.is_null() {
-        // SAFETY: `TpuStatus_Set` checks `status` for null.
-        unsafe {
-            TpuStatus_Set(status, 3, c"empty program_bytes".as_ptr(), 19);
-        }
-        return -1;
-    }
-    0
-}
-
-/// Compiles and builds an XRT TPU program (`TpuCompile_XrtCompileAndBuild`).
-///
-/// # Arguments
-///
-/// * `program_bytes` - Input XRT computation bytes pointer.
-/// * `program_len` - Length of `program_bytes`.
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `program_bytes` and `status` must be null or valid pointers.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuCompile_XrtCompileAndBuild(
-    program_bytes: *const c_char,
-    program_len: usize,
-    status: *mut TpuStatus,
-) -> i32 {
-    // SAFETY: Delegates directly to `TpuCompile_CompileAndBuild`.
-    unsafe { TpuCompile_CompileAndBuild(program_bytes, program_len, status) }
-}
-
-/// Loads a compiled TPU program and enqueues it onto a device stream (`TpuExecutable_LoadProgramAndEnqueueToStream`).
-///
-/// # Arguments
-///
-/// * `device_ordinal` - Target device ordinal.
-/// * `status` - Optional [`TpuStatus`] pointer.
-///
-/// # Safety
-///
-/// `status` must be null or a valid pointer to [`TpuStatus`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuExecutable_LoadProgramAndEnqueueToStream(
-    device_ordinal: i32,
-    status: *mut TpuStatus,
-) -> i32 {
-    if device_ordinal < 0 {
-        // SAFETY: `TpuStatus_Set` checks `status` for null.
-        unsafe {
-            TpuStatus_Set(status, 3, c"negative device_ordinal".as_ptr(), 23);
-        }
-        return -1;
-    }
-    0
-}
-
-/// Creates a TPU resource manager handle (`TpuResourceMgr_Create`).
-#[unsafe(no_mangle)]
-pub extern "C" fn TpuResourceMgr_Create() -> *mut TpuMeshState {
-    TpuMeshState_Create()
-}
-
-/// Destroys a TPU resource manager handle (`TpuResourceMgr_Destroy`).
-///
-/// # Arguments
-///
-/// * `mgr` - Pointer returned by [`TpuResourceMgr_Create`].
-///
-/// # Safety
-///
-/// `mgr` must be null or allocated by [`TpuResourceMgr_Create`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn TpuResourceMgr_Destroy(mgr: *mut TpuMeshState) {
-    // SAFETY: Delegates directly to `TpuMeshState_Free`.
-    unsafe { TpuMeshState_Free(mgr) }
 }

@@ -123,6 +123,7 @@ pub unsafe extern "C" fn LibtpuSdk_Client_Create(
         inner,
         host_names,
         coords_entries,
+        metrics: Vec::new(),
     }));
     // SAFETY: `args_ptr` is non-null.
     unsafe {
@@ -316,7 +317,7 @@ pub unsafe extern "C" fn LibtpuSdk_GetMetric(
     // SAFETY: `name_ptr` is non-null.
     let metric_name = unsafe { CStr::from_ptr(name_ptr).to_string_lossy() };
     // SAFETY: `client_ptr` is non-null.
-    let client_ref = unsafe { &*client_ptr };
+    let client_ref = unsafe { &mut *client_ptr };
     match client_ref.inner.get_metric(&metric_name) {
         Ok((desc, vals)) => {
             let description = to_c_string(&desc);
@@ -324,11 +325,13 @@ pub unsafe extern "C" fn LibtpuSdk_GetMetric(
                 vals.iter().map(|v| to_c_string(&v.to_string())).collect();
             let value_ptrs: Vec<*const c_char> =
                 value_cstrings.iter().map(|cs| cs.as_ptr()).collect();
-            let metric_handle = Box::into_raw(Box::new(LibtpuSdk_Metric {
+            let mut boxed_metric = Box::new(LibtpuSdk_Metric {
                 description,
                 value_cstrings,
                 value_ptrs,
-            }));
+            });
+            let metric_handle: *mut LibtpuSdk_Metric = ptr::from_mut(&mut *boxed_metric);
+            client_ref.metrics.push(boxed_metric);
             // SAFETY: Writing output metric pointer.
             unsafe {
                 (*args_ptr).metric = metric_handle;
@@ -648,4 +651,307 @@ pub extern "C" fn GetLibtpuSdkApi() -> *const LibtpuSdk_Api {
 #[unsafe(no_mangle)]
 pub extern "C" fn PyInit_sdk() -> *const LibtpuSdk_Api {
     ptr::addr_of!(GLOBAL_SDK_API)
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::similar_names,
+    clippy::items_after_statements
+)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_libtpu_sdk_api_vtable_and_lifecycle() {
+        let sdk_ptr = GetLibtpuSdkApi();
+        assert!(!sdk_ptr.is_null());
+        assert_eq!(PyInit_sdk(), sdk_ptr);
+        // SAFETY: Testing all 17 LibtpuSdk_Api entrypoints with null and valid arguments.
+        unsafe {
+            let sdk = *sdk_ptr;
+            assert_eq!(sdk.version_header, 0x0000_0001_0000_0000);
+
+            LibtpuSdk_Error_GetMessage(ptr::null_mut());
+            let mut sdk_msg_args = LibtpuSdk_Error_GetMessage_Args {
+                error: ptr::null(),
+                message: ptr::null(),
+                message_size: 0,
+            };
+            assert_ne!(format!("{sdk_msg_args:?}"), "");
+            LibtpuSdk_Error_GetMessage(ptr::addr_of_mut!(sdk_msg_args).cast());
+            let sdk_err = LibtpuSdk_Error_GetCode(ptr::null_mut());
+            assert!(!sdk_err.is_null());
+            assert_ne!(format!("{:?}", *sdk_err), "");
+            sdk_msg_args.error = sdk_err;
+            LibtpuSdk_Error_GetMessage(ptr::addr_of_mut!(sdk_msg_args).cast());
+            assert!(sdk_msg_args.message_size > 0);
+
+            let mut sdk_code_args = LibtpuSdk_Error_GetCode_Args {
+                error: ptr::null(),
+                code: 0,
+                pad: 0,
+            };
+            assert_ne!(format!("{sdk_code_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_Error_GetCode(
+                ptr::addr_of_mut!(sdk_code_args).cast(),
+            )));
+            sdk_code_args.error = sdk_err;
+            assert!(LibtpuSdk_Error_GetCode(ptr::addr_of_mut!(sdk_code_args).cast()).is_null());
+            assert_eq!(sdk_code_args.code, 3);
+
+            LibtpuSdk_Error_Destroy(ptr::null_mut());
+            let mut sdk_del_args = LibtpuSdk_Error_Destroy_Args {
+                error: ptr::null_mut(),
+            };
+            assert_ne!(format!("{sdk_del_args:?}"), "");
+            LibtpuSdk_Error_Destroy(ptr::addr_of_mut!(sdk_del_args).cast());
+            sdk_del_args.error = sdk_err;
+            LibtpuSdk_Error_Destroy(ptr::addr_of_mut!(sdk_del_args).cast());
+
+            drop(Box::from_raw(LibtpuSdk_Client_Create(ptr::null_mut())));
+            let mut sdk_cli_args = LibtpuSdk_Client_Args {
+                client: ptr::null_mut(),
+            };
+            assert_ne!(format!("{sdk_cli_args:?}"), "");
+            assert!(LibtpuSdk_Client_Create(ptr::addr_of_mut!(sdk_cli_args).cast()).is_null());
+            let sdk_client = sdk_cli_args.client;
+            assert!(!sdk_client.is_null());
+
+            drop(Box::from_raw(LibtpuSdk_GetChipCoordinates(ptr::null_mut())));
+            let mut coords_args = LibtpuSdk_GetChipCoordinates_Args {
+                client: ptr::null_mut(),
+                coords: ptr::null(),
+                num_coords: 0,
+            };
+            assert_ne!(format!("{coords_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_GetChipCoordinates(
+                ptr::addr_of_mut!(coords_args).cast(),
+            )));
+            coords_args.client = sdk_client;
+            assert!(LibtpuSdk_GetChipCoordinates(ptr::addr_of_mut!(coords_args).cast()).is_null());
+            assert_eq!(coords_args.num_coords, 4);
+            assert_ne!(format!("{:?}", *coords_args.coords), "");
+
+            drop(Box::from_raw(LibtpuSdk_GetHostName(ptr::null_mut())));
+            let mut host_args = LibtpuSdk_GetHostName_Args {
+                coord: ptr::null(),
+                host_name: ptr::null(),
+                host_name_size: 0,
+            };
+            assert_ne!(format!("{host_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_GetHostName(
+                ptr::addr_of_mut!(host_args).cast(),
+            )));
+            host_args.coord = coords_args.coords;
+            assert!(LibtpuSdk_GetHostName(ptr::addr_of_mut!(host_args).cast()).is_null());
+            assert!(host_args.host_name_size > 0);
+
+            drop(Box::from_raw(LibtpuSdk_GetChipIndex(ptr::null_mut())));
+            let mut cidx_args = LibtpuSdk_GetChipIndex_Args {
+                coord: ptr::null(),
+                chip_index: -1,
+                pad: 0,
+            };
+            assert_ne!(format!("{cidx_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_GetChipIndex(
+                ptr::addr_of_mut!(cidx_args).cast(),
+            )));
+            cidx_args.coord = coords_args.coords;
+            assert!(LibtpuSdk_GetChipIndex(ptr::addr_of_mut!(cidx_args).cast()).is_null());
+            assert_eq!(cidx_args.chip_index, 0);
+
+            drop(Box::from_raw(LibtpuSdk_GetCartesianCoordinates(
+                ptr::null_mut(),
+            )));
+            let mut cart_args = LibtpuSdk_GetCartesianCoordinates_Args {
+                coord: ptr::null(),
+                coordinates: ptr::null(),
+                num_coordinates: 0,
+            };
+            assert_ne!(format!("{cart_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_GetCartesianCoordinates(
+                ptr::addr_of_mut!(cart_args).cast(),
+            )));
+            cart_args.coord = coords_args.coords;
+            assert!(
+                LibtpuSdk_GetCartesianCoordinates(ptr::addr_of_mut!(cart_args).cast()).is_null()
+            );
+            assert_eq!(cart_args.num_coordinates, 3);
+
+            drop(Box::from_raw(LibtpuSdk_GetMetric(ptr::null_mut())));
+            let mut met_args = LibtpuSdk_GetMetric_Args {
+                client: ptr::null_mut(),
+                metric_name: ptr::null(),
+                metric: ptr::null_mut(),
+            };
+            assert_ne!(format!("{met_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_GetMetric(
+                ptr::addr_of_mut!(met_args).cast(),
+            )));
+            met_args.client = sdk_client;
+            met_args.metric_name = c"unknown_metric".as_ptr();
+            drop(Box::from_raw(LibtpuSdk_GetMetric(
+                ptr::addr_of_mut!(met_args).cast(),
+            )));
+            met_args.metric_name = c"tpu.runtime.hbm.usage_bytes".as_ptr();
+            assert!(LibtpuSdk_GetMetric(ptr::addr_of_mut!(met_args).cast()).is_null());
+            assert!(!met_args.metric.is_null());
+            assert_ne!(format!("{:?}", *met_args.metric), "");
+
+            drop(Box::from_raw(LibtpuSdk_GetMetricDescription(
+                ptr::null_mut(),
+            )));
+            let mut mdesc_args = LibtpuSdk_GetMetricDescription_Args {
+                metric: ptr::null(),
+                description: ptr::null(),
+                description_size: 0,
+            };
+            assert_ne!(format!("{mdesc_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_GetMetricDescription(
+                ptr::addr_of_mut!(mdesc_args).cast(),
+            )));
+            mdesc_args.metric = met_args.metric;
+            assert!(LibtpuSdk_GetMetricDescription(ptr::addr_of_mut!(mdesc_args).cast()).is_null());
+            assert!(mdesc_args.description_size > 0);
+
+            drop(Box::from_raw(LibtpuSdk_GetMetricValues(ptr::null_mut())));
+            let mut mvals_args = LibtpuSdk_GetMetricValues_Args {
+                metric: ptr::null(),
+                values: ptr::null(),
+                num_values: 0,
+            };
+            assert_ne!(format!("{mvals_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_GetMetricValues(
+                ptr::addr_of_mut!(mvals_args).cast(),
+            )));
+            mvals_args.metric = met_args.metric;
+            assert!(LibtpuSdk_GetMetricValues(ptr::addr_of_mut!(mvals_args).cast()).is_null());
+            assert_eq!(mvals_args.num_values, 4);
+
+            drop(Box::from_raw(LibtpuSdk_GetRuntimeStatus(ptr::null_mut())));
+            let mut rstat_args = LibtpuSdk_GetRuntimeStatus_Args {
+                client: ptr::null_mut(),
+                include_hlo_info: true,
+                pad: [0; 7],
+                status: ptr::null_mut(),
+            };
+            assert_ne!(format!("{rstat_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_GetRuntimeStatus(
+                ptr::addr_of_mut!(rstat_args).cast(),
+            )));
+            rstat_args.client = sdk_client;
+            assert!(LibtpuSdk_GetRuntimeStatus(ptr::addr_of_mut!(rstat_args).cast()).is_null());
+            assert!(!rstat_args.status.is_null());
+            assert_ne!(format!("{:?}", *rstat_args.status), "");
+
+            drop(Box::from_raw(LibtpuSdk_RuntimeStatus_GetCoreStateSummary(
+                ptr::null_mut(),
+            )));
+            let mut sum_args = LibtpuSdk_RuntimeStatus_GetCoreStateSummary_Args {
+                status: ptr::null(),
+                summary: ptr::null(),
+                summary_size: 0,
+            };
+            assert_ne!(format!("{sum_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_RuntimeStatus_GetCoreStateSummary(
+                ptr::addr_of_mut!(sum_args).cast(),
+            )));
+            sum_args.status = rstat_args.status;
+            assert!(
+                LibtpuSdk_RuntimeStatus_GetCoreStateSummary(ptr::addr_of_mut!(sum_args).cast())
+                    .is_null()
+            );
+            assert!(sum_args.summary_size > 0);
+
+            drop(Box::from_raw(LibtpuSdk_RuntimeStatus_Destroy(
+                ptr::null_mut(),
+            )));
+            let mut rdel_args = LibtpuSdk_RuntimeStatus_Destroy_Args {
+                status: ptr::null_mut(),
+            };
+            assert_ne!(format!("{rdel_args:?}"), "");
+            assert!(LibtpuSdk_RuntimeStatus_Destroy(ptr::addr_of_mut!(rdel_args).cast()).is_null());
+            rdel_args.status = rstat_args.status;
+            assert!(LibtpuSdk_RuntimeStatus_Destroy(ptr::addr_of_mut!(rdel_args).cast()).is_null());
+
+            drop(Box::from_raw(LibtpuSdk_RegisterDebugCallback(
+                ptr::null_mut(),
+            )));
+            let mut reg_cb_args = LibtpuSdk_RegisterDebugCallback_Args {
+                client: ptr::null_mut(),
+                callback: ptr::null(),
+                user_data: ptr::null_mut(),
+                callback_id: 0,
+            };
+            assert_ne!(format!("{reg_cb_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_RegisterDebugCallback(
+                ptr::addr_of_mut!(reg_cb_args).cast(),
+            )));
+            reg_cb_args.client = sdk_client;
+            assert!(
+                LibtpuSdk_RegisterDebugCallback(ptr::addr_of_mut!(reg_cb_args).cast()).is_null()
+            );
+            assert!(reg_cb_args.callback_id > 0);
+            assert_eq!(LibtpuSdk_TriggerDebugCallbacks(ptr::null()), 0);
+            assert_eq!(LibtpuSdk_TriggerDebugCallbacks(sdk_client), 1);
+
+            unsafe extern "C" fn rust_debug_cb(user_data: *mut std::ffi::c_void) {
+                // SAFETY: `user_data` points to `cb_counter`.
+                unsafe {
+                    *user_data.cast::<u32>() += 1;
+                }
+            }
+            let mut cb_counter = 0_u32;
+            let mut real_cb_args = LibtpuSdk_RegisterDebugCallback_Args {
+                client: sdk_client,
+                callback: (rust_debug_cb as *const () as usize) as *const std::ffi::c_void,
+                user_data: ptr::addr_of_mut!(cb_counter).cast(),
+                callback_id: 0,
+            };
+            assert!(
+                LibtpuSdk_RegisterDebugCallback(ptr::addr_of_mut!(real_cb_args).cast()).is_null()
+            );
+            assert_eq!(LibtpuSdk_TriggerDebugCallbacks(sdk_client), 2);
+            assert_eq!(cb_counter, 1);
+            let mut unreg_real = LibtpuSdk_UnregisterDebugCallback_Args {
+                client: sdk_client,
+                callback_id: real_cb_args.callback_id,
+            };
+            assert!(
+                LibtpuSdk_UnregisterDebugCallback(ptr::addr_of_mut!(unreg_real).cast()).is_null()
+            );
+
+            drop(Box::from_raw(LibtpuSdk_UnregisterDebugCallback(
+                ptr::null_mut(),
+            )));
+            let mut unreg_cb_args = LibtpuSdk_UnregisterDebugCallback_Args {
+                client: ptr::null_mut(),
+                callback_id: reg_cb_args.callback_id,
+            };
+            assert_ne!(format!("{unreg_cb_args:?}"), "");
+            drop(Box::from_raw(LibtpuSdk_UnregisterDebugCallback(
+                ptr::addr_of_mut!(unreg_cb_args).cast(),
+            )));
+            unreg_cb_args.client = sdk_client;
+            assert!(
+                LibtpuSdk_UnregisterDebugCallback(ptr::addr_of_mut!(unreg_cb_args).cast())
+                    .is_null()
+            );
+            drop(Box::from_raw(LibtpuSdk_UnregisterDebugCallback(
+                ptr::addr_of_mut!(unreg_cb_args).cast(),
+            )));
+
+            drop(Box::from_raw(LibtpuSdk_Client_Destroy(ptr::null_mut())));
+            let mut null_cli_args = LibtpuSdk_Client_Args {
+                client: ptr::null_mut(),
+            };
+            drop(Box::from_raw(LibtpuSdk_Client_Destroy(
+                ptr::addr_of_mut!(null_cli_args).cast(),
+            )));
+            assert!(LibtpuSdk_Client_Destroy(ptr::addr_of_mut!(sdk_cli_args).cast()).is_null());
+        }
+    }
 }

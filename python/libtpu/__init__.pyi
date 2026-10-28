@@ -34,10 +34,12 @@ class TpuGeneration(enum.IntEnum):
     V5P = 6
     V6E = 7
     V7X = 8
+    V4LITE = 9
 
 class DataType(enum.IntEnum):
-    """Supported tensor element types matching `PJRT_Buffer_Type`."""
+    """Supported tensor element types matching all 29 `PJRT_Buffer_Type` variants."""
 
+    INVALID = 0
     PRED = 1
     S8 = 2
     S16 = 3
@@ -50,7 +52,34 @@ class DataType(enum.IntEnum):
     F16 = 10
     F32 = 11
     F64 = 12
-    BF16 = 16
+    BF16 = 13
+    C64 = 14
+    C128 = 15
+    F8E5M2 = 16
+    F8E4M3FN = 17
+    F8E4M3B11FNUZ = 18
+    F8E5M2FNUZ = 19
+    F8E4M3FNUZ = 20
+    S4 = 21
+    U4 = 22
+    TOKEN = 23
+    S2 = 24
+    U2 = 25
+    F4E2M1FN = 26
+    F8E8M0FNU = 27
+    TUPLE = 28
+
+    def bit_size(self) -> int:
+        """Returns the bit width of a single element of this `DataType`."""
+        ...
+
+    def byte_size_for_elements(self, num_elements: int) -> int:
+        """Computes the exact host byte length for `num_elements` of this `DataType`.
+
+        Args:
+            num_elements: Number of scalar elements in the tensor.
+        """
+        ...
 
 def get_library_path() -> str:
     """Returns the filesystem path to the compiled `libtpu` shared library."""
@@ -93,6 +122,10 @@ class TpuBuffer:
 
     def tile_count(self) -> int:
         """Returns the number of 256-byte TPU hardware tiles occupied by the buffer."""
+        ...
+
+    def byte_size(self) -> int:
+        """Computes the host byte size of this buffer from its `dtype()` and element count."""
         ...
 
     def to_bytes(self) -> bytes:
@@ -190,6 +223,23 @@ class TpuClient:
 
     def device_count(self) -> int:
         """Returns the number of addressable TPU devices managed by this client."""
+        ...
+
+    def buffer_from_bytes(
+        self,
+        device_id: int,
+        dtype: DataType,
+        raw_bytes: bytes,
+        dims: Sequence[int],
+    ) -> TpuBuffer:
+        """Allocates a TPU buffer of any `DataType` on `device_id` from raw host bytes.
+
+        Args:
+            device_id: Target logical TPU device ordinal.
+            dtype: Tensor element `DataType`.
+            raw_bytes: Raw little-endian host byte buffer.
+            dims: Logical tensor dimensions.
+        """
         ...
 
     def buffer_from_floats(

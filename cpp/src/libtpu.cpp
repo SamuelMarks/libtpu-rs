@@ -41,39 +41,34 @@ static Status pjrt_error_to_status(PJRT_Error *err) noexcept {
                                    err, nullptr, 0};
   GetPjrtApi()->pjrt_error_message(&msg_args);
 
-  static thread_local char last_error_buf[256];
-  for (size_t i = 0; i < msg_args.message_size; ++i) {
-    last_error_buf[i] = msg_args.message[i];
-  }
-  last_error_buf[msg_args.message_size] = '\0';
+  std::string owned_msg(msg_args.message, msg_args.message_size);
 
   PJRT_Error_Destroy_Args del_args{sizeof(PJRT_Error_Destroy_Args), nullptr,
                                    err};
   GetPjrtApi()->pjrt_error_destroy(&del_args);
-  return Status(LibTpuCStatus{code_args.code, nullptr}, last_error_buf);
+  return Status(LibTpuCStatus{code_args.code, nullptr},
+                static_cast<std::string &&>(owned_msg));
 }
 
-Status::Status(LibTpuCStatus raw, const char *msg_str) noexcept
-    : raw_(raw), msg_str_(msg_str) {}
+Status::Status(LibTpuCStatus raw, std::string msg_str) noexcept
+    : raw_(raw), msg_str_(static_cast<std::string &&>(msg_str)) {}
 
 Status::~Status() noexcept { libtpu_rs_status_free(raw_); }
 
 Status::Status(Status &&other) noexcept
-    : raw_(other.raw_), msg_str_(other.msg_str_) {
+    : raw_(other.raw_), msg_str_(static_cast<std::string &&>(other.msg_str_)) {
   other.raw_.code = 0;
   other.raw_.message = nullptr;
-  other.msg_str_ = "";
 }
 
 Status &Status::operator=(Status &&other) noexcept {
   LibTpuCStatus next = other.raw_;
-  const char *next_msg = other.msg_str_;
+  std::string next_msg = static_cast<std::string &&>(other.msg_str_);
   other.raw_.code = 0;
   other.raw_.message = nullptr;
-  other.msg_str_ = "";
   libtpu_rs_status_free(raw_);
   raw_ = next;
-  msg_str_ = next_msg;
+  msg_str_ = static_cast<std::string &&>(next_msg);
   return *this;
 }
 
@@ -81,7 +76,7 @@ bool Status::is_ok() const noexcept { return raw_.code == 0; }
 
 int32_t Status::code() const noexcept { return raw_.code; }
 
-const char *Status::message() const noexcept { return msg_str_; }
+const char *Status::message() const noexcept { return msg_str_.c_str(); }
 
 Buffer::Buffer(PJRT_Buffer *handle) noexcept : handle_(handle) {}
 
@@ -793,6 +788,35 @@ EmbeddingEngine::~EmbeddingEngine() noexcept {
 
 const void *EmbeddingEngine::raw_state() const noexcept {
   return TpuEmbeddingEngineState_GetState(state_);
+}
+
+Communicator::Communicator() noexcept : handle_(nullptr) {
+  PJRT_Collectives_CreateCommunicator_Args args{
+      sizeof(PJRT_Collectives_CreateCommunicator_Args), nullptr, nullptr,
+      nullptr};
+  (void)PJRT_Collectives_CreateCommunicator(&args);
+  handle_ = args.communicator;
+}
+
+Communicator::~Communicator() noexcept {
+  PJRT_Communicator_Destroy_Args args{sizeof(PJRT_Communicator_Destroy_Args),
+                                      nullptr, handle_};
+  (void)PJRT_Communicator_Destroy(&args);
+}
+
+Status Communicator::all_reduce(const Buffer &send_buf, Buffer *recv_buf,
+                                size_t count) noexcept {
+  PJRT_Communicator_AllReduce_Args args{
+      sizeof(PJRT_Communicator_AllReduce_Args),
+      nullptr,
+      handle_,
+      const_cast<PJRT_Buffer *>(send_buf.raw()),
+      const_cast<PJRT_Buffer *>(recv_buf->raw()),
+      0,
+      0,
+      count,
+      nullptr};
+  return pjrt_error_to_status(PJRT_Communicator_AllReduce(&args));
 }
 
 } // namespace libtpu

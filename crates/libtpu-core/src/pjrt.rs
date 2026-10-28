@@ -1798,6 +1798,7 @@ mod tests {
                                 assert!(empty_buf.delete().is_ok());
                                 assert!(empty_buf.is_deleted());
                                 assert!(empty_buf.fulfill_from(buf0).is_err());
+                                assert!(buf0.fulfill_from(empty_buf).is_err());
                                 assert!(empty_buf.to_host_bytes().is_err());
                                 assert!(
                                     empty_buf

@@ -48,11 +48,46 @@ class TpuGeneration(enum.IntEnum):
     V5P = 6
     V6E = 7
     V7X = 8
+    V4LITE = 9
+
+
+_DATA_TYPE_BIT_SIZES: dict[int, int] = {
+    0: 0,
+    1: 8,
+    2: 8,
+    3: 16,
+    4: 32,
+    5: 64,
+    6: 8,
+    7: 16,
+    8: 32,
+    9: 64,
+    10: 16,
+    11: 32,
+    12: 64,
+    13: 16,
+    14: 64,
+    15: 128,
+    16: 8,
+    17: 8,
+    18: 8,
+    19: 8,
+    20: 8,
+    21: 4,
+    22: 4,
+    23: 0,
+    24: 2,
+    25: 2,
+    26: 4,
+    27: 8,
+    28: 0,
+}
 
 
 class DataType(enum.IntEnum):
-    """Enumeration of PJRT tensor element types (`PJRT_Buffer_Type`)."""
+    """Enumeration of all 29 PJRT tensor element types (`PJRT_Buffer_Type`)."""
 
+    INVALID = 0
     PRED = 1
     S8 = 2
     S16 = 3
@@ -65,7 +100,42 @@ class DataType(enum.IntEnum):
     F16 = 10
     F32 = 11
     F64 = 12
-    BF16 = 16
+    BF16 = 13
+    C64 = 14
+    C128 = 15
+    F8E5M2 = 16
+    F8E4M3FN = 17
+    F8E4M3B11FNUZ = 18
+    F8E5M2FNUZ = 19
+    F8E4M3FNUZ = 20
+    S4 = 21
+    U4 = 22
+    TOKEN = 23
+    S2 = 24
+    U2 = 25
+    F4E2M1FN = 26
+    F8E8M0FNU = 27
+    TUPLE = 28
+
+    def bit_size(self) -> int:
+        """Returns the bit width of a single element of this `DataType`.
+
+        Returns:
+            Number of bits per scalar element (`0` for `INVALID`, `TOKEN`, `TUPLE`).
+        """
+        return _DATA_TYPE_BIT_SIZES[int(self.value)]
+
+    def byte_size_for_elements(self, num_elements: int) -> int:
+        """Computes the exact host byte length for `num_elements` of this `DataType`.
+
+        Args:
+            num_elements: Number of scalar elements in the tensor.
+
+        Returns:
+            Number of bytes required to store `num_elements` (sub-byte types rounded up).
+        """
+        total_bits = num_elements * self.bit_size()
+        return (total_bits + 7) // 8
 
 
 def get_library_path() -> str:
@@ -657,13 +727,21 @@ class TpuBuffer:
         self._lib.PJRT_Buffer_GetMemoryLayout(ctypes.byref(ml_args))
         return int(ml_args.layout_words[6])
 
+    def byte_size(self) -> int:
+        """Computes the host byte size of this buffer from its `dtype()` and element count.
+
+        Returns:
+            Exact host byte length of this buffer.
+        """
+        return self.dtype().byte_size_for_elements(self._num_elements)
+
     def to_bytes(self) -> bytes:
         """Reads the buffer from device HBM as raw bytes via `PJRT_Buffer_ToHostBuffer`.
 
         Returns:
             Raw bytes read from the TPU buffer.
         """
-        byte_len = self._num_elements * 4
+        byte_len = self.byte_size()
         raw = ctypes.create_string_buffer(byte_len)
         d2h_args = _PjrtBufferToHostBufferArgs(
             ctypes.sizeof(_PjrtBufferToHostBufferArgs),
@@ -1018,6 +1096,29 @@ class TpuClient:
         err_h2d = self._lib.PJRT_Client_BufferFromHostBuffer(ctypes.byref(h2d_args))
         _check_pjrt_error(self._lib, err_h2d)
         return TpuBuffer(self._lib, ctypes.c_void_p(int(h2d_args.out_buffer or 0)), num_elements)
+
+    def buffer_from_bytes(
+        self,
+        device_id: int,
+        dtype: DataType,
+        raw_bytes: bytes,
+        dims: Sequence[int],
+    ) -> TpuBuffer:
+        """Allocates a TPU buffer of any `DataType` on `device_id` from raw host bytes.
+
+        Args:
+            device_id: Logical TPU device ID.
+            dtype: Tensor element `DataType` (any of the 29 PJRT element types).
+            raw_bytes: Raw little-endian host byte buffer matching `dims` and `dtype`.
+            dims: Logical tensor dimensions.
+
+        Returns:
+            Allocated `TpuBuffer` instance on `device_id`.
+        """
+        num_elements = 1
+        for dim in dims:
+            num_elements *= dim
+        return self._buffer_from_packed(device_id, int(dtype.value), raw_bytes, num_elements, dims)
 
     def buffer_from_floats(
         self,

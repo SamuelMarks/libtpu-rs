@@ -2552,6 +2552,80 @@ PJRT_Error *PJRT_Megascale_Barrier(void *raw_args);
  */
 PJRT_Error *PJRT_Megascale_GetNumSlices(void *raw_args);
 
+/**
+ * @brief Argument structure for `PJRT_Collectives_CreateCommunicator` (`32`
+ * bytes).
+ */
+typedef struct PJRT_Collectives_CreateCommunicator_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Collectives instance handle. */
+  void *collectives;
+  /** @brief Output communicator handle. */
+  void *communicator;
+} PJRT_Collectives_CreateCommunicator_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Communicator_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_Communicator_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Communicator handle to destroy. */
+  void *communicator;
+} PJRT_Communicator_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Communicator_AllReduce` (`64` bytes).
+ */
+typedef struct PJRT_Communicator_AllReduce_Args {
+  /** @brief Size of this struct (`64`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Communicator handle. */
+  void *communicator;
+  /** @brief Send buffer pointer. */
+  void *send_buffer;
+  /** @brief Receive buffer pointer. */
+  void *recv_buffer;
+  /** @brief Reduction operation code (`CollectiveReductionOp`). */
+  int32_t reduction_op;
+  /** @brief Alignment padding. */
+  int32_t pad;
+  /** @brief Element count. */
+  size_t count;
+  /** @brief Output completion event. */
+  void *event;
+} PJRT_Communicator_AllReduce_Args;
+
+/**
+ * @brief Creates a collective communicator
+ * (`PJRT_Collectives_CreateCommunicator`).
+ * @param raw_args Pointer to `PJRT_Collectives_CreateCommunicator_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Collectives_CreateCommunicator(void *raw_args);
+
+/**
+ * @brief Destroys a collective communicator (`PJRT_Communicator_Destroy`).
+ * @param raw_args Pointer to `PJRT_Communicator_Destroy_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Communicator_Destroy(void *raw_args);
+
+/**
+ * @brief Executes an ICI/DCN `AllReduce` collective
+ * (`PJRT_Communicator_AllReduce`).
+ * @param raw_args Pointer to `PJRT_Communicator_AllReduce_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Communicator_AllReduce(void *raw_args);
+
 /** @cond INTERNAL */
 #if defined(__cplusplus)
 static_assert(sizeof(PJRT_Extension_Base) == 24, "PJRT_Extension_Base == 24");

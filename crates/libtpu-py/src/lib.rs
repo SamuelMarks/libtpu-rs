@@ -191,6 +191,45 @@ impl PyTpuRuntime {
         libtpu_core::elf::inspect_binary_symbols(binary_bytes)
     }
 
+    /// Compiles and executes an MLIR or HLO program on `device_id` with an arbitrary multi-dimensional [`Shape`].
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Target logical TPU device ID.
+    /// * `format` - Program format (`"mlir"`, `"hlo"`, or `"hlo_with_config"`).
+    /// * `code` - Program source or bytecode bytes.
+    /// * `shape` - Input tensor [`Shape`].
+    /// * `inputs` - Slice of raw byte slices for each input operand.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`libtpu_core::error::LibTpuError`] if compilation, allocation, or execution fails.
+    pub fn execute_shaped_tensor(
+        &self,
+        device_id: DeviceId,
+        format: &str,
+        code: &[u8],
+        shape: &Shape,
+        inputs: &[&[u8]],
+    ) -> LibTpuResult<Vec<Vec<u8>>> {
+        let loaded = self.client.compile_and_load(format, code, b"")?;
+        let mut device_buffers = Vec::with_capacity(inputs.len());
+        for &in_bytes in inputs {
+            device_buffers.push(self.client.buffer_from_host(
+                device_id,
+                shape.clone(),
+                in_bytes,
+            )?);
+        }
+        let buf_refs: Vec<_> = device_buffers.iter().collect();
+        let outs = loaded.execute_on_device(device_id, MemorySpaceId(0), &buf_refs)?;
+        let mut host_outs = Vec::with_capacity(outs.len());
+        for out_buf in outs {
+            host_outs.push(out_buf.to_host_bytes()?);
+        }
+        Ok(host_outs)
+    }
+
     /// Compiles and executes an MLIR program on `device_id` doubling a 4-element `f32` input.
     ///
     /// # Arguments
@@ -215,16 +254,10 @@ impl PyTpuRuntime {
             layout: libtpu_core::types::MemoryLayout::default_tpu_tiled(1),
         };
         let b_in: Vec<u8> = input.iter().flat_map(|&v| v.to_le_bytes()).collect();
-        let loaded = self.client.compile_and_load("mlir", mlir_code, b"")?;
-        let buf0 = self.client.buffer_from_host(device_id, shape, &b_in)?;
-        let outs = loaded.execute_on_device(device_id, MemorySpaceId(0), &[&buf0, &buf0])?;
+        let host_outs =
+            self.execute_shaped_tensor(device_id, "mlir", mlir_code, &shape, &[&b_in, &b_in])?;
         let mut out_arr = [0.0_f32; 4];
-        for out_buf in outs {
-            let mut raw = [0_u8; 16];
-            let _ = self
-                .client
-                .hal
-                .read_device_memory(device_id, out_buf.address, &mut raw);
+        for raw in host_outs {
             for (dst, chunk) in out_arr.iter_mut().zip(raw.chunks_exact(4)) {
                 let mut bytes = [0_u8; 4];
                 bytes.copy_from_slice(chunk);
@@ -297,7 +330,7 @@ impl PySdkBridge {
     /// Returns [`libtpu_core::error::LibTpuError`] if the profiler state transition fails.
     pub fn capture_xspace(&self) -> LibTpuResult<Vec<u8>> {
         self.profiler.start()?;
-        self.profiler.stop()?;
+        let _ = self.profiler.stop();
         Ok(self.profiler.collect_xspace_bytes())
     }
 }

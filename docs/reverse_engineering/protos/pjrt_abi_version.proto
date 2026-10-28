@@ -28,10 +28,12 @@ option java_outer_classname = "PjrtAbiVersion";
 
 message PjRtRuntimeAbiVersionProto {
   uint64 platform = 1;
-  bytes version = 2;
+  string version = 2;
+  int32 pjrt_api_minor = 3;
 }
 
 message PjRtExecutableAbiVersionProto {
   uint64 platform = 1;
-  bytes version = 2;
+  string version = 2;
+  int32 target_generation = 3;
 }

@@ -20,40 +20,35 @@ pub mod types;
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+
+    fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect_rs_files(&path, out);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                    out.push(path);
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_workspace_rust_doc_coverage_audit() {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let crates_dir = manifest_dir.parent().unwrap_or(manifest_dir);
-        let rs_files = [
-            crates_dir.join("libtpu-core/src/lib.rs"),
-            crates_dir.join("libtpu-core/src/elf.rs"),
-            crates_dir.join("libtpu-core/src/error.rs"),
-            crates_dir.join("libtpu-core/src/types.rs"),
-            crates_dir.join("libtpu-core/src/config.rs"),
-            crates_dir.join("libtpu-core/src/proto.rs"),
-            crates_dir.join("libtpu-core/src/compiler.rs"),
-            crates_dir.join("libtpu-core/src/hal.rs"),
-            crates_dir.join("libtpu-core/src/pjrt.rs"),
-            crates_dir.join("libtpu-core/src/driver.rs"),
-            crates_dir.join("libtpu-c-api/src/lib.rs"),
-            crates_dir.join("libtpu-c-api/src/pjrt_types.rs"),
-            crates_dir.join("libtpu-c-api/src/pjrt_error_api.rs"),
-            crates_dir.join("libtpu-c-api/src/pjrt_client_api.rs"),
-            crates_dir.join("libtpu-c-api/src/pjrt_device_api.rs"),
-            crates_dir.join("libtpu-c-api/src/pjrt_executable_api.rs"),
-            crates_dir.join("libtpu-c-api/src/pjrt_buffer_api.rs"),
-            crates_dir.join("libtpu-c-api/src/extensions.rs"),
-            crates_dir.join("libtpu-c-api/src/tpu_driver_types.rs"),
-            crates_dir.join("libtpu-c-api/src/sdk_api.rs"),
-            crates_dir.join("libtpu-c-api/src/legacy_tf_api.rs"),
-            crates_dir.join("libtpu-c-api/src/rust_ergonomic_api.rs"),
-            crates_dir.join("libtpu-py/src/lib.rs"),
-        ];
+        let mut rs_files = Vec::new();
+        collect_rs_files(crates_dir, &mut rs_files);
+        assert!(rs_files.len() >= 80);
         for path in rs_files {
             let content = fs::read_to_string(&path).unwrap_or_default();
-            assert!(content.starts_with("//!"));
+            assert!(
+                content.starts_with("//!"),
+                "Missing //! file doc header in {}",
+                path.display()
+            );
         }
     }
 }

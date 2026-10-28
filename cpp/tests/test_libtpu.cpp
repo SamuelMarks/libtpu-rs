@@ -323,10 +323,18 @@ int main() {
   }
 
   libtpu::PjrtApiView api_view;
+  PJRT_DeviceDescription_MemoryDescriptions_Args mdesc_args{
+      sizeof(PJRT_DeviceDescription_MemoryDescriptions_Args),
+      nullptr,
+      nullptr,
+      nullptr,
+      0,
+      -1};
+  (void)PJRT_MemoryDescriptions_Get(&mdesc_args);
   PJRT_MemoryDescription_Kind_Args kind_args{
       sizeof(PJRT_MemoryDescription_Kind_Args),
       nullptr,
-      reinterpret_cast<const void *>(static_cast<uintptr_t>(2)),
+      mdesc_args.memory_descriptions[1],
       nullptr,
       0,
       -1,
@@ -346,8 +354,13 @@ int main() {
   libtpu::PhaseCompiler phase_compiler;
   libtpu::MegascaleContext ms_ctx;
   libtpu::EmbeddingEngine emb_engine;
+  libtpu::Communicator comm;
+  float ar_out[4] = {0.0F, 0.0F, 0.0F, 0.0F};
   if (dev_view.raw() != nullptr || mem_view.raw() != nullptr ||
-      exec_view.raw() != nullptr) {
+      exec_view.raw() != nullptr || !comm.all_reduce(b0, &b1, 4).is_ok() ||
+      !b1.to_host(reinterpret_cast<uint8_t *>(ar_out), sizeof(ar_out))
+           .is_ok() ||
+      ar_out[0] != 11.0F || ar_out[3] != 44.0F) {
     return 26;
   }
   if (phase_compiler.phase_count() != 5 ||

@@ -20,10 +20,34 @@
 //! 16. `PJRT_RawBuffer_Extension` (`80` bytes, `ext_type = 8`)
 //! 17. `PJRT_Profiler_Extension` (`40` bytes, `ext_type = 1`)
 
+/// `#[repr(C)]` argument structures, enums, and size assertions for PJRT extensions.
+pub mod args;
+/// PJRT Collectives and Cross-Host Transfers extension entrypoints.
+pub mod collectives;
+/// PJRT XLA Transform, Callback, PhaseCompile, and Triton extension entrypoints.
+pub mod compiler;
+/// PJRT ABI Version, Shardings, and TPU Executable extension entrypoints.
+pub mod executable;
+/// PJRT Multi-Slice and Megascale extension entrypoints.
+pub mod megascale;
+/// PJRT Host Memory Allocator, Metadata, Memory Descriptions, Layouts, and Raw Buffer entrypoints.
+pub mod memory;
+/// PJRT Profiler and `PLUGIN_Profiler_Api` extension entrypoints.
+pub mod profiler;
+/// PJRT TPU Topology extension entrypoints.
+pub mod topology;
+
+pub use args::*;
+pub use collectives::*;
+pub use compiler::*;
+pub use executable::*;
+pub use megascale::*;
+pub use memory::*;
+pub use profiler::*;
+pub use topology::*;
+
 use crate::box_pjrt_error;
 use crate::pjrt_types::{PJRT_Error, PJRT_Extension_Base, PjrtFn};
-use libtpu_core::compiler::COMPILATION_PHASE_NAMES;
-use libtpu_core::config::global_init_config;
 use libtpu_core::driver::TpuCoreProfiler;
 use libtpu_core::error::LibTpuError;
 use parking_lot::Mutex;
@@ -73,1151 +97,6 @@ pub unsafe extern "C" fn PJRT_Extension_ValidateArgs(
     ptr::null_mut()
 }
 
-/// Argument structure for `PLUGIN_Profiler_Error_Destroy` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PLUGIN_Profiler_Error_Destroy_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Profiler error handle to destroy.
-    pub error: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PLUGIN_Profiler_Error_Message` (`40` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PLUGIN_Profiler_Error_Message_Args {
-    /// Size of this struct (`40`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Profiler error handle.
-    pub error: *const std::ffi::c_void,
-    /// Output error message pointer.
-    pub message: *const std::os::raw::c_char,
-    /// Output error message byte length.
-    pub message_size: usize,
-}
-
-/// Argument structure for `PLUGIN_Profiler_Error_GetCode` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PLUGIN_Profiler_Error_GetCode_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Profiler error handle.
-    pub error: *const std::ffi::c_void,
-    /// Output status code.
-    pub code: usize,
-}
-
-/// Argument structure for `PLUGIN_Profiler_Create` (`40` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PLUGIN_Profiler_Create_Args {
-    /// Size of this struct (`40`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Options string pointer.
-    pub options: *const std::os::raw::c_char,
-    /// Options string byte length.
-    pub options_size: usize,
-    /// Output profiler handle.
-    pub profiler: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PLUGIN_Profiler_Destroy` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PLUGIN_Profiler_Destroy_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Profiler handle to destroy.
-    pub profiler: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PLUGIN_Profiler_Start` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PLUGIN_Profiler_Start_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Profiler handle to start.
-    pub profiler: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PLUGIN_Profiler_Stop` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PLUGIN_Profiler_Stop_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Profiler handle to stop.
-    pub profiler: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PLUGIN_Profiler_CollectData` (`40` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PLUGIN_Profiler_CollectData_Args {
-    /// Size of this struct (`40`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Profiler handle word.
-    pub profiler: usize,
-    /// Caller buffer to receive serialized `tensorflow.profiler.XSpace` bytes (or `NULL` to query size).
-    pub buffer: *mut u8,
-    /// Output byte count (or input/output buffer capacity).
-    pub size_in_bytes: *mut usize,
-}
-
-/// Argument structure for `PJRT_MultiSlice_Config_Destroy` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_MultiSlice_Config_Destroy_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Multi-slice configuration handle to destroy.
-    pub config: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_MultiSlice_Config_NumSlices` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_MultiSlice_Config_NumSlices_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Multi-slice configuration handle.
-    pub config: *const std::ffi::c_void,
-    /// Output number of slices (`i32` / `usize`).
-    pub num_slices: usize,
-}
-
-/// Argument structure for `PJRT_MultiSlice_Config_NumDevicesPerSlice` (`40` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_MultiSlice_Config_NumDevicesPerSlice_Args {
-    /// Size of this struct (`40`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Multi-slice configuration handle.
-    pub config: *const std::ffi::c_void,
-    /// Output slice device count map.
-    pub num_devices_per_slice_map: usize,
-    /// Output number of slices.
-    pub num_slices: usize,
-}
-
-/// Argument structure for `PJRT_MultiSlice_Config_SliceId` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_MultiSlice_Config_SliceId_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Multi-slice configuration handle.
-    pub config: *const std::ffi::c_void,
-    /// Output local slice ID.
-    pub slice_id: usize,
-}
-
-/// Argument structure for `PJRT_Collectives_Destroy` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Collectives_Destroy_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Collectives instance handle.
-    pub collectives: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_Collectives_CreateCommunicator` (`48` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Collectives_CreateCommunicator_Args {
-    /// Size of this struct (`48`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Collectives instance handle.
-    pub collectives: *mut std::ffi::c_void,
-    /// Clique device IDs pointer.
-    pub device_ids: *const i32,
-    /// Number of devices in clique.
-    pub num_devices: usize,
-    /// Output communicator handle.
-    pub communicator: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_Communicator_Destroy` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Communicator_Destroy_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Communicator handle to destroy.
-    pub communicator: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_Communicator_AllGather` (`56` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Communicator_AllGather_Args {
-    /// Size of this struct (`56`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Communicator handle.
-    pub communicator: *mut std::ffi::c_void,
-    /// Send buffer pointer.
-    pub send_buffer: *mut std::ffi::c_void,
-    /// Receive buffer pointer.
-    pub recv_buffer: *mut std::ffi::c_void,
-    /// Element count.
-    pub count: usize,
-    /// Output completion event.
-    pub event: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_Communicator_CollectivePermute` and `AllToAll` (`64` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Communicator_CollectivePermute_Args {
-    /// Size of this struct (`64`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Communicator handle.
-    pub communicator: *mut std::ffi::c_void,
-    /// Send buffer pointer.
-    pub send_buffer: *mut std::ffi::c_void,
-    /// Receive buffer pointer.
-    pub recv_buffer: *mut std::ffi::c_void,
-    /// Target ranks pointer.
-    pub target_ranks: *const i32,
-    /// Number of target ranks or elements.
-    pub count: usize,
-    /// Output completion event.
-    pub event: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_Communicator_ToString` (`40` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Communicator_ToString_Args {
-    /// Size of this struct (`40`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Communicator handle.
-    pub communicator: *const std::ffi::c_void,
-    /// Output string pointer or length.
-    pub str_out: usize,
-    /// Output string length.
-    pub str_size: usize,
-}
-
-/// Argument structure for `PJRT_Client_RuntimeAbiVersion` and `PJRT_Executable_GetAbiVersion` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_AbiVersion_Get_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Client or executable handle.
-    pub handle: *const std::ffi::c_void,
-    /// Output ABI version handle or version number.
-    pub abi_version_out: usize,
-}
-
-/// Argument structure for `PJRT_RuntimeAbiVersion_Destroy` and `PJRT_ExecutableAbiVersion_Destroy` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_AbiVersion_Destroy_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// ABI version handle to destroy.
-    pub abi_version: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_RuntimeAbiVersion_IsCompatibleWith*` (`40` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_AbiVersion_IsCompatible_Args {
-    /// Size of this struct (`40`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Runtime ABI version handle.
-    pub abi_version: *const std::ffi::c_void,
-    /// Other runtime or executable ABI version handle.
-    pub other_abi_version: usize,
-    /// Output compatibility boolean flag.
-    pub is_compatible_out: usize,
-}
-
-/// Argument structure for `PJRT_RuntimeAbiVersion_PlatformId` and `PJRT_ExecutableAbiVersion_PlatformId` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_AbiVersion_PlatformId_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// ABI version handle.
-    pub abi_version: *const std::ffi::c_void,
-    /// Output 64-bit platform ID.
-    pub platform_id_out: usize,
-}
-
-/// Argument structure for `PJRT_RuntimeAbiVersion_FromProto` and `PJRT_ExecutableAbiVersion_FromProto` (`40` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_AbiVersion_FromProto_Args {
-    /// Size of this struct (`40`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Serialized proto bytes pointer.
-    pub serialized_proto: *const std::os::raw::c_char,
-    /// Serialized proto byte length.
-    pub serialized_proto_size: usize,
-    /// Output ABI version handle.
-    pub abi_version_out: usize,
-}
-
-/// Argument structure for `PJRT_Megascale_*` 24-byte lifecycle operations (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Megascale_Handle_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Megascale context or config handle.
-    pub handle: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_Megascale_*` 32-byte query/create operations (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Megascale_Query_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Input Megascale handle or slice parameter.
-    pub handle: usize,
-    /// Output value, count, or created handle.
-    pub out_value: usize,
-}
-
-/// Argument structure for `PJRT_Megascale_*` 40-byte config/metrics operations (`40` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Megascale_Data_Args {
-    /// Size of this struct (`40`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Input Megascale handle.
-    pub handle: usize,
-    /// Output pointer or count.
-    pub out_first: usize,
-    /// Output byte length.
-    pub out_second: usize,
-}
-
-/// Argument structure for `PJRT_TpuExecutable_*` 48-byte serialized proto queries (`48` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_TpuExecutable_ProtoQuery_Args {
-    /// Size of this struct (`48`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Executable handle.
-    pub executable: *const std::ffi::c_void,
-    /// Output serialized bytes pointer or length.
-    pub serialized_bytes: usize,
-    /// Output serialized byte length.
-    pub serialized_bytes_size: usize,
-    /// Output holder handle.
-    pub holder: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_TpuExecutable_IsPredeterminedError` and `IsCancellationPlaceholderError` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_TpuExecutable_ErrorCheck_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// `PJRT_Error*` handle to inspect.
-    pub error: *const PJRT_Error,
-    /// Output boolean result.
-    pub is_matched: usize,
-}
-
-/// Argument structure for `PJRT_TpuTopology_*` 32-byte scalar queries (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_TpuTopology_ScalarQuery_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// `PJRT_TopologyDescription*` handle.
-    pub topology: *const std::ffi::c_void,
-    /// Output count, ID, or boolean flag.
-    pub out_value: usize,
-}
-
-/// Argument structure for `PJRT_TpuTopology_*` 40-byte coordinate/bounds queries (`40` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_TpuTopology_BoundsQuery_Args {
-    /// Size of this struct (`40`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// `PJRT_TopologyDescription*` handle.
-    pub topology: *const std::ffi::c_void,
-    /// Primary coordinate or output pointer word.
-    pub out_first: usize,
-    /// Secondary coordinate or count word.
-    pub out_second: usize,
-}
-
-/// Argument structure for `PJRT_TpuTopology_*` 48-byte mapping/subslice queries (`48` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_TpuTopology_MappingQuery_Args {
-    /// Size of this struct (`48`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// `PJRT_TopologyDescription*` handle.
-    pub topology: *const std::ffi::c_void,
-    /// Input ID or coordinate word.
-    pub param0: usize,
-    /// Output process/chip ID word.
-    pub out_first: usize,
-    /// Output index on process/chip word.
-    pub out_second: usize,
-}
-
-/// Argument structure for `PJRT_Callback_InvokeCallback` (`40` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Callback_Invoke_Args {
-    /// Size of this struct (`40`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Client handle.
-    pub client: *mut std::ffi::c_void,
-    /// Callback type identifier.
-    pub callback_type: usize,
-    /// Callback payload pointer.
-    pub payload: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_PhaseCompile_GetCompiler` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_PhaseCompile_GetCompiler_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Input topology or client handle.
-    pub client: *mut std::ffi::c_void,
-    /// Output phase compiler handle.
-    pub compiler_out: usize,
-}
-
-/// Argument structure for `PJRT_PhaseCompile_DestroyCompiler` and `CBuffersDestroy` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_PhaseCompile_Destroy_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Phase compiler or C buffer handle to destroy.
-    pub handle: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_CrossHostTransfers_*` (`56` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_CrossHostTransfers_Args {
-    /// Size of this struct (`56`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Client handle.
-    pub client: *mut std::ffi::c_void,
-    /// Buffers or shape specs array pointer.
-    pub buffers: usize,
-    /// Number of buffers.
-    pub num_buffers: usize,
-    /// Remote device or tag descriptor.
-    pub remote_device: usize,
-    /// Output completion event or count.
-    pub out_event: usize,
-}
-
-/// Argument structure for `PJRT_ExecutableMetadata_Get` and `PJRT_MemoryDescriptions_Get` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Metadata_Get_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Executable or device description handle.
-    pub handle: *const std::ffi::c_void,
-    /// Output metadata pointer or count.
-    pub metadata_out: usize,
-}
-
-/// Argument structure for `PJRT_ExecutableMetadata_Destroy` and `PJRT_MemoryDescriptions_Destroy` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Metadata_Destroy_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Metadata handle to destroy.
-    pub metadata: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_RawBuffer_*` 32-byte queries (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_RawBuffer_Query_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Input `PJRT_Buffer*` or `PJRT_RawBuffer*` handle.
-    pub buffer: *mut std::ffi::c_void,
-    /// Output raw buffer handle, pointer, size, or memory space.
-    pub out_value: usize,
-}
-
-/// Argument structure for `PJRT_RawBuffer_Destroy` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_RawBuffer_Destroy_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Raw buffer handle to destroy.
-    pub raw_buffer: *mut std::ffi::c_void,
-}
-
-const _: () = assert!(size_of::<PLUGIN_Profiler_Error_Destroy_Args>() == 24);
-const _: () = assert!(size_of::<PLUGIN_Profiler_Error_Message_Args>() == 40);
-const _: () = assert!(size_of::<PLUGIN_Profiler_Error_GetCode_Args>() == 32);
-const _: () = assert!(size_of::<PLUGIN_Profiler_Create_Args>() == 40);
-const _: () = assert!(size_of::<PLUGIN_Profiler_Destroy_Args>() == 24);
-const _: () = assert!(size_of::<PLUGIN_Profiler_Start_Args>() == 24);
-const _: () = assert!(size_of::<PLUGIN_Profiler_Stop_Args>() == 24);
-const _: () = assert!(size_of::<PLUGIN_Profiler_CollectData_Args>() == 40);
-const _: () = assert!(size_of::<PJRT_MultiSlice_Config_Destroy_Args>() == 24);
-const _: () = assert!(size_of::<PJRT_MultiSlice_Config_NumSlices_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_MultiSlice_Config_NumDevicesPerSlice_Args>() == 40);
-const _: () = assert!(size_of::<PJRT_MultiSlice_Config_SliceId_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_Collectives_Destroy_Args>() == 24);
-const _: () = assert!(size_of::<PJRT_Collectives_CreateCommunicator_Args>() == 48);
-const _: () = assert!(size_of::<PJRT_Communicator_Destroy_Args>() == 24);
-const _: () = assert!(size_of::<PJRT_Communicator_AllGather_Args>() == 56);
-const _: () = assert!(size_of::<PJRT_Communicator_CollectivePermute_Args>() == 64);
-const _: () = assert!(size_of::<PJRT_Communicator_ToString_Args>() == 40);
-const _: () = assert!(size_of::<PJRT_AbiVersion_Get_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_AbiVersion_Destroy_Args>() == 24);
-const _: () = assert!(size_of::<PJRT_AbiVersion_IsCompatible_Args>() == 40);
-const _: () = assert!(size_of::<PJRT_AbiVersion_PlatformId_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_AbiVersion_FromProto_Args>() == 40);
-const _: () = assert!(size_of::<PJRT_Megascale_Handle_Args>() == 24);
-const _: () = assert!(size_of::<PJRT_Megascale_Query_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_Megascale_Data_Args>() == 40);
-const _: () = assert!(size_of::<PJRT_TpuExecutable_ProtoQuery_Args>() == 48);
-const _: () = assert!(size_of::<PJRT_TpuExecutable_ErrorCheck_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_TpuTopology_ScalarQuery_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_TpuTopology_BoundsQuery_Args>() == 40);
-const _: () = assert!(size_of::<PJRT_TpuTopology_MappingQuery_Args>() == 48);
-const _: () = assert!(size_of::<PJRT_Callback_Invoke_Args>() == 40);
-const _: () = assert!(size_of::<PJRT_PhaseCompile_GetCompiler_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_PhaseCompile_Destroy_Args>() == 24);
-const _: () = assert!(size_of::<PJRT_CrossHostTransfers_Args>() == 56);
-const _: () = assert!(size_of::<PJRT_Metadata_Get_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_Metadata_Destroy_Args>() == 24);
-const _: () = assert!(size_of::<PJRT_RawBuffer_Query_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_RawBuffer_Destroy_Args>() == 24);
-
-/// Argument structure for `PJRT_Layouts_MemoryLayout_Destroy` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Layouts_MemoryLayout_Destroy_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Memory layout handle to destroy.
-    pub layout: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_Layouts_MemoryLayout_Serialize` (`56` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Layouts_MemoryLayout_Serialize_Args {
-    /// Size of this struct (`56`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Memory layout handle to serialize.
-    pub layout: *const std::ffi::c_void,
-    /// Output pointer to serialized layout bytes.
-    pub serialized_bytes: *const std::os::raw::c_char,
-    /// Output byte length of serialized layout.
-    pub serialized_bytes_size: usize,
-    /// Output opaque serialized layout backing handle.
-    pub serialized_layout: *mut std::ffi::c_void,
-    /// Output deleter callback for `serialized_layout`.
-    pub serialized_layout_deleter: *const std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_Layouts_PJRT_Client_GetDefaultLayout` (`56` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args {
-    /// Size of this struct (`56`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Client handle.
-    pub client: *mut std::ffi::c_void,
-    /// Element type (`PJRT_Buffer_Type`).
-    pub elem_type: i32,
-    /// Explicit 4-byte alignment padding.
-    pub pad: i32,
-    /// Dimension array pointer.
-    pub dims: *const i64,
-    /// Number of dimensions.
-    pub num_dims: usize,
-    /// Output default memory layout handle.
-    pub layout: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_Layouts_PJRT_Buffer_MemoryLayout` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Buffer handle.
-    pub buffer: *mut std::ffi::c_void,
-    /// Output memory layout handle.
-    pub layout: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_Shardings_PJRT_Executable_ParameterShardings` and `OutputShardings` (`48` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Shardings_PJRT_Executable_Shardings_Args {
-    /// Size of this struct (`48`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Executable handle.
-    pub executable: *mut std::ffi::c_void,
-    /// Number of parameters or outputs.
-    pub num_items: usize,
-    /// Output array of serialized `xla.OpSharding` byte pointers.
-    pub shardings: *const *const std::os::raw::c_char,
-    /// Output array of serialized `xla.OpSharding` byte lengths.
-    pub sharding_sizes: *const usize,
-}
-
-/// Argument structure for `PJRT_PhaseCompile_GetPhaseNames` (`48` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_PhaseCompile_GetPhaseNames_Args {
-    /// Size of this struct (`48`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Phase compiler handle.
-    pub phase_compiler: *const std::ffi::c_void,
-    /// Output array of phase name pointers.
-    pub phase_names: *const *const std::os::raw::c_char,
-    /// Output array of phase name byte lengths.
-    pub phase_names_sizes: *const usize,
-    /// Output number of compilation phases.
-    pub num_phase_names: usize,
-}
-
-/// Argument structure for `PJRT_Triton_Compile` (`88` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Triton_Compile_Args {
-    /// Size of this struct (`88`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Triton MLIR module bytes pointer.
-    pub module: *const std::os::raw::c_char,
-    /// Triton MLIR module byte length.
-    pub module_size: usize,
-    /// Target architecture string pointer.
-    pub arch_name: *const std::os::raw::c_char,
-    /// Target architecture string byte length.
-    pub arch_name_size: usize,
-    /// Number of warps / sublanes.
-    pub num_warps: i32,
-    /// Number of CTAs / cores.
-    pub num_ctas: i32,
-    /// Number of software pipeline stages.
-    pub num_stages: i32,
-    /// Explicit 4-byte padding.
-    pub pad: i32,
-    /// Output compiled assembly/payload pointer.
-    pub out_asm: *const std::os::raw::c_char,
-    /// Output compiled assembly/payload byte size.
-    pub out_asm_size: usize,
-    /// Output shared memory / VMEM scratchpad size in bytes.
-    pub out_smem_bytes: i64,
-}
-
-/// Collective reduction operation kind (`PJRT_Collectives_ReductionKind` in `pjrt_c_api_collectives_extension.h`).
-#[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum PJRT_Collectives_ReductionKind {
-    /// Element-wise summation (`0`).
-    #[default]
-    Sum = 0,
-    /// Element-wise product (`1`).
-    Product = 1,
-    /// Element-wise minimum (`2`).
-    Min = 2,
-    /// Element-wise maximum (`3`).
-    Max = 3,
-}
-
-/// Collective operation group mode (`PJRT_Collectives_CollectiveOpKind` in `pjrt_c_api_collectives_extension.h`).
-#[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum PJRT_Collectives_CollectiveOpKind {
-    /// Cross-module (SPMD partition) collective (`0`).
-    #[default]
-    CrossModule = 0,
-    /// Cross-replica (data-parallel) collective (`1`).
-    CrossReplica = 1,
-}
-
-/// Runtime callback category (`PJRT_Callback_Type` in `pjrt_c_api_callback_extension.h`).
-#[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum PJRT_Callback_Type {
-    /// Unknown callback type (`0`).
-    #[default]
-    Unknown = 0,
-    /// TPU slice builder failure callback (`1`).
-    TpuSliceBuilder = 1,
-    /// Pre-fatal error notification callback (`2`).
-    Prefatal = 2,
-}
-
-/// TPU slice builder failure classification (`PJRT_Callback_Tpu_SliceFailureType` in `pjrt_c_api_callback_extension.h`).
-#[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum PJRT_Callback_Tpu_SliceFailureType {
-    /// Unknown slice failure (`0`).
-    #[default]
-    SliceFailureUnknown = 0,
-    /// Initialization error (`1`).
-    InitError = 1,
-    /// Worker disconnected (`2`).
-    WorkerDisconnected = 2,
-    /// Heartbeat check failure (`3`).
-    HeartbeatCheckFailure = 3,
-    /// Fast-reroute ICI failure (`4`).
-    FastRerouteFailure = 4,
-    /// Chip driver error (`5`).
-    ChipDriverError = 5,
-}
-
-/// Payload passed to `PJRT_Callback_Type::TpuSliceBuilder` callbacks (`16` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Callback_Tpu_SliceBuilderArgs {
-    /// Size of this struct (`16`).
-    pub struct_size: usize,
-    /// Failure type (`PJRT_Callback_Tpu_SliceFailureType`).
-    pub failure_type: i32,
-    /// Explicit 4-byte alignment padding.
-    pub pad: i32,
-}
-
-/// Payload passed to `PJRT_Callback_Type::Prefatal` callbacks (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Callback_PrefatalArgs {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Error code (`PJRT_Error_Code`).
-    pub error_code: i32,
-    /// Explicit 4-byte alignment padding.
-    pub pad: i32,
-    /// Pointer to error message text.
-    pub error_message: *const std::os::raw::c_char,
-    /// Byte length of `error_message`.
-    pub error_message_size: usize,
-}
-
-/// Argument structure for `PJRT_HostMemoryAllocator_Allocate` (`56` bytes, `host_memory_allocator_extension.h`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_HostMemoryAllocator_Allocate_Args {
-    /// Size of this struct (`56`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Client handle.
-    pub client: *mut std::ffi::c_void,
-    /// Requested allocation size in bytes.
-    pub size: usize,
-    /// Preferred NUMA node index.
-    pub numa_node: i32,
-    /// Explicit 4-byte alignment padding.
-    pub pad: i32,
-    /// Output allocated host memory pointer.
-    pub ptr: *mut std::ffi::c_void,
-    /// Output deleter callback function pointer.
-    pub deleter: *const std::ffi::c_void,
-    /// Output deleter user argument.
-    pub deleter_arg: *mut std::ffi::c_void,
-}
-
-/// Serialized executable metadata structure (`PJRT_ExecutableMetadata` in `executable_metadata_extension.h`, `16` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_ExecutableMetadata {
-    /// Pointer to serialized `xla.PjRtExecutableMetadata` protobuf bytes.
-    pub serialized_metadata: *const std::os::raw::c_char,
-    /// Byte length of `serialized_metadata`.
-    pub serialized_metadata_size: usize,
-}
-
-/// Argument structure for `PJRT_DeviceDescription_MemoryDescriptions` (`48` bytes, `pjrt_c_api_memory_descriptions_extension.h`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_DeviceDescription_MemoryDescriptions_Args {
-    /// Size of this struct (`48`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Device description handle.
-    pub device_description: *const std::ffi::c_void,
-    /// Output array of `PJRT_MemoryDescription*` handles.
-    pub memory_descriptions: *const *const std::ffi::c_void,
-    /// Output number of memory descriptions (`4`: HBM, VMEM, SMEM, `pinned_host`).
-    pub num_memory_descriptions: usize,
-    /// Output index of default memory space (`0` = HBM, `-1` if none).
-    pub default_memory_index: isize,
-}
-
-/// Argument structure for `PJRT_MemoryDescription_Kind` (`48` bytes, `pjrt_c_api_memory_descriptions_extension.h`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_MemoryDescription_Kind_Args {
-    /// Size of this struct (`48`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Memory description handle.
-    pub memory_description: *const std::ffi::c_void,
-    /// Output memory space kind string pointer.
-    pub kind: *const std::os::raw::c_char,
-    /// Output memory space kind string byte length.
-    pub kind_size: usize,
-    /// Output numeric kind ID (`0` = device/HBM, `1` = vmem, `2` = smem, `3` = `pinned_host`).
-    pub kind_id: i32,
-    /// Explicit 4-byte alignment padding.
-    pub pad: i32,
-}
-
-const _: () = assert!(size_of::<PJRT_Callback_Tpu_SliceBuilderArgs>() == 16);
-const _: () = assert!(size_of::<PJRT_Callback_PrefatalArgs>() == 32);
-const _: () = assert!(size_of::<PJRT_HostMemoryAllocator_Allocate_Args>() == 64);
-const _: () = assert!(size_of::<PJRT_ExecutableMetadata>() == 16);
-const _: () = assert!(size_of::<PJRT_DeviceDescription_MemoryDescriptions_Args>() == 48);
-const _: () = assert!(size_of::<PJRT_MemoryDescription_Kind_Args>() == 48);
-
-/// Argument structure for `PJRT_XlaTransform_Register` (`40` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_XlaTransform_Register_Args {
-    /// Size of this struct (`40`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Transform pass name pointer.
-    pub name: *const std::os::raw::c_char,
-    /// Transform pass name byte length.
-    pub name_size: usize,
-    /// Transform callback or output registration ID.
-    pub transform_fn: usize,
-}
-
-/// Argument structure for `PJRT_XlaTransform_WaitForAll` (`24` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_XlaTransform_WaitForAll_Args {
-    /// Size of this struct (`24`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Client handle.
-    pub client: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_XlaTransform_Unregister` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_XlaTransform_Unregister_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Transform pass name pointer.
-    pub name: *const std::os::raw::c_char,
-    /// Transform pass name byte length.
-    pub name_size: usize,
-}
-
-/// Argument structure for `PJRT_XlaTransform_List` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_XlaTransform_List_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Output array of transform pass name pointers.
-    pub names_out: *const *const std::os::raw::c_char,
-    /// Output number of registered transform passes.
-    pub num_names_out: usize,
-}
-
-/// Argument structure for `PJRT_HostMemoryAllocator_Get` (`32` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_HostMemoryAllocator_Get_Args {
-    /// Size of this struct (`32`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Client handle.
-    pub client: *mut std::ffi::c_void,
-    /// Output host memory allocator handle or capacity.
-    pub allocator_out: usize,
-}
-
-/// Argument structure for `PJRT_MultiSlice_Config_Serialize` (`48` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_MultiSlice_Config_Serialize_Args {
-    /// Size of this struct (`48`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Multi-slice config handle.
-    pub config: *const std::ffi::c_void,
-    /// Output serialized proto byte pointer.
-    pub serialized_bytes: *const std::os::raw::c_char,
-    /// Output serialized proto byte length.
-    pub serialized_bytes_size: usize,
-    /// Output opaque serialized proto holder.
-    pub serialized_config: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_Communicator_AllReduce` and `ReduceScatter` (`64` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Communicator_AllReduce_Args {
-    /// Size of this struct (`64`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Communicator handle.
-    pub communicator: *mut std::ffi::c_void,
-    /// Send buffer pointer.
-    pub send_buffer: *mut std::ffi::c_void,
-    /// Receive buffer pointer.
-    pub recv_buffer: *mut std::ffi::c_void,
-    /// Reduction operation code (`CollectiveReductionOp`).
-    pub reduction_op: i32,
-    /// Alignment padding.
-    pub pad: i32,
-    /// Element count.
-    pub count: usize,
-    /// Output completion event.
-    pub event: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_AbiVersion_RuntimeToProto` and `ExecutableToProto` (`48` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_AbiVersion_ToProto_Args {
-    /// Size of this struct (`48`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// ABI version handle.
-    pub abi_version: *const std::ffi::c_void,
-    /// Output serialized proto pointer.
-    pub serialized_proto: *const std::os::raw::c_char,
-    /// Output serialized proto byte length.
-    pub serialized_proto_size: usize,
-    /// Output serialized proto holder.
-    pub serialized_proto_holder: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_TpuExecutable_GetCompiledMemoryStats` (`64` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_TpuExecutable_GetCompiledMemoryStats_Args {
-    /// Size of this struct (`64`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Executable handle.
-    pub executable: *mut std::ffi::c_void,
-    /// Generated code size in bytes.
-    pub generated_code_size_in_bytes: i64,
-    /// Argument size in bytes.
-    pub argument_size_in_bytes: i64,
-    /// Output size in bytes.
-    pub output_size_in_bytes: i64,
-    /// Alias size in bytes.
-    pub alias_size_in_bytes: i64,
-    /// Temporary buffer size in bytes.
-    pub temp_size_in_bytes: i64,
-}
-
-/// Argument structure for `PJRT_Callback_RegisterCallback` (`48` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_Callback_Register_Args {
-    /// Size of this struct (`48`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Client handle.
-    pub client: *mut std::ffi::c_void,
-    /// Callback type identifier.
-    pub callback_type: i64,
-    /// Callback function pointer.
-    pub callback_fn: *const std::ffi::c_void,
-    /// User context pointer.
-    pub user_arg: *mut std::ffi::c_void,
-}
-
-/// Argument structure for `PJRT_PhaseCompile_RunPhase` (`56` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_PhaseCompile_RunPhase_Args {
-    /// Size of this struct (`56`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Phase compiler handle.
-    pub phase_compiler: *mut std::ffi::c_void,
-    /// Input program bytes pointer.
-    pub input_bytes: *const std::os::raw::c_char,
-    /// Input program byte length.
-    pub input_size: usize,
-    /// Phase name pointer.
-    pub phase_name: *const std::os::raw::c_char,
-    /// Output artifact count or size.
-    pub output_status: usize,
-}
-
-/// Argument structure for `PJRT_RawBuffer_CopyRawHostToDevice` and `CopyRawDeviceToHost` (`56` bytes).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_RawBuffer_CopyRaw_Args {
-    /// Size of this struct (`56`).
-    pub struct_size: usize,
-    /// Optional chained `PJRT_Extension_Base*`.
-    pub extension_start: *mut PJRT_Extension_Base,
-    /// Raw buffer handle.
-    pub buffer: *mut std::ffi::c_void,
-    /// Host pointer.
-    pub host_ptr: *mut std::ffi::c_void,
-    /// Byte offset within buffer.
-    pub offset: i64,
-    /// Number of bytes to transfer.
-    pub transfer_size: i64,
-    /// Output completion event.
-    pub event: *mut std::ffi::c_void,
-}
-
-const _: () = assert!(size_of::<PJRT_XlaTransform_Register_Args>() == 40);
-const _: () = assert!(size_of::<PJRT_XlaTransform_WaitForAll_Args>() == 24);
-const _: () = assert!(size_of::<PJRT_XlaTransform_Unregister_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_XlaTransform_List_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_HostMemoryAllocator_Get_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_MultiSlice_Config_Serialize_Args>() == 48);
-const _: () = assert!(size_of::<PJRT_Communicator_AllReduce_Args>() == 64);
-const _: () = assert!(size_of::<PJRT_AbiVersion_ToProto_Args>() == 48);
-const _: () = assert!(size_of::<PJRT_TpuExecutable_GetCompiledMemoryStats_Args>() == 64);
-const _: () = assert!(size_of::<PJRT_Callback_Register_Args>() == 48);
-const _: () = assert!(size_of::<PJRT_PhaseCompile_RunPhase_Args>() == 56);
-const _: () = assert!(size_of::<PJRT_RawBuffer_CopyRaw_Args>() == 56);
-const _: () = assert!(size_of::<PJRT_Layouts_MemoryLayout_Destroy_Args>() == 24);
-const _: () = assert!(size_of::<PJRT_Layouts_MemoryLayout_Serialize_Args>() == 56);
-const _: () = assert!(size_of::<PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args>() == 56);
-const _: () = assert!(size_of::<PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args>() == 32);
-const _: () = assert!(size_of::<PJRT_Shardings_PJRT_Executable_Shardings_Args>() == 48);
-const _: () = assert!(size_of::<PJRT_PhaseCompile_GetPhaseNames_Args>() == 48);
-const _: () = assert!(size_of::<PJRT_Triton_Compile_Args>() == 88);
-
 /// Stateful coordinator and registry backing the 17 TPU PJRT extension structures.
 #[derive(Debug, Default)]
 pub struct ExtensionRuntimeState {
@@ -1253,20 +132,34 @@ pub struct ExtensionRuntimeState {
     pub raw_buffers: usize,
     /// Whether the active TPU topology is a subslice topology.
     pub is_subslice_topology: bool,
-    /// Cached serialized protobuf payload buffer for extension queries.
-    pub last_serialized_bytes: Vec<u8>,
+    /// Heap-allocated [`crate::pjrt_types::PjrtSerializedArtifact`] buffers whose lifetime is managed by extension state or explicit deleters.
+    pub serialized_artifacts: Vec<Box<[u8]>>,
 }
 
 /// Process-wide [`ExtensionRuntimeState`] singleton.
 static EXTENSION_STATE: OnceLock<Mutex<ExtensionRuntimeState>> = OnceLock::new();
 
 /// Returns the singleton [`Mutex<ExtensionRuntimeState>`] backing all 17 PJRT extensions.
-fn extension_state() -> &'static Mutex<ExtensionRuntimeState> {
+pub(super) fn extension_state() -> &'static Mutex<ExtensionRuntimeState> {
     EXTENSION_STATE.get_or_init(|| Mutex::new(ExtensionRuntimeState::default()))
 }
 
+/// Allocates an immutable heap-backed byte slice registered in [`ExtensionRuntimeState::serialized_artifacts`]
+/// so that multiple concurrent or sequential extension queries never overwrite each other's buffers.
+///
+/// # Arguments
+///
+/// * `bytes` - Serialized protobuf or string payload bytes.
+pub(super) fn alloc_extension_bytes(bytes: Vec<u8>) -> (*const u8, usize) {
+    let boxed: Box<[u8]> = bytes.into_boxed_slice();
+    let ptr = boxed.as_ptr();
+    let len = boxed.len();
+    extension_state().lock().serialized_artifacts.push(boxed);
+    (ptr, len)
+}
+
 /// Returns the singleton [`Mutex<TpuCoreProfiler>`] backing `PLUGIN_Profiler_Api`.
-fn extension_profiler() -> &'static Mutex<TpuCoreProfiler> {
+pub(super) fn extension_profiler() -> &'static Mutex<TpuCoreProfiler> {
     EXTENSION_PROFILER.get_or_init(|| Mutex::new(TpuCoreProfiler::new()))
 }
 
@@ -1330,7 +223,7 @@ unsafe fn dispatch_erased_extension_args(
 ///
 /// `raw_args` must be null or point to a valid extension `_Args` struct of type `T`.
 #[inline]
-unsafe fn dispatch_typed_extension_args<T>(
+pub(super) unsafe fn dispatch_typed_extension_args<T>(
     raw_args: *mut std::ffi::c_void,
     handler: unsafe fn(&mut T),
 ) -> *mut PJRT_Error {
@@ -1340,4908 +233,6 @@ unsafe fn dispatch_typed_extension_args<T>(
         dispatch_erased_extension_args(raw_args, handler_ref, invoke_typed_extension_handler::<T>)
     }
 }
-
-/// Strongly-typed handler for [`PLUGIN_Profiler_Error_Destroy`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PLUGIN_Profiler_Error_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PLUGIN_Profiler_Error_Destroy_Args`].
-unsafe fn handle_profiler_error_destroy(args: &mut PLUGIN_Profiler_Error_Destroy_Args) {
-    args.error = ptr::null_mut();
-}
-
-/// Destroys a `PLUGIN_Profiler_Error` (`PLUGIN_Profiler_Error_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PLUGIN_Profiler_Error_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Error_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PLUGIN_Profiler_Error_Destroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PLUGIN_Profiler_Error_Destroy_Args>(
-            raw_args,
-            handle_profiler_error_destroy,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PLUGIN_Profiler_Error_Message`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PLUGIN_Profiler_Error_Message_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PLUGIN_Profiler_Error_Message_Args`].
-unsafe fn handle_profiler_error_message(args: &mut PLUGIN_Profiler_Error_Message_Args) {
-    args.message = c"OK".as_ptr();
-    args.message_size = "OK".len();
-}
-
-/// Queries the message of a `PLUGIN_Profiler_Error` (`PLUGIN_Profiler_Error_Message`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PLUGIN_Profiler_Error_Message_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Error_Message_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PLUGIN_Profiler_Error_Message(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PLUGIN_Profiler_Error_Message_Args>(
-            raw_args,
-            handle_profiler_error_message,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PLUGIN_Profiler_Error_GetCode`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PLUGIN_Profiler_Error_GetCode_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PLUGIN_Profiler_Error_GetCode_Args`].
-unsafe fn handle_profiler_error_get_code(args: &mut PLUGIN_Profiler_Error_GetCode_Args) {
-    args.code = 0;
-}
-
-/// Queries the status code of a `PLUGIN_Profiler_Error` (`PLUGIN_Profiler_Error_GetCode`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PLUGIN_Profiler_Error_GetCode_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Error_GetCode_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PLUGIN_Profiler_Error_GetCode(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PLUGIN_Profiler_Error_GetCode_Args>(
-            raw_args,
-            handle_profiler_error_get_code,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PLUGIN_Profiler_Create`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PLUGIN_Profiler_Create_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PLUGIN_Profiler_Create_Args`].
-unsafe fn handle_profiler_create(args: &mut PLUGIN_Profiler_Create_Args) {
-    let _ = extension_profiler();
-    args.profiler = std::ptr::dangling_mut::<std::ffi::c_void>();
-}
-
-/// Creates a `PLUGIN_Profiler` session (`PLUGIN_Profiler_Create`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PLUGIN_Profiler_Create_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Create_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PLUGIN_Profiler_Create(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PLUGIN_Profiler_Create_Args>(
-            raw_args,
-            handle_profiler_create,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PLUGIN_Profiler_Destroy`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PLUGIN_Profiler_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PLUGIN_Profiler_Destroy_Args`].
-unsafe fn handle_profiler_destroy(args: &mut PLUGIN_Profiler_Destroy_Args) {
-    args.profiler = ptr::null_mut();
-}
-
-/// Destroys a `PLUGIN_Profiler` session (`PLUGIN_Profiler_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PLUGIN_Profiler_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PLUGIN_Profiler_Destroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PLUGIN_Profiler_Destroy_Args>(
-            raw_args,
-            handle_profiler_destroy,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PLUGIN_Profiler_Start`].
-///
-/// # Arguments
-///
-/// * `_args` - Validated [`PLUGIN_Profiler_Start_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PLUGIN_Profiler_Start_Args`].
-unsafe fn handle_profiler_start(_args: &mut PLUGIN_Profiler_Start_Args) {
-    let prof = extension_profiler().lock();
-    let _ = prof.start();
-}
-
-/// Starts trace collection on a `PLUGIN_Profiler` (`PLUGIN_Profiler_Start`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PLUGIN_Profiler_Start_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Start_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PLUGIN_Profiler_Start(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PLUGIN_Profiler_Start_Args>(raw_args, handle_profiler_start)
-    }
-}
-
-/// Strongly-typed handler for [`PLUGIN_Profiler_Stop`].
-///
-/// # Arguments
-///
-/// * `_args` - Validated [`PLUGIN_Profiler_Stop_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PLUGIN_Profiler_Stop_Args`].
-unsafe fn handle_profiler_stop(_args: &mut PLUGIN_Profiler_Stop_Args) {
-    let prof = extension_profiler().lock();
-    let _ = prof.stop();
-}
-
-/// Stops trace collection on a `PLUGIN_Profiler` (`PLUGIN_Profiler_Stop`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PLUGIN_Profiler_Stop_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_Stop_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PLUGIN_Profiler_Stop(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PLUGIN_Profiler_Stop_Args>(raw_args, handle_profiler_stop)
-    }
-}
-
-/// Strongly-typed handler for [`PLUGIN_Profiler_CollectData`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PLUGIN_Profiler_CollectData_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PLUGIN_Profiler_CollectData_Args`].
-unsafe fn handle_profiler_collect_data(args: &mut PLUGIN_Profiler_CollectData_Args) {
-    let xspace_bytes = extension_profiler().lock().collect_xspace_bytes();
-    let xspace_len = xspace_bytes.len();
-    if !args.size_in_bytes.is_null() {
-        // SAFETY: `args.size_in_bytes` is non-null.
-        unsafe {
-            *args.size_in_bytes = xspace_len;
-        }
-    }
-    if !args.buffer.is_null() {
-        // SAFETY: `args.buffer` points to a caller buffer of at least `xspace_len` bytes.
-        unsafe {
-            ptr::copy_nonoverlapping(xspace_bytes.as_ptr(), args.buffer, xspace_len);
-        }
-    }
-}
-
-/// Collects serialized `XSpace` bytes from a `PLUGIN_Profiler` (`PLUGIN_Profiler_CollectData`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PLUGIN_Profiler_CollectData_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PLUGIN_Profiler_CollectData_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PLUGIN_Profiler_CollectData(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PLUGIN_Profiler_CollectData_Args>(
-            raw_args,
-            handle_profiler_collect_data,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_XlaTransform_Register`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_XlaTransform_Register_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_XlaTransform_Register_Args`].
-unsafe fn handle_xla_transform_register(args: &mut PJRT_XlaTransform_Register_Args) {
-    let pass_name = if args.name.is_null() {
-        String::from("default_xla_transform")
-    } else {
-        // SAFETY: `args.name` points to `args.name_size` bytes.
-        let bytes = unsafe { std::slice::from_raw_parts(args.name.cast::<u8>(), args.name_size) };
-        String::from_utf8_lossy(bytes).into_owned()
-    };
-    let mut st = extension_state().lock();
-    st.registered_transforms = st.registered_transforms.saturating_add(1);
-    let count = st.registered_transforms;
-    st.transform_passes.insert(pass_name, count);
-    args.transform_fn = count;
-}
-
-/// Registers an XLA HLO transform pass (`PJRT_XlaTransform_Register`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_XlaTransform_Register_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_XlaTransform_Register_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_XlaTransform_Register(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_XlaTransform_Register_Args>(
-            raw_args,
-            handle_xla_transform_register,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_XlaTransform_WaitForAll`].
-///
-/// # Arguments
-///
-/// * `_args` - Validated [`PJRT_XlaTransform_WaitForAll_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_XlaTransform_WaitForAll_Args`].
-unsafe fn handle_xla_transform_wait_for_all(_args: &mut PJRT_XlaTransform_WaitForAll_Args) {
-    let _ = extension_state().lock().registered_transforms;
-}
-
-/// Waits for all registered XLA transforms to complete (`PJRT_XlaTransform_WaitForAll`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_XlaTransform_WaitForAll_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_XlaTransform_WaitForAll_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_XlaTransform_WaitForAll(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_XlaTransform_WaitForAll_Args>(
-            raw_args,
-            handle_xla_transform_wait_for_all,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_XlaTransform_Unregister`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_XlaTransform_Unregister_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_XlaTransform_Unregister_Args`].
-unsafe fn handle_xla_transform_unregister(args: &mut PJRT_XlaTransform_Unregister_Args) {
-    let pass_name = if args.name.is_null() {
-        String::from("default_xla_transform")
-    } else {
-        // SAFETY: `args.name` points to `args.name_size` bytes.
-        let bytes = unsafe { std::slice::from_raw_parts(args.name.cast::<u8>(), args.name_size) };
-        String::from_utf8_lossy(bytes).into_owned()
-    };
-    let mut st = extension_state().lock();
-    st.transform_passes.remove(&pass_name);
-    st.registered_transforms = st.registered_transforms.saturating_sub(1);
-}
-
-/// Unregisters an XLA HLO transform pass (`PJRT_XlaTransform_Unregister`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_XlaTransform_Unregister_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_XlaTransform_Unregister_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_XlaTransform_Unregister(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_XlaTransform_Unregister_Args>(
-            raw_args,
-            handle_xla_transform_unregister,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_XlaTransform_List`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_XlaTransform_List_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_XlaTransform_List_Args`].
-unsafe fn handle_xla_transform_list(args: &mut PJRT_XlaTransform_List_Args) {
-    let st = extension_state().lock();
-    args.num_names_out = st.transform_passes.len().max(st.registered_transforms);
-}
-
-/// Lists all active XLA HLO transform passes (`PJRT_XlaTransform_List`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_XlaTransform_List_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_XlaTransform_List_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_XlaTransform_List(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_XlaTransform_List_Args>(
-            raw_args,
-            handle_xla_transform_list,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_HostMemoryAllocator_Get`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_HostMemoryAllocator_Get_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_HostMemoryAllocator_Get_Args`] (or [`PJRT_HostMemoryAllocator_Allocate_Args`] when `struct_size >= 64`).
-unsafe fn handle_host_memory_allocator_get(args: &mut PJRT_HostMemoryAllocator_Get_Args) {
-    let cap = global_init_config().premapped_buffer_size.0;
-    if args.struct_size >= size_of::<PJRT_HostMemoryAllocator_Allocate_Args>() {
-        // SAFETY: `args.struct_size >= 64` guarantees `args` is a valid `PJRT_HostMemoryAllocator_Allocate_Args`.
-        let alloc_args =
-            unsafe { &mut *ptr::from_mut(args).cast::<PJRT_HostMemoryAllocator_Allocate_Args>() };
-        alloc_args.ptr = cap as *mut std::ffi::c_void;
-    } else {
-        args.allocator_out = cap;
-    }
-}
-
-/// Returns the TPU DMA host memory allocator (`PJRT_HostMemoryAllocator_Get`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_HostMemoryAllocator_Get_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_HostMemoryAllocator_Get_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_HostMemoryAllocator_Get(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_HostMemoryAllocator_Get_Args>(
-            raw_args,
-            handle_host_memory_allocator_get,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_MultiSlice_Config_Destroy`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_MultiSlice_Config_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_MultiSlice_Config_Destroy_Args`].
-unsafe fn handle_multislice_config_destroy(args: &mut PJRT_MultiSlice_Config_Destroy_Args) {
-    args.config = ptr::null_mut();
-}
-
-/// Destroys a `PJRT_MultiSlice_Config` (`PJRT_MultiSlice_Config_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_MultiSlice_Config_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_MultiSlice_Config_Destroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_MultiSlice_Config_Destroy_Args>(
-            raw_args,
-            handle_multislice_config_destroy,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_MultiSlice_Config_NumSlices`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_MultiSlice_Config_NumSlices_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_MultiSlice_Config_NumSlices_Args`].
-unsafe fn handle_multislice_config_num_slices(args: &mut PJRT_MultiSlice_Config_NumSlices_Args) {
-    args.num_slices =
-        usize::try_from(global_init_config().megascale_num_slices.max(1)).unwrap_or(1);
-}
-
-/// Queries slice count from a `PJRT_MultiSlice_Config` (`PJRT_MultiSlice_Config_NumSlices`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_MultiSlice_Config_NumSlices_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_NumSlices_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_MultiSlice_Config_NumSlices(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_MultiSlice_Config_NumSlices_Args>(
-            raw_args,
-            handle_multislice_config_num_slices,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_MultiSlice_Config_NumDevicesPerSlice`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_MultiSlice_Config_NumDevicesPerSlice_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_MultiSlice_Config_NumDevicesPerSlice_Args`].
-unsafe fn handle_multislice_config_num_devices_per_slice(
-    args: &mut PJRT_MultiSlice_Config_NumDevicesPerSlice_Args,
-) {
-    let cfg = global_init_config();
-    args.num_devices_per_slice_map = usize::try_from(cfg.chips_per_host()).unwrap_or(4);
-    args.num_slices = usize::try_from(cfg.megascale_num_slices.max(1)).unwrap_or(1);
-}
-
-/// Queries per-slice device counts from a `PJRT_MultiSlice_Config` (`PJRT_MultiSlice_Config_NumDevicesPerSlice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_MultiSlice_Config_NumDevicesPerSlice_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_NumDevicesPerSlice_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_MultiSlice_Config_NumDevicesPerSlice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_MultiSlice_Config_NumDevicesPerSlice_Args>(
-            raw_args,
-            handle_multislice_config_num_devices_per_slice,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_MultiSlice_Config_SliceId`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_MultiSlice_Config_SliceId_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_MultiSlice_Config_SliceId_Args`].
-unsafe fn handle_multislice_config_slice_id(args: &mut PJRT_MultiSlice_Config_SliceId_Args) {
-    args.slice_id = usize::try_from(global_init_config().megascale_slice_id).unwrap_or(0);
-}
-
-/// Queries the local slice ID from a `PJRT_MultiSlice_Config` (`PJRT_MultiSlice_Config_SliceId`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_MultiSlice_Config_SliceId_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_SliceId_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_MultiSlice_Config_Serialize(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_MultiSlice_Config_Serialize_Args>(
-            raw_args,
-            handle_multislice_config_serialize,
-        )
-    }
-}
-
-/// Queries the local slice ID from a `PJRT_MultiSlice_Config` (`PJRT_MultiSlice_Config_SliceId`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_MultiSlice_Config_SliceId_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_SliceId_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_MultiSlice_Config_SliceId(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_MultiSlice_Config_SliceId_Args>(
-            raw_args,
-            handle_multislice_config_slice_id,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_MultiSlice_Config_Serialize`] and [`PJRT_Megascale_ConfigSerialize`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_MultiSlice_Config_Serialize_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_MultiSlice_Config_Serialize_Args`].
-unsafe fn handle_multislice_config_serialize(args: &mut PJRT_MultiSlice_Config_Serialize_Args) {
-    let cfg = global_init_config();
-    let encoded = libtpu_core::proto::MegascaleMultiSliceConfigProto {
-        num_slices: i32::try_from(cfg.megascale_num_slices.max(1)).unwrap_or(1),
-        slice_id: i32::try_from(cfg.megascale_slice_id).unwrap_or(0),
-        num_devices_per_slice: i32::try_from(cfg.chips_per_host()).unwrap_or(4),
-        coordinator_address: String::from("127.0.0.1:8080"),
-    }
-    .encode();
-    let mut st = extension_state().lock();
-    st.last_serialized_bytes = encoded;
-    args.serialized_bytes = st.last_serialized_bytes.as_ptr().cast();
-    args.serialized_bytes_size = st.last_serialized_bytes.len();
-    args.serialized_config = std::ptr::dangling_mut::<std::ffi::c_void>();
-}
-
-/// Strongly-typed handler for [`PJRT_Collectives_Destroy`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Collectives_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Collectives_Destroy_Args`].
-unsafe fn handle_collectives_destroy(args: &mut PJRT_Collectives_Destroy_Args) {
-    args.collectives = ptr::null_mut();
-}
-
-/// Destroys a `PJRT_Collectives` instance (`PJRT_Collectives_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Collectives_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Collectives_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Collectives_Destroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Collectives_Destroy_Args>(
-            raw_args,
-            handle_collectives_destroy,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Collectives_CreateCommunicator`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Collectives_CreateCommunicator_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Collectives_CreateCommunicator_Args`].
-unsafe fn handle_collectives_create_communicator(
-    args: &mut PJRT_Collectives_CreateCommunicator_Args,
-) {
-    let mut st = extension_state().lock();
-    st.active_communicators = st.active_communicators.saturating_add(1);
-    args.communicator = st.active_communicators as *mut std::ffi::c_void;
-}
-
-/// Creates a collective communicator (`PJRT_Collectives_CreateCommunicator`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Collectives_CreateCommunicator_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Collectives_CreateCommunicator_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Collectives_CreateCommunicator(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Collectives_CreateCommunicator_Args>(
-            raw_args,
-            handle_collectives_create_communicator,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Communicator_Destroy`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Communicator_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Communicator_Destroy_Args`].
-unsafe fn handle_communicator_destroy(args: &mut PJRT_Communicator_Destroy_Args) {
-    let mut st = extension_state().lock();
-    st.active_communicators = st.active_communicators.saturating_sub(1);
-    args.communicator = ptr::null_mut();
-}
-
-/// Destroys a collective communicator (`PJRT_Communicator_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Communicator_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Communicator_Destroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Communicator_Destroy_Args>(
-            raw_args,
-            handle_communicator_destroy,
-        )
-    }
-}
-
-/// Copies device memory from `send_buffer` to `recv_buffer` when both are non-null `PJRT_Buffer*` handles.
-///
-/// # Arguments
-///
-/// * `send_buffer` - Source `PJRT_Buffer*` handle.
-/// * `recv_buffer` - Destination `PJRT_Buffer*` handle.
-///
-/// # Safety
-///
-/// `send_buffer` and `recv_buffer` must be null or valid `PJRT_Buffer*` pointers.
-unsafe fn copy_collective_buffers(
-    send_buffer: *mut std::ffi::c_void,
-    recv_buffer: *mut std::ffi::c_void,
-) {
-    if !crate::any_null(&[send_buffer as usize, recv_buffer as usize]) {
-        // SAFETY: `send_buffer` and `recv_buffer` point to valid `PJRT_Buffer` handles when non-null.
-        let send_buf = unsafe { &*send_buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
-        // SAFETY: `recv_buffer` is a valid `PJRT_Buffer` handle.
-        let recv_buf = unsafe { &*recv_buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
-        let src_bytes = send_buf.inner.to_host_bytes().unwrap_or_default();
-        let _ = recv_buf.inner.hal.write_device_memory(
-            recv_buf.inner.device_id,
-            recv_buf.inner.address,
-            &src_bytes,
-        );
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Communicator_AllReduce`] and [`PJRT_Communicator_ReduceScatter`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Communicator_AllReduce_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Communicator_AllReduce_Args`].
-unsafe fn handle_communicator_all_reduce(args: &mut PJRT_Communicator_AllReduce_Args) {
-    // SAFETY: Caller guarantees `send_buffer` and `recv_buffer` are null or valid `PJRT_Buffer*`.
-    unsafe {
-        copy_collective_buffers(args.send_buffer, args.recv_buffer);
-    }
-    let mut st = extension_state().lock();
-    st.collective_ops_executed = st.collective_ops_executed.saturating_add(1);
-    args.event = st.collective_ops_executed as *mut std::ffi::c_void;
-}
-
-/// Executes an ICI/DCN `AllReduce` collective (`PJRT_Communicator_AllReduce`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Communicator_AllReduce_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_AllReduce_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Communicator_AllReduce(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Communicator_AllReduce_Args>(
-            raw_args,
-            handle_communicator_all_reduce,
-        )
-    }
-}
-
-/// Executes an ICI/DCN `ReduceScatter` collective (`PJRT_Communicator_ReduceScatter`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Communicator_AllReduce_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_AllReduce_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Communicator_ReduceScatter(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Communicator_AllReduce_Args>(
-            raw_args,
-            handle_communicator_all_reduce,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Communicator_AllGather`] and [`PJRT_Communicator_AllToAll`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Communicator_AllGather_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Communicator_AllGather_Args`].
-unsafe fn handle_communicator_all_gather(args: &mut PJRT_Communicator_AllGather_Args) {
-    // SAFETY: Caller guarantees `send_buffer` and `recv_buffer` are null or valid `PJRT_Buffer*`.
-    unsafe {
-        copy_collective_buffers(args.send_buffer, args.recv_buffer);
-    }
-    let mut st = extension_state().lock();
-    st.collective_ops_executed = st.collective_ops_executed.saturating_add(1);
-    args.event = st.collective_ops_executed as *mut std::ffi::c_void;
-}
-
-/// Executes an ICI/DCN `AllGather` collective (`PJRT_Communicator_AllGather`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Communicator_AllGather_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_AllGather_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Communicator_AllGather(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Communicator_AllGather_Args>(
-            raw_args,
-            handle_communicator_all_gather,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Communicator_CollectivePermute`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Communicator_CollectivePermute_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Communicator_CollectivePermute_Args`].
-unsafe fn handle_communicator_collective_permute(
-    args: &mut PJRT_Communicator_CollectivePermute_Args,
-) {
-    // SAFETY: Caller guarantees `send_buffer` and `recv_buffer` are null or valid `PJRT_Buffer*`.
-    unsafe {
-        copy_collective_buffers(args.send_buffer, args.recv_buffer);
-    }
-    let mut st = extension_state().lock();
-    st.collective_ops_executed = st.collective_ops_executed.saturating_add(1);
-    args.event = st.collective_ops_executed as *mut std::ffi::c_void;
-}
-
-/// Executes an ICI/DCN `CollectivePermute` operation (`PJRT_Communicator_CollectivePermute`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Communicator_CollectivePermute_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_CollectivePermute_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Communicator_CollectivePermute(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Communicator_CollectivePermute_Args>(
-            raw_args,
-            handle_communicator_collective_permute,
-        )
-    }
-}
-
-/// Executes an ICI/DCN `AllToAll` collective (`PJRT_Communicator_AllToAll`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Communicator_AllGather_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_AllGather_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Communicator_AllToAll(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Communicator_AllGather_Args>(
-            raw_args,
-            handle_communicator_all_gather,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Communicator_ToString`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Communicator_ToString_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Communicator_ToString_Args`].
-unsafe fn handle_communicator_to_string(args: &mut PJRT_Communicator_ToString_Args) {
-    args.str_out = c"TpuIciCommunicator(v0.0.50)".as_ptr() as usize;
-    args.str_size = "TpuIciCommunicator(v0.0.50)".len();
-}
-
-/// Formats a communicator debug string (`PJRT_Communicator_ToString`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Communicator_ToString_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Communicator_ToString_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Communicator_ToString(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Communicator_ToString_Args>(
-            raw_args,
-            handle_communicator_to_string,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_AbiVersion_ClientRuntime`] and [`PJRT_AbiVersion_ExecutableGet`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_AbiVersion_Get_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_AbiVersion_Get_Args`].
-unsafe fn handle_abi_version_get(args: &mut PJRT_AbiVersion_Get_Args) {
-    args.abi_version_out = usize::try_from(crate::pjrt_types::PJRT_API_MINOR).unwrap_or(116);
-}
-
-/// Queries the client runtime ABI version (`PJRT_AbiVersion_ClientRuntime`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_Get_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_Get_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_ClientRuntime(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_Get_Args>(raw_args, handle_abi_version_get)
-    }
-}
-
-/// Queries an executable's ABI version (`PJRT_AbiVersion_ExecutableGet`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_Get_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_Get_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableGet(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_Get_Args>(raw_args, handle_abi_version_get)
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_AbiVersion_RuntimeDestroy`] and [`PJRT_AbiVersion_ExecutableDestroy`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_AbiVersion_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_AbiVersion_Destroy_Args`].
-unsafe fn handle_abi_version_destroy(args: &mut PJRT_AbiVersion_Destroy_Args) {
-    args.abi_version = ptr::null_mut();
-}
-
-/// Destroys a runtime ABI version handle (`PJRT_AbiVersion_RuntimeDestroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeDestroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_Destroy_Args>(
-            raw_args,
-            handle_abi_version_destroy,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_AbiVersion_RuntimeCompatibleWithRuntime`] and [`PJRT_AbiVersion_RuntimeCompatibleWithExecutable`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_AbiVersion_IsCompatible_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_AbiVersion_IsCompatible_Args`].
-unsafe fn handle_abi_version_is_compatible(args: &mut PJRT_AbiVersion_IsCompatible_Args) {
-    args.is_compatible_out = 1;
-}
-
-/// Checks compatibility between two runtime ABI versions (`PJRT_AbiVersion_RuntimeCompatibleWithRuntime`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_IsCompatible_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_IsCompatible_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeCompatibleWithRuntime(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_IsCompatible_Args>(
-            raw_args,
-            handle_abi_version_is_compatible,
-        )
-    }
-}
-
-/// Checks compatibility between runtime and executable ABI versions (`PJRT_AbiVersion_RuntimeCompatibleWithExecutable`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_IsCompatible_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_IsCompatible_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeCompatibleWithExecutable(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_IsCompatible_Args>(
-            raw_args,
-            handle_abi_version_is_compatible,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_AbiVersion_RuntimeToProto`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_AbiVersion_ToProto_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_AbiVersion_ToProto_Args`].
-unsafe fn handle_abi_version_runtime_to_proto(args: &mut PJRT_AbiVersion_ToProto_Args) {
-    let encoded = libtpu_core::proto::RuntimeAbiVersionProto {
-        platform_id: u64::from(u32::from_be_bytes(*b"TPU\0")),
-        version_string: String::from("0.116"),
-        pjrt_api_minor: crate::pjrt_types::PJRT_API_MINOR,
-    }
-    .encode();
-    let mut st = extension_state().lock();
-    st.last_serialized_bytes = encoded;
-    args.serialized_proto = st.last_serialized_bytes.as_ptr().cast();
-    args.serialized_proto_size = st.last_serialized_bytes.len();
-    args.serialized_proto_holder = std::ptr::dangling_mut::<std::ffi::c_void>();
-}
-
-/// Serializes a runtime ABI version to proto (`PJRT_AbiVersion_RuntimeToProto`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_ToProto_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_ToProto_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeToProto(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_ToProto_Args>(
-            raw_args,
-            handle_abi_version_runtime_to_proto,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_AbiVersion_RuntimePlatformId`] and [`PJRT_AbiVersion_ExecutablePlatformId`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_AbiVersion_PlatformId_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_AbiVersion_PlatformId_Args`].
-unsafe fn handle_abi_version_platform_id(args: &mut PJRT_AbiVersion_PlatformId_Args) {
-    args.platform_id_out = u32::from_be_bytes(*b"TPU\0") as usize;
-}
-
-/// Queries the platform ID of a runtime ABI version (`PJRT_AbiVersion_RuntimePlatformId`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_PlatformId_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_PlatformId_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_RuntimePlatformId(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_PlatformId_Args>(
-            raw_args,
-            handle_abi_version_platform_id,
-        )
-    }
-}
-
-/// Destroys an executable ABI version handle (`PJRT_AbiVersion_ExecutableDestroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableDestroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_Destroy_Args>(
-            raw_args,
-            handle_abi_version_destroy,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_AbiVersion_ExecutableToProto`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_AbiVersion_ToProto_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_AbiVersion_ToProto_Args`].
-unsafe fn handle_abi_version_executable_to_proto(args: &mut PJRT_AbiVersion_ToProto_Args) {
-    let encoded = libtpu_core::proto::ExecutableAbiVersionProto {
-        platform_id: u64::from(u32::from_be_bytes(*b"TPU\0")),
-        compiler_version: String::from("0.0.50"),
-        target_generation: global_init_config().generation as i32,
-    }
-    .encode();
-    let mut st = extension_state().lock();
-    st.last_serialized_bytes = encoded;
-    args.serialized_proto = st.last_serialized_bytes.as_ptr().cast();
-    args.serialized_proto_size = st.last_serialized_bytes.len();
-    args.serialized_proto_holder = std::ptr::dangling_mut::<std::ffi::c_void>();
-}
-
-/// Serializes an executable ABI version to proto (`PJRT_AbiVersion_ExecutableToProto`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_ToProto_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_ToProto_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableToProto(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_ToProto_Args>(
-            raw_args,
-            handle_abi_version_executable_to_proto,
-        )
-    }
-}
-
-/// Queries the platform ID of an executable ABI version (`PJRT_AbiVersion_ExecutablePlatformId`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_PlatformId_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_PlatformId_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_ExecutablePlatformId(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_PlatformId_Args>(
-            raw_args,
-            handle_abi_version_platform_id,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_AbiVersion_RuntimeFromProto`] and [`PJRT_AbiVersion_ExecutableFromProto`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_AbiVersion_FromProto_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_AbiVersion_FromProto_Args`].
-unsafe fn handle_abi_version_from_proto(args: &mut PJRT_AbiVersion_FromProto_Args) {
-    args.abi_version_out = usize::try_from(crate::pjrt_types::PJRT_API_MINOR).unwrap_or(116);
-}
-
-/// Deserializes a runtime ABI version from proto (`PJRT_AbiVersion_RuntimeFromProto`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_FromProto_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_FromProto_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeFromProto(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_FromProto_Args>(
-            raw_args,
-            handle_abi_version_from_proto,
-        )
-    }
-}
-
-/// Deserializes an executable ABI version from proto (`PJRT_AbiVersion_ExecutableFromProto`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_AbiVersion_FromProto_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_AbiVersion_FromProto_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableFromProto(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_AbiVersion_FromProto_Args>(
-            raw_args,
-            handle_abi_version_from_proto,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Shardings_ParameterShardings`] and [`PJRT_Shardings_OutputShardings`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Shardings_PJRT_Executable_Shardings_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Shardings_PJRT_Executable_Shardings_Args`].
-unsafe fn handle_executable_shardings(args: &mut PJRT_Shardings_PJRT_Executable_Shardings_Args) {
-    let encoded = libtpu_core::proto::OpShardingProto::default().encode();
-    // SAFETY: `args.executable` is null or a valid `PJRT_Executable*`.
-    let count = unsafe {
-        args.executable
-            .cast::<crate::pjrt_types::PJRT_Executable>()
-            .as_ref()
-    }
-    .map_or(1, |e| e.inner.program.output_shapes.len().max(1));
-    let mut st = extension_state().lock();
-    st.last_serialized_bytes = encoded;
-    args.num_items = count;
-}
-
-/// Queries parameter `OpSharding` protos of an executable (`PJRT_Shardings_ParameterShardings`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Shardings_PJRT_Executable_Shardings_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Shardings_PJRT_Executable_Shardings_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Shardings_ParameterShardings(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Shardings_PJRT_Executable_Shardings_Args>(
-            raw_args,
-            handle_executable_shardings,
-        )
-    }
-}
-
-/// Queries output `OpSharding` protos of an executable (`PJRT_Shardings_OutputShardings`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Shardings_PJRT_Executable_Shardings_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Shardings_PJRT_Executable_Shardings_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Shardings_OutputShardings(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Shardings_PJRT_Executable_Shardings_Args>(
-            raw_args,
-            handle_executable_shardings,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_CreateClientContext`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_create_client_context(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state().lock();
-    st.megascale_contexts = st.megascale_contexts.saturating_add(1);
-    args.out_value = st.megascale_contexts;
-}
-
-/// Creates a Megascale client context (`PJRT_Megascale_CreateClientContext`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_CreateClientContext(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_create_client_context,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_DeleteClientContext`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
-unsafe fn handle_megascale_delete_client_context(args: &mut PJRT_Megascale_Handle_Args) {
-    let mut st = extension_state().lock();
-    st.megascale_contexts = st.megascale_contexts.saturating_sub(1);
-    args.handle = ptr::null_mut();
-}
-
-/// Deletes a Megascale client context (`PJRT_Megascale_DeleteClientContext`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Handle_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_DeleteClientContext(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(
-            raw_args,
-            handle_megascale_delete_client_context,
-        )
-    }
-}
-
-/// Strongly-typed handler for Megascale config creation entrypoints.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_create_config(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state().lock();
-    st.megascale_configs = st.megascale_configs.saturating_add(1);
-    args.out_value = st.megascale_configs;
-}
-
-/// Creates a default Megascale config (`PJRT_Megascale_CreateDefaultConfig`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_CreateDefaultConfig(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_create_config,
-        )
-    }
-}
-
-/// Creates an AOT Megascale config (`PJRT_Megascale_CreateAotConfig`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_CreateAotConfig(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_create_config,
-        )
-    }
-}
-
-/// Creates a Megascale multi-slice config (`PJRT_Megascale_CreateMultiSliceConfig`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_CreateMultiSliceConfig(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_create_config,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_DeleteMultiSliceConfig`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
-unsafe fn handle_megascale_delete_config(args: &mut PJRT_Megascale_Handle_Args) {
-    let mut st = extension_state().lock();
-    st.megascale_configs = st.megascale_configs.saturating_sub(1);
-    args.handle = ptr::null_mut();
-}
-
-/// Deletes a Megascale multi-slice config (`PJRT_Megascale_DeleteMultiSliceConfig`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Handle_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_DeleteMultiSliceConfig(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(
-            raw_args,
-            handle_megascale_delete_config,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_ConfigNumSlices`] and [`PJRT_Megascale_GetNumSlices`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_num_slices(args: &mut PJRT_Megascale_Query_Args) {
-    args.out_value = usize::try_from(global_init_config().megascale_num_slices.max(1)).unwrap_or(1);
-}
-
-/// Queries slice count from Megascale config (`PJRT_Megascale_ConfigNumSlices`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_ConfigNumSlices(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_num_slices,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_ConfigNumDevicesPerSlice`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_num_devices_per_slice(args: &mut PJRT_Megascale_Query_Args) {
-    args.out_value = usize::try_from(global_init_config().chips_per_host()).unwrap_or(4);
-}
-
-/// Queries devices per slice from Megascale config (`PJRT_Megascale_ConfigNumDevicesPerSlice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_ConfigNumDevicesPerSlice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_num_devices_per_slice,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_ConfigSliceId`] and [`PJRT_Megascale_GetSliceId`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_slice_id(args: &mut PJRT_Megascale_Query_Args) {
-    args.out_value = usize::try_from(global_init_config().megascale_slice_id).unwrap_or(0);
-}
-
-/// Queries slice ID from Megascale config (`PJRT_Megascale_ConfigSliceId`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_ConfigSliceId(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_slice_id,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_ConfigSerializedSliceKeyValue`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Data_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Data_Args`].
-unsafe fn handle_megascale_serialized_kv(args: &mut PJRT_Megascale_Data_Args) {
-    args.out_first = global_init_config().extra_flags.len().saturating_add(16);
-    args.out_second = 1;
-}
-
-/// Queries serialized slice key-values from Megascale config (`PJRT_Megascale_ConfigSerializedSliceKeyValue`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Data_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Data_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_ConfigSerializedSliceKeyValue(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Data_Args>(
-            raw_args,
-            handle_megascale_serialized_kv,
-        )
-    }
-}
-
-/// Serializes a Megascale multi-slice config (`PJRT_Megascale_ConfigSerialize`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_MultiSlice_Config_Serialize_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_Serialize_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_ConfigSerialize(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_MultiSlice_Config_Serialize_Args>(
-            raw_args,
-            handle_multislice_config_serialize,
-        )
-    }
-}
-
-/// Deserializes a Megascale multi-slice config (`PJRT_Megascale_DeserializeMultiSliceConfig`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_DeserializeMultiSliceConfig(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_create_config,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_Addresses`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_addresses(args: &mut PJRT_Megascale_Query_Args) {
-    args.out_value = usize::try_from(global_init_config().total_hosts()).unwrap_or(1);
-}
-
-/// Queries Megascale coordinator addresses (`PJRT_Megascale_Addresses`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_Addresses(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_addresses,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_Barrier`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_barrier(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state().lock();
-    st.megascale_barriers = st.megascale_barriers.saturating_add(1);
-    args.out_value = st.megascale_barriers;
-}
-
-/// Executes a Megascale multi-slice barrier (`PJRT_Megascale_Barrier`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_Barrier(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_barrier,
-        )
-    }
-}
-
-/// Strongly-typed no-op handler for [`PJRT_Megascale_Handle_Args`].
-///
-/// # Arguments
-///
-/// * `_args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
-unsafe fn handle_megascale_noop(_args: &mut PJRT_Megascale_Handle_Args) {}
-
-/// Logs a Megascale collective error (`PJRT_Megascale_LogError`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Handle_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_LogError(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(raw_args, handle_megascale_noop)
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_GetDcnTopology`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_dcn_topology(args: &mut PJRT_Megascale_Query_Args) {
-    let cfg = global_init_config();
-    let dcn_bytes = libtpu_core::proto::MegascaleDcnTopologyProto {
-        num_slices: i32::try_from(cfg.megascale_num_slices.max(1)).unwrap_or(1),
-        num_hosts_per_slice: i32::try_from(cfg.total_hosts()).unwrap_or(1),
-        transport_type: 1,
-    }
-    .encode();
-    args.out_value = dcn_bytes.len();
-}
-
-/// Queries the Megascale DCN topology (`PJRT_Megascale_GetDcnTopology`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_GetDcnTopology(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_dcn_topology,
-        )
-    }
-}
-
-/// Queries the active Megascale slice ID (`PJRT_Megascale_GetSliceId`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_GetSliceId(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_slice_id,
-        )
-    }
-}
-
-/// Queries the total Megascale slice count (`PJRT_Megascale_GetNumSlices`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_GetNumSlices(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_num_slices,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_InitializeSlice`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_initialize_slice(args: &mut PJRT_Megascale_Query_Args) {
-    args.out_value = 1;
-}
-
-/// Initializes a Megascale slice (`PJRT_Megascale_InitializeSlice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_InitializeSlice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_initialize_slice,
-        )
-    }
-}
-
-/// Finalizes a Megascale slice (`PJRT_Megascale_FinalizeSlice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Handle_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_FinalizeSlice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(raw_args, handle_megascale_noop)
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_RegisterErrorHandler`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_register_error_handler(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state().lock();
-    st.megascale_error_handlers = st.megascale_error_handlers.saturating_add(1);
-    args.out_value = st.megascale_error_handlers;
-}
-
-/// Registers a Megascale error handler (`PJRT_Megascale_RegisterErrorHandler`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_RegisterErrorHandler(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_register_error_handler,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_UnregisterErrorHandler`].
-///
-/// # Arguments
-///
-/// * `_args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
-unsafe fn handle_megascale_unregister_error_handler(_args: &mut PJRT_Megascale_Handle_Args) {
-    let mut st = extension_state().lock();
-    st.megascale_error_handlers = st.megascale_error_handlers.saturating_sub(1);
-}
-
-/// Unregisters a Megascale error handler (`PJRT_Megascale_UnregisterErrorHandler`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Handle_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_UnregisterErrorHandler(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(
-            raw_args,
-            handle_megascale_unregister_error_handler,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_CollectMetrics`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Data_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Data_Args`].
-unsafe fn handle_megascale_collect_metrics(args: &mut PJRT_Megascale_Data_Args) {
-    let mut st = extension_state().lock();
-    let encoded = libtpu_core::proto::MegascaleRuntimeMetricsProto {
-        completed_barriers: u64::try_from(st.megascale_barriers).unwrap_or(0),
-        collective_ops_count: u64::try_from(st.collective_ops_executed).unwrap_or(0),
-        active_contexts: i32::try_from(st.megascale_contexts).unwrap_or(0),
-    }
-    .encode();
-    st.last_serialized_bytes = encoded;
-    args.out_first = st.last_serialized_bytes.as_ptr() as usize;
-    args.out_second = st.last_serialized_bytes.len();
-}
-
-/// Collects Megascale telemetry metrics (`PJRT_Megascale_CollectMetrics`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Data_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Data_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_CollectMetrics(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Data_Args>(
-            raw_args,
-            handle_megascale_collect_metrics,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_ResetMetrics`].
-///
-/// # Arguments
-///
-/// * `_args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
-unsafe fn handle_megascale_reset_metrics(_args: &mut PJRT_Megascale_Handle_Args) {
-    let mut st = extension_state().lock();
-    st.megascale_barriers = 0;
-}
-
-/// Resets Megascale telemetry metrics (`PJRT_Megascale_ResetMetrics`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Handle_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_ResetMetrics(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(
-            raw_args,
-            handle_megascale_reset_metrics,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_GetTransportType`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_get_transport_type(args: &mut PJRT_Megascale_Query_Args) {
-    args.out_value = extension_state().lock().megascale_transport_type;
-}
-
-/// Queries Megascale transport type (`PJRT_Megascale_GetTransportType`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_GetTransportType(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_get_transport_type,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Megascale_SetTransportType`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_megascale_set_transport_type(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state().lock();
-    st.megascale_transport_type = 1;
-    args.out_value = st.megascale_transport_type;
-}
-
-/// Sets Megascale transport type (`PJRT_Megascale_SetTransportType`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_SetTransportType(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_megascale_set_transport_type,
-        )
-    }
-}
-
-/// Waits for a Megascale barrier (`PJRT_Megascale_WaitForBarrier`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Handle_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_WaitForBarrier(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(raw_args, handle_megascale_noop)
-    }
-}
-
-/// Aborts in-flight Megascale collectives (`PJRT_Megascale_AbortCollectives`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Handle_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Megascale_AbortCollectives(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(raw_args, handle_megascale_noop)
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuExecutable_GetTargetArguments`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuExecutable_ProtoQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuExecutable_ProtoQuery_Args`].
-unsafe fn handle_tpu_executable_target_arguments(args: &mut PJRT_TpuExecutable_ProtoQuery_Args) {
-    let tpu_gen = global_init_config().generation;
-    let target_bytes = libtpu_core::proto::TargetArgumentsProto {
-        tpu_version: tpu_gen as i32,
-        chip_variant: tpu_gen.to_string(),
-        clock_rate_mhz: 1750,
-        hbm_capacity_bytes: i64::try_from(tpu_gen.hbm_capacity_bytes().0).unwrap_or(0),
-        vmem_capacity_bytes: i64::try_from(tpu_gen.vmem_capacity_bytes().0).unwrap_or(0),
-        smem_capacity_bytes: 2 * 1024 * 1024,
-        cmem_capacity_bytes: 128 * 1024 * 1024,
-        tensor_cores_per_chip: i32::try_from(tpu_gen.tensor_cores_per_chip()).unwrap_or(1),
-        sparse_cores_per_chip: i32::try_from(tpu_gen.sparse_cores_per_chip()).unwrap_or(0),
-        mxu_dimension: i32::try_from(tpu_gen.mxu_dimension()).unwrap_or(128),
-        ici_bandwidth_bps: 4_800_000_000_000,
-    }
-    .encode();
-    let mut st = extension_state().lock();
-    st.last_serialized_bytes = target_bytes;
-    args.serialized_bytes = st.last_serialized_bytes.as_ptr() as usize;
-    args.serialized_bytes_size = st.last_serialized_bytes.len();
-    args.holder = std::ptr::dangling_mut::<std::ffi::c_void>();
-}
-
-/// Extracts target arguments from a TPU executable (`PJRT_TpuExecutable_GetTargetArguments`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuExecutable_ProtoQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_ProtoQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuExecutable_GetTargetArguments(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuExecutable_ProtoQuery_Args>(
-            raw_args,
-            handle_tpu_executable_target_arguments,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuExecutable_GetHloModuleWithConfig`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuExecutable_ProtoQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuExecutable_ProtoQuery_Args`].
-unsafe fn handle_tpu_executable_hlo_module_with_config(
-    args: &mut PJRT_TpuExecutable_ProtoQuery_Args,
-) {
-    // SAFETY: `args.executable` is null or a valid `PJRT_Executable*`.
-    let hlo_mod = unsafe {
-        args.executable
-            .cast::<crate::pjrt_types::PJRT_Executable>()
-            .as_ref()
-    }
-    .map_or_else(libtpu_core::proto::HloModuleProto::default, |e| {
-        libtpu_core::proto::HloModuleProto {
-            name: e.inner.program.name.clone(),
-            entry_computation_name: String::from("main"),
-            entry_computation_id: 1,
-            computations: Vec::new(),
-            host_program_shape: None,
-            id: 1,
-        }
-    });
-    let encoded = libtpu_core::proto::HloModuleProtoWithConfig {
-        hlo_module: Some(hlo_mod),
-        config: Some(libtpu_core::proto::HloModuleConfigProto::default()),
-    }
-    .encode();
-    let mut st = extension_state().lock();
-    st.last_serialized_bytes = encoded;
-    args.serialized_bytes = st.last_serialized_bytes.as_ptr() as usize;
-    args.serialized_bytes_size = st.last_serialized_bytes.len();
-    args.holder = std::ptr::dangling_mut::<std::ffi::c_void>();
-}
-
-/// Extracts `HloModuleWithConfig` from a TPU executable (`PJRT_TpuExecutable_GetHloModuleWithConfig`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuExecutable_ProtoQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_ProtoQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuExecutable_GetHloModuleWithConfig(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuExecutable_ProtoQuery_Args>(
-            raw_args,
-            handle_tpu_executable_hlo_module_with_config,
-        )
-    }
-}
-
-/// Reserved slot on `PJRT_TpuExecutable_Extension` (`PJRT_TpuExecutable_Reserved`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Handle_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Handle_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuExecutable_Reserved(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(raw_args, handle_megascale_noop)
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuExecutable_GetCompiledMemoryStats`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuExecutable_GetCompiledMemoryStats_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuExecutable_GetCompiledMemoryStats_Args`].
-unsafe fn handle_tpu_executable_get_compiled_memory_stats(
-    args: &mut PJRT_TpuExecutable_GetCompiledMemoryStats_Args,
-) {
-    // SAFETY: `args.executable` is null or a valid `PJRT_Executable*`.
-    let exec_opt = unsafe {
-        args.executable
-            .cast::<crate::pjrt_types::PJRT_Executable>()
-            .as_ref()
-    };
-    let (code_sz, arg_sz, out_sz, alias_sz, temp_sz) =
-        exec_opt.map_or((256, 64, 32, 0, 128), |e| {
-            let ms = &e.inner.program.memory_stats;
-            (
-                ms.generated_code_size_in_bytes,
-                ms.argument_size_in_bytes,
-                ms.output_size_in_bytes,
-                ms.alias_size_in_bytes,
-                ms.temp_size_in_bytes,
-            )
-        });
-    args.generated_code_size_in_bytes = code_sz;
-    args.argument_size_in_bytes = arg_sz;
-    args.output_size_in_bytes = out_sz;
-    args.alias_size_in_bytes = alias_sz;
-    args.temp_size_in_bytes = temp_sz;
-}
-
-/// Extracts compiled memory stats from a TPU executable (`PJRT_TpuExecutable_GetCompiledMemoryStats`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuExecutable_GetCompiledMemoryStats_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_GetCompiledMemoryStats_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuExecutable_GetCompiledMemoryStats(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuExecutable_GetCompiledMemoryStats_Args>(
-            raw_args,
-            handle_tpu_executable_get_compiled_memory_stats,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuExecutable_RunHloCostAnalysis`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_tpu_executable_cost_analysis(args: &mut PJRT_Megascale_Query_Args) {
-    args.out_value = if args.handle >= 0x10000 {
-        // SAFETY: `args.handle` is a valid `PJRT_Executable*`.
-        let exec = unsafe { &*(args.handle as *const crate::pjrt_types::PJRT_Executable) };
-        exec.inner.program.instruction_bundles.len().max(1)
-    } else {
-        4
-    };
-}
-
-/// Runs HLO cost analysis on a TPU executable (`PJRT_TpuExecutable_RunHloCostAnalysis`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuExecutable_RunHloCostAnalysis(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_tpu_executable_cost_analysis,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuExecutable_SetTpuCompilationEnv`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Megascale_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Megascale_Query_Args`].
-unsafe fn handle_tpu_executable_set_env(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state().lock();
-    st.tpu_compilation_env_overrides = st.tpu_compilation_env_overrides.saturating_add(1);
-    args.out_value = st.tpu_compilation_env_overrides;
-}
-
-/// Updates a field in `TpuCompilationEnvironmentProto` (`PJRT_TpuExecutable_SetTpuCompilationEnv`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuExecutable_SetTpuCompilationEnv(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Query_Args>(
-            raw_args,
-            handle_tpu_executable_set_env,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuExecutable_ProtoQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuExecutable_ProtoQuery_Args`].
-unsafe fn handle_tpu_executable_get_env_field(args: &mut PJRT_TpuExecutable_ProtoQuery_Args) {
-    let encoded = libtpu_core::proto::TpuCompilationEnvironmentProto::default().encode();
-    let mut st = extension_state().lock();
-    st.last_serialized_bytes = encoded;
-    args.serialized_bytes = st.last_serialized_bytes.as_ptr() as usize;
-    args.serialized_bytes_size = st.last_serialized_bytes.len();
-}
-
-/// Reads a field from `TpuCompilationEnvironmentProto` as string (`PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuExecutable_ProtoQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_ProtoQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuExecutable_ProtoQuery_Args>(
-            raw_args,
-            handle_tpu_executable_get_env_field,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuExecutable_IsPredeterminedError`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuExecutable_ErrorCheck_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuExecutable_ErrorCheck_Args`].
-unsafe fn handle_tpu_executable_is_predetermined_error(
-    args: &mut PJRT_TpuExecutable_ErrorCheck_Args,
-) {
-    // SAFETY: `args.error` is null or a valid `PJRT_Error*`.
-    let err_opt = unsafe { args.error.cast::<PJRT_Error>().as_ref() };
-    let matched = err_opt.map_or_else(
-        || {
-            LibTpuError::DevicePoisoned {
-                device_id: 0,
-                launch_id: 0,
-                reason: String::new(),
-            }
-            .is_predetermined_error()
-        },
-        |e| e.error.is_predetermined_error(),
-    );
-    args.is_matched = usize::from(matched);
-}
-
-/// Checks whether an error is a TPU predetermined error (`PJRT_TpuExecutable_IsPredeterminedError`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuExecutable_ErrorCheck_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_ErrorCheck_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuExecutable_IsPredeterminedError(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuExecutable_ErrorCheck_Args>(
-            raw_args,
-            handle_tpu_executable_is_predetermined_error,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuExecutable_IsCancellationPlaceholderError`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuExecutable_ErrorCheck_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuExecutable_ErrorCheck_Args`].
-unsafe fn handle_tpu_executable_is_cancellation_error(
-    args: &mut PJRT_TpuExecutable_ErrorCheck_Args,
-) {
-    // SAFETY: `args.error` is null or a valid `PJRT_Error*`.
-    let err_opt = unsafe { args.error.cast::<PJRT_Error>().as_ref() };
-    let matched = err_opt.map_or_else(
-        || {
-            LibTpuError::EventFailed {
-                reason: String::new(),
-            }
-            .is_cancellation_placeholder_error()
-        },
-        |e| e.error.is_cancellation_placeholder_error(),
-    );
-    args.is_matched = usize::from(matched);
-}
-
-/// Checks whether an error is a TPU cancellation placeholder (`PJRT_TpuExecutable_IsCancellationPlaceholderError`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuExecutable_ErrorCheck_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuExecutable_ErrorCheck_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuExecutable_IsCancellationPlaceholderError(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuExecutable_ErrorCheck_Args>(
-            raw_args,
-            handle_tpu_executable_is_cancellation_error,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuTopology_Subslice`] and [`PJRT_TpuTopology_ReplaceHostBounds`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_subslice(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let mut st = extension_state().lock();
-    st.is_subslice_topology = true;
-    args.out_value = 1;
-}
-
-/// Creates a subslice TPU topology (`PJRT_TpuTopology_Subslice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_Subslice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_subslice,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuTopology_IsSubsliceTopology`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_is_subslice(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let is_sub = extension_state().lock().is_subslice_topology;
-    args.out_value = usize::from(is_sub);
-}
-
-/// Checks whether a topology is a subslice (`PJRT_TpuTopology_IsSubsliceTopology`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_IsSubsliceTopology(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_is_subslice,
-        )
-    }
-}
-
-/// Strongly-typed handler for zero-returning [`PJRT_TpuTopology_ScalarQuery_Args`] entrypoints.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_zero(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    args.out_value = 0;
-}
-
-/// Strongly-typed handler for one-returning [`PJRT_TpuTopology_ScalarQuery_Args`] entrypoints.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_one(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    args.out_value = 1;
-}
-
-/// Maps full device ID to subslice device ID (`PJRT_TpuTopology_SubsliceDeviceIdFromFullDeviceId`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_SubsliceDeviceIdFromFullDeviceId(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_zero,
-        )
-    }
-}
-
-/// Replaces host bounds on a TPU topology (`PJRT_TpuTopology_ReplaceHostBounds`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ReplaceHostBounds(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_subslice,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuTopology_IsEnhancedBarrierEnabled`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_enhanced_barrier(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    args.out_value = usize::from(global_init_config().allow_async_allocations);
-}
-
-/// Checks whether enhanced ICI barrier is enabled (`PJRT_TpuTopology_IsEnhancedBarrierEnabled`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_IsEnhancedBarrierEnabled(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_enhanced_barrier,
-        )
-    }
-}
-
-/// Checks whether topology has limited ICI connectivity (`PJRT_TpuTopology_HasLimitedIciConnectivity`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_HasLimitedIciConnectivity(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_zero,
-        )
-    }
-}
-
-/// Checks whether two chips are reachable over limited ICI (`PJRT_TpuTopology_IsReachableOverLimitedIci`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_IsReachableOverLimitedIci(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_one,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuTopology_ProcessCount`] and [`PJRT_TpuTopology_ProcessIds`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_process_count(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    args.out_value = usize::try_from(global_init_config().total_hosts()).unwrap_or(1);
-}
-
-/// Queries process count in TPU topology (`PJRT_TpuTopology_ProcessCount`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ProcessCount(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_process_count,
-        )
-    }
-}
-
-/// Strongly-typed handler for chips-per-process queries.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_chips_per_process(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    args.out_value = usize::try_from(global_init_config().chips_per_host()).unwrap_or(4);
-}
-
-/// Queries chips per process in TPU topology (`PJRT_TpuTopology_ChipsPerProcess`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ChipsPerProcess(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_chips_per_process,
-        )
-    }
-}
-
-/// Strongly-typed handler for cores-per-chip queries.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_cores_per_chip(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    args.out_value =
-        usize::try_from(global_init_config().generation.logical_devices_per_chip()).unwrap_or(1);
-}
-
-/// Queries cores per chip in TPU topology (`PJRT_TpuTopology_CoreCountPerChip`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerChip(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_cores_per_chip,
-        )
-    }
-}
-
-/// Strongly-typed handler for total chip count queries.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_total_chips(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let cfg = global_init_config();
-    args.out_value = usize::try_from(cfg.chips_per_host() * cfg.total_hosts()).unwrap_or(4);
-}
-
-/// Strongly-typed handler for total core / logical device count queries.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_total_cores(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let cfg = global_init_config();
-    args.out_value = usize::try_from(
-        cfg.chips_per_host() * cfg.total_hosts() * cfg.generation.logical_devices_per_chip(),
-    )
-    .unwrap_or(4);
-}
-
-/// Strongly-typed handler for per-process core / logical device count queries.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_cores_per_process(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let cfg = global_init_config();
-    args.out_value =
-        usize::try_from(cfg.chips_per_host() * cfg.generation.logical_devices_per_chip())
-            .unwrap_or(4);
-}
-
-/// Queries total chip count in TPU topology (`PJRT_TpuTopology_ChipCount`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ChipCount(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_total_chips,
-        )
-    }
-}
-
-/// Queries total core count in TPU topology (`PJRT_TpuTopology_CoreCount`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_CoreCount(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_total_cores,
-        )
-    }
-}
-
-/// Queries logical devices per process (`PJRT_TpuTopology_LogiDeviceCountPerProcess`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceCountPerProcess(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_cores_per_process,
-        )
-    }
-}
-
-/// Queries total logical device count (`PJRT_TpuTopology_LogiDeviceCount`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceCount(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_total_cores,
-        )
-    }
-}
-
-/// Queries logical devices per chip (`PJRT_TpuTopology_LogiDeviceCountPerChip`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceCountPerChip(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_cores_per_chip,
-        )
-    }
-}
-
-/// Queries cores per process (`PJRT_TpuTopology_CoreCountPerProcess`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerProcess(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_cores_per_process,
-        )
-    }
-}
-
-/// Queries process ID list (`PJRT_TpuTopology_ProcessIds`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ProcessIds(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_process_count,
-        )
-    }
-}
-
-/// Queries logical device IDs on a process (`PJRT_TpuTopology_LogiDeviceIdsOnProcess`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceIdsOnProcess(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_cores_per_process,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuTopology_MappingQuery_Args`] coordinate/index bijections.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_MappingQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_MappingQuery_Args`].
-unsafe fn handle_tpu_topology_mapping(args: &mut PJRT_TpuTopology_MappingQuery_Args) {
-    let chips_per_proc = usize::try_from(global_init_config().chips_per_host().max(1)).unwrap_or(4);
-    args.out_first = args.param0 / chips_per_proc;
-    args.out_second = args.param0 % chips_per_proc;
-}
-
-/// Maps chip ID to `(process_id, index_on_process)` (`PJRT_TpuTopology_ProcIdAndIdxOnProcForChip`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ProcIdAndIdxOnProcForChip(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_MappingQuery_Args>(
-            raw_args,
-            handle_tpu_topology_mapping,
-        )
-    }
-}
-
-/// Maps logical device ID to `(process_id, index_on_process)` (`PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_MappingQuery_Args>(
-            raw_args,
-            handle_tpu_topology_mapping,
-        )
-    }
-}
-
-/// Maps process ID to 3D process coordinates (`PJRT_TpuTopology_ProcessCoordFromId`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ProcessCoordFromId(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_MappingQuery_Args>(
-            raw_args,
-            handle_tpu_topology_mapping,
-        )
-    }
-}
-
-/// Maps 3D chip coordinates to chip ID (`PJRT_TpuTopology_ChipIdFromCoord`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ChipIdFromCoord(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_MappingQuery_Args>(
-            raw_args,
-            handle_tpu_topology_mapping,
-        )
-    }
-}
-
-/// Maps `(chip_coord, core_idx)` to logical device ID (`PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_MappingQuery_Args>(
-            raw_args,
-            handle_tpu_topology_mapping,
-        )
-    }
-}
-
-/// Maps logical device ID to `(chip_coord, core_idx)` (`PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_MappingQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_MappingQuery_Args>(
-            raw_args,
-            handle_tpu_topology_mapping,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuTopology_ChipsPerProcessBounds`] and [`PJRT_TpuTopology_ChipBounds`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_BoundsQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_BoundsQuery_Args`].
-unsafe fn handle_tpu_topology_chip_bounds(args: &mut PJRT_TpuTopology_BoundsQuery_Args) {
-    let bounds = global_init_config().chips_per_host_bounds;
-    args.out_first = usize::try_from(bounds.x).unwrap_or(2);
-    args.out_second = usize::try_from(bounds.y).unwrap_or(2);
-}
-
-/// Queries 3D chips-per-process bounds (`PJRT_TpuTopology_ChipsPerProcessBounds`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_BoundsQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_BoundsQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ChipsPerProcessBounds(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_BoundsQuery_Args>(
-            raw_args,
-            handle_tpu_topology_chip_bounds,
-        )
-    }
-}
-
-/// Queries 3D chip mesh bounds (`PJRT_TpuTopology_ChipBounds`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_BoundsQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_BoundsQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ChipBounds(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_BoundsQuery_Args>(
-            raw_args,
-            handle_tpu_topology_chip_bounds,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuTopology_ProcessBounds`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_BoundsQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_BoundsQuery_Args`].
-unsafe fn handle_tpu_topology_process_bounds(args: &mut PJRT_TpuTopology_BoundsQuery_Args) {
-    let bounds = global_init_config().host_bounds;
-    args.out_first = usize::try_from(bounds.x).unwrap_or(1);
-    args.out_second = usize::try_from(bounds.y).unwrap_or(1);
-}
-
-/// Queries 3D process mesh bounds (`PJRT_TpuTopology_ProcessBounds`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_BoundsQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_BoundsQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_ProcessBounds(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_BoundsQuery_Args>(
-            raw_args,
-            handle_tpu_topology_process_bounds,
-        )
-    }
-}
-
-/// Queries ICI routing strategy (`PJRT_TpuTopology_GetRoutingStrategy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_GetRoutingStrategy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_zero,
-        )
-    }
-}
-
-/// Queries a named TPU slice configuration (`PJRT_TpuTopology_GetSliceConfig`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_GetSliceConfig(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_one,
-        )
-    }
-}
-
-/// Lists all TPU slice configurations (`PJRT_TpuTopology_GetSliceConfigs`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_GetSliceConfigs(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_chips_per_process,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_TpuTopology_GetDefaultPlatformConfig`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
-unsafe fn handle_tpu_topology_default_platform_config(
-    args: &mut PJRT_TpuTopology_ScalarQuery_Args,
-) {
-    args.out_value = usize::try_from(global_init_config().generation as i32).unwrap_or(5);
-}
-
-/// Queries default TPU platform configuration (`PJRT_TpuTopology_GetDefaultPlatformConfig`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ScalarQuery_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_TpuTopology_GetDefaultPlatformConfig(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
-            raw_args,
-            handle_tpu_topology_default_platform_config,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Callback_RegisterCallback`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Callback_Register_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Callback_Register_Args`].
-unsafe fn handle_callback_register(args: &mut PJRT_Callback_Register_Args) {
-    let mut st = extension_state().lock();
-    st.registered_callbacks = st.registered_callbacks.saturating_add(1);
-    st.callback_registry.insert(
-        args.callback_type,
-        (args.callback_fn as usize, args.user_arg as usize),
-    );
-}
-
-/// Registers a runtime callback on `PJRT_Client` (`PJRT_Callback_RegisterCallback`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Callback_Register_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Callback_Register_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Callback_RegisterCallback(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Callback_Register_Args>(
-            raw_args,
-            handle_callback_register,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Callback_InvokeCallback`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Callback_Invoke_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Callback_Invoke_Args`].
-unsafe fn handle_callback_invoke(args: &mut PJRT_Callback_Invoke_Args) {
-    let cb_key = i64::try_from(args.callback_type).unwrap_or(0);
-    let (fn_addr, user_arg) = extension_state()
-        .lock()
-        .callback_registry
-        .get(&cb_key)
-        .copied()
-        .unwrap_or((0, 0));
-    if fn_addr != 0 {
-        let fn_ptr = fn_addr as *const ();
-        // SAFETY: `fn_addr` is a non-null C callback function pointer registered by the caller.
-        let cb = unsafe {
-            *ptr::from_ref(&fn_ptr)
-                .cast::<unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void)>()
-        };
-        // SAFETY: Invoking caller's C callback with `payload` and `user_arg`.
-        unsafe {
-            cb(args.payload, user_arg as *mut std::ffi::c_void);
-        }
-    }
-}
-
-/// Invokes registered runtime callbacks on `PJRT_Client` (`PJRT_Callback_InvokeCallback`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Callback_Invoke_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Callback_Invoke_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Callback_InvokeCallback(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Callback_Invoke_Args>(raw_args, handle_callback_invoke)
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_PhaseCompile_GetCompiler`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_PhaseCompile_GetCompiler_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_PhaseCompile_GetCompiler_Args`].
-unsafe fn handle_phase_compile_get_compiler(args: &mut PJRT_PhaseCompile_GetCompiler_Args) {
-    let mut st = extension_state().lock();
-    st.phase_compilers = st.phase_compilers.saturating_add(1);
-    args.compiler_out = st.phase_compilers;
-}
-
-/// Acquires the phased TPU compiler handle (`PJRT_PhaseCompile_GetCompiler`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_PhaseCompile_GetCompiler_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_PhaseCompile_GetCompiler_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_PhaseCompile_GetCompiler(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_PhaseCompile_GetCompiler_Args>(
-            raw_args,
-            handle_phase_compile_get_compiler,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_PhaseCompile_DestroyCompiler`] and [`PJRT_PhaseCompile_CBuffersDestroy`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_PhaseCompile_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_PhaseCompile_Destroy_Args`].
-unsafe fn handle_phase_compile_destroy(args: &mut PJRT_PhaseCompile_Destroy_Args) {
-    let mut st = extension_state().lock();
-    st.phase_compilers = st.phase_compilers.saturating_sub(1);
-    args.handle = ptr::null_mut();
-}
-
-/// Destroys a phased TPU compiler handle (`PJRT_PhaseCompile_DestroyCompiler`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_PhaseCompile_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_PhaseCompile_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_PhaseCompile_DestroyCompiler(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_PhaseCompile_Destroy_Args>(
-            raw_args,
-            handle_phase_compile_destroy,
-        )
-    }
-}
-
-/// Static null-terminated C strings for the 6 canonical TPU compilation phases.
-const COMPILATION_PHASE_CSTR_PTRS: [*const std::os::raw::c_char; 6] = [
-    c"hlo_verification".as_ptr(),
-    c"sharding_propagation".as_ptr(),
-    c"tpu_layout_assignment".as_ptr(),
-    c"hlo_fusion".as_ptr(),
-    c"llo_scheduling".as_ptr(),
-    c"vliw_code_generation".as_ptr(),
-];
-
-/// Byte lengths of the 6 canonical TPU compilation phase names.
-const COMPILATION_PHASE_SIZES: [usize; 6] = [
-    "hlo_verification".len(),
-    "sharding_propagation".len(),
-    "tpu_layout_assignment".len(),
-    "hlo_fusion".len(),
-    "llo_scheduling".len(),
-    "vliw_code_generation".len(),
-];
-
-/// Strongly-typed handler for [`PJRT_PhaseCompile_RunPhase`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_PhaseCompile_RunPhase_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_PhaseCompile_RunPhase_Args`].
-unsafe fn handle_phase_compile_run_phase(args: &mut PJRT_PhaseCompile_RunPhase_Args) {
-    let phase_name = if args.phase_name.is_null() {
-        "hlo_verification"
-    } else {
-        // SAFETY: `args.phase_name` is a null-terminated C string when non-null.
-        unsafe { std::ffi::CStr::from_ptr(args.phase_name) }
-            .to_str()
-            .unwrap_or("hlo_verification")
-    };
-    let input_program = if args.input_bytes.is_null() {
-        &b"module @phase { stablehlo.add }"[..]
-    } else {
-        // SAFETY: `args.input_bytes` is valid for `args.input_size` bytes.
-        unsafe { std::slice::from_raw_parts(args.input_bytes.cast::<u8>(), args.input_size) }
-    };
-    let phase_out = libtpu_core::compiler::CompiledProgram::run_compilation_phase_proto(
-        phase_name,
-        input_program,
-        b"",
-    )
-    .map(|p| p.encode())
-    .unwrap_or_default();
-    let mut st = extension_state().lock();
-    st.last_serialized_bytes = phase_out;
-    args.output_status = st
-        .last_serialized_bytes
-        .len()
-        .max(COMPILATION_PHASE_NAMES.len());
-}
-
-/// Executes a named TPU compilation phase (`PJRT_PhaseCompile_RunPhase`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_PhaseCompile_RunPhase_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_PhaseCompile_RunPhase_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_PhaseCompile_RunPhase(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_PhaseCompile_RunPhase_Args>(
-            raw_args,
-            handle_phase_compile_run_phase,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_PhaseCompile_GetPhaseNames`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_PhaseCompile_GetPhaseNames_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_PhaseCompile_GetPhaseNames_Args`].
-unsafe fn handle_phase_compile_get_phase_names(args: &mut PJRT_PhaseCompile_GetPhaseNames_Args) {
-    args.phase_names = COMPILATION_PHASE_CSTR_PTRS.as_ptr();
-    args.phase_names_sizes = COMPILATION_PHASE_SIZES.as_ptr();
-    args.num_phase_names = COMPILATION_PHASE_NAMES.len();
-}
-
-/// Queries supported TPU compilation phase names (`PJRT_PhaseCompile_GetPhaseNames`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_PhaseCompile_GetPhaseNames_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_PhaseCompile_GetPhaseNames_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_PhaseCompile_GetPhaseNames(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_PhaseCompile_GetPhaseNames_Args>(
-            raw_args,
-            handle_phase_compile_get_phase_names,
-        )
-    }
-}
-
-/// Destroys C buffers allocated by phased compilation (`PJRT_PhaseCompile_CBuffersDestroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_PhaseCompile_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_PhaseCompile_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_PhaseCompile_CBuffersDestroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_PhaseCompile_Destroy_Args>(
-            raw_args,
-            handle_phase_compile_destroy,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_CrossHostTransfers_Args`] entrypoints.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_CrossHostTransfers_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_CrossHostTransfers_Args`].
-unsafe fn handle_cross_host_transfer(args: &mut PJRT_CrossHostTransfers_Args) {
-    if args.buffers.min(args.remote_device) >= 0x10000 {
-        // SAFETY: `args.buffers` and `args.remote_device` are valid `PJRT_Buffer*` handles when >= 0x10000.
-        unsafe {
-            copy_collective_buffers(
-                args.buffers as *mut std::ffi::c_void,
-                args.remote_device as *mut std::ffi::c_void,
-            );
-        }
-    }
-    let mut st = extension_state().lock();
-    st.cross_host_transfers = st.cross_host_transfers.saturating_add(1);
-    args.out_event = st.cross_host_transfers;
-}
-
-/// Allocates cross-host receive buffers (`PJRT_CrossHostTransfers_MakeReceiveBuffers`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_CrossHostTransfers_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_CrossHostTransfers_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_CrossHostTransfers_MakeReceiveBuffers(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_CrossHostTransfers_Args>(
-            raw_args,
-            handle_cross_host_transfer,
-        )
-    }
-}
-
-/// Copies a buffer to a remote host device (`PJRT_CrossHostTransfers_CopyToRemoteDevice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_CrossHostTransfers_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_CrossHostTransfers_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_CrossHostTransfers_CopyToRemoteDevice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_CrossHostTransfers_Args>(
-            raw_args,
-            handle_cross_host_transfer,
-        )
-    }
-}
-
-/// Initiates cross-host receive transfers (`PJRT_CrossHostTransfers_ReceiveBuffers`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_CrossHostTransfers_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_CrossHostTransfers_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_CrossHostTransfers_ReceiveBuffers(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_CrossHostTransfers_Args>(
-            raw_args,
-            handle_cross_host_transfer,
-        )
-    }
-}
-
-/// Initiates cross-host send transfers (`PJRT_CrossHostTransfers_SendBuffers`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_CrossHostTransfers_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_CrossHostTransfers_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_CrossHostTransfers_SendBuffers(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_CrossHostTransfers_Args>(
-            raw_args,
-            handle_cross_host_transfer,
-        )
-    }
-}
-
-/// Static memory space description handles for HBM (`0`), VMEM (`1`), SMEM (`2`), and pinned host (`3`).
-const MEMORY_DESCRIPTION_HANDLES: [*const std::ffi::c_void; 4] = [
-    std::ptr::dangling::<std::ffi::c_void>(),
-    2_usize as *const std::ffi::c_void,
-    3_usize as *const std::ffi::c_void,
-    4_usize as *const std::ffi::c_void,
-];
-
-/// Static memory space kind strings corresponding to `MEMORY_DESCRIPTION_HANDLES`.
-const MEMORY_DESCRIPTION_KINDS: [&str; 4] = ["device", "vmem", "smem", "pinned_host"];
-
-/// Strongly-typed handler for [`PJRT_ExecutableMetadata_Get`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Metadata_Get_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Metadata_Get_Args`].
-unsafe fn handle_executable_metadata_get(args: &mut PJRT_Metadata_Get_Args) {
-    let encoded = libtpu_core::proto::PjRtExecutableMetadataProto {
-        compiled_memory_stats: Some(libtpu_core::proto::CompiledMemoryStatsProto {
-            generated_code_size_in_bytes: 1024,
-            argument_size_in_bytes: 256,
-            output_size_in_bytes: 256,
-            alias_size_in_bytes: 0,
-            temp_size_in_bytes: 512,
-            host_generated_code_size_in_bytes: 0,
-            host_argument_size_in_bytes: 0,
-            host_output_size_in_bytes: 0,
-            host_alias_size_in_bytes: 0,
-            host_temp_size_in_bytes: 0,
-            serialized_buffer_assignment: Vec::new(),
-            peak_memory_in_bytes: 2048,
-            total_size_in_bytes: 2048,
-            total_allocation_bytes: 2048,
-            indefinite_allocations: 0,
-            peak_unpadded_heap_bytes: 1536,
-        }),
-        platform_specific_metadata: Vec::new(),
-    }
-    .encode();
-    let mut st = extension_state().lock();
-    st.last_serialized_bytes = encoded;
-    args.metadata_out = if (args.handle as usize) >= 0x10000 {
-        // SAFETY: `args.handle` is a valid `PJRT_Executable*`.
-        let exec = unsafe { &*args.handle.cast::<crate::pjrt_types::PJRT_Executable>() };
-        exec.inner.program.fingerprint.len()
-    } else {
-        1
-    };
-}
-
-/// Queries TPU executable metadata (`PJRT_ExecutableMetadata_Get`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Metadata_Get_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Get_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_ExecutableMetadata_Get(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Metadata_Get_Args>(
-            raw_args,
-            handle_executable_metadata_get,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_ExecutableMetadata_Destroy`] and [`PJRT_MemoryDescriptions_Destroy`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Metadata_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Metadata_Destroy_Args`] (or [`PJRT_MemoryDescription_Kind_Args`] when `struct_size >= 48`).
-unsafe fn handle_metadata_destroy(args: &mut PJRT_Metadata_Destroy_Args) {
-    if args.struct_size >= size_of::<PJRT_MemoryDescription_Kind_Args>() {
-        // SAFETY: `args.struct_size >= 48` guarantees `args` is a valid `PJRT_MemoryDescription_Kind_Args`.
-        let kind_args =
-            unsafe { &mut *ptr::from_mut(args).cast::<PJRT_MemoryDescription_Kind_Args>() };
-        let idx = (kind_args.memory_description as usize)
-            .saturating_sub(1)
-            .min(3);
-        let kind_str = MEMORY_DESCRIPTION_KINDS
-            .get(idx)
-            .copied()
-            .unwrap_or("device");
-        kind_args.kind = kind_str.as_ptr().cast();
-        kind_args.kind_size = kind_str.len();
-        kind_args.kind_id = i32::try_from(idx).unwrap_or(0);
-    } else {
-        args.metadata = ptr::null_mut();
-    }
-}
-
-/// Destroys TPU executable metadata (`PJRT_ExecutableMetadata_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Metadata_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_ExecutableMetadata_Destroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Metadata_Destroy_Args>(
-            raw_args,
-            handle_metadata_destroy,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_MemoryDescriptions_Get`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Metadata_Get_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Metadata_Get_Args`] (or [`PJRT_DeviceDescription_MemoryDescriptions_Args`] when `struct_size >= 48`).
-unsafe fn handle_memory_descriptions_get(args: &mut PJRT_Metadata_Get_Args) {
-    if args.struct_size >= size_of::<PJRT_DeviceDescription_MemoryDescriptions_Args>() {
-        // SAFETY: `args.struct_size >= 48` guarantees `args` is a valid `PJRT_DeviceDescription_MemoryDescriptions_Args`.
-        let desc_args = unsafe {
-            &mut *ptr::from_mut(args).cast::<PJRT_DeviceDescription_MemoryDescriptions_Args>()
-        };
-        desc_args.memory_descriptions = MEMORY_DESCRIPTION_HANDLES.as_ptr();
-        desc_args.num_memory_descriptions = MEMORY_DESCRIPTION_HANDLES.len();
-        desc_args.default_memory_index = 0;
-    } else {
-        args.metadata_out = 4;
-    }
-}
-
-/// Queries device memory space descriptions (`PJRT_MemoryDescriptions_Get`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Metadata_Get_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Get_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_MemoryDescriptions_Get(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Metadata_Get_Args>(
-            raw_args,
-            handle_memory_descriptions_get,
-        )
-    }
-}
-
-/// Destroys device memory space descriptions (`PJRT_MemoryDescriptions_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Metadata_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_MemoryDescriptions_Destroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Metadata_Destroy_Args>(
-            raw_args,
-            handle_metadata_destroy,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Layouts_MemoryLayout_Destroy`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Layouts_MemoryLayout_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Layouts_MemoryLayout_Destroy_Args`].
-unsafe fn handle_layouts_memory_layout_destroy(args: &mut PJRT_Layouts_MemoryLayout_Destroy_Args) {
-    args.layout = ptr::null_mut();
-}
-
-/// Destroys a `PJRT_Layouts_MemoryLayout` (`PJRT_Layouts_MemoryLayout_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Layouts_MemoryLayout_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Layouts_MemoryLayout_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Layouts_MemoryLayout_Destroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Layouts_MemoryLayout_Destroy_Args>(
-            raw_args,
-            handle_layouts_memory_layout_destroy,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Layouts_MemoryLayout_Serialize`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Layouts_MemoryLayout_Serialize_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Layouts_MemoryLayout_Serialize_Args`].
-unsafe fn handle_layouts_memory_layout_serialize(
-    args: &mut PJRT_Layouts_MemoryLayout_Serialize_Args,
-) {
-    let sublane_tile = i64::from(global_init_config().generation.mxu_dimension());
-    let layout_proto = libtpu_core::proto::LayoutProto {
-        minor_to_major: vec![1, 0],
-        tiles: vec![libtpu_core::proto::TileProto {
-            dimensions: vec![8, sublane_tile],
-        }],
-        tail_padding_alignment_in_elements: 1,
-        index_primitive_type: 0,
-        pointer_primitive_type: 0,
-        memory_space: 0,
-        element_size_in_bits: 32,
-        dynamic_shape_metadata_prefix_bytes: 0,
-    };
-    let encoded = layout_proto.encode();
-    let mut st = extension_state().lock();
-    st.last_serialized_bytes = encoded;
-    args.serialized_bytes = st.last_serialized_bytes.as_ptr().cast();
-    args.serialized_bytes_size = st.last_serialized_bytes.len();
-    args.serialized_layout = std::ptr::dangling_mut::<std::ffi::c_void>();
-}
-
-/// Serializes a `PJRT_Layouts_MemoryLayout` (`PJRT_Layouts_MemoryLayout_Serialize`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Layouts_MemoryLayout_Serialize_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Layouts_MemoryLayout_Serialize_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Layouts_MemoryLayout_Serialize(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Layouts_MemoryLayout_Serialize_Args>(
-            raw_args,
-            handle_layouts_memory_layout_serialize,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Layouts_Client_GetDefaultLayout`] and [`PJRT_Layouts_Topology_GetDefaultLayout`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args`].
-unsafe fn handle_layouts_get_default_layout(
-    args: &mut PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args,
-) {
-    let sublane_tile =
-        usize::try_from(global_init_config().generation.mxu_dimension()).unwrap_or(128);
-    args.layout = sublane_tile as *mut std::ffi::c_void;
-}
-
-/// Queries default memory layout for a `PJRT_Client` (`PJRT_Layouts_Client_GetDefaultLayout`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Layouts_Client_GetDefaultLayout(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args>(
-            raw_args,
-            handle_layouts_get_default_layout,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Layouts_Buffer_GetMemoryLayout`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args`].
-unsafe fn handle_layouts_buffer_get_memory_layout(
-    args: &mut PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args,
-) {
-    let sublane_tile =
-        usize::try_from(global_init_config().generation.mxu_dimension()).unwrap_or(128);
-    let rank_bonus = if (args.buffer as usize) >= 0x10000 {
-        // SAFETY: `args.buffer` is a valid `PJRT_Buffer*`.
-        let buf = unsafe { &*args.buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
-        buf.inner.shape.rank()
-    } else {
-        0
-    };
-    args.layout = (sublane_tile + rank_bonus) as *mut std::ffi::c_void;
-}
-
-/// Queries memory layout of a `PJRT_Buffer` (`PJRT_Layouts_Buffer_GetMemoryLayout`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Layouts_Buffer_GetMemoryLayout(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args>(
-            raw_args,
-            handle_layouts_buffer_get_memory_layout,
-        )
-    }
-}
-
-/// Queries default memory layout for a `PJRT_TopologyDescription` (`PJRT_Layouts_Topology_GetDefaultLayout`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Layouts_Topology_GetDefaultLayout(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args>(
-            raw_args,
-            handle_layouts_get_default_layout,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Layouts_Executable_GetOutputLayouts`] and [`PJRT_Layouts_Executable_GetParameterLayouts`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Metadata_Get_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Metadata_Get_Args`].
-unsafe fn handle_layouts_executable_layouts(args: &mut PJRT_Metadata_Get_Args) {
-    args.metadata_out = if (args.handle as usize) >= 0x10000 {
-        // SAFETY: `args.handle` is a valid `PJRT_Executable*`.
-        let exec = unsafe { &*args.handle.cast::<crate::pjrt_types::PJRT_Executable>() };
-        exec.inner.program.output_shapes.len().max(1)
-    } else {
-        1
-    };
-}
-
-/// Queries output memory layouts of a `PJRT_Executable` (`PJRT_Layouts_Executable_GetOutputLayouts`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Metadata_Get_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Get_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Layouts_Executable_GetOutputLayouts(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Metadata_Get_Args>(
-            raw_args,
-            handle_layouts_executable_layouts,
-        )
-    }
-}
-
-/// Queries parameter memory layouts of a `PJRT_Executable` (`PJRT_Layouts_Executable_GetParameterLayouts`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Metadata_Get_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Metadata_Get_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Layouts_Executable_GetParameterLayouts(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Metadata_Get_Args>(
-            raw_args,
-            handle_layouts_executable_layouts,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_RawBuffer_CreateRawAliasOfBuffer`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_RawBuffer_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
-unsafe fn handle_raw_buffer_create(args: &mut PJRT_RawBuffer_Query_Args) {
-    let addr_bonus = if (args.buffer as usize) >= 0x10000 {
-        // SAFETY: `args.buffer` is a valid `PJRT_Buffer*`.
-        let buf = unsafe { &*args.buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
-        usize::try_from(buf.inner.address.0).unwrap_or(0)
-    } else {
-        0
-    };
-    let mut st = extension_state().lock();
-    st.raw_buffers = st.raw_buffers.saturating_add(1);
-    args.out_value = st.raw_buffers.saturating_add(addr_bonus);
-}
-
-/// Creates a raw alias of a `PJRT_Buffer` (`PJRT_RawBuffer_CreateRawAliasOfBuffer`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_RawBuffer_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_RawBuffer_CreateRawAliasOfBuffer(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_RawBuffer_Query_Args>(
-            raw_args,
-            handle_raw_buffer_create,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_RawBuffer_Destroy`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_RawBuffer_Destroy_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_RawBuffer_Destroy_Args`].
-unsafe fn handle_raw_buffer_destroy(args: &mut PJRT_RawBuffer_Destroy_Args) {
-    let mut st = extension_state().lock();
-    st.raw_buffers = st.raw_buffers.saturating_sub(1);
-    args.raw_buffer = ptr::null_mut();
-}
-
-/// Destroys a `PJRT_RawBuffer` handle (`PJRT_RawBuffer_Destroy`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_RawBuffer_Destroy_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Destroy_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_RawBuffer_Destroy(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_RawBuffer_Destroy_Args>(
-            raw_args,
-            handle_raw_buffer_destroy,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_RawBuffer_GetHostPointer`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_RawBuffer_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
-unsafe fn handle_raw_buffer_host_ptr(args: &mut PJRT_RawBuffer_Query_Args) {
-    // SAFETY: `args.buffer` is null or a valid `PJRT_Buffer*`.
-    args.out_value = unsafe {
-        args.buffer
-            .cast::<crate::pjrt_types::PJRT_Buffer>()
-            .as_ref()
-    }
-    .map_or(0x1000, |b| {
-        usize::try_from(b.inner.address.0).unwrap_or(0x1000)
-    });
-}
-
-/// Returns the host pointer of a `PJRT_RawBuffer` (`PJRT_RawBuffer_GetHostPointer`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_RawBuffer_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_RawBuffer_GetHostPointer(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_RawBuffer_Query_Args>(
-            raw_args,
-            handle_raw_buffer_host_ptr,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_RawBuffer_GetOnDeviceSizeInBytes`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_RawBuffer_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
-unsafe fn handle_raw_buffer_size(args: &mut PJRT_RawBuffer_Query_Args) {
-    // SAFETY: `args.buffer` is null or a valid `PJRT_Buffer*`.
-    args.out_value = unsafe {
-        args.buffer
-            .cast::<crate::pjrt_types::PJRT_Buffer>()
-            .as_ref()
-    }
-    .map_or(256, |b| b.inner.shape.on_device_byte_size().0);
-}
-
-/// Returns the on-device byte size of a `PJRT_RawBuffer` (`PJRT_RawBuffer_GetOnDeviceSizeInBytes`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_RawBuffer_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_RawBuffer_GetOnDeviceSizeInBytes(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_RawBuffer_Query_Args>(raw_args, handle_raw_buffer_size)
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_RawBuffer_GetMemorySpace`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_RawBuffer_Query_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
-unsafe fn handle_raw_buffer_memory_space(args: &mut PJRT_RawBuffer_Query_Args) {
-    // SAFETY: `args.buffer` is null or a valid `PJRT_Buffer*`.
-    args.out_value = unsafe {
-        args.buffer
-            .cast::<crate::pjrt_types::PJRT_Buffer>()
-            .as_ref()
-    }
-    .map_or(0, |b| b.memory_ptr as usize);
-}
-
-/// Returns the `PJRT_Memory` space of a `PJRT_RawBuffer` (`PJRT_RawBuffer_GetMemorySpace`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_RawBuffer_Query_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_RawBuffer_GetMemorySpace(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_RawBuffer_Query_Args>(
-            raw_args,
-            handle_raw_buffer_memory_space,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_RawBuffer_CopyRawHostToDevice`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_RawBuffer_CopyRaw_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_RawBuffer_CopyRaw_Args`].
-unsafe fn handle_raw_buffer_copy_h2d(args: &mut PJRT_RawBuffer_CopyRaw_Args) {
-    if !crate::any_null(&[args.buffer as usize, args.host_ptr as usize]) {
-        // SAFETY: `args.buffer` is a valid `PJRT_Buffer*` when non-null.
-        let buf = unsafe { &*args.buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
-        let tx_len = usize::try_from(args.transfer_size).unwrap_or(0);
-        // SAFETY: `args.host_ptr` points to `tx_len` bytes.
-        let src = unsafe { std::slice::from_raw_parts(args.host_ptr.cast::<u8>(), tx_len) };
-        let _ = buf
-            .inner
-            .hal
-            .write_device_memory(buf.inner.device_id, buf.inner.address, src);
-    }
-    args.event = std::ptr::dangling_mut::<std::ffi::c_void>();
-}
-
-/// Copies raw host bytes into a `PJRT_RawBuffer` (`PJRT_RawBuffer_CopyRawHostToDevice`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_RawBuffer_CopyRaw_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_CopyRaw_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_RawBuffer_CopyRawHostToDevice(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_RawBuffer_CopyRaw_Args>(
-            raw_args,
-            handle_raw_buffer_copy_h2d,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_RawBuffer_CopyRawDeviceToHost`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_RawBuffer_CopyRaw_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_RawBuffer_CopyRaw_Args`].
-unsafe fn handle_raw_buffer_copy_d2h(args: &mut PJRT_RawBuffer_CopyRaw_Args) {
-    if !crate::any_null(&[args.buffer as usize, args.host_ptr as usize]) {
-        // SAFETY: `args.buffer` is a valid `PJRT_Buffer*` when non-null.
-        let buf = unsafe { &*args.buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
-        let bytes = buf.inner.to_host_bytes().unwrap_or_default();
-        let tx_len = usize::try_from(args.transfer_size).unwrap_or(0);
-        let len = bytes.len().min(tx_len);
-        // SAFETY: `args.host_ptr` has room for `len` bytes.
-        unsafe {
-            ptr::copy_nonoverlapping(bytes.as_ptr(), args.host_ptr.cast::<u8>(), len);
-        }
-    }
-    args.event = std::ptr::dangling_mut::<std::ffi::c_void>();
-}
-
-/// Copies `PJRT_RawBuffer` bytes to host memory (`PJRT_RawBuffer_CopyRawDeviceToHost`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_RawBuffer_CopyRaw_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_CopyRaw_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_RawBuffer_CopyRawDeviceToHost(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_RawBuffer_CopyRaw_Args>(
-            raw_args,
-            handle_raw_buffer_copy_d2h,
-        )
-    }
-}
-
-/// Strongly-typed handler for [`PJRT_Triton_Compile`].
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Triton_Compile_Args`] structure.
-///
-/// # Safety
-///
-/// `args` must be a valid [`PJRT_Triton_Compile_Args`].
-unsafe fn handle_triton_compile(args: &mut PJRT_Triton_Compile_Args) {
-    let mlir_bytes = if args.module.is_null() {
-        &b"module @triton_kernel { stablehlo.add }"[..]
-    } else {
-        // SAFETY: `args.module` points to `args.module_size` bytes.
-        unsafe { std::slice::from_raw_parts(args.module.cast::<u8>(), args.module_size) }
-    };
-    let _ = libtpu_core::compiler::CompiledProgram::compile("mlir", mlir_bytes, b"").map(|prog| {
-        let mut st = extension_state().lock();
-        st.last_serialized_bytes = prog.to_executable_proto().encode();
-        args.out_asm = st.last_serialized_bytes.as_ptr().cast();
-        args.out_asm_size = st.last_serialized_bytes.len();
-        args.out_smem_bytes = 4096;
-    });
-}
-
-/// Compiles a Triton MLIR kernel module into TPU VLIW assembly (`PJRT_Triton_Compile`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_Triton_Compile_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Triton_Compile_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_Triton_Compile(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_Triton_Compile_Args>(raw_args, handle_triton_compile)
-    }
-}
-
-/// Plugin profiler vtable structure (`PLUGIN_Profiler_Api`, 80 bytes) pointed to by `EXT_17_PROFILER.profiler_api`.
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PLUGIN_Profiler_Api {
-    /// Size of this struct (`80`).
-    pub struct_size: usize,
-    /// Reserved private pointer (`NULL`).
-    pub priv_data: *mut std::ffi::c_void,
-    /// Destroys a profiler error (`PLUGIN_Profiler_Error_Destroy`).
-    pub error_destroy: PjrtFn,
-    /// Queries a profiler error message (`PLUGIN_Profiler_Error_Message`).
-    pub error_message: PjrtFn,
-    /// Queries a profiler error code (`PLUGIN_Profiler_Error_GetCode`).
-    pub error_get_code: PjrtFn,
-    /// Creates a profiler session (`PLUGIN_Profiler_Create`).
-    pub create: PjrtFn,
-    /// Destroys a profiler session (`PLUGIN_Profiler_Destroy`).
-    pub destroy: PjrtFn,
-    /// Starts profiling (`PLUGIN_Profiler_Start`).
-    pub start: PjrtFn,
-    /// Stops profiling (`PLUGIN_Profiler_Stop`).
-    pub stop: PjrtFn,
-    /// Collects serialized `XSpace` profiling data (`PLUGIN_Profiler_CollectData`).
-    pub collect_data: PjrtFn,
-}
-
-// SAFETY: Immutable static vtable structure.
-unsafe impl Sync for PLUGIN_Profiler_Api {}
-
-const _: () = assert!(size_of::<PLUGIN_Profiler_Api>() == 80);
-
-/// Static `PLUGIN_Profiler_Api` vtable referenced by [`EXT_17_PROFILER`].
-pub static GLOBAL_PLUGIN_PROFILER_API: PLUGIN_Profiler_Api = PLUGIN_Profiler_Api {
-    struct_size: 80,
-    priv_data: ptr::null_mut(),
-    error_destroy: PLUGIN_Profiler_Error_Destroy,
-    error_message: PLUGIN_Profiler_Error_Message,
-    error_get_code: PLUGIN_Profiler_Error_GetCode,
-    create: PLUGIN_Profiler_Create,
-    destroy: PLUGIN_Profiler_Destroy,
-    start: PLUGIN_Profiler_Start,
-    stop: PLUGIN_Profiler_Stop,
-    collect_data: PLUGIN_Profiler_CollectData,
-};
 
 /// Node 1 (`ext_type = 29`, `56` bytes): `PJRT_XlaTransform_Extension`.
 #[repr(C)]
@@ -7065,3 +1056,1275 @@ pub static EXT_01_XLA_TRANSFORM: PJRT_XlaTransform_Extension = PJRT_XlaTransform
     unregister_xla_transform: PJRT_XlaTransform_Unregister,
     list_xla_transforms: PJRT_XlaTransform_List,
 };
+
+#[cfg(test)]
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::similar_names,
+    clippy::items_after_statements,
+    clippy::float_cmp
+)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::pjrt_buffer_api::{PJRT_Buffer_Destroy, PJRT_Buffer_IsDeleted};
+    use crate::pjrt_client_api::{
+        PJRT_Client_BufferFromHostBuffer, PJRT_Client_Compile, PJRT_Client_Create,
+        PJRT_Client_Destroy, PJRT_Client_LookupDevice,
+    };
+    use crate::pjrt_device_api::{
+        PJRT_Device_GetDescription, PJRT_DeviceDescription_Id, PJRT_Memory_Id,
+    };
+    use crate::pjrt_error_api::PJRT_Plugin_Attributes;
+    use crate::pjrt_executable_api::{PJRT_Executable_Name, PJRT_LoadedExecutable_Destroy};
+    use crate::pjrt_helpers::box_pjrt_error;
+    use crate::pjrt_types::{
+        PJRT_Buffer_Destroy_Args, PJRT_Client_BufferFromHostBuffer_Args, PJRT_Client_Compile_Args,
+        PJRT_Client_Create_Args, PJRT_Client_Destroy_Args, PJRT_Client_LookupDevice_Args,
+        PJRT_LoadedExecutable_Destroy_Args, PJRT_Program, PjrtFn,
+    };
+    use libtpu_core::error::LibTpuError;
+
+    #[test]
+    fn test_pjrt_extensions_vtable_and_behavioral_operations() {
+        assert_ne!(
+            format!(
+                "{GLOBAL_PLUGIN_PROFILER_API:?}{EXT_01_XLA_TRANSFORM:?}{EXT_02_HOST_ALLOCATOR:?}{EXT_03_MULTI_SLICE:?}{EXT_04_COLLECTIVES:?}{EXT_05_ABI_VERSION:?}{EXT_06_SHARDINGS:?}{EXT_07_MEGASCALE:?}{EXT_08_TPU_EXECUTABLE:?}{EXT_09_TPU_TOPOLOGY:?}{EXT_10_CALLBACK:?}{EXT_11_PHASE_COMPILE:?}{EXT_12_CROSS_HOST:?}{EXT_13_EXEC_METADATA:?}{EXT_14_MEM_DESC:?}{EXT_15_LAYOUTS:?}{EXT_16_RAW_BUFFER:?}{EXT_17_PROFILER:?}"
+            ),
+            ""
+        );
+
+        // SAFETY: Testing all 138 PJRT extension entrypoints and argument validation paths.
+        unsafe {
+            let ext_null_err = PJRT_Extension_ValidateArgs(ptr::null_mut());
+            drop(Box::from_raw(ext_null_err));
+            drop(Box::from_raw(PJRT_Plugin_Attributes(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_DeviceDescription_Id(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Device_GetDescription(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Memory_Id(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Executable_Name(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Buffer_IsDeleted(ptr::null_mut())));
+            drop(Box::from_raw(
+                PLUGIN_Profiler_Error_Destroy(ptr::null_mut()),
+            ));
+            let mut zero_sz: usize = 0;
+            let ext_sz_err = PJRT_Extension_ValidateArgs(ptr::addr_of_mut!(zero_sz).cast());
+            drop(Box::from_raw(ext_sz_err));
+            let mut valid_sz: [usize; 12] = [96, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            assert!(PJRT_Extension_ValidateArgs(valid_sz.as_mut_ptr().cast()).is_null());
+
+            let ext_fns: [PjrtFn; 138] = [
+                GLOBAL_PLUGIN_PROFILER_API.error_destroy,
+                GLOBAL_PLUGIN_PROFILER_API.error_message,
+                GLOBAL_PLUGIN_PROFILER_API.error_get_code,
+                GLOBAL_PLUGIN_PROFILER_API.create,
+                GLOBAL_PLUGIN_PROFILER_API.destroy,
+                GLOBAL_PLUGIN_PROFILER_API.start,
+                GLOBAL_PLUGIN_PROFILER_API.stop,
+                GLOBAL_PLUGIN_PROFILER_API.collect_data,
+                EXT_01_XLA_TRANSFORM.register_xla_transform,
+                EXT_01_XLA_TRANSFORM.wait_for_all_transforms,
+                EXT_01_XLA_TRANSFORM.unregister_xla_transform,
+                EXT_01_XLA_TRANSFORM.list_xla_transforms,
+                EXT_02_HOST_ALLOCATOR.get_host_memory_allocator,
+                EXT_03_MULTI_SLICE.config_destroy,
+                EXT_03_MULTI_SLICE.config_num_slices,
+                EXT_03_MULTI_SLICE.config_num_devices_per_slice,
+                EXT_03_MULTI_SLICE.config_slice_id,
+                EXT_03_MULTI_SLICE.config_serialize,
+                EXT_04_COLLECTIVES.collectives_destroy,
+                EXT_04_COLLECTIVES.create_communicator,
+                EXT_04_COLLECTIVES.communicator_destroy,
+                EXT_04_COLLECTIVES.communicator_all_reduce,
+                EXT_04_COLLECTIVES.communicator_reduce_scatter,
+                EXT_04_COLLECTIVES.communicator_all_gather,
+                EXT_04_COLLECTIVES.communicator_collective_permute,
+                EXT_04_COLLECTIVES.communicator_all_to_all,
+                EXT_04_COLLECTIVES.communicator_to_string,
+                EXT_05_ABI_VERSION.client_runtime_abi_version,
+                EXT_05_ABI_VERSION.executable_get_abi_version,
+                EXT_05_ABI_VERSION.runtime_abi_version_destroy,
+                EXT_05_ABI_VERSION.runtime_abi_version_is_compatible_with_runtime,
+                EXT_05_ABI_VERSION.runtime_abi_version_is_compatible_with_executable,
+                EXT_05_ABI_VERSION.runtime_abi_version_to_proto,
+                EXT_05_ABI_VERSION.runtime_abi_version_platform_id,
+                EXT_05_ABI_VERSION.executable_abi_version_destroy,
+                EXT_05_ABI_VERSION.executable_abi_version_to_proto,
+                EXT_05_ABI_VERSION.executable_abi_version_platform_id,
+                EXT_05_ABI_VERSION.runtime_abi_version_from_proto,
+                EXT_05_ABI_VERSION.executable_abi_version_from_proto,
+                EXT_06_SHARDINGS.parameter_shardings,
+                EXT_06_SHARDINGS.output_shardings,
+                EXT_07_MEGASCALE.create_client_context,
+                EXT_07_MEGASCALE.delete_client_context,
+                EXT_07_MEGASCALE.create_default_config,
+                EXT_07_MEGASCALE.create_aot_config,
+                EXT_07_MEGASCALE.create_multi_slice_config,
+                EXT_07_MEGASCALE.delete_multi_slice_config,
+                EXT_07_MEGASCALE.multi_slice_config_num_slices,
+                EXT_07_MEGASCALE.multi_slice_config_num_devices_per_slice,
+                EXT_07_MEGASCALE.multi_slice_config_slice_id,
+                EXT_07_MEGASCALE.multi_slice_config_serialized_slice_key_value,
+                EXT_07_MEGASCALE.multi_slice_config_serialize,
+                EXT_07_MEGASCALE.deserialize_multi_slice_config,
+                EXT_07_MEGASCALE.megascale_addresses,
+                EXT_07_MEGASCALE.barrier,
+                EXT_07_MEGASCALE.log_error,
+                EXT_07_MEGASCALE.get_megascale_dcn_topology,
+                EXT_07_MEGASCALE.get_slice_id,
+                EXT_07_MEGASCALE.get_num_slices,
+                EXT_07_MEGASCALE.initialize_slice,
+                EXT_07_MEGASCALE.finalize_slice,
+                EXT_07_MEGASCALE.register_error_handler,
+                EXT_07_MEGASCALE.unregister_error_handler,
+                EXT_07_MEGASCALE.collect_metrics,
+                EXT_07_MEGASCALE.reset_metrics,
+                EXT_07_MEGASCALE.get_transport_type,
+                EXT_07_MEGASCALE.set_transport_type,
+                EXT_07_MEGASCALE.wait_for_barrier,
+                EXT_07_MEGASCALE.abort_collectives,
+                EXT_08_TPU_EXECUTABLE.get_target_arguments,
+                EXT_08_TPU_EXECUTABLE.get_hlo_module_with_config,
+                EXT_08_TPU_EXECUTABLE.reserved,
+                EXT_08_TPU_EXECUTABLE.get_compiled_memory_stats,
+                EXT_08_TPU_EXECUTABLE.run_hlo_cost_analysis,
+                EXT_08_TPU_EXECUTABLE.set_tpu_compilation_env,
+                EXT_08_TPU_EXECUTABLE.get_tpu_compilation_env_field_as_string,
+                EXT_08_TPU_EXECUTABLE.is_tpu_predetermined_error,
+                EXT_08_TPU_EXECUTABLE.is_tpu_cancellation_placeholder_error,
+                EXT_09_TPU_TOPOLOGY.subslice,
+                EXT_09_TPU_TOPOLOGY.is_subslice_topology,
+                EXT_09_TPU_TOPOLOGY.subslice_device_id_from_full_device_id,
+                EXT_09_TPU_TOPOLOGY.replace_host_bounds,
+                EXT_09_TPU_TOPOLOGY.is_enhanced_barrier_enabled,
+                EXT_09_TPU_TOPOLOGY.has_limited_ici_connectivity,
+                EXT_09_TPU_TOPOLOGY.is_reachable_over_limited_ici,
+                EXT_09_TPU_TOPOLOGY.process_count,
+                EXT_09_TPU_TOPOLOGY.chips_per_process,
+                EXT_09_TPU_TOPOLOGY.core_count_per_chip,
+                EXT_09_TPU_TOPOLOGY.chip_count,
+                EXT_09_TPU_TOPOLOGY.core_count,
+                EXT_09_TPU_TOPOLOGY.logi_device_count_per_process,
+                EXT_09_TPU_TOPOLOGY.logi_device_count,
+                EXT_09_TPU_TOPOLOGY.logi_device_count_per_chip,
+                EXT_09_TPU_TOPOLOGY.core_count_per_process,
+                EXT_09_TPU_TOPOLOGY.process_ids,
+                EXT_09_TPU_TOPOLOGY.logi_device_ids_on_process,
+                EXT_09_TPU_TOPOLOGY.proc_id_and_idx_on_proc_for_chip,
+                EXT_09_TPU_TOPOLOGY.proc_id_and_idx_on_proc_for_logi_device,
+                EXT_09_TPU_TOPOLOGY.process_coord_from_id,
+                EXT_09_TPU_TOPOLOGY.chip_id_from_coord,
+                EXT_09_TPU_TOPOLOGY.logi_device_id_from_chip_coord_and_idx,
+                EXT_09_TPU_TOPOLOGY.chip_coord_and_idx_for_logi_device,
+                EXT_09_TPU_TOPOLOGY.chips_per_process_bounds,
+                EXT_09_TPU_TOPOLOGY.chip_bounds,
+                EXT_09_TPU_TOPOLOGY.process_bounds,
+                EXT_09_TPU_TOPOLOGY.get_routing_strategy,
+                EXT_09_TPU_TOPOLOGY.get_slice_config,
+                EXT_09_TPU_TOPOLOGY.get_slice_configs,
+                EXT_09_TPU_TOPOLOGY.get_default_platform_config,
+                EXT_10_CALLBACK.register_callback,
+                EXT_10_CALLBACK.invoke_callback,
+                EXT_11_PHASE_COMPILE.phase_compile_get_compiler,
+                EXT_11_PHASE_COMPILE.phase_compile_destroy_compiler,
+                EXT_11_PHASE_COMPILE.phase_compile_run_phase,
+                EXT_11_PHASE_COMPILE.phase_compile_get_phase_names,
+                EXT_11_PHASE_COMPILE.phase_compile_c_buffers_destroy,
+                EXT_12_CROSS_HOST.make_cross_host_receive_buffers,
+                EXT_12_CROSS_HOST.copy_to_remote_device,
+                EXT_12_CROSS_HOST.cross_host_receive_buffers,
+                EXT_12_CROSS_HOST.cross_host_send_buffers,
+                EXT_13_EXEC_METADATA.get_executable_metadata,
+                EXT_13_EXEC_METADATA.destroy_executable_metadata,
+                EXT_14_MEM_DESC.get_memory_descriptions,
+                EXT_14_MEM_DESC.destroy_memory_descriptions,
+                EXT_15_LAYOUTS.memory_layout_destroy,
+                EXT_15_LAYOUTS.memory_layout_serialize,
+                EXT_15_LAYOUTS.client_get_default_layout,
+                EXT_15_LAYOUTS.buffer_memory_layout,
+                EXT_15_LAYOUTS.topology_get_default_layout,
+                EXT_15_LAYOUTS.executable_get_output_layouts,
+                EXT_15_LAYOUTS.executable_get_parameter_layouts,
+                EXT_16_RAW_BUFFER.create_raw_alias_of_buffer,
+                EXT_16_RAW_BUFFER.destroy,
+                EXT_16_RAW_BUFFER.get_host_pointer,
+                EXT_16_RAW_BUFFER.get_on_device_size_in_bytes,
+                EXT_16_RAW_BUFFER.get_memory_space,
+                EXT_16_RAW_BUFFER.copy_raw_host_to_device,
+                EXT_16_RAW_BUFFER.copy_raw_device_to_host,
+            ];
+            for ext_fn in ext_fns {
+                valid_sz = [96, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+                assert!(ext_fn(valid_sz.as_mut_ptr().cast()).is_null());
+            }
+
+            drop(Box::from_raw(PLUGIN_Profiler_CollectData(ptr::null_mut())));
+            let mut prof_create_args = PLUGIN_Profiler_Create_Args {
+                struct_size: size_of::<PLUGIN_Profiler_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                options: ptr::null(),
+                options_size: 0,
+                profiler: ptr::null_mut(),
+            };
+            assert!(PLUGIN_Profiler_Create(ptr::addr_of_mut!(prof_create_args).cast()).is_null());
+            assert!(!prof_create_args.profiler.is_null());
+            let mut prof_start_args = PLUGIN_Profiler_Start_Args {
+                struct_size: size_of::<PLUGIN_Profiler_Start_Args>(),
+                extension_start: ptr::null_mut(),
+                profiler: prof_create_args.profiler,
+            };
+            assert!(PLUGIN_Profiler_Start(ptr::addr_of_mut!(prof_start_args).cast()).is_null());
+            assert!(PLUGIN_Profiler_Start(ptr::addr_of_mut!(prof_start_args).cast()).is_null());
+
+            let mut prof_collect_null = PLUGIN_Profiler_CollectData_Args {
+                struct_size: size_of::<PLUGIN_Profiler_CollectData_Args>(),
+                extension_start: ptr::null_mut(),
+                profiler: prof_create_args.profiler as usize,
+                buffer: ptr::null_mut(),
+                size_in_bytes: ptr::null_mut(),
+            };
+            assert_ne!(format!("{prof_collect_null:?}"), "");
+            assert!(
+                PLUGIN_Profiler_CollectData(ptr::addr_of_mut!(prof_collect_null).cast()).is_null()
+            );
+            let mut xspace_sz: usize = 0;
+            let mut xspace_buf = vec![0_u8; 512];
+            let mut prof_collect_full = PLUGIN_Profiler_CollectData_Args {
+                struct_size: size_of::<PLUGIN_Profiler_CollectData_Args>(),
+                extension_start: ptr::null_mut(),
+                profiler: prof_create_args.profiler as usize,
+                buffer: xspace_buf.as_mut_ptr(),
+                size_in_bytes: ptr::addr_of_mut!(xspace_sz),
+            };
+            assert!(
+                PLUGIN_Profiler_CollectData(ptr::addr_of_mut!(prof_collect_full).cast()).is_null()
+            );
+            assert!(xspace_sz > 0);
+            assert!(PLUGIN_Profiler_Start(ptr::addr_of_mut!(prof_start_args).cast()).is_null());
+            let mut prof_stop_args = PLUGIN_Profiler_Stop_Args {
+                struct_size: size_of::<PLUGIN_Profiler_Stop_Args>(),
+                extension_start: ptr::null_mut(),
+                profiler: prof_create_args.profiler,
+            };
+            assert!(PLUGIN_Profiler_Stop(ptr::addr_of_mut!(prof_stop_args).cast()).is_null());
+            let mut prof_destroy_args = PLUGIN_Profiler_Destroy_Args {
+                struct_size: size_of::<PLUGIN_Profiler_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                profiler: prof_create_args.profiler,
+            };
+            assert!(PLUGIN_Profiler_Destroy(ptr::addr_of_mut!(prof_destroy_args).cast()).is_null());
+            assert!(prof_destroy_args.profiler.is_null());
+            assert_ne!(format!("{:?}", ExtensionRuntimeState::default()), "");
+
+            let ext_destroy_args = PJRT_Megascale_Handle_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                handle: ptr::null_mut(),
+            };
+            let ext_q32_args = PJRT_Megascale_Query_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                handle: 0,
+                out_value: 0,
+            };
+            let ext_q40_args = PJRT_Megascale_Data_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                handle: 0,
+                out_first: 0,
+                out_second: 0,
+            };
+            let ext_q48_args = PJRT_TpuExecutable_ProtoQuery_Args {
+                struct_size: 48,
+                extension_start: ptr::null_mut(),
+                executable: ptr::null(),
+                serialized_bytes: 0,
+                serialized_bytes_size: 0,
+                holder: ptr::null_mut(),
+            };
+            let ext_q56_args = PJRT_CrossHostTransfers_Args {
+                struct_size: 56,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                buffers: 0,
+                num_buffers: 0,
+                remote_device: 0,
+                out_event: 0,
+            };
+            let ext_q64_args = PJRT_Communicator_CollectivePermute_Args {
+                struct_size: 64,
+                extension_start: ptr::null_mut(),
+                communicator: ptr::null_mut(),
+                send_buffer: ptr::null_mut(),
+                recv_buffer: ptr::null_mut(),
+                target_ranks: ptr::null(),
+                count: 0,
+                event: ptr::null_mut(),
+            };
+            let prof_err_del = PLUGIN_Profiler_Error_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                error: ptr::null_mut(),
+            };
+            let prof_err_msg = PLUGIN_Profiler_Error_Message_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                error: ptr::null(),
+                message: ptr::null(),
+                message_size: 0,
+            };
+            let prof_err_code = PLUGIN_Profiler_Error_GetCode_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                error: ptr::null(),
+                code: 0,
+            };
+            let prof_create = PLUGIN_Profiler_Create_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                options: ptr::null(),
+                options_size: 0,
+                profiler: ptr::null_mut(),
+            };
+            let prof_del = PLUGIN_Profiler_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                profiler: ptr::null_mut(),
+            };
+            let prof_start = PLUGIN_Profiler_Start_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                profiler: ptr::null_mut(),
+            };
+            let prof_stop = PLUGIN_Profiler_Stop_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                profiler: ptr::null_mut(),
+            };
+            let ms_del = PJRT_MultiSlice_Config_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                config: ptr::null_mut(),
+            };
+            let ms_ns = PJRT_MultiSlice_Config_NumSlices_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                config: ptr::null(),
+                num_slices: 0,
+            };
+            let ms_ndps = PJRT_MultiSlice_Config_NumDevicesPerSlice_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                config: ptr::null(),
+                num_devices_per_slice_map: 0,
+                num_slices: 0,
+            };
+            let ms_sid = PJRT_MultiSlice_Config_SliceId_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                config: ptr::null(),
+                slice_id: 0,
+            };
+            let coll_del = PJRT_Collectives_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                collectives: ptr::null_mut(),
+            };
+            let coll_cc = PJRT_Collectives_CreateCommunicator_Args {
+                struct_size: 48,
+                extension_start: ptr::null_mut(),
+                collectives: ptr::null_mut(),
+                device_ids: ptr::null(),
+                num_devices: 0,
+                communicator: ptr::null_mut(),
+            };
+            let comm_del = PJRT_Communicator_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                communicator: ptr::null_mut(),
+            };
+            let comm_ag = PJRT_Communicator_AllGather_Args {
+                struct_size: 56,
+                extension_start: ptr::null_mut(),
+                communicator: ptr::null_mut(),
+                send_buffer: ptr::null_mut(),
+                recv_buffer: ptr::null_mut(),
+                count: 0,
+                event: ptr::null_mut(),
+            };
+            let comm_str = PJRT_Communicator_ToString_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                communicator: ptr::null(),
+                str_out: 0,
+                str_size: 0,
+            };
+            let abi_get = PJRT_AbiVersion_Get_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                handle: ptr::null(),
+                abi_version_out: 0,
+            };
+            let abi_del = PJRT_AbiVersion_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                abi_version: ptr::null_mut(),
+            };
+            let abi_cmp = PJRT_AbiVersion_IsCompatible_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                abi_version: ptr::null(),
+                other_abi_version: 0,
+                is_compatible_out: 0,
+            };
+            let abi_pid = PJRT_AbiVersion_PlatformId_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                abi_version: ptr::null(),
+                platform_id_out: 0,
+            };
+            let abi_fp = PJRT_AbiVersion_FromProto_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                serialized_proto: ptr::null(),
+                serialized_proto_size: 0,
+                abi_version_out: 0,
+            };
+            let tpu_ec = PJRT_TpuExecutable_ErrorCheck_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                error: ptr::null(),
+                is_matched: 0,
+            };
+            let topo_sq = PJRT_TpuTopology_ScalarQuery_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                topology: ptr::null(),
+                out_value: 0,
+            };
+            let topo_bq = PJRT_TpuTopology_BoundsQuery_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                topology: ptr::null(),
+                out_first: 0,
+                out_second: 0,
+            };
+            let topo_mq = PJRT_TpuTopology_MappingQuery_Args {
+                struct_size: 48,
+                extension_start: ptr::null_mut(),
+                topology: ptr::null(),
+                param0: 0,
+                out_first: 0,
+                out_second: 0,
+            };
+            let cb_inv = PJRT_Callback_Invoke_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                callback_type: 0,
+                payload: ptr::null_mut(),
+            };
+            let pc_gc = PJRT_PhaseCompile_GetCompiler_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                compiler_out: 0,
+            };
+            let pc_del = PJRT_PhaseCompile_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                handle: ptr::null_mut(),
+            };
+            let md_get = PJRT_Metadata_Get_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                handle: ptr::null(),
+                metadata_out: 0,
+            };
+            let md_del = PJRT_Metadata_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                metadata: ptr::null_mut(),
+            };
+            let rb_q = PJRT_RawBuffer_Query_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                buffer: ptr::null_mut(),
+                out_value: 0,
+            };
+            let rb_del = PJRT_RawBuffer_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                raw_buffer: ptr::null_mut(),
+            };
+            assert_ne!(
+                format!(
+                    "{ext_destroy_args:?}{ext_q32_args:?}{ext_q40_args:?}{ext_q48_args:?}{ext_q56_args:?}{ext_q64_args:?}{prof_err_del:?}{prof_err_msg:?}{prof_err_code:?}{prof_create:?}{prof_del:?}{prof_start:?}{prof_stop:?}{ms_del:?}{ms_ns:?}{ms_ndps:?}{ms_sid:?}{coll_del:?}{coll_cc:?}{comm_del:?}{comm_ag:?}{comm_str:?}{abi_get:?}{abi_del:?}{abi_cmp:?}{abi_pid:?}{abi_fp:?}{tpu_ec:?}{topo_sq:?}{topo_bq:?}{topo_mq:?}{cb_inv:?}{pc_gc:?}{pc_del:?}{md_get:?}{md_del:?}{rb_q:?}{rb_del:?}"
+                ),
+                ""
+            );
+
+            let layout_destroy_args = PJRT_Layouts_MemoryLayout_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                layout: ptr::null_mut(),
+            };
+            let layout_ser_args = PJRT_Layouts_MemoryLayout_Serialize_Args {
+                struct_size: 56,
+                extension_start: ptr::null_mut(),
+                layout: ptr::null(),
+                serialized_bytes: ptr::null(),
+                serialized_bytes_size: 0,
+                serialized_layout: ptr::null_mut(),
+                serialized_layout_deleter: ptr::null(),
+            };
+            let layout_def_args = PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args {
+                struct_size: 56,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                elem_type: 11,
+                pad: 0,
+                dims: ptr::null(),
+                num_dims: 0,
+                layout: ptr::null_mut(),
+            };
+            let layout_buf_args = PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                buffer: ptr::null_mut(),
+                layout: ptr::null_mut(),
+            };
+            let shardings_args = PJRT_Shardings_PJRT_Executable_Shardings_Args {
+                struct_size: 48,
+                extension_start: ptr::null_mut(),
+                executable: ptr::null_mut(),
+                num_items: 0,
+                shardings: ptr::null(),
+                sharding_sizes: ptr::null(),
+            };
+            let phase_names_args = PJRT_PhaseCompile_GetPhaseNames_Args {
+                struct_size: 48,
+                extension_start: ptr::null_mut(),
+                phase_compiler: ptr::null(),
+                phase_names: ptr::null(),
+                phase_names_sizes: ptr::null(),
+                num_phase_names: 0,
+            };
+            let triton_args = PJRT_Triton_Compile_Args {
+                struct_size: 88,
+                extension_start: ptr::null_mut(),
+                module: ptr::null(),
+                module_size: 0,
+                arch_name: ptr::null(),
+                arch_name_size: 0,
+                num_warps: 4,
+                num_ctas: 1,
+                num_stages: 2,
+                pad: 0,
+                out_asm: ptr::null(),
+                out_asm_size: 0,
+                out_smem_bytes: 0,
+            };
+            assert_ne!(
+                format!(
+                    "{layout_destroy_args:?}{layout_ser_args:?}{layout_def_args:?}{layout_buf_args:?}{shardings_args:?}{phase_names_args:?}{triton_args:?}"
+                ),
+                ""
+            );
+
+            let xla_reg_args = PJRT_XlaTransform_Register_Args {
+                struct_size: 40,
+                extension_start: ptr::null_mut(),
+                name: ptr::null(),
+                name_size: 0,
+                transform_fn: 0,
+            };
+            let xla_wait_args = PJRT_XlaTransform_WaitForAll_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+            };
+            let xla_unreg_args = PJRT_XlaTransform_Unregister_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                name: ptr::null(),
+                name_size: 0,
+            };
+            let xla_list_args = PJRT_XlaTransform_List_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                names_out: ptr::null(),
+                num_names_out: 0,
+            };
+            let mut host_alloc_args = PJRT_HostMemoryAllocator_Get_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                allocator_out: 0,
+            };
+            assert!(
+                PJRT_HostMemoryAllocator_Get(ptr::addr_of_mut!(host_alloc_args).cast()).is_null()
+            );
+            assert!(host_alloc_args.allocator_out > 0);
+            let mut md_get32 = PJRT_Metadata_Get_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                handle: ptr::null(),
+                metadata_out: 0,
+            };
+            assert!(PJRT_MemoryDescriptions_Get(ptr::addr_of_mut!(md_get32).cast()).is_null());
+            assert_eq!(md_get32.metadata_out, 4);
+            let mut md_del24 = PJRT_Metadata_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                metadata: ptr::dangling_mut(),
+            };
+            assert!(PJRT_MemoryDescriptions_Destroy(ptr::addr_of_mut!(md_del24).cast()).is_null());
+            assert!(md_del24.metadata.is_null());
+            let ms_ser_args = PJRT_MultiSlice_Config_Serialize_Args {
+                struct_size: 48,
+                extension_start: ptr::null_mut(),
+                config: ptr::null(),
+                serialized_bytes: ptr::null(),
+                serialized_bytes_size: 0,
+                serialized_config: ptr::null_mut(),
+            };
+            let comm_ar_args = PJRT_Communicator_AllReduce_Args {
+                struct_size: 64,
+                extension_start: ptr::null_mut(),
+                communicator: ptr::null_mut(),
+                send_buffer: ptr::null_mut(),
+                recv_buffer: ptr::null_mut(),
+                reduction_op: 0,
+                pad: 0,
+                count: 4,
+                event: ptr::null_mut(),
+            };
+            let abi_proto_args = PJRT_AbiVersion_ToProto_Args {
+                struct_size: 48,
+                extension_start: ptr::null_mut(),
+                abi_version: ptr::null(),
+                serialized_proto: ptr::null(),
+                serialized_proto_size: 0,
+                serialized_proto_holder: ptr::null_mut(),
+            };
+            let tpu_mem_stats_args = PJRT_TpuExecutable_GetCompiledMemoryStats_Args {
+                struct_size: 64,
+                extension_start: ptr::null_mut(),
+                executable: ptr::null_mut(),
+                generated_code_size_in_bytes: 0,
+                argument_size_in_bytes: 0,
+                output_size_in_bytes: 0,
+                alias_size_in_bytes: 0,
+                temp_size_in_bytes: 0,
+            };
+            let cb_reg_args = PJRT_Callback_Register_Args {
+                struct_size: 48,
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                callback_type: 1,
+                callback_fn: ptr::null(),
+                user_arg: ptr::null_mut(),
+            };
+            let phase_run_args = PJRT_PhaseCompile_RunPhase_Args {
+                struct_size: 56,
+                extension_start: ptr::null_mut(),
+                phase_compiler: ptr::null_mut(),
+                input_bytes: ptr::null(),
+                input_size: 0,
+                phase_name: ptr::null(),
+                output_status: 0,
+            };
+            let raw_copy_args = PJRT_RawBuffer_CopyRaw_Args {
+                struct_size: 56,
+                extension_start: ptr::null_mut(),
+                buffer: ptr::null_mut(),
+                host_ptr: ptr::null_mut(),
+                offset: 0,
+                transfer_size: 0,
+                event: ptr::null_mut(),
+            };
+            assert_ne!(
+                format!(
+                    "{xla_reg_args:?}{xla_wait_args:?}{xla_unreg_args:?}{xla_list_args:?}{host_alloc_args:?}{ms_ser_args:?}{comm_ar_args:?}{abi_proto_args:?}{tpu_mem_stats_args:?}{cb_reg_args:?}{phase_run_args:?}{raw_copy_args:?}"
+                ),
+                ""
+            );
+
+            let mut host_alloc64 = PJRT_HostMemoryAllocator_Allocate_Args {
+                struct_size: size_of::<PJRT_HostMemoryAllocator_Allocate_Args>(),
+                extension_start: ptr::null_mut(),
+                client: ptr::null_mut(),
+                size: 4096,
+                numa_node: 0,
+                pad: 0,
+                ptr: ptr::null_mut(),
+                deleter: ptr::null(),
+                deleter_arg: ptr::null_mut(),
+            };
+            assert!(PJRT_HostMemoryAllocator_Get(ptr::addr_of_mut!(host_alloc64).cast()).is_null());
+            assert!(!host_alloc64.ptr.is_null());
+            let mut mem_desc48 = PJRT_DeviceDescription_MemoryDescriptions_Args {
+                struct_size: size_of::<PJRT_DeviceDescription_MemoryDescriptions_Args>(),
+                extension_start: ptr::null_mut(),
+                device_description: ptr::null(),
+                memory_descriptions: ptr::null(),
+                num_memory_descriptions: 0,
+                default_memory_index: -1,
+            };
+            assert!(PJRT_MemoryDescriptions_Get(ptr::addr_of_mut!(mem_desc48).cast()).is_null());
+            assert_eq!(mem_desc48.num_memory_descriptions, 4);
+            assert_eq!(mem_desc48.default_memory_index, 0);
+            let vmem_desc_ptr = *mem_desc48.memory_descriptions.add(1);
+            let mut mem_kind48 = PJRT_MemoryDescription_Kind_Args {
+                struct_size: size_of::<PJRT_MemoryDescription_Kind_Args>(),
+                extension_start: ptr::null_mut(),
+                memory_description: vmem_desc_ptr,
+                kind: ptr::null(),
+                kind_size: 0,
+                kind_id: -1,
+                pad: 0,
+            };
+            assert!(
+                PJRT_MemoryDescriptions_Destroy(ptr::addr_of_mut!(mem_kind48).cast()).is_null()
+            );
+            assert_eq!(mem_kind48.kind_id, 1);
+            assert_eq!(mem_kind48.kind_size, 4);
+            mem_kind48.memory_description = ptr::null();
+            assert!(
+                PJRT_MemoryDescriptions_Destroy(ptr::addr_of_mut!(mem_kind48).cast()).is_null()
+            );
+            assert_eq!(mem_kind48.kind_id, 0);
+            let cb_sb = PJRT_Callback_Tpu_SliceBuilderArgs {
+                struct_size: 16,
+                failure_type: PJRT_Callback_Tpu_SliceFailureType::default() as i32,
+                pad: 0,
+            };
+            let cb_pf = PJRT_Callback_PrefatalArgs {
+                struct_size: 32,
+                error_code: 0,
+                pad: 0,
+                error_message: ptr::null(),
+                error_message_size: 0,
+            };
+            let exec_md = PJRT_ExecutableMetadata {
+                serialized_metadata: ptr::null(),
+                serialized_metadata_size: 0,
+            };
+            assert_ne!(
+                format!(
+                    "{host_alloc64:?}{mem_desc48:?}{mem_kind48:?}{cb_sb:?}{cb_pf:?}{exec_md:?}{:?}{:?}{:?}",
+                    PJRT_Collectives_ReductionKind::default(),
+                    PJRT_Collectives_CollectiveOpKind::default(),
+                    PJRT_Callback_Type::default(),
+                ),
+                ""
+            );
+            assert!(extension_call_count() > 0);
+
+            // Behavioral tests with real PJRT client, executable, and buffer handles
+            let mut create_args = PJRT_Client_Create_Args {
+                struct_size: size_of::<PJRT_Client_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                create_options: ptr::null(),
+                num_options: 0,
+                kv_get_callback: ptr::null(),
+                kv_get_user_arg: ptr::null_mut(),
+                kv_put_callback: ptr::null(),
+                kv_put_user_arg: ptr::null_mut(),
+                kv_try_get_callback: ptr::null(),
+                kv_try_get_user_arg: ptr::null_mut(),
+                client: ptr::null_mut(),
+            };
+            assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args).cast()).is_null());
+            let client = create_args.client;
+
+            let mut look_args = PJRT_Client_LookupDevice_Args {
+                struct_size: size_of::<PJRT_Client_LookupDevice_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                id: 0,
+                pad: 0,
+                device: ptr::null_mut(),
+            };
+            assert!(PJRT_Client_LookupDevice(ptr::addr_of_mut!(look_args).cast()).is_null());
+
+            let code_bytes = b"module @test { stablehlo.add }";
+            let fmt_bytes = b"mlir";
+            let prog = PJRT_Program {
+                struct_size: size_of::<PJRT_Program>(),
+                extension_start: ptr::null_mut(),
+                code: code_bytes.as_ptr().cast(),
+                code_size: code_bytes.len(),
+                format: fmt_bytes.as_ptr().cast(),
+                format_size: fmt_bytes.len(),
+            };
+            let mut comp_args = PJRT_Client_Compile_Args {
+                struct_size: size_of::<PJRT_Client_Compile_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                program: ptr::addr_of!(prog),
+                compile_options: ptr::null(),
+                compile_options_size: 0,
+                executable: ptr::null_mut(),
+            };
+            assert!(PJRT_Client_Compile(ptr::addr_of_mut!(comp_args).cast()).is_null());
+
+            let host_floats = [1.0_f32, 2.0, 3.0, 4.0];
+            let dims_arr = [4_i64];
+            let mut h2d_args = PJRT_Client_BufferFromHostBuffer_Args {
+                struct_size: size_of::<PJRT_Client_BufferFromHostBuffer_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                data: host_floats.as_ptr().cast(),
+                element_type: 11,
+                pad0: 0,
+                dims: dims_arr.as_ptr(),
+                num_dims: 1,
+                byte_strides: ptr::null(),
+                num_byte_strides: 0,
+                host_buffer_semantics: 0,
+                pad1: 0,
+                device: look_args.device,
+                memory: ptr::null_mut(),
+                device_layout: ptr::null(),
+                done_with_host_buffer: ptr::null_mut(),
+                out_buffer: ptr::null_mut(),
+            };
+            assert!(PJRT_Client_BufferFromHostBuffer(ptr::addr_of_mut!(h2d_args).cast()).is_null());
+            let buf_in = h2d_args.out_buffer;
+
+            let pass_name = b"custom_fusion_pass";
+            let mut xla_reg = PJRT_XlaTransform_Register_Args {
+                struct_size: size_of::<PJRT_XlaTransform_Register_Args>(),
+                extension_start: ptr::null_mut(),
+                name: pass_name.as_ptr().cast(),
+                name_size: pass_name.len(),
+                transform_fn: 0,
+            };
+            assert!(PJRT_XlaTransform_Register(ptr::addr_of_mut!(xla_reg).cast()).is_null());
+            assert!(xla_reg.transform_fn > 0);
+            let mut xla_list = PJRT_XlaTransform_List_Args {
+                struct_size: size_of::<PJRT_XlaTransform_List_Args>(),
+                extension_start: ptr::null_mut(),
+                names_out: ptr::null(),
+                num_names_out: 0,
+            };
+            assert!(PJRT_XlaTransform_List(ptr::addr_of_mut!(xla_list).cast()).is_null());
+            assert!(xla_list.num_names_out >= 1);
+            let mut xla_unreg = PJRT_XlaTransform_Unregister_Args {
+                struct_size: size_of::<PJRT_XlaTransform_Unregister_Args>(),
+                extension_start: ptr::null_mut(),
+                name: pass_name.as_ptr().cast(),
+                name_size: pass_name.len(),
+            };
+            assert!(PJRT_XlaTransform_Unregister(ptr::addr_of_mut!(xla_unreg).cast()).is_null());
+
+            let dev_ids = [0_i32, 1];
+            let mut comm_create = PJRT_Collectives_CreateCommunicator_Args {
+                struct_size: size_of::<PJRT_Collectives_CreateCommunicator_Args>(),
+                extension_start: ptr::null_mut(),
+                collectives: ptr::null_mut(),
+                device_ids: dev_ids.as_ptr(),
+                num_devices: dev_ids.len(),
+                communicator: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_Collectives_CreateCommunicator(ptr::addr_of_mut!(comm_create).cast())
+                    .is_null()
+            );
+            assert!(!comm_create.communicator.is_null());
+            let mut comm_to_str = PJRT_Communicator_ToString_Args {
+                struct_size: size_of::<PJRT_Communicator_ToString_Args>(),
+                extension_start: ptr::null_mut(),
+                communicator: comm_create.communicator,
+                str_out: 0,
+                str_size: 0,
+            };
+            assert!(PJRT_Communicator_ToString(ptr::addr_of_mut!(comm_to_str).cast()).is_null());
+            assert!(comm_to_str.str_size > 0);
+
+            let host_floats_2 = [10.0_f32, 20.0, 30.0, 40.0];
+            let mut h2d_args_2 = PJRT_Client_BufferFromHostBuffer_Args {
+                struct_size: size_of::<PJRT_Client_BufferFromHostBuffer_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                data: host_floats_2.as_ptr().cast(),
+                element_type: 11,
+                pad0: 0,
+                dims: dims_arr.as_ptr(),
+                num_dims: 1,
+                byte_strides: ptr::null(),
+                num_byte_strides: 0,
+                host_buffer_semantics: 0,
+                pad1: 0,
+                device: look_args.device,
+                memory: ptr::null_mut(),
+                device_layout: ptr::null(),
+                done_with_host_buffer: ptr::null_mut(),
+                out_buffer: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_Client_BufferFromHostBuffer(ptr::addr_of_mut!(h2d_args_2).cast()).is_null()
+            );
+            let buf_recv = h2d_args_2.out_buffer;
+
+            for red_op in [0_i32, 1, 2, 3] {
+                let mut comm_ar = PJRT_Communicator_AllReduce_Args {
+                    struct_size: size_of::<PJRT_Communicator_AllReduce_Args>(),
+                    extension_start: ptr::null_mut(),
+                    communicator: comm_create.communicator,
+                    send_buffer: buf_in.cast(),
+                    recv_buffer: buf_recv.cast(),
+                    reduction_op: red_op,
+                    pad: 0,
+                    count: 4,
+                    event: ptr::null_mut(),
+                };
+                assert!(PJRT_Communicator_AllReduce(ptr::addr_of_mut!(comm_ar).cast()).is_null());
+                assert!(!comm_ar.event.is_null());
+            }
+
+            let host_ints_1 = [2_i32, 3, 4, 5];
+            let host_ints_2 = [10_i32, 20, 30, 40];
+            let mut h2d_i1 = h2d_args_2;
+            h2d_i1.data = host_ints_1.as_ptr().cast();
+            h2d_i1.element_type = 4;
+            h2d_i1.out_buffer = ptr::null_mut();
+            assert!(PJRT_Client_BufferFromHostBuffer(ptr::addr_of_mut!(h2d_i1).cast()).is_null());
+            let mut h2d_i2 = h2d_i1;
+            h2d_i2.data = host_ints_2.as_ptr().cast();
+            h2d_i2.out_buffer = ptr::null_mut();
+            assert!(PJRT_Client_BufferFromHostBuffer(ptr::addr_of_mut!(h2d_i2).cast()).is_null());
+            for red_op in [0_i32, 1, 2, 3] {
+                let mut comm_ar_i = PJRT_Communicator_AllReduce_Args {
+                    struct_size: size_of::<PJRT_Communicator_AllReduce_Args>(),
+                    extension_start: ptr::null_mut(),
+                    communicator: comm_create.communicator,
+                    send_buffer: h2d_i1.out_buffer.cast(),
+                    recv_buffer: h2d_i2.out_buffer.cast(),
+                    reduction_op: red_op,
+                    pad: 0,
+                    count: 4,
+                    event: ptr::null_mut(),
+                };
+                assert!(PJRT_Communicator_AllReduce(ptr::addr_of_mut!(comm_ar_i).cast()).is_null());
+            }
+            let mut del_bi1 = PJRT_Buffer_Destroy_Args {
+                struct_size: size_of::<PJRT_Buffer_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                buffer: h2d_i1.out_buffer,
+            };
+            assert!(PJRT_Buffer_Destroy(ptr::addr_of_mut!(del_bi1).cast()).is_null());
+            del_bi1.buffer = h2d_i2.out_buffer;
+            assert!(PJRT_Buffer_Destroy(ptr::addr_of_mut!(del_bi1).cast()).is_null());
+            del_bi1.buffer = buf_recv;
+            assert!(PJRT_Buffer_Destroy(ptr::addr_of_mut!(del_bi1).cast()).is_null());
+
+            let mut comm_destroy = PJRT_Communicator_Destroy_Args {
+                struct_size: size_of::<PJRT_Communicator_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                communicator: comm_create.communicator,
+            };
+            assert!(PJRT_Communicator_Destroy(ptr::addr_of_mut!(comm_destroy).cast()).is_null());
+            assert!(comm_destroy.communicator.is_null());
+
+            let mut layout_buf = PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args {
+                struct_size: size_of::<PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args>(),
+                extension_start: ptr::null_mut(),
+                buffer: buf_in.cast(),
+                layout: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_Layouts_Buffer_GetMemoryLayout(ptr::addr_of_mut!(layout_buf).cast()).is_null()
+            );
+            assert!(!layout_buf.layout.is_null());
+            let mut layout_ser = PJRT_Layouts_MemoryLayout_Serialize_Args {
+                struct_size: size_of::<PJRT_Layouts_MemoryLayout_Serialize_Args>(),
+                extension_start: ptr::null_mut(),
+                layout: layout_buf.layout,
+                serialized_bytes: ptr::null(),
+                serialized_bytes_size: 0,
+                serialized_layout: ptr::null_mut(),
+                serialized_layout_deleter: ptr::null(),
+            };
+            assert!(
+                PJRT_Layouts_MemoryLayout_Serialize(ptr::addr_of_mut!(layout_ser).cast()).is_null()
+            );
+            assert!(layout_ser.serialized_bytes_size > 0);
+            let mut layout_del = PJRT_Layouts_MemoryLayout_Destroy_Args {
+                struct_size: size_of::<PJRT_Layouts_MemoryLayout_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                layout: layout_buf.layout,
+            };
+            assert!(
+                PJRT_Layouts_MemoryLayout_Destroy(ptr::addr_of_mut!(layout_del).cast()).is_null()
+            );
+            assert!(layout_del.layout.is_null());
+
+            let mut meta_get = PJRT_Metadata_Get_Args {
+                struct_size: size_of::<PJRT_Metadata_Get_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: (*comp_args.executable).executable_ptr.cast(),
+                metadata_out: 0,
+            };
+            assert!(PJRT_ExecutableMetadata_Get(ptr::addr_of_mut!(meta_get).cast()).is_null());
+            assert_ne!(meta_get.metadata_out, 0);
+            let mut meta_del = PJRT_Metadata_Destroy_Args {
+                struct_size: size_of::<PJRT_Metadata_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                metadata: meta_get.metadata_out as *mut std::ffi::c_void,
+            };
+            assert!(PJRT_ExecutableMetadata_Destroy(ptr::addr_of_mut!(meta_del).cast()).is_null());
+
+            let mut raw_create = PJRT_RawBuffer_Query_Args {
+                struct_size: size_of::<PJRT_RawBuffer_Query_Args>(),
+                extension_start: ptr::null_mut(),
+                buffer: buf_in.cast(),
+                out_value: 0,
+            };
+            assert!(
+                PJRT_RawBuffer_CreateRawAliasOfBuffer(ptr::addr_of_mut!(raw_create).cast())
+                    .is_null()
+            );
+            let raw_buf_handle = raw_create.out_value as *mut std::ffi::c_void;
+            assert!(!raw_buf_handle.is_null());
+            assert!(PJRT_RawBuffer_GetHostPointer(ptr::addr_of_mut!(raw_create).cast()).is_null());
+            assert!(
+                PJRT_RawBuffer_GetOnDeviceSizeInBytes(ptr::addr_of_mut!(raw_create).cast())
+                    .is_null()
+            );
+            let mut raw_del = PJRT_RawBuffer_Destroy_Args {
+                struct_size: size_of::<PJRT_RawBuffer_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                raw_buffer: raw_buf_handle,
+            };
+            assert!(PJRT_RawBuffer_Destroy(ptr::addr_of_mut!(raw_del).cast()).is_null());
+
+            let mut abi_get_real = PJRT_AbiVersion_Get_Args {
+                struct_size: size_of::<PJRT_AbiVersion_Get_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: client.cast(),
+                abi_version_out: 0,
+            };
+            assert!(
+                PJRT_AbiVersion_ClientRuntime(ptr::addr_of_mut!(abi_get_real).cast()).is_null()
+            );
+            let mut abi_del_real = PJRT_AbiVersion_Destroy_Args {
+                struct_size: size_of::<PJRT_AbiVersion_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                abi_version: abi_get_real.abi_version_out as *mut std::ffi::c_void,
+            };
+            assert!(
+                PJRT_AbiVersion_RuntimeDestroy(ptr::addr_of_mut!(abi_del_real).cast()).is_null()
+            );
+            let sample_proto = b"\x08\x74";
+            let mut abi_from_p = PJRT_AbiVersion_FromProto_Args {
+                struct_size: size_of::<PJRT_AbiVersion_FromProto_Args>(),
+                extension_start: ptr::null_mut(),
+                serialized_proto: sample_proto.as_ptr().cast(),
+                serialized_proto_size: sample_proto.len(),
+                abi_version_out: 0,
+            };
+            assert!(
+                PJRT_AbiVersion_RuntimeFromProto(ptr::addr_of_mut!(abi_from_p).cast()).is_null()
+            );
+            abi_del_real.abi_version = abi_from_p.abi_version_out as *mut std::ffi::c_void;
+            assert!(
+                PJRT_AbiVersion_ExecutableDestroy(ptr::addr_of_mut!(abi_del_real).cast()).is_null()
+            );
+
+            let mut pc_get = PJRT_PhaseCompile_GetCompiler_Args {
+                struct_size: size_of::<PJRT_PhaseCompile_GetCompiler_Args>(),
+                extension_start: ptr::null_mut(),
+                client: client.cast(),
+                compiler_out: 0,
+            };
+            assert!(PJRT_PhaseCompile_GetCompiler(ptr::addr_of_mut!(pc_get).cast()).is_null());
+            let mut pc_run_real = PJRT_PhaseCompile_RunPhase_Args {
+                struct_size: size_of::<PJRT_PhaseCompile_RunPhase_Args>(),
+                extension_start: ptr::null_mut(),
+                phase_compiler: pc_get.compiler_out as *mut std::ffi::c_void,
+                input_bytes: code_bytes.as_ptr().cast(),
+                input_size: code_bytes.len(),
+                phase_name: ptr::null(),
+                output_status: 0,
+            };
+            assert!(PJRT_PhaseCompile_RunPhase(ptr::addr_of_mut!(pc_run_real).cast()).is_null());
+            let mut pc_del_real = PJRT_PhaseCompile_Destroy_Args {
+                struct_size: size_of::<PJRT_PhaseCompile_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: pc_get.compiler_out as *mut std::ffi::c_void,
+            };
+            assert!(
+                PJRT_PhaseCompile_DestroyCompiler(ptr::addr_of_mut!(pc_del_real).cast()).is_null()
+            );
+
+            let mut tpu_mem_stats = PJRT_TpuExecutable_GetCompiledMemoryStats_Args {
+                struct_size: size_of::<PJRT_TpuExecutable_GetCompiledMemoryStats_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: (*comp_args.executable).executable_ptr.cast(),
+                generated_code_size_in_bytes: 0,
+                argument_size_in_bytes: 0,
+                output_size_in_bytes: 0,
+                alias_size_in_bytes: 0,
+                temp_size_in_bytes: 0,
+            };
+            assert!(
+                PJRT_TpuExecutable_GetCompiledMemoryStats(ptr::addr_of_mut!(tpu_mem_stats).cast())
+                    .is_null()
+            );
+            assert!(tpu_mem_stats.generated_code_size_in_bytes >= 256);
+
+            let pred_err = box_pjrt_error(LibTpuError::DevicePoisoned {
+                device_id: 0,
+                launch_id: 1,
+                reason: String::from("poisoned"),
+            });
+            let mut pred_chk = PJRT_TpuExecutable_ErrorCheck_Args {
+                struct_size: size_of::<PJRT_TpuExecutable_ErrorCheck_Args>(),
+                extension_start: ptr::null_mut(),
+                error: pred_err.cast(),
+                is_matched: 0,
+            };
+            assert!(
+                PJRT_TpuExecutable_IsPredeterminedError(ptr::addr_of_mut!(pred_chk).cast())
+                    .is_null()
+            );
+            assert_eq!(pred_chk.is_matched, 1);
+            assert!(
+                PJRT_TpuExecutable_IsCancellationPlaceholderError(
+                    ptr::addr_of_mut!(pred_chk).cast()
+                )
+                .is_null()
+            );
+            assert_eq!(pred_chk.is_matched, 0);
+            drop(Box::from_raw(pred_err));
+
+            let mut topo_map = PJRT_TpuTopology_MappingQuery_Args {
+                struct_size: size_of::<PJRT_TpuTopology_MappingQuery_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                param0: 5,
+                out_first: 0,
+                out_second: 0,
+            };
+            assert!(
+                PJRT_TpuTopology_ProcIdAndIdxOnProcForChip(ptr::addr_of_mut!(topo_map).cast())
+                    .is_null()
+            );
+            assert_eq!(topo_map.out_first, 1);
+            assert_eq!(topo_map.out_second, 1);
+
+            unsafe extern "C" fn sample_ext_cb(
+                payload: *mut std::ffi::c_void,
+                user_arg: *mut std::ffi::c_void,
+            ) {
+                if !user_arg.is_null() {
+                    // SAFETY: `user_arg` points to `cb_counter` in the test frame.
+                    unsafe {
+                        *user_arg.cast::<usize>() += payload as usize;
+                    }
+                }
+            }
+            let mut cb_counter: usize = 0;
+            let cb_fn_ptr: unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) =
+                sample_ext_cb;
+            let mut cb_reg = PJRT_Callback_Register_Args {
+                struct_size: size_of::<PJRT_Callback_Register_Args>(),
+                extension_start: ptr::null_mut(),
+                client: client.cast(),
+                callback_type: 7,
+                callback_fn: cb_fn_ptr as *const std::ffi::c_void,
+                user_arg: ptr::addr_of_mut!(cb_counter).cast(),
+            };
+            assert!(PJRT_Callback_RegisterCallback(ptr::addr_of_mut!(cb_reg).cast()).is_null());
+            let mut cb_inv_real = PJRT_Callback_Invoke_Args {
+                struct_size: size_of::<PJRT_Callback_Invoke_Args>(),
+                extension_start: ptr::null_mut(),
+                client: client.cast(),
+                callback_type: 7,
+                payload: 42 as *mut std::ffi::c_void,
+            };
+            assert!(PJRT_Callback_InvokeCallback(ptr::addr_of_mut!(cb_inv_real).cast()).is_null());
+            assert_eq!(cb_counter, 42);
+
+            let mut raw_host_bytes: Vec<u8> = [1.0_f32, 2.0, 3.0, 4.0]
+                .into_iter()
+                .flat_map(f32::to_le_bytes)
+                .collect();
+            let mut raw_h2d = PJRT_RawBuffer_CopyRaw_Args {
+                struct_size: size_of::<PJRT_RawBuffer_CopyRaw_Args>(),
+                extension_start: ptr::null_mut(),
+                buffer: buf_in.cast(),
+                host_ptr: raw_host_bytes.as_mut_ptr().cast(),
+                offset: 0,
+                transfer_size: 16,
+                event: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_RawBuffer_CopyRawHostToDevice(ptr::addr_of_mut!(raw_h2d).cast()).is_null()
+            );
+            let mut raw_d2h_out = vec![0_u8; 16];
+            let mut raw_d2h = PJRT_RawBuffer_CopyRaw_Args {
+                struct_size: size_of::<PJRT_RawBuffer_CopyRaw_Args>(),
+                extension_start: ptr::null_mut(),
+                buffer: buf_in.cast(),
+                host_ptr: raw_d2h_out.as_mut_ptr().cast(),
+                offset: 0,
+                transfer_size: 16,
+                event: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_RawBuffer_CopyRawDeviceToHost(ptr::addr_of_mut!(raw_d2h).cast()).is_null()
+            );
+            assert_eq!(raw_d2h_out, raw_host_bytes);
+
+            let triton_src = b"module @triton { stablehlo.add }";
+            let mut triton_call = PJRT_Triton_Compile_Args {
+                struct_size: size_of::<PJRT_Triton_Compile_Args>(),
+                extension_start: ptr::null_mut(),
+                module: ptr::null(),
+                module_size: 0,
+                arch_name: ptr::null(),
+                arch_name_size: 0,
+                num_warps: 4,
+                num_ctas: 1,
+                num_stages: 2,
+                pad: 0,
+                out_asm: ptr::null(),
+                out_asm_size: 0,
+                out_smem_bytes: 0,
+            };
+            assert!(PJRT_Triton_Compile(ptr::addr_of_mut!(triton_call).cast()).is_null());
+            triton_call.module = triton_src.as_ptr().cast();
+            triton_call.module_size = triton_src.len();
+            assert!(PJRT_Triton_Compile(ptr::addr_of_mut!(triton_call).cast()).is_null());
+            assert!(triton_call.out_asm_size > 0);
+            assert_eq!(triton_call.out_smem_bytes, 4096);
+            drop(Box::from_raw(PJRT_Triton_Compile(ptr::null_mut())));
+
+            let mut del_b_args = PJRT_Buffer_Destroy_Args {
+                struct_size: size_of::<PJRT_Buffer_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                buffer: buf_in,
+            };
+            assert!(PJRT_Buffer_Destroy(ptr::addr_of_mut!(del_b_args).cast()).is_null());
+            let mut del_exec_args = PJRT_LoadedExecutable_Destroy_Args {
+                struct_size: size_of::<PJRT_LoadedExecutable_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: comp_args.executable,
+            };
+            assert!(
+                PJRT_LoadedExecutable_Destroy(ptr::addr_of_mut!(del_exec_args).cast()).is_null()
+            );
+            let mut destroy_client_args = PJRT_Client_Destroy_Args {
+                struct_size: size_of::<PJRT_Client_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+            };
+            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_client_args).cast()).is_null());
+        }
+    }
+}

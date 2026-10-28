@@ -513,7 +513,7 @@ unsafe fn handle_error_for_each_payload(
     Ok(())
 }
 
-/// Iterates over structured payloads attached to a `PJRT_Error` (`PJRT_Error_ForEachPayload`).
+/// Iterates over key-value metadata payloads attached to a [`PJRT_Error`] (`PJRT_Error_ForEachPayload`).
 ///
 /// # Arguments
 ///
@@ -532,5 +532,263 @@ pub unsafe extern "C" fn PJRT_Error_ForEachPayload(
             raw_args,
             handle_error_for_each_payload,
         )
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::items_after_statements
+)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::pjrt_types::{
+        PJRT_Event_Await_Args, PJRT_Event_Create_Args, PJRT_Event_Destroy_Args,
+        PJRT_Event_Error_Args, PJRT_Event_IsReady_Args, PJRT_Event_OnReady_Args,
+        PJRT_Event_Set_Args, PJRT_Plugin_Attributes_Args,
+    };
+
+    #[test]
+    fn test_pjrt_error_plugin_and_event_api() {
+        // SAFETY: Testing PJRT error, plugin, and event entrypoints with null and valid arguments.
+        unsafe {
+            PJRT_Error_Destroy(ptr::null_mut());
+            let mut destroy_null_err = PJRT_Error_Destroy_Args {
+                struct_size: 16,
+                extension_start: ptr::null_mut(),
+                error: ptr::null_mut(),
+            };
+            assert_ne!(format!("{destroy_null_err:?}"), "");
+            PJRT_Error_Destroy(ptr::addr_of_mut!(destroy_null_err).cast());
+
+            PJRT_Error_Message(ptr::null_mut());
+            let mut msg_null_err = PJRT_Error_Message_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                error: ptr::null(),
+                message: ptr::null(),
+                message_size: 0,
+            };
+            assert_ne!(format!("{msg_null_err:?}"), "");
+            PJRT_Error_Message(ptr::addr_of_mut!(msg_null_err).cast());
+
+            let null_code_err = PJRT_Error_GetCode(ptr::null_mut());
+            assert!(!null_code_err.is_null());
+            let mut msg_args = PJRT_Error_Message_Args {
+                struct_size: 32,
+                extension_start: ptr::null_mut(),
+                error: null_code_err,
+                message: ptr::null(),
+                message_size: 0,
+            };
+            PJRT_Error_Message(ptr::addr_of_mut!(msg_args).cast());
+            assert!(msg_args.message_size > 0);
+            assert_ne!(format!("{:?}", *null_code_err), "");
+
+            let mut code_args = PJRT_Error_GetCode_Args {
+                struct_size: size_of::<PJRT_Error_GetCode_Args>(),
+                extension_start: ptr::null_mut(),
+                error: null_code_err,
+                code: 0,
+            };
+            assert_ne!(format!("{code_args:?}"), "");
+            assert!(PJRT_Error_GetCode(ptr::addr_of_mut!(code_args).cast()).is_null());
+            assert_eq!(code_args.code, 3);
+
+            let mut code_null_inner = PJRT_Error_GetCode_Args {
+                struct_size: size_of::<PJRT_Error_GetCode_Args>(),
+                extension_start: ptr::null_mut(),
+                error: ptr::null(),
+                code: 0,
+            };
+            let err2 = PJRT_Error_GetCode(ptr::addr_of_mut!(code_null_inner).cast());
+            let mut d2 = PJRT_Error_Destroy_Args {
+                struct_size: 16,
+                extension_start: ptr::null_mut(),
+                error: err2,
+            };
+            PJRT_Error_Destroy(ptr::addr_of_mut!(d2).cast());
+
+            let mut d1 = PJRT_Error_Destroy_Args {
+                struct_size: 16,
+                extension_start: ptr::null_mut(),
+                error: null_code_err,
+            };
+            PJRT_Error_Destroy(ptr::addr_of_mut!(d1).cast());
+
+            let e_init = PJRT_Plugin_Initialize(ptr::null_mut());
+            drop(Box::from_raw(e_init));
+            let mut init_args = PJRT_Plugin_Initialize_Args {
+                struct_size: 16,
+                extension_start: ptr::null_mut(),
+            };
+            assert_ne!(format!("{init_args:?}"), "");
+            assert!(PJRT_Plugin_Initialize(ptr::addr_of_mut!(init_args).cast()).is_null());
+
+            let mut plug_attr_args = PJRT_Plugin_Attributes_Args {
+                struct_size: 16,
+                extension_start: ptr::null_mut(),
+                attributes: ptr::null(),
+                num_attributes: 0,
+            };
+            drop(Box::from_raw(PJRT_Plugin_Attributes(
+                ptr::addr_of_mut!(plug_attr_args).cast(),
+            )));
+            plug_attr_args.struct_size = size_of::<PJRT_Plugin_Attributes_Args>();
+            assert!(PJRT_Plugin_Attributes(ptr::addr_of_mut!(plug_attr_args).cast()).is_null());
+            assert_eq!(plug_attr_args.num_attributes, 3);
+            assert!(!plug_attr_args.attributes.is_null());
+            assert_ne!(format!("{:?}", *plug_attr_args.attributes), "");
+
+            drop(Box::from_raw(PJRT_Event_Create(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Event_Set(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Event_IsReady(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Event_Error(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Event_Await(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Event_OnReady(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Event_Destroy(ptr::null_mut())));
+            drop(Box::from_raw(PJRT_Error_ForEachPayload(ptr::null_mut())));
+
+            let mut ev_create_args = PJRT_Event_Create_Args {
+                struct_size: size_of::<PJRT_Event_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                event: ptr::null_mut(),
+            };
+            assert!(PJRT_Event_Create(ptr::addr_of_mut!(ev_create_args).cast()).is_null());
+            let created_ev = ev_create_args.event;
+            assert!(!created_ev.is_null());
+
+            let mut ev_ready_args = PJRT_Event_IsReady_Args {
+                struct_size: size_of::<PJRT_Event_IsReady_Args>(),
+                extension_start: ptr::null_mut(),
+                event: created_ev,
+                is_ready: true,
+                pad: [0; 7],
+            };
+            assert!(PJRT_Event_IsReady(ptr::addr_of_mut!(ev_ready_args).cast()).is_null());
+            assert!(!ev_ready_args.is_ready);
+
+            let mut ev_set_args = PJRT_Event_Set_Args {
+                struct_size: size_of::<PJRT_Event_Set_Args>(),
+                extension_start: ptr::null_mut(),
+                event: created_ev,
+                error_code: 0,
+                pad: 0,
+                error_message: ptr::null(),
+                error_message_size: 0,
+            };
+            assert!(PJRT_Event_Set(ptr::addr_of_mut!(ev_set_args).cast()).is_null());
+            assert!(PJRT_Event_IsReady(ptr::addr_of_mut!(ev_ready_args).cast()).is_null());
+            assert!(ev_ready_args.is_ready);
+
+            let mut ev_err_args = PJRT_Event_Error_Args {
+                struct_size: size_of::<PJRT_Event_Error_Args>(),
+                extension_start: ptr::null_mut(),
+                event: created_ev,
+            };
+            assert!(PJRT_Event_Error(ptr::addr_of_mut!(ev_err_args).cast()).is_null());
+            let mut ev_await_args = PJRT_Event_Await_Args {
+                struct_size: size_of::<PJRT_Event_Await_Args>(),
+                extension_start: ptr::null_mut(),
+                event: created_ev,
+            };
+            assert!(PJRT_Event_Await(ptr::addr_of_mut!(ev_await_args).cast()).is_null());
+
+            ev_set_args.error_code = 3;
+            ev_set_args.error_message = ptr::null();
+            assert!(PJRT_Event_Set(ptr::addr_of_mut!(ev_set_args).cast()).is_null());
+            drop(Box::from_raw(PJRT_Event_Error(
+                ptr::addr_of_mut!(ev_err_args).cast(),
+            )));
+            drop(Box::from_raw(PJRT_Event_Await(
+                ptr::addr_of_mut!(ev_await_args).cast(),
+            )));
+            ev_set_args.error_message = c"custom event failure".as_ptr();
+            assert!(PJRT_Event_Set(ptr::addr_of_mut!(ev_set_args).cast()).is_null());
+
+            unsafe extern "C" fn test_on_ready_cb(
+                err: *mut PJRT_Error,
+                user_arg: *mut std::ffi::c_void,
+            ) {
+                if !err.is_null() {
+                    // SAFETY: `err` was boxed by `box_pjrt_error`.
+                    unsafe {
+                        drop(Box::from_raw(err));
+                    }
+                }
+                // SAFETY: `user_arg` points to a mutable `u32` counter in this test.
+                unsafe {
+                    *user_arg.cast::<u32>() += 1;
+                }
+            }
+            let mut cb_hits: u32 = 0;
+            let mut on_ready_args = PJRT_Event_OnReady_Args {
+                struct_size: size_of::<PJRT_Event_OnReady_Args>(),
+                extension_start: ptr::null_mut(),
+                event: created_ev,
+                callback: Some(test_on_ready_cb),
+                user_arg: ptr::addr_of_mut!(cb_hits).cast(),
+            };
+            assert!(PJRT_Event_OnReady(ptr::addr_of_mut!(on_ready_args).cast()).is_null());
+            assert_eq!(cb_hits, 1);
+            on_ready_args.event = ptr::null_mut();
+            assert!(PJRT_Event_OnReady(ptr::addr_of_mut!(on_ready_args).cast()).is_null());
+            assert_eq!(cb_hits, 2);
+
+            let mut ev_create2 = PJRT_Event_Create_Args {
+                struct_size: size_of::<PJRT_Event_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                event: ptr::null_mut(),
+            };
+            assert!(PJRT_Event_Create(ptr::addr_of_mut!(ev_create2).cast()).is_null());
+            on_ready_args.event = ev_create2.event;
+            assert!(PJRT_Event_OnReady(ptr::addr_of_mut!(on_ready_args).cast()).is_null());
+            assert_eq!(cb_hits, 2);
+            ev_set_args.event = ev_create2.event;
+            ev_set_args.error_code = 0;
+            ev_set_args.error_message = ptr::null();
+            assert!(PJRT_Event_Set(ptr::addr_of_mut!(ev_set_args).cast()).is_null());
+            assert_eq!(cb_hits, 3);
+            let mut ev_del2 = PJRT_Event_Destroy_Args {
+                struct_size: size_of::<PJRT_Event_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                event: ev_create2.event,
+            };
+            assert!(PJRT_Event_Destroy(ptr::addr_of_mut!(ev_del2).cast()).is_null());
+
+            let mut ev_del_args = PJRT_Event_Destroy_Args {
+                struct_size: size_of::<PJRT_Event_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                event: created_ev,
+            };
+            assert!(PJRT_Event_Destroy(ptr::addr_of_mut!(ev_del_args).cast()).is_null());
+
+            unsafe extern "C" fn test_payload_visitor(
+                _k: *const c_char,
+                _k_len: usize,
+                _v: *const c_char,
+                _v_len: usize,
+                user_arg: *mut std::ffi::c_void,
+            ) {
+                // SAFETY: `user_arg` points to a mutable `u32` counter in this test.
+                unsafe {
+                    *user_arg.cast::<u32>() += 1;
+                }
+            }
+            let sample_err = box_pjrt_error(LibTpuError::NullPointer { parameter: "test" });
+            let mut visited_count: u32 = 0;
+            let mut fep_args = crate::pjrt_types::PJRT_Error_ForEachPayload_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Error_ForEachPayload_Args>(),
+                extension_start: ptr::null_mut(),
+                error: sample_err,
+                visitor: Some(test_payload_visitor),
+                user_arg: ptr::addr_of_mut!(visited_count).cast(),
+            };
+            assert!(PJRT_Error_ForEachPayload(ptr::addr_of_mut!(fep_args).cast()).is_null());
+            assert!(visited_count >= 2);
+            drop(Box::from_raw(sample_err));
+        }
     }
 }

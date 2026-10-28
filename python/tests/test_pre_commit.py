@@ -422,6 +422,8 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
     with patch.object(pc, "run_command") as mock_run:
         assert pc.hook_fmt(tmp_path, check_only=False) == 0
         assert mock_run.call_count == 6
+        assert pc.hook_fmt(tmp_path, check_only=True) == 0
+        assert mock_run.call_count == 9
 
     with patch.object(pc, "run_command") as mock_run_no_cpp:
         empty_ws = tmp_path / "no_cpp"
@@ -491,6 +493,9 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
 
     with (
         patch.object(pc, "hook_fmt", return_value=0),
+        patch.object(pc, "hook_cargo_fmt", return_value=0),
+        patch.object(pc, "hook_ruff_format", return_value=0),
+        patch.object(pc, "hook_clang_format", return_value=0),
         patch.object(pc, "hook_build", return_value=0),
         patch.object(pc, "hook_clippy", return_value=0),
         patch.object(pc, "hook_abi", return_value=0),
@@ -499,6 +504,9 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
         patch.object(pc, "hook_all", return_value=0),
     ):
         assert pc.main(["fmt", "--check"]) == 0
+        assert pc.main(["cargo-fmt", "--check"]) == 0
+        assert pc.main(["ruff-format", "--check"]) == 0
+        assert pc.main(["clang-format", "--check"]) == 0
         assert pc.main(["build"]) == 0
         assert pc.main(["clippy"]) == 0
         assert pc.main(["lint"]) == 0
@@ -683,6 +691,12 @@ def test_github_actions_workflows_present_and_complete() -> None:
     readme_text = (root / "README.md").read_text(encoding="utf-8")
     assert "actions/workflows/ci.yml/badge.svg" in readme_text
     assert "actions/workflows/release.yml/badge.svg" in readme_text
+
+    pre_commit_cfg = (root / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+    assert "id: cargo-fmt" in pre_commit_cfg
+    assert "id: ruff-format" in pre_commit_cfg
+    assert "id: clang-format" in pre_commit_cfg
+    assert "clang-format --style=LLVM" in pre_commit_cfg
 
 
 def _build_synthetic_elf64() -> bytes:

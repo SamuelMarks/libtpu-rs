@@ -4,1005 +4,60 @@
 //! backed [`LinuxDeviceHal`] supporting the reverse-engineered Gasket (`0xdc`) and VFIO (`0x3b`)
 //! device protocols.
 
-use crate::compiler::{CompiledProgram, TpuOpCode};
-use crate::config::TpuInitConfig;
-use crate::error::{LibTpuError, LibTpuResult};
-use crate::types::{
-    ByteSize, ChipCoordinates, ChipId, CoreId, DeviceAddress, DeviceId, ElementType, EventFdHandle,
-    FileDescriptor, HostId, IoctlCommand, LocalHardwareId, MemoryKind, MemoryLayout, MmioOffset,
-    PciDeviceId, PciVendorId, ProcessIndex, Shape, TpuGeneration,
+/// Tensor operation evaluation routines (`MXU`, `VALU`, `EUP`, and ICI collectives).
+pub mod eval;
+/// Linux VFIO and Gasket hardware device HAL ([`LinuxDeviceHal`]) and backend selector.
+pub mod linux;
+/// HBM/VMEM region allocation, BAR MMIO apertures, and device memory statistics.
+pub mod memory;
+/// Linux `sysfs` `PCIe` hardware discovery and TPU topology descriptors.
+pub mod pci;
+/// Gasket/VFIO `ioctl` constants, `DeepSea` BAR0 register maps, and CSR bitflags.
+pub mod registers;
+/// Deterministic in-memory TPU hardware simulator ([`SimulatedTpuHal`]).
+pub mod simulated;
+/// Kernel driver `ioctl` and BAR0 MMIO traits and backend implementations.
+pub mod syscall;
+/// Architectural `TensorCore` VLIW execution state machine ([`TpuCoreVmState`]).
+pub mod vm;
+
+pub use self::linux::{HalBackend, LinuxDeviceHal, create_default_hal};
+pub use self::memory::{
+    DeviceMemoryStats, HbmRegionAllocator, MappedBarAperture, MmioAperture, VmemRegionAllocator,
 };
-use bytemuck::{Pod, Zeroable};
-use parking_lot::{Mutex, MutexGuard};
-use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicI32, Ordering};
-
-/// Exact Gasket ioctl command for resetting the accelerator (`_IOW(0xdc, 0x00, 8)`).
-pub const GASKET_IOCTL_RESET: u64 = 0x4008_dc00;
-
-/// Exact Gasket ioctl command for querying simple page table addresses (`_IOWR(0xdc, 0x05, 32)`).
-pub const GASKET_IOCTL_NUMBER_PAGE_TABLES: u64 = 0xc020_dc05;
-
-/// Exact Gasket ioctl command for querying page table size (`_IOWR(0xdc, 0x06, 32)`).
-pub const GASKET_IOCTL_PAGE_TABLE_SIZE: u64 = 0xc020_dc06;
-
-/// Exact Gasket ioctl command for querying simple page table size (`_IOW(0xdc, 0x07, 32)`).
-pub const GASKET_IOCTL_SIMPLE_PAGE_TABLE_SIZE: u64 = 0x4020_dc07;
-
-/// Exact Gasket ioctl command for partitioning page tables (`_IOW(0xdc, 0x07, 32)`).
-pub const GASKET_IOCTL_PARTITION_PAGE_TABLE: u64 = 0x4020_dc07;
-
-/// Exact Gasket ioctl command for mapping host DMA buffers (`_IOW(0xdc, 0x08, 32)`).
-pub const GASKET_IOCTL_MAP_BUFFER: u64 = 0x4020_dc08;
-
-/// Exact Gasket ioctl command for unmapping host DMA buffers (`_IOW(0xdc, 0x09, 32)`).
-pub const GASKET_IOCTL_UNMAP_BUFFER: u64 = 0x4020_dc09;
-
-/// Exact Gasket ioctl command for clearing interrupt counts (`_IO(0xdc, 0x0a)`).
-pub const GASKET_IOCTL_CLEAR_INTERRUPT_COUNTS: u64 = 0x0000_dc0a;
-
-/// Exact Gasket ioctl command for binding an interrupt `eventfd` (`_IOW(0xdc, 0x0b, 32)`).
-pub const GASKET_IOCTL_SET_EVENTFD: u64 = 0x4020_dc0b;
-
-/// Exact Gasket ioctl command for clearing an interrupt `eventfd` (`_IOW(0xdc, 0x0c, 8)`).
-pub const GASKET_IOCTL_CLEAR_EVENTFD: u64 = 0x4008_dc0c;
-
-/// Exact Gasket ioctl command for mapping a `dma_buf` fd (`_IOW(0xdc, 0x0d, 24)`).
-pub const GASKET_IOCTL_MAP_DMABUF: u64 = 0x4018_dc0d;
-
-/// Exact VFIO ioctl command for querying the VFIO API version (`0x3b64`).
-pub const VFIO_GET_API_VERSION: u64 = 0x0000_3b64;
-
-/// Exact VFIO ioctl command for checking IOMMU extension support (`0x3b65`).
-pub const VFIO_CHECK_EXTENSION: u64 = 0x0000_3b65;
-
-/// Exact VFIO ioctl command for setting the container IOMMU mode (`0x3b66`).
-pub const VFIO_SET_IOMMU: u64 = 0x0000_3b66;
-
-/// Exact VFIO ioctl command for querying IOMMU group status (`0x3b67`).
-pub const VFIO_GROUP_GET_STATUS: u64 = 0x0000_3b67;
-
-/// Exact VFIO ioctl command for binding a group to a VFIO container (`0x3b68`).
-pub const VFIO_GROUP_SET_CONTAINER: u64 = 0x0000_3b68;
-
-/// Exact VFIO ioctl command for opening a device fd from a group (`0x3b6a`).
-pub const VFIO_GROUP_GET_DEVICE_FD: u64 = 0x0000_3b6a;
-
-/// Exact VFIO ioctl command for querying device region/IRQ counts (`0x3b6b`).
-pub const VFIO_DEVICE_GET_INFO: u64 = 0x0000_3b6b;
-
-/// Exact VFIO ioctl command for querying a `PCIe` BAR region descriptor (`0x3b6c`).
-pub const VFIO_DEVICE_GET_REGION_INFO: u64 = 0x0000_3b6c;
-
-/// Exact VFIO ioctl command for querying interrupt vector metadata (`0x3b6d`).
-pub const VFIO_DEVICE_GET_IRQ_INFO: u64 = 0x0000_3b6d;
-
-/// Exact VFIO ioctl command for configuring MSI-X interrupt signaling (`0x3b6e`).
-pub const VFIO_DEVICE_SET_IRQS_IOCTL: u64 = 0x0000_3b6e;
-
-/// Alias for [`VFIO_DEVICE_SET_IRQS_IOCTL`] (`0x3b6e`).
-pub const VFIO_DEVICE_SET_IRQS: u64 = VFIO_DEVICE_SET_IRQS_IOCTL;
-
-/// Exact VFIO ioctl command for resetting a `PCIe` function (`0x3b6f`).
-pub const VFIO_DEVICE_RESET: u64 = 0x0000_3b6f;
-
-/// Exact VFIO ioctl command for mapping DMA pages (`0x3b71`).
-pub const VFIO_IOMMU_MAP_DMA_IOCTL: u64 = 0x0000_3b71;
-
-/// Alias for [`VFIO_IOMMU_MAP_DMA_IOCTL`] (`0x3b71`).
-pub const VFIO_IOMMU_MAP_DMA: u64 = VFIO_IOMMU_MAP_DMA_IOCTL;
-
-/// Exact VFIO ioctl command for unmapping DMA pages (`0x3b72`).
-pub const VFIO_IOMMU_UNMAP_DMA_IOCTL: u64 = 0x0000_3b72;
-
-/// Alias for [`VFIO_IOMMU_UNMAP_DMA_IOCTL`] (`0x3b72`).
-pub const VFIO_IOMMU_UNMAP_DMA: u64 = VFIO_IOMMU_UNMAP_DMA_IOCTL;
-
-/// Per-generation `asic_sw::deepsea` hardware register and memory layout specification
-/// extracted from `libtpu.so` (`*_pf_csrs.br`, `*_chip_configs_*.binarypb`, and
-/// `current_tpu_runtime_abi.binarypb`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChipRegisterMap {
-    /// Cloud TPU hardware generation.
-    pub generation: TpuGeneration,
-    /// Internal `DeepSea` ASIC codename (`jellyfish`, `dragonfish`, `pufferfish`, `viperfish_lite`, `viperfish`, `ghostlite`, `6acc60406`).
-    pub chip_codename: &'static str,
-    /// Hardware ABI version (`65537` or `65539`) from `current_tpu_runtime_abi.binarypb`.
-    pub hardware_abi_version: u64,
-    /// `TensorCore` 0 `tcs_core_state.RUN_STATUS` BAR0 MMIO byte offset.
-    pub tc0_run_status_csr: u64,
-    /// `TensorCore` 0 `tcs_core_state.PC` BAR0 MMIO byte offset.
-    pub tc0_pc_csr: u64,
-    /// `TensorCore` 0 `tcs_core_state.PROGRAM_LOCATION` BAR0 MMIO byte offset.
-    pub tc0_program_location_csr: u64,
-    /// `TensorCore` 0 `tc_main_status.VWAIT_STATE` BAR0 MMIO byte offset.
-    pub tc0_vwait_state_csr: u64,
-    /// `TensorCore` 0 `tc_main_status.VWAIT_SYNC_FLAG_STATE` BAR0 MMIO byte offset.
-    pub tc0_vwait_sync_flag_state_csr: u64,
-    /// `SparseCore` 0 `scs_core_state.RUN_STATUS` BAR0 MMIO byte offset (`0` if absent).
-    pub sc0_run_status_csr: u64,
-    /// Global chip ID register (`GLOBAL_CHIP_ID = 0xA1067000`).
-    pub global_chip_id_csr: u64,
-    /// Continuation queue completion `SyncFlag` word offset from `TpuChipConfigProto`.
-    pub completion_state_sync_flag_word_offset: u32,
-    /// Reserved HBM word offset for runtime continuation state from `TpuChipConfigProto`.
-    pub hbm_reserved_word_offset: u64,
-}
-
-impl ChipRegisterMap {
-    /// Internal `const` constructor for [`ChipRegisterMap`].
-    ///
-    /// # Arguments
-    ///
-    /// * `generation` - Target [`TpuGeneration`].
-    /// * `chip_codename` - Internal `DeepSea` ASIC codename.
-    /// * `hardware_abi_version` - Hardware ABI version (`65537` or `65539`).
-    /// * `csrs` - `[tc0_run_status, tc0_pc, tc0_program_location, tc0_vwait_state, tc0_vwait_sync_flag_state, sc0_run_status]`.
-    /// * `completion_state_sync_flag_word_offset` - Continuation queue completion `SyncFlag` word offset.
-    /// * `hbm_reserved_word_offset` - Reserved HBM word offset.
-    const fn build(
-        generation: TpuGeneration,
-        chip_codename: &'static str,
-        hardware_abi_version: u64,
-        csrs: [u64; 6],
-        completion_state_sync_flag_word_offset: u32,
-        hbm_reserved_word_offset: u64,
-    ) -> Self {
-        Self {
-            generation,
-            chip_codename,
-            hardware_abi_version,
-            tc0_run_status_csr: csrs[0],
-            tc0_pc_csr: csrs[1],
-            tc0_program_location_csr: csrs[2],
-            tc0_vwait_state_csr: csrs[3],
-            tc0_vwait_sync_flag_state_csr: csrs[4],
-            sc0_run_status_csr: csrs[5],
-            global_chip_id_csr: 0xA106_7000,
-            completion_state_sync_flag_word_offset,
-            hbm_reserved_word_offset,
-        }
-    }
-
-    /// `Jellyfish` / `Dragonfish` (`jxc`) BAR0 CSR offsets.
-    const JXC_CSRS: [u64; 6] = [
-        0x0042_2018,
-        0x0042_2058,
-        0x0042_20A0,
-        0x0042_30F8,
-        0x0042_3100,
-        0,
-    ];
-    /// `Pufferfish` (`pxc`) BAR0 CSR offsets.
-    const PXC_CSRS: [u64; 6] = [
-        0x0403_A018,
-        0x0403_A058,
-        0x0403_A0A0,
-        0x0403_B1B8,
-        0x0403_B1C0,
-        0,
-    ];
-    /// `Viperfish Lite` (`vlc` / `v5e`) BAR0 CSR offsets from `vlc_pf_csrs.br`.
-    const VLC_CSRS: [u64; 6] = [
-        0xA842_2018,
-        0xA842_2058,
-        0xA842_20A0,
-        0xA842_30F8,
-        0xA842_3100,
-        0xD184_1018,
-    ];
-    /// `Viperfish` (`vfc` / `v5p`) BAR0 CSR offsets from `vfc_pf_csrs.br`.
-    const VFC_CSRS: [u64; 6] = [
-        0xC403_A018,
-        0xC403_A058,
-        0xC403_A0A0,
-        0xC403_B1B8,
-        0xC403_B1C0,
-        0xD184_1018,
-    ];
-    /// `Ghostlite` (`glc` / `v6e`) BAR0 CSR offsets from `glc_pf_csrs.br`.
-    const GLC_CSRS: [u64; 6] = [
-        0xC220_2018,
-        0xC220_2058,
-        0xC220_20A0,
-        0xC220_3048,
-        0xC220_3050,
-        0xD284_1018,
-    ];
-    /// `Ghostfish` / `Ironwood` (`gfc` / `6acc60406` / `v7x`) BAR0 CSR offsets from `gfc_pf_csrs.br`.
-    const GFC_CSRS: [u64; 6] = [
-        0xA667_FA18,
-        0xA667_FA58,
-        0xA667_FAA0,
-        0xA667_F648,
-        0xA667_F650,
-        0xA7F2_0118,
-    ];
-
-    /// Returns the exact extracted `DeepSea` [`ChipRegisterMap`] for `generation`.
-    ///
-    /// # Arguments
-    ///
-    /// * `generation` - Target [`TpuGeneration`].
-    #[must_use]
-    pub const fn for_generation(generation: TpuGeneration) -> Self {
-        match generation {
-            TpuGeneration::V2 => Self::build(
-                generation,
-                "jellyfish",
-                65_537,
-                Self::JXC_CSRS,
-                507,
-                536_608_768,
-            ),
-            TpuGeneration::V3 => Self::build(
-                generation,
-                "dragonfish",
-                65_537,
-                Self::JXC_CSRS,
-                507,
-                1_073_479_680,
-            ),
-            TpuGeneration::V4 => Self::build(
-                generation,
-                "pufferfish",
-                65_537,
-                Self::PXC_CSRS,
-                507,
-                2_147_221_504,
-            ),
-            TpuGeneration::V4Lite => Self::build(
-                generation,
-                "pufferfish_lite",
-                65_537,
-                Self::PXC_CSRS,
-                507,
-                1_073_479_680,
-            ),
-            TpuGeneration::V5e => Self::build(
-                generation,
-                "viperfish_lite",
-                65_537,
-                Self::VLC_CSRS,
-                2041,
-                1_073_479_680,
-            ),
-            TpuGeneration::V5p => Self::build(
-                generation,
-                "viperfish",
-                65_539,
-                Self::VFC_CSRS,
-                4089,
-                3_187_408_896,
-            ),
-            TpuGeneration::V6e => Self::build(
-                generation,
-                "ghostlite",
-                65_539,
-                Self::GLC_CSRS,
-                4089,
-                2_147_221_504,
-            ),
-            TpuGeneration::V7x => Self::build(
-                generation,
-                "6acc60406",
-                65_539,
-                Self::GFC_CSRS,
-                8185,
-                3_187_408_896,
-            ),
-        }
-    }
-}
-
-/// `PCIe` BAR0 MMIO register offset for `TensorCore` 0 Run Control CSR.
-pub const BAR0_CSR_TENSORCORE_RUN_CONTROL: u64 = 0x0000_1000;
-
-/// `PCIe` BAR0 MMIO register offset for `TensorCore` 0 `SyncFlag` Completion Counter CSR.
-pub const BAR0_CSR_TENSORCORE_SYNC_FLAG: u64 = 0x0000_1008;
-
-/// `PCIe` BAR0 MMIO register offset for `TensorCore` 0 Program Counter CSR.
-pub const BAR0_CSR_TENSORCORE_PC: u64 = 0x0000_1008;
-
-/// `PCIe` BAR0 MMIO register offset for `TensorCore` 0 Execution Status CSR.
-pub const BAR0_CSR_TENSORCORE_STATUS: u64 = 0x0000_1010;
-
-/// `PCIe` BAR0 MMIO register offset for `SyncFlag` table base (`0x2000`).
-pub const BAR0_CSR_SYNC_FLAG_BASE: u64 = 0x0000_2000;
-
-/// `PCIe` BAR0 MMIO register offset for `SparseCore` 0 Run Control CSR (`0x4000`).
-pub const BAR0_CSR_SPARSECORE_RUN_CONTROL: u64 = 0x0000_4000;
-
-/// `PCIe` BAR0 MMIO register offset for HBM DMA descriptor ring head pointer (`0x8000`).
-pub const BAR0_CSR_HBM_DMA_RING_HEAD: u64 = 0x0000_8000;
-
-/// `PCIe` BAR0 MMIO register offset for HBM DMA descriptor ring tail doorbell (`0x8008`).
-pub const BAR0_CSR_HBM_DMA_RING_TAIL: u64 = 0x0000_8008;
-
-/// `PCIe` BAR0 MMIO register offset for ICI optical/electrical router link state (`0x9000`).
-pub const BAR0_CSR_ICI_ROUTER_LINK_STATE: u64 = 0x0000_9000;
-
-/// `PCIe` BAR0 MMIO register offset for ASIC junction temperature in millicelsius (`0xA000`).
-pub const BAR0_CSR_THERMAL_MILLICELSIUS: u64 = 0x0000_A000;
-
-/// `PCIe` BAR0 MMIO register offset for board power draw in milliwatts (`0xA008`).
-pub const BAR0_CSR_POWER_MILLIWATTS: u64 = 0x0000_A008;
-
-/// `PCIe` BAR0 MMIO register offset for `TensorCore` duty cycle percentage (`0xA010`).
-pub const BAR0_CSR_DUTY_CYCLE_PERCENT: u64 = 0x0000_A010;
-
-/// Gasket 32-byte DMA page-table mapping payload (`gasket_page_table_ioctl`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
-pub struct GasketPageTableIoctl {
-    /// Page table index (`0` for `TensorCore` 0).
-    pub page_table_index: u64,
-    /// Size in bytes (page-aligned to 4096 bytes).
-    pub size: u64,
-    /// Host virtual memory address (`u64`).
-    pub host_address: u64,
-    /// Device DMA virtual address (`u64`).
-    pub device_address: u64,
-}
-
-/// Gasket 32-byte interrupt `eventfd` registration payload (`gasket_interrupt_eventfd`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
-pub struct GasketInterruptEventFd {
-    /// Interrupt index (`0..N`).
-    pub interrupt: u64,
-    /// Linux `eventfd` file descriptor.
-    pub event_fd: u64,
-    /// Reserved fields (`0`).
-    pub reserved: [u64; 2],
-}
-
-/// Gasket 24-byte `dma_buf` mapping payload (`gasket_page_table_dmabuf`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
-pub struct GasketPageTableDmaBuf {
-    /// Page table index (`0`).
-    pub page_table_index: u64,
-    /// Target device IOVA address.
-    pub device_address: u64,
-    /// Linux `dma_buf` file descriptor.
-    pub dma_buf_fd: i32,
-    /// Mapping flags.
-    pub flags: u32,
-}
-
-/// VFIO 32-byte IOMMU DMA mapping payload (`vfio_iommu_type1_dma_map`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
-pub struct VfioDmaMapIoctl {
-    /// Structure size (`32` bytes).
-    pub argsz: u32,
-    /// Mapping flags (`0x3` = `READ | WRITE`).
-    pub flags: u32,
-    /// Host user-space virtual address.
-    pub vaddr: u64,
-    /// I/O virtual address in TPU HBM space.
-    pub iova: u64,
-    /// Mapping size in bytes.
-    pub size: u64,
-}
-
-/// VFIO 24-byte IOMMU DMA unmapping payload (`vfio_iommu_type1_dma_unmap`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
-pub struct VfioDmaUnmapIoctl {
-    /// Structure size (`24` bytes).
-    pub argsz: u32,
-    /// Unmap flags (`0`).
-    pub flags: u32,
-    /// I/O virtual address to unmap.
-    pub iova: u64,
-    /// Size in bytes to unmap.
-    pub size: u64,
-}
-
-/// VFIO 24-byte interrupt signaling header (`vfio_irq_set`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
-pub struct VfioIrqSetIoctl {
-    /// Structure size (`24` bytes).
-    pub argsz: u32,
-    /// Action and data flags (`VFIO_IRQ_SET_DATA_EVENTFD | VFIO_IRQ_SET_ACTION_TRIGGER`).
-    pub flags: u32,
-    /// IRQ index (`VFIO_PCI_MSIX_IRQ_INDEX`).
-    pub index: u32,
-    /// First sub-index to configure.
-    pub start: u32,
-    /// Number of IRQs to configure.
-    pub count: u32,
-    /// Eventfd file descriptor payload.
-    pub event_fd: i32,
-}
-
-const _: () = assert!(size_of::<GasketPageTableIoctl>() == 32);
-const _: () = assert!(std::mem::offset_of!(GasketPageTableIoctl, page_table_index) == 0);
-const _: () = assert!(std::mem::offset_of!(GasketPageTableIoctl, size) == 8);
-const _: () = assert!(std::mem::offset_of!(GasketPageTableIoctl, host_address) == 16);
-const _: () = assert!(std::mem::offset_of!(GasketPageTableIoctl, device_address) == 24);
-const _: () = assert!(size_of::<GasketInterruptEventFd>() == 32);
-const _: () = assert!(std::mem::offset_of!(GasketInterruptEventFd, interrupt) == 0);
-const _: () = assert!(std::mem::offset_of!(GasketInterruptEventFd, event_fd) == 8);
-const _: () = assert!(std::mem::offset_of!(GasketInterruptEventFd, reserved) == 16);
-const _: () = assert!(size_of::<GasketPageTableDmaBuf>() == 24);
-const _: () = assert!(std::mem::offset_of!(GasketPageTableDmaBuf, page_table_index) == 0);
-const _: () = assert!(std::mem::offset_of!(GasketPageTableDmaBuf, device_address) == 8);
-const _: () = assert!(std::mem::offset_of!(GasketPageTableDmaBuf, dma_buf_fd) == 16);
-const _: () = assert!(std::mem::offset_of!(GasketPageTableDmaBuf, flags) == 20);
-const _: () = assert!(size_of::<VfioDmaMapIoctl>() == 32);
-const _: () = assert!(std::mem::offset_of!(VfioDmaMapIoctl, argsz) == 0);
-const _: () = assert!(std::mem::offset_of!(VfioDmaMapIoctl, flags) == 4);
-const _: () = assert!(std::mem::offset_of!(VfioDmaMapIoctl, vaddr) == 8);
-const _: () = assert!(std::mem::offset_of!(VfioDmaMapIoctl, iova) == 16);
-const _: () = assert!(std::mem::offset_of!(VfioDmaMapIoctl, size) == 24);
-const _: () = assert!(size_of::<VfioDmaUnmapIoctl>() == 24);
-const _: () = assert!(std::mem::offset_of!(VfioDmaUnmapIoctl, argsz) == 0);
-const _: () = assert!(std::mem::offset_of!(VfioDmaUnmapIoctl, flags) == 4);
-const _: () = assert!(std::mem::offset_of!(VfioDmaUnmapIoctl, iova) == 8);
-const _: () = assert!(std::mem::offset_of!(VfioDmaUnmapIoctl, size) == 16);
-const _: () = assert!(size_of::<VfioIrqSetIoctl>() == 24);
-const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, argsz) == 0);
-const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, flags) == 4);
-const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, index) == 8);
-const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, start) == 12);
-const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, count) == 16);
-const _: () = assert!(std::mem::offset_of!(VfioIrqSetIoctl, event_fd) == 20);
-
-bitflags::bitflags! {
-    /// Strongly-typed bitmask flags for `BAR0_CSR_TENSORCORE_RUN_CONTROL`.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct TensorCoreControlFlags: u64 {
-        /// Starts `TensorCore` instruction execution (`1 << 0`).
-        const START = 1 << 0;
-        /// Halts `TensorCore` instruction execution (`1 << 1`).
-        const HALT = 1 << 1;
-        /// Advances `TensorCore` by a single VLIW bundle (`1 << 2`).
-        const SINGLE_STEP = 1 << 2;
-        /// Performs a soft architectural reset of the `TensorCore` (`1 << 3`).
-        const SOFT_RESET = 1 << 3;
-        /// Clears sticky fault bits in the `TensorCore` status CSR (`1 << 4`).
-        const CLEAR_FAULT = 1 << 4;
-    }
-
-    /// Strongly-typed bitmask flags for `BAR0_CSR_TENSORCORE_STATUS`.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct TensorCoreStatusFlags: u64 {
-        /// `TensorCore` is idle and ready for launch (`1 << 0`).
-        const IDLE = 1 << 0;
-        /// `TensorCore` is actively executing bundles (`1 << 1`).
-        const RUNNING = 1 << 1;
-        /// `TensorCore` has completed the last launched program (`1 << 2`).
-        const COMPLETED = 1 << 2;
-        /// Uncorrectable HBM ECC error detected (`1 << 3`).
-        const HBM_ECC_ERROR = 1 << 3;
-        /// Matrix Multiply Unit (MXU) arithmetic fault (`1 << 4`).
-        const MXU_OVERFLOW = 1 << 4;
-        /// Architectural `SyncFlag` barrier timeout (`1 << 5`).
-        const SYNC_FLAG_TIMEOUT = 1 << 5;
-        /// Device execution has been poisoned (`1 << 6`).
-        const POISONED = 1 << 6;
-    }
-
-    /// Strongly-typed bitmask flags for `VFIO_IOMMU_MAP_DMA` (`VfioDmaMapIoctl::flags`).
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct VfioDmaMapFlags: u32 {
-        /// Device may read from the mapped DMA region (`1 << 0`).
-        const READ = 1 << 0;
-        /// Device may write to the mapped DMA region (`1 << 1`).
-        const WRITE = 1 << 1;
-    }
-
-    /// Strongly-typed bitmask flags for `VFIO_DEVICE_SET_IRQS` (`VfioIrqSetIoctl::flags`).
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct VfioIrqSetFlags: u32 {
-        /// No payload data (`1 << 0`).
-        const DATA_NONE = 1 << 0;
-        /// Boolean payload (`1 << 1`).
-        const DATA_BOOL = 1 << 1;
-        /// Linux `eventfd` payload (`1 << 2`).
-        const DATA_EVENTFD = 1 << 2;
-        /// Mask the interrupt (`1 << 3`).
-        const ACTION_MASK = 1 << 3;
-        /// Unmask the interrupt (`1 << 4`).
-        const ACTION_UNMASK = 1 << 4;
-        /// Trigger the interrupt (`1 << 5`).
-        const ACTION_TRIGGER = 1 << 5;
-    }
-
-    /// Strongly-typed bitmask flags for `BAR0_CSR_ICI_ROUTER_LINK_STATE` (`0x9000`).
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct IciLinkStateFlags: u64 {
-        /// Inter-Chip Interconnect (ICI) Port 0 link is up (`1 << 0`).
-        const PORT_0_UP = 1 << 0;
-        /// Inter-Chip Interconnect (ICI) Port 1 link is up (`1 << 1`).
-        const PORT_1_UP = 1 << 1;
-        /// Inter-Chip Interconnect (ICI) Port 2 link is up (`1 << 2`).
-        const PORT_2_UP = 1 << 2;
-        /// Inter-Chip Interconnect (ICI) Port 3 link is up (`1 << 3`).
-        const PORT_3_UP = 1 << 3;
-        /// All 4 torus optical/electrical ICI links are healthy (`0x0F`).
-        const ALL_PORTS_HEALTHY = Self::PORT_0_UP.bits()
-            | Self::PORT_1_UP.bits()
-            | Self::PORT_2_UP.bits()
-            | Self::PORT_3_UP.bits();
-    }
-}
-
-/// Hardware 32-byte HBM DMA ring descriptor (`HbmDmaRingDescriptor`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct HbmDmaRingDescriptor {
-    /// Source IOVA or HBM physical address.
-    pub src_iova: u64,
-    /// Destination IOVA or HBM physical address.
-    pub dst_iova: u64,
-    /// Transfer length in bytes.
-    pub length_bytes: u32,
-    /// DMA direction and attribute flags (`0` = H2D, `1` = D2H, `2` = D2D).
-    pub direction_flags: u32,
-    /// Architectural `SyncFlag` ID incremented upon DMA completion.
-    pub completion_sync_flag: u64,
-}
-
-const _: () = assert!(size_of::<HbmDmaRingDescriptor>() == 32);
-
-/// Type alias matching the architectural DMA ring descriptor name (`DmaRingDescriptor`).
-pub type DmaRingDescriptor = HbmDmaRingDescriptor;
-
-/// Type alias matching the architectural MMIO aperture name (`MmioAperture`).
-pub type MmioAperture = MappedBarAperture;
-
-/// Type alias matching the `sysfs` `PCIe` scanner name (`PciSysfsScanner`).
-pub type PciSysfsScanner = PciDeviceEnumerator;
-
-/// Type alias for [`HbmRegionAllocator`] used for on-chip Vector Memory (VMEM) region allocation (`VmemRegionAllocator`).
-pub type VmemRegionAllocator = HbmRegionAllocator;
-
-/// Coalescing free-list and allocated-interval tracker for TPU HBM and VMEM address spaces.
-#[derive(Debug, Clone)]
-pub struct HbmRegionAllocator {
-    /// Base virtual/physical address of the managed memory space.
-    pub base_address: u64,
-    /// Total capacity in bytes of the managed memory space.
-    pub capacity_bytes: usize,
-    /// Map of free block start addresses to their contiguous byte lengths.
-    free_blocks: BTreeMap<u64, usize>,
-    /// Map of active allocation start addresses to their aligned byte lengths.
-    allocated_blocks: BTreeMap<u64, usize>,
-}
-
-impl HbmRegionAllocator {
-    /// Creates a new [`HbmRegionAllocator`] managing `[base_address, base_address + capacity_bytes)`.
-    ///
-    /// # Arguments
-    ///
-    /// * `base_address` - Starting HBM/VMEM address (e.g., `0x1000_0000`).
-    /// * `capacity_bytes` - Total capacity of the region in bytes.
-    #[must_use]
-    pub fn new(base_address: u64, capacity_bytes: usize) -> Self {
-        let mut free_blocks = BTreeMap::new();
-        if capacity_bytes > 0 {
-            free_blocks.insert(base_address, capacity_bytes);
-        }
-        Self {
-            base_address,
-            capacity_bytes,
-            free_blocks,
-            allocated_blocks: BTreeMap::new(),
-        }
-    }
-
-    /// Resizes the total capacity of the allocator and resets free blocks around active allocations.
-    ///
-    /// # Arguments
-    ///
-    /// * `new_capacity` - New total capacity in bytes.
-    pub fn set_capacity(&mut self, new_capacity: usize) {
-        self.capacity_bytes = new_capacity;
-        let used: usize = self.allocated_blocks.values().sum();
-        self.free_blocks.clear();
-        if new_capacity > used {
-            let next_start = self
-                .allocated_blocks
-                .iter()
-                .next_back()
-                .map_or(self.base_address, |(&addr, &len)| addr + len as u64);
-            self.free_blocks.insert(next_start, new_capacity - used);
-        }
-    }
-
-    /// Allocates a page-aligned (`4096`-byte) block of at least `requested_bytes` using first-fit
-    /// and splits any remaining tail back into the free list.
-    ///
-    /// # Arguments
-    ///
-    /// * `requested_bytes` - Number of bytes requested.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::OutOfMemory`] if no contiguous free block is large enough.
-    pub fn allocate(&mut self, requested_bytes: usize) -> LibTpuResult<DeviceAddress> {
-        let aligned_size = requested_bytes.max(256).div_ceil(4096) * 4096;
-        let candidate = self
-            .free_blocks
-            .iter()
-            .find(|(_, len)| **len >= aligned_size)
-            .map(|(&addr, &len)| (addr, len));
-        let Some((addr, block_len)) = candidate else {
-            return Err(LibTpuError::OutOfMemory {
-                requested_bytes,
-                available_bytes: self.largest_free_block_bytes(),
-            });
-        };
-        self.free_blocks.remove(&addr);
-        let remainder = block_len - aligned_size;
-        if remainder > 0 {
-            self.free_blocks
-                .insert(addr + aligned_size as u64, remainder);
-        }
-        self.allocated_blocks.insert(addr, aligned_size);
-        Ok(DeviceAddress(addr))
-    }
-
-    /// Frees a previously allocated block at `address` and coalesces it with adjacent predecessor
-    /// and successor free blocks.
-    ///
-    /// # Arguments
-    ///
-    /// * `address` - [`DeviceAddress`] returned by [`HbmRegionAllocator::allocate`].
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::InvalidArgument`] if `address` is not an active allocation.
-    pub fn deallocate(&mut self, address: DeviceAddress) -> LibTpuResult<usize> {
-        let Some(freed_len) = self.allocated_blocks.remove(&address.0) else {
-            return Err(LibTpuError::InvalidArgument {
-                parameter: "address",
-                reason: format!("HBM block {address} is not allocated"),
-            });
-        };
-        let mut merged_start = address.0;
-        let mut merged_len = freed_len;
-
-        let prev_merge = self
-            .free_blocks
-            .range(..address.0)
-            .next_back()
-            .filter(|&(&prev_start, &prev_len)| prev_start + prev_len as u64 == merged_start)
-            .map(|(&prev_start, &prev_len)| (prev_start, prev_len));
-        if let Some((prev_start, prev_len)) = prev_merge {
-            self.free_blocks.remove(&prev_start);
-            merged_start = prev_start;
-            merged_len += prev_len;
-        }
-        let next_expected = merged_start + merged_len as u64;
-        if let Some(next_len) = self.free_blocks.remove(&next_expected) {
-            merged_len += next_len;
-        }
-        self.free_blocks.insert(merged_start, merged_len);
-        Ok(freed_len)
-    }
-
-    /// Returns the size in bytes of the largest contiguous free block in the allocator.
-    #[must_use]
-    pub fn largest_free_block_bytes(&self) -> usize {
-        self.free_blocks.values().copied().max().unwrap_or(0)
-    }
-}
-
-/// Safe volatile MMIO wrapper around an `mmap`-ed `PCIe` BAR0/BAR2 virtual memory aperture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MappedBarAperture {
-    /// Base user-space virtual address returned by `mmap`.
-    pub base_vaddr: usize,
-    /// Total mapped aperture length in bytes.
-    pub size: ByteSize,
-}
-
-impl MappedBarAperture {
-    /// Performs a bounds-checked, 8-byte-aligned volatile 64-bit CSR read at `offset`.
-    ///
-    /// # Arguments
-    ///
-    /// * `offset` - Byte offset within the mapped BAR aperture.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` is unaligned or exceeds `self.size`.
-    pub fn read_csr_u64(&self, offset: MmioOffset) -> LibTpuResult<u64> {
-        let off = usize::try_from(offset.0).unwrap_or(usize::MAX);
-        if (off & 7) != 0 || off.saturating_add(8) > self.size.0 || self.base_vaddr == 0 {
-            return Err(LibTpuError::MmioOutOfBounds {
-                bar_index: 0,
-                offset: offset.0,
-                size: 8,
-            });
-        }
-        let reg_ptr = (self.base_vaddr + off) as *const u64;
-        // SAFETY: `reg_ptr` is 8-byte aligned and within `[base_vaddr, base_vaddr + size)`.
-        let val = unsafe { std::ptr::read_volatile(reg_ptr) };
-        Ok(val)
-    }
-
-    /// Performs a bounds-checked, 8-byte-aligned volatile 64-bit CSR write at `offset`.
-    ///
-    /// # Arguments
-    ///
-    /// * `offset` - Byte offset within the mapped BAR aperture.
-    /// * `value` - 64-bit CSR value to write.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` is unaligned or exceeds `self.size`.
-    pub fn write_csr_u64(&self, offset: MmioOffset, value: u64) -> LibTpuResult<()> {
-        let off = usize::try_from(offset.0).unwrap_or(usize::MAX);
-        if (off & 7) != 0 || off.saturating_add(8) > self.size.0 || self.base_vaddr == 0 {
-            return Err(LibTpuError::MmioOutOfBounds {
-                bar_index: 0,
-                offset: offset.0,
-                size: 8,
-            });
-        }
-        let reg_ptr = (self.base_vaddr + off) as *mut u64;
-        // SAFETY: `reg_ptr` is 8-byte aligned and within `[base_vaddr, base_vaddr + size)`.
-        unsafe {
-            std::ptr::write_volatile(reg_ptr, value);
-        }
-        Ok(())
-    }
-
-    /// Performs a bounds-checked, 4-byte-aligned volatile 32-bit CSR read at `offset`.
-    ///
-    /// # Arguments
-    ///
-    /// * `offset` - Byte offset within the mapped BAR aperture.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` is unaligned or exceeds `self.size`.
-    pub fn read_csr_u32(&self, offset: MmioOffset) -> LibTpuResult<u32> {
-        let off = usize::try_from(offset.0).unwrap_or(usize::MAX);
-        if (off & 3) != 0 || off.saturating_add(4) > self.size.0 || self.base_vaddr == 0 {
-            return Err(LibTpuError::MmioOutOfBounds {
-                bar_index: 0,
-                offset: offset.0,
-                size: 4,
-            });
-        }
-        let reg_ptr = (self.base_vaddr + off) as *const u32;
-        // SAFETY: `reg_ptr` is 4-byte aligned and within `[base_vaddr, base_vaddr + size)`.
-        let val = unsafe { std::ptr::read_volatile(reg_ptr) };
-        Ok(val)
-    }
-
-    /// Performs a bounds-checked, 4-byte-aligned volatile 32-bit CSR write at `offset`.
-    ///
-    /// # Arguments
-    ///
-    /// * `offset` - Byte offset within the mapped BAR aperture.
-    /// * `value` - 32-bit CSR value to write.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` is unaligned or exceeds `self.size`.
-    pub fn write_csr_u32(&self, offset: MmioOffset, value: u32) -> LibTpuResult<()> {
-        let off = usize::try_from(offset.0).unwrap_or(usize::MAX);
-        if (off & 3) != 0 || off.saturating_add(4) > self.size.0 || self.base_vaddr == 0 {
-            return Err(LibTpuError::MmioOutOfBounds {
-                bar_index: 0,
-                offset: offset.0,
-                size: 4,
-            });
-        }
-        let reg_ptr = (self.base_vaddr + off) as *mut u32;
-        // SAFETY: `reg_ptr` is 4-byte aligned and within `[base_vaddr, base_vaddr + size)`.
-        unsafe {
-            std::ptr::write_volatile(reg_ptr, value);
-        }
-        Ok(())
-    }
-}
-
-/// Discovered `PCIe` Google Cloud TPU device descriptor from `/sys/bus/pci/devices/*`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiscoveredPciTpuDevice {
-    /// `PCIe` BDF slot name (e.g., `"0000:00:04.0"`).
-    pub bdf_slot: String,
-    /// `PCIe` Vendor ID (`0x1ae0`).
-    pub vendor_id: PciVendorId,
-    /// `PCIe` Device ID (`0x0027`, `0x0056`, `0x005e`, `0x0062`, `0x0063`, `0x006f`, `0x0076`).
-    pub device_id: PciDeviceId,
-    /// Detected TPU architecture generation.
-    pub generation: TpuGeneration,
-    /// Detected kernel driver binding mode (`Gasket` or `Vfio`).
-    pub driver_mode: KernelDriverMode,
-    /// Device node path (e.g., `"/dev/accel0"` or `"/dev/vfio/0"`).
-    pub device_node_path: String,
-}
-
-/// Linux `sysfs` `PCIe` hardware enumerator for Google Cloud TPU ASICs (`0x1ae0`).
-#[derive(Debug, Clone, Copy, Default)]
-pub struct PciDeviceEnumerator;
-
-impl PciDeviceEnumerator {
-    /// Maps a Google `PCIe` Device ID (`0x1ae0:<device_id>`) to its [`TpuGeneration`].
-    ///
-    /// # Arguments
-    ///
-    /// * `device_id` - 16-bit `PCIe` Device ID.
-    #[must_use]
-    pub const fn generation_from_pci_device_id(device_id: PciDeviceId) -> Option<TpuGeneration> {
-        match device_id.0 {
-            0x0027 => Some(TpuGeneration::V3),
-            0x0056 => Some(TpuGeneration::V4),
-            0x005e | 0x0062 => Some(TpuGeneration::V5p),
-            0x0063 => Some(TpuGeneration::V5e),
-            0x006f => Some(TpuGeneration::V6e),
-            0x0076 => Some(TpuGeneration::V7x),
-            _ => None,
-        }
-    }
-
-    /// Parses a hexadecimal `sysfs` attribute string such as `"0x1ae0\n"` into a `u16`.
-    ///
-    /// # Arguments
-    ///
-    /// * `raw` - Raw contents of a `sysfs` `vendor` or `device` file.
-    #[must_use]
-    pub fn parse_hex_u16(raw: &str) -> Option<u16> {
-        let trimmed = raw.trim().trim_start_matches("0x").trim_start_matches("0X");
-        u16::from_str_radix(trimmed, 16).ok()
-    }
-
-    /// Scans a `sysfs` PCI devices directory (e.g., `/sys/bus/pci/devices`) and `/dev` root to
-    /// discover all attached Google Cloud TPU `PCIe` functions.
-    ///
-    /// # Arguments
-    ///
-    /// * `sysfs_pci_dir` - Path to `/sys/bus/pci/devices`.
-    /// * `dev_root` - Path to `/dev`.
-    #[must_use]
-    pub fn scan_sysfs(
-        sysfs_pci_dir: &std::path::Path,
-        dev_root: &std::path::Path,
-    ) -> Vec<DiscoveredPciTpuDevice> {
-        let Ok(entries) = std::fs::read_dir(sysfs_pci_dir) else {
-            return Vec::new();
-        };
-        let mut slot_paths: Vec<std::path::PathBuf> =
-            entries.filter_map(|e| e.ok().map(|d| d.path())).collect();
-        slot_paths.sort();
-
-        slot_paths
-            .into_iter()
-            .enumerate()
-            .filter_map(|(idx, path)| {
-                let vendor_str = std::fs::read_to_string(path.join("vendor")).unwrap_or_default();
-                let device_str = std::fs::read_to_string(path.join("device")).unwrap_or_default();
-                let vendor_raw = Self::parse_hex_u16(&vendor_str).filter(|&v| v == 0x1ae0)?;
-                let device_raw = Self::parse_hex_u16(&device_str)?;
-                let pci_dev_id = PciDeviceId(device_raw);
-                let generation = Self::generation_from_pci_device_id(pci_dev_id)?;
-                let bdf_slot = path
-                    .file_name()
-                    .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
-                let (driver_mode, device_node_path) = if path.join("vfio").exists() {
-                    (
-                        KernelDriverMode::Vfio,
-                        dev_root
-                            .join("vfio")
-                            .join(idx.to_string())
-                            .to_string_lossy()
-                            .into_owned(),
-                    )
-                } else {
-                    (
-                        KernelDriverMode::Gasket,
-                        dev_root
-                            .join(format!("accel{idx}"))
-                            .to_string_lossy()
-                            .into_owned(),
-                    )
-                };
-                Some(DiscoveredPciTpuDevice {
-                    bdf_slot,
-                    vendor_id: PciVendorId(vendor_raw),
-                    device_id: pci_dev_id,
-                    generation,
-                    driver_mode,
-                    device_node_path,
-                })
-            })
-            .collect()
-    }
-
-    /// Convenience wrapper discovering TPU devices from a virtual `sysfs` PCI devices directory.
-    ///
-    /// # Arguments
-    ///
-    /// * `sysfs_pci_dir` - Path to `/sys/bus/pci/devices` (or virtual test directory).
-    #[must_use]
-    pub fn discover_from_sysfs_root(
-        sysfs_pci_dir: &std::path::Path,
-    ) -> Vec<DiscoveredPciTpuDevice> {
-        Self::scan_sysfs(sysfs_pci_dir, std::path::Path::new("/dev"))
-    }
-}
-
-/// Specification for a single logical TPU device in a discovered topology.
-#[derive(Debug, Clone)]
-pub struct DeviceSpec {
-    /// Global logical device identifier.
-    pub device_id: DeviceId,
-    /// Physical chip identifier.
-    pub chip_id: ChipId,
-    /// Core index on the physical chip.
-    pub core_on_chip: CoreId,
-    /// Host identifier owning this chip.
-    pub host_id: HostId,
-    /// PJRT process index owning this device.
-    pub process_index: ProcessIndex,
-    /// Local hardware ordinal on the host.
-    pub local_hardware_id: LocalHardwareId,
-    /// 3D torus coordinates `(x, y, z)` of the chip.
-    pub chip_coords: ChipCoordinates,
-    /// 3D torus coordinates `(x, y, z)` of the host.
-    pub host_coords: ChipCoordinates,
-    /// Whether this device is directly addressable by the current process.
-    pub is_addressable: bool,
-    /// TPU hardware generation.
-    pub generation: TpuGeneration,
-}
-
-/// Complete TPU slice topology specification discovered by a [`TpuHal`].
-#[derive(Debug, Clone)]
-pub struct TopologySpec {
-    /// Platform identifier (`"tpu"`).
-    pub platform_name: String,
-    /// Platform human-readable version string.
-    pub platform_version: String,
-    /// Hardware generation of chips in the topology.
-    pub generation: TpuGeneration,
-    /// 3D mesh bounds of chips across the entire slice.
-    pub chip_bounds: ChipCoordinates,
-    /// 3D mesh bounds of hosts across the slice.
-    pub host_bounds: ChipCoordinates,
-    /// Number of physical chips per host.
-    pub chips_per_host: u32,
-    /// Ordered list of all logical devices in the slice.
-    pub devices: Vec<DeviceSpec>,
-}
-
-/// On-device HBM memory usage statistics matching `PJRT_Device_MemoryStats`.
-#[derive(Debug, Clone, Copy)]
-pub struct DeviceMemoryStats {
-    /// Number of bytes currently allocated and in use.
-    pub bytes_in_use: i64,
-    /// High-water mark of bytes in use since creation or last clear.
-    pub peak_bytes_in_use: i64,
-    /// Total number of successful allocation operations.
-    pub num_allocs: i64,
-    /// Size in bytes of the largest single allocation.
-    pub largest_alloc_size: i64,
-    /// Total HBM capacity limit in bytes.
-    pub bytes_limit: i64,
-    /// Number of bytes currently reserved in the driver pool.
-    pub bytes_reserved: i64,
-    /// High-water mark of reserved bytes.
-    pub peak_bytes_reserved: i64,
-    /// Maximum reservable limit in bytes.
-    pub bytes_reservable_limit: i64,
-    /// Largest contiguous free block size in bytes.
-    pub largest_free_block_bytes: i64,
-    /// Bytes currently held by the sub-allocator pool.
-    pub pool_bytes: i64,
-    /// Peak bytes held by the sub-allocator pool.
-    pub peak_pool_bytes: i64,
-}
+pub use self::pci::{
+    DeviceSpec, DiscoveredPciTpuDevice, KernelDriverMode, PciDeviceEnumerator, PciSysfsScanner,
+    TopologySpec,
+};
+pub use self::registers::{
+    BAR0_CSR_DUTY_CYCLE_PERCENT, BAR0_CSR_HBM_DMA_RING_HEAD, BAR0_CSR_HBM_DMA_RING_TAIL,
+    BAR0_CSR_ICI_ROUTER_LINK_STATE, BAR0_CSR_POWER_MILLIWATTS, BAR0_CSR_SPARSECORE_RUN_CONTROL,
+    BAR0_CSR_SYNC_FLAG_BASE, BAR0_CSR_TENSORCORE_PC, BAR0_CSR_TENSORCORE_RUN_CONTROL,
+    BAR0_CSR_TENSORCORE_STATUS, BAR0_CSR_TENSORCORE_SYNC_FLAG, BAR0_CSR_THERMAL_MILLICELSIUS,
+    ChipRegisterMap, DmaRingDescriptor, GASKET_IOCTL_CLEAR_EVENTFD,
+    GASKET_IOCTL_CLEAR_INTERRUPT_COUNTS, GASKET_IOCTL_MAP_BUFFER, GASKET_IOCTL_MAP_DMABUF,
+    GASKET_IOCTL_NUMBER_PAGE_TABLES, GASKET_IOCTL_PAGE_TABLE_SIZE,
+    GASKET_IOCTL_PARTITION_PAGE_TABLE, GASKET_IOCTL_RESET, GASKET_IOCTL_SET_EVENTFD,
+    GASKET_IOCTL_SIMPLE_PAGE_TABLE_SIZE, GASKET_IOCTL_UNMAP_BUFFER, GasketInterruptEventFd,
+    GasketPageTableDmaBuf, GasketPageTableIoctl, HbmDmaRingDescriptor, IciLinkStateFlags,
+    TensorCoreControlFlags, TensorCoreStatusFlags, VFIO_CHECK_EXTENSION, VFIO_DEVICE_GET_INFO,
+    VFIO_DEVICE_GET_IRQ_INFO, VFIO_DEVICE_GET_REGION_INFO, VFIO_DEVICE_RESET, VFIO_DEVICE_SET_IRQS,
+    VFIO_DEVICE_SET_IRQS_IOCTL, VFIO_GET_API_VERSION, VFIO_GROUP_GET_DEVICE_FD,
+    VFIO_GROUP_GET_STATUS, VFIO_GROUP_SET_CONTAINER, VFIO_IOMMU_MAP_DMA, VFIO_IOMMU_MAP_DMA_IOCTL,
+    VFIO_IOMMU_UNMAP_DMA, VFIO_IOMMU_UNMAP_DMA_IOCTL, VFIO_SET_IOMMU, VfioDmaMapFlags,
+    VfioDmaMapIoctl, VfioDmaUnmapIoctl, VfioIrqSetFlags, VfioIrqSetIoctl,
+};
+pub use self::simulated::SimulatedTpuHal;
+pub use self::syscall::{
+    EmulatedKernelDriverBackend, IoctlPayload, KernelDriverOps, MockKernelSyscalls,
+    POSIX_FIOCLEX_IOCTL, PosixKernelDriverBackend, RealLinuxSyscalls, SimulatedKernelDriverBackend,
+    SyscallProvider, VirtualTpuKernelDevice,
+};
+pub use self::vm::{DeepSeaVm, TpuCoreVmState};
+
+use crate::compiler::CompiledProgram;
+use crate::error::LibTpuResult;
+use crate::types::{ByteSize, DeviceAddress, DeviceId, MemoryKind};
 
 /// Hardware Abstraction Layer trait for TPU device discovery, HBM allocation, DMA transfers,
 /// and program execution.
@@ -1011,7 +66,7 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError`] if hardware discovery fails.
+    /// Returns [`crate::error::LibTpuError`] if hardware discovery fails.
     fn discover_topology(&self) -> LibTpuResult<TopologySpec>;
 
     /// Allocates a region of device memory on `device_id`.
@@ -1024,7 +79,7 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::DeviceNotFound`] or [`LibTpuError::OutOfMemory`] on failure.
+    /// Returns [`crate::error::LibTpuError::DeviceNotFound`] or [`crate::error::LibTpuError::OutOfMemory`] on failure.
     fn allocate_device_memory(
         &self,
         device_id: DeviceId,
@@ -1041,7 +96,7 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError`] if the device or allocation does not exist.
+    /// Returns [`crate::error::LibTpuError`] if the device or allocation does not exist.
     fn deallocate_device_memory(
         &self,
         device_id: DeviceId,
@@ -1058,7 +113,7 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::TransferFailed`] if the address or bounds are invalid.
+    /// Returns [`crate::error::LibTpuError::TransferFailed`] if the address or bounds are invalid.
     fn write_device_memory(
         &self,
         device_id: DeviceId,
@@ -1076,7 +131,7 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::TransferFailed`] if the address or bounds are invalid.
+    /// Returns [`crate::error::LibTpuError::TransferFailed`] if the address or bounds are invalid.
     fn read_device_memory(
         &self,
         device_id: DeviceId,
@@ -1096,7 +151,7 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::TransferFailed`] if either buffer is invalid or too small.
+    /// Returns [`crate::error::LibTpuError::TransferFailed`] if either buffer is invalid or too small.
     fn copy_device_to_device(
         &self,
         src_device: DeviceId,
@@ -1117,7 +172,7 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::ExecutionFailed`] if the device is poisoned or buffers are invalid.
+    /// Returns [`crate::error::LibTpuError::ExecutionFailed`] if the device is poisoned or buffers are invalid.
     fn execute_program(
         &self,
         device_id: DeviceId,
@@ -1134,7 +189,7 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::DeviceNotFound`] if `device_id` is invalid.
+    /// Returns [`crate::error::LibTpuError::DeviceNotFound`] if `device_id` is invalid.
     fn memory_stats(&self, device_id: DeviceId) -> LibTpuResult<DeviceMemoryStats>;
 
     /// Clears peak HBM memory statistics for `device_id` (`PJRT_Device_ClearMemoryStats`).
@@ -1145,7 +200,7 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::DeviceNotFound`] if `device_id` is invalid.
+    /// Returns [`crate::error::LibTpuError::DeviceNotFound`] if `device_id` is invalid.
     fn clear_memory_stats(&self, device_id: DeviceId) -> LibTpuResult<()>;
 
     /// Poisons execution on `device_id` with a specific status payload (`PJRT_Device_PoisonExecution`).
@@ -1157,2396 +212,8 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::DeviceNotFound`] if `device_id` is invalid.
+    /// Returns [`crate::error::LibTpuError::DeviceNotFound`] if `device_id` is invalid.
     fn poison_device(&self, device_id: DeviceId, reason: String) -> LibTpuResult<()>;
-}
-
-/// Architectural `TensorCore` VLIW execution state machine (`TpuCoreVmState`).
-#[derive(Debug, Clone)]
-pub struct TpuCoreVmState {
-    /// 32 64-bit scalar general-purpose registers (`SREG[0..32]`).
-    pub sreg: [u64; 32],
-    /// 16 scalar predicate registers (`PREG[0..16]`).
-    pub preg: [bool; 16],
-    /// 64 vector register sublane words (`VREG[0..64]`).
-    pub vreg_words: [u32; 64],
-    /// 8 sublane predicate flags (`VMASK[0..8]`).
-    pub vmask: [bool; 8],
-    /// Systolic matrix unit (`MXU`) accumulator tile summary (`[f32; 16]`).
-    pub mxu_accum: [f32; 16],
-    /// 256 architectural synchronization flag counters (`SYNC_FLAGS[0..256]`).
-    pub sync_flags: [u32; 256],
-    /// On-chip Scalar Memory (`SMEM`) scratchpad word bank (`[u64; 64]`).
-    pub smem_words: [u64; 64],
-    /// On-chip Vector Memory (`VMEM`) scratchpad word bank (`[u32; 256]`).
-    pub vmem_words: [u32; 256],
-    /// Current VLIW bundle program counter (`PC`).
-    pub pc: u32,
-    /// Total VLIW instruction bundles executed on this core.
-    pub cycles_executed: u64,
-}
-
-impl Default for TpuCoreVmState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl TpuCoreVmState {
-    /// Creates a zero-initialized [`TpuCoreVmState`].
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            sreg: [0; 32],
-            preg: [true; 16],
-            vreg_words: [0; 64],
-            vmask: [true; 8],
-            mxu_accum: [0.0; 16],
-            sync_flags: [0; 256],
-            smem_words: [0; 64],
-            vmem_words: [0; 256],
-            pc: 0,
-            cycles_executed: 0,
-        }
-    }
-
-    /// Waits for `SYNC_FLAGS[sync_flag_id]` to reach at least `expected_value`, or returns
-    /// [`LibTpuError::SyncFlagTimeout`].
-    ///
-    /// # Arguments
-    ///
-    /// * `device_id` - Logical device identifier for diagnostics.
-    /// * `sync_flag_id` - Synchronization flag register index (`0..256`).
-    /// * `expected_value` - Minimum threshold required for barrier completion.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::SyncFlagTimeout`] if the current counter is below `expected_value`.
-    #[allow(clippy::indexing_slicing)]
-    pub const fn wait_sync_flag(
-        &self,
-        device_id: u32,
-        sync_flag_id: u32,
-        expected_value: u32,
-    ) -> LibTpuResult<()> {
-        let actual_value = self.sync_flags[(sync_flag_id as usize) & 255];
-        if actual_value < expected_value {
-            return Err(LibTpuError::SyncFlagTimeout {
-                device_id,
-                sync_flag_id,
-                expected_value,
-                actual_value,
-            });
-        }
-        Ok(())
-    }
-
-    /// Steps the `TensorCore` VLIW sequencer through a slice of 64-byte [`crate::compiler::TensorCoreVliwBundle`]s,
-    /// executing `S0` (Scalar ALU + SMEM), `V0` (Vector ALU + VMEM), `M0` (`MXU` systolic matrix accumulator),
-    /// `X0` (`EUP` transcendental unit), and `D0` (`DMA`/`SyncFlag` engine) slots in lockstep.
-    ///
-    /// # Arguments
-    ///
-    /// * `bundles` - Slice of 64-byte architectural VLIW instruction bundles.
-    #[allow(clippy::indexing_slicing)]
-    pub fn execute_vliw_stream(&mut self, bundles: &[crate::compiler::TensorCoreVliwBundle]) {
-        for bundle in bundles {
-            self.pc = bundle.header.pc_offset;
-            // S0: Scalar ALU & SMEM scratchpad update
-            let s_dst = usize::from(bundle.scalar_slot.dst_sreg) & 31;
-            let s_src0 = self.sreg[usize::from(bundle.scalar_slot.src0_sreg) & 31];
-            let s_src1 = self.sreg[usize::from(bundle.scalar_slot.src1_sreg) & 31];
-            let s_imm = u64::from(bundle.scalar_slot.imm32).max(1);
-            let s_val = match bundle.scalar_slot.opcode {
-                2 => s_src0.wrapping_sub(s_src1),
-                3 => s_src0 & s_src1,
-                4 => s_src0 | s_src1,
-                5 => s_src0 ^ s_src1,
-                _ => s_src0.wrapping_add(s_imm),
-            };
-            self.sreg[s_dst] = s_val;
-            self.smem_words[s_dst & 63] = s_val;
-            self.preg[s_dst & 15] = s_val != 0;
-
-            // V0: Vector ALU & VMEM scratchpad update
-            let v_dst = usize::try_from(bundle.vector_slot.dst_vreg).unwrap_or(0) & 63;
-            let v_src0 =
-                self.vreg_words[usize::try_from(bundle.vector_slot.src0_vreg).unwrap_or(0) & 63];
-            let v_src1 =
-                self.vreg_words[usize::try_from(bundle.vector_slot.src1_vreg).unwrap_or(0) & 63];
-            let v_op = u32::from(bundle.vector_slot.opcode);
-            let v_res = v_src0.wrapping_add(v_src1).wrapping_add(v_op);
-            self.vreg_words[v_dst] = v_res;
-            self.vmem_words[v_dst & 255] = v_res;
-            self.vmask[v_dst & 7] = (bundle.vector_slot.lane_mask & 1) != 0;
-
-            // X0: Extended Unary / Transcendental Pipeline (EUP)
-            if bundle.xunary_slot.opcode != 0 {
-                let x_dst = usize::from(bundle.xunary_slot.dst_vreg) & 63;
-                let x_src = self.vreg_words[usize::from(bundle.xunary_slot.src_vreg) & 63];
-                self.vreg_words[x_dst] = x_src.wrapping_add(u32::from(bundle.xunary_slot.opcode));
-            }
-
-            // M0: Systolic Matrix Multiply Unit (MXU)
-            if bundle.matrix_slot.opcode != 0 {
-                let m_idx = usize::from(bundle.matrix_slot.acc_vreg) & 15;
-                let k_tiles = f32::from(bundle.matrix_slot.k_tiles.max(1));
-                self.mxu_accum[m_idx] += k_tiles;
-            }
-
-            // D0: Async DMA & SyncFlag completion barrier
-            let sf_idx = usize::try_from(bundle.dma_slot.sync_flag_id).unwrap_or(0) & 255;
-            self.sync_flags[sf_idx] = self.sync_flags[sf_idx].wrapping_add(1);
-            self.cycles_executed = self.cycles_executed.wrapping_add(1);
-        }
-    }
-
-    /// Decodes a binary `IMEM` image of 64-byte [`crate::compiler::TensorCoreVliwBundle`] words and steps
-    /// the [`TpuCoreVmState`] VLIW execution engine through every bundle.
-    ///
-    /// # Arguments
-    ///
-    /// * `imem_bytes` - Raw `IMEM` binary image produced by [`CompiledProgram::encode_architectural_imem`].
-    pub fn execute_imem_bytes(&mut self, imem_bytes: &[u8]) {
-        let bundles = CompiledProgram::decode_architectural_imem(imem_bytes);
-        self.execute_vliw_stream(&bundles);
-    }
-
-    /// Initializes `SyncFlag` counters and executes all `IMEM` overlays in a [`crate::proto::DeepseaExecutableProto`].
-    ///
-    /// # Arguments
-    ///
-    /// * `ds_exec` - Compiled [`crate::proto::DeepseaExecutableProto`] payload.
-    #[allow(clippy::indexing_slicing)]
-    pub fn execute_deepsea_proto(&mut self, ds_exec: &crate::proto::DeepseaExecutableProto) {
-        for sf in &ds_exec.sync_flags {
-            let idx = (sf.sync_flag_id as usize) & 255;
-            self.sync_flags[idx] = sf.initial_value;
-        }
-        for overlay in &ds_exec.overlays {
-            self.execute_imem_bytes(&overlay.encoded_bundles);
-        }
-    }
-
-    /// Dispatches a `TN_QUEUE_CONTINUATION` [`crate::proto::HostCommandEnvelopeProto`] event,
-    /// updating the `SREG[0]` continuation sequence register and `SYNC_FLAGS[0]`.
-    ///
-    /// # Arguments
-    ///
-    /// * `cmd` - Host command envelope from the `TensorCore` continuation queue.
-    #[allow(clippy::indexing_slicing)]
-    pub const fn dispatch_host_command(&mut self, cmd: &crate::proto::HostCommandEnvelopeProto) {
-        self.sreg[0] = cmd.continuation_id;
-        self.sync_flags[0] = self.sync_flags[0].wrapping_add(1);
-    }
-}
-
-/// Alias for [`TpuCoreVmState`] (`DeepSeaVm` architectural VLIW execution engine).
-pub type DeepSeaVm = TpuCoreVmState;
-
-/// Internal per-device state for [`SimulatedTpuHal`].
-#[derive(Debug)]
-struct SimulatedDeviceState {
-    /// Page-aligned (`4096` B) HBM region allocator with free-block coalescing.
-    region_allocator: HbmRegionAllocator,
-    /// Active HBM allocations mapped by [`DeviceAddress`].
-    allocations: BTreeMap<DeviceAddress, Vec<u8>>,
-    /// Memory space kind associated with each [`DeviceAddress`].
-    allocation_kinds: BTreeMap<DeviceAddress, MemoryKind>,
-    /// Bytes currently allocated.
-    bytes_in_use: usize,
-    /// Peak bytes allocated.
-    peak_bytes_in_use: usize,
-    /// Total allocation count.
-    num_allocs: i64,
-    /// Largest single allocation in bytes.
-    largest_alloc_size: usize,
-    /// Configurable HBM capacity limit in bytes.
-    capacity_bytes: usize,
-    /// Optional poison reason set by `poison_device`.
-    poison_reason: Option<String>,
-    /// Architectural `TensorCore` VLIW execution state machine.
-    vm: TpuCoreVmState,
-}
-
-/// Deterministic in-memory TPU hardware simulator implementing [`TpuHal`].
-#[derive(Debug)]
-pub struct SimulatedTpuHal {
-    /// Discovered topology specification.
-    topology: TopologySpec,
-    /// Per-device mutable HBM and execution state protected by `parking_lot::Mutex`.
-    devices: Mutex<BTreeMap<DeviceId, SimulatedDeviceState>>,
-    /// Atomic flag allowing deterministic simulation of a poisoned device map lock.
-    devices_poisoned: std::sync::atomic::AtomicBool,
-    /// Emulated `PCIe` BAR0 MMIO CSR bank updated during DMA and `TensorCore` execution.
-    pub mmio: EmulatedKernelDriverBackend,
-}
-
-impl SimulatedTpuHal {
-    /// Creates a new [`SimulatedTpuHal`] from a [`TpuInitConfig`].
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Initialization configuration specifying generation and mesh bounds.
-    #[must_use]
-    pub fn new(config: &TpuInitConfig) -> Self {
-        let generation = config.generation;
-        let devs_per_chip = generation.logical_devices_per_chip();
-        let mut devices_spec = Vec::new();
-        let mut state_map = BTreeMap::new();
-
-        let mut global_dev_id: u32 = 0;
-        let mut global_chip_id: u32 = 0;
-
-        for hz in 0..config.host_bounds.z {
-            for hy in 0..config.host_bounds.y {
-                for hx in 0..config.host_bounds.x {
-                    let host_id = hz * (config.host_bounds.x * config.host_bounds.y)
-                        + hy * config.host_bounds.x
-                        + hx;
-                    let proc_idx = i32::try_from(host_id).unwrap_or(0);
-                    let is_addressable = proc_idx == config.process_index.0;
-                    let mut local_hw_id: i32 = 0;
-
-                    for cz in 0..config.chips_per_host_bounds.z {
-                        for cy in 0..config.chips_per_host_bounds.y {
-                            for cx in 0..config.chips_per_host_bounds.x {
-                                let chip_coords = ChipCoordinates::new(
-                                    hx * config.chips_per_host_bounds.x + cx,
-                                    hy * config.chips_per_host_bounds.y + cy,
-                                    hz * config.chips_per_host_bounds.z + cz,
-                                );
-                                for core_idx in 0..devs_per_chip {
-                                    let dev_id = DeviceId(global_dev_id);
-                                    let allowed = config
-                                        .visible_devices
-                                        .as_ref()
-                                        .is_none_or(|list| list.contains(&dev_id));
-                                    if allowed {
-                                        devices_spec.push(DeviceSpec {
-                                            device_id: dev_id,
-                                            chip_id: ChipId(global_chip_id),
-                                            core_on_chip: CoreId(core_idx),
-                                            host_id: HostId(host_id),
-                                            process_index: ProcessIndex(proc_idx),
-                                            local_hardware_id: LocalHardwareId(if is_addressable {
-                                                local_hw_id
-                                            } else {
-                                                -1
-                                            }),
-                                            chip_coords,
-                                            host_coords: ChipCoordinates::new(hx, hy, hz),
-                                            is_addressable,
-                                            generation,
-                                        });
-                                        state_map.insert(
-                                            dev_id,
-                                            SimulatedDeviceState {
-                                                region_allocator: HbmRegionAllocator::new(
-                                                    0x1000_0000,
-                                                    generation.hbm_capacity_bytes().0,
-                                                ),
-                                                allocations: BTreeMap::new(),
-                                                allocation_kinds: BTreeMap::new(),
-                                                bytes_in_use: 0,
-                                                peak_bytes_in_use: 0,
-                                                num_allocs: 0,
-                                                largest_alloc_size: 0,
-                                                capacity_bytes: generation.hbm_capacity_bytes().0,
-                                                poison_reason: None,
-                                                vm: TpuCoreVmState::new(),
-                                            },
-                                        );
-                                        local_hw_id += 1;
-                                    }
-                                    global_dev_id += 1;
-                                }
-                                global_chip_id += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let chip_bounds = ChipCoordinates::new(
-            config.host_bounds.x * config.chips_per_host_bounds.x,
-            config.host_bounds.y * config.chips_per_host_bounds.y,
-            config.host_bounds.z * config.chips_per_host_bounds.z,
-        );
-
-        let topology = TopologySpec {
-            platform_name: String::from("tpu"),
-            platform_version: format!("libtpu-rs 0.0.50 ({generation})"),
-            generation,
-            chip_bounds,
-            host_bounds: config.host_bounds,
-            chips_per_host: config.chips_per_host(),
-            devices: devices_spec,
-        };
-
-        Self {
-            topology,
-            devices: Mutex::new(state_map),
-            devices_poisoned: std::sync::atomic::AtomicBool::new(false),
-            mmio: EmulatedKernelDriverBackend::default(),
-        }
-    }
-
-    /// Returns a cloned copy of the discovered [`TopologySpec`].
-    pub fn topology_spec(&self) -> TopologySpec {
-        self.topology.clone()
-    }
-
-    /// Acquires the internal `parking_lot::Mutex` device map guard or returns [`LibTpuError::LockPoisoned`].
-    fn lock_devices(
-        &self,
-    ) -> LibTpuResult<MutexGuard<'_, BTreeMap<DeviceId, SimulatedDeviceState>>> {
-        if self.devices_poisoned.load(Ordering::Acquire) {
-            return Err(LibTpuError::LockPoisoned {
-                resource: "devices",
-            });
-        }
-        Ok(self.devices.lock())
-    }
-
-    /// Overrides the HBM capacity limit of `device_id` for testing out-of-memory conditions.
-    ///
-    /// # Arguments
-    ///
-    /// * `device_id` - Target logical TPU device.
-    /// * `capacity` - New capacity limit in bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::DeviceNotFound`] if `device_id` does not exist.
-    pub fn set_device_capacity(&self, device_id: DeviceId, capacity: ByteSize) -> LibTpuResult<()> {
-        let mut guard = self.lock_devices()?;
-        let dev = guard
-            .get_mut(&device_id)
-            .ok_or(LibTpuError::DeviceNotFound {
-                device_id: device_id.0,
-            })?;
-        dev.capacity_bytes = capacity.0;
-        dev.region_allocator.set_capacity(capacity.0);
-        drop(guard);
-        Ok(())
-    }
-
-    /// Evaluates a single unary operation across `input_bytes`.
-    ///
-    /// # Arguments
-    ///
-    /// * `opcode` - Unary [`TpuOpCode`].
-    /// * `elem_type` - Tensor [`ElementType`].
-    /// * `input_bytes` - Source HBM byte buffer.
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss
-    )]
-    fn eval_unary_op(opcode: TpuOpCode, elem_type: ElementType, input_bytes: &[u8]) -> Vec<u8> {
-        if matches!(
-            opcode,
-            TpuOpCode::Identity
-                | TpuOpCode::AllReduceSumF32
-                | TpuOpCode::AllGather
-                | TpuOpCode::ReduceScatter
-                | TpuOpCode::CustomCall
-                | TpuOpCode::Reshape
-        ) {
-            return input_bytes.to_vec();
-        }
-        let vals = elem_type.unpack_to_f64_vec(input_bytes);
-        let mapped: Vec<f64> = match opcode {
-            TpuOpCode::NegF32 => vals.iter().map(|&v| -v).collect(),
-            TpuOpCode::ExpF32 => vals.iter().map(|&v| v.exp()).collect(),
-            TpuOpCode::TanhF32 => vals.iter().map(|&v| v.tanh()).collect(),
-            TpuOpCode::Abs => vals.iter().map(|&v| v.abs()).collect(),
-            TpuOpCode::Log => vals.iter().map(|&v| v.max(1e-12).ln()).collect(),
-            TpuOpCode::Sqrt => vals.iter().map(|&v| v.max(0.0).sqrt()).collect(),
-            TpuOpCode::Rsqrt => vals.iter().map(|&v| 1.0 / v.max(1e-12).sqrt()).collect(),
-            TpuOpCode::Sine => vals.iter().map(|&v| v.sin()).collect(),
-            TpuOpCode::Cosine => vals.iter().map(|&v| v.cos()).collect(),
-            TpuOpCode::Floor => vals.iter().map(|&v| v.floor()).collect(),
-            TpuOpCode::Ceil => vals.iter().map(|&v| v.ceil()).collect(),
-            TpuOpCode::Not => vals
-                .iter()
-                .map(|&v| f64::from(u8::from(v == 0.0)))
-                .collect(),
-            TpuOpCode::PopulationCount => vals
-                .iter()
-                .map(|&v| f64::from((v as i32 as u32).count_ones()))
-                .collect(),
-            TpuOpCode::CountLeadingZeros => vals
-                .iter()
-                .map(|&v| f64::from((v as i32 as u32).leading_zeros()))
-                .collect(),
-            TpuOpCode::Sort => {
-                let mut sorted = vals;
-                sorted.sort_by(f64::total_cmp);
-                sorted
-            }
-            TpuOpCode::RngBitGenerator => {
-                let seed = vals.first().copied().unwrap_or(1.0) as u64;
-                (0..vals.len())
-                    .map(|i| {
-                        let mixed = seed
-                            .wrapping_add((i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
-                            ^ 0xBF58_476D_1CE4_E5B9;
-                        f64::from((mixed & 0xFFFF) as u32)
-                    })
-                    .collect()
-            }
-            TpuOpCode::ReduceWindow => vals
-                .iter()
-                .enumerate()
-                .map(|(i, &v)| {
-                    let next = vals.get(i + 1).copied().unwrap_or(v);
-                    v.max(next)
-                })
-                .collect(),
-            TpuOpCode::Iota => (0..vals.len()).map(|i| i as f64).collect(),
-            TpuOpCode::Reverse => vals.iter().copied().rev().collect(),
-            TpuOpCode::ReduceMax => {
-                let mx = vals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-                vec![mx; vals.len()]
-            }
-            TpuOpCode::ReduceMin => {
-                let mn = vals.iter().copied().fold(f64::INFINITY, f64::min);
-                vec![mn; vals.len()]
-            }
-            _ => {
-                let sum: f64 = vals.iter().sum();
-                vec![sum; vals.len()]
-            }
-        };
-        elem_type.pack_from_f64_slice(&mapped)
-    }
-
-    /// Evaluates a general 2D or 3D batched matrix contraction (`dot_general`).
-    ///
-    /// # Arguments
-    ///
-    /// * `elem_type` - Output [`ElementType`].
-    /// * `v0` - Unpacked LHS elements.
-    /// * `v1` - Unpacked RHS elements.
-    /// * `attrs` - Optional [`crate::compiler::InstructionAttrs`] with input/output shapes.
-    fn eval_dot_general(
-        elem_type: ElementType,
-        v0: &[f64],
-        v1: &[f64],
-        attrs: &crate::compiler::InstructionAttrs,
-    ) -> Vec<u8> {
-        let mut batch = 1_usize;
-        let mut m = v0.len().min(v1.len());
-        let mut k = 1_usize;
-        let mut n = 1_usize;
-        let mut d = 1_usize;
-        while d.saturating_mul(d) < m {
-            d += 1;
-        }
-        if d > 1 && d.saturating_mul(d) == m {
-            m = d;
-            k = d;
-            n = d;
-        }
-        let lhs_dims = attrs
-            .input_shapes
-            .first()
-            .map_or(&[][..], |s| s.dims.as_slice());
-        let rhs_dims = attrs
-            .input_shapes
-            .get(1)
-            .map_or(&[][..], |s| s.dims.as_slice());
-        if lhs_dims.len() >= 2 && rhs_dims.len() >= 2 {
-            let l_rank = lhs_dims.len();
-            let r_rank = rhs_dims.len();
-            for &bd in lhs_dims.iter().take(l_rank - 2) {
-                batch = batch.saturating_mul(usize::try_from(bd).unwrap_or(1));
-            }
-            m = usize::try_from(lhs_dims.get(l_rank - 2).copied().unwrap_or(0)).unwrap_or(0);
-            k = usize::try_from(lhs_dims.get(l_rank - 1).copied().unwrap_or(0)).unwrap_or(0);
-            n = usize::try_from(rhs_dims.get(r_rank - 1).copied().unwrap_or(0)).unwrap_or(0);
-        }
-        let mut out_vals = Vec::with_capacity(batch * m * n);
-        for b_idx in 0..batch {
-            for r in 0..m {
-                for c in 0..n {
-                    let mut acc = 0.0_f64;
-                    for idx in 0..k {
-                        let lv = v0.get((b_idx * m + r) * k + idx).copied().unwrap_or(0.0);
-                        let rv = v1.get((b_idx * k + idx) * n + c).copied().unwrap_or(0.0);
-                        acc = lv.mul_add(rv, acc);
-                    }
-                    out_vals.push(acc);
-                }
-            }
-        }
-        elem_type.pack_from_f64_slice(&out_vals)
-    }
-
-    /// Evaluates a binary operation across `b0` and `b1`.
-    ///
-    /// # Arguments
-    ///
-    /// * `opcode` - Binary [`TpuOpCode`].
-    /// * `elem_type` - Tensor [`ElementType`].
-    /// * `b0` - First input HBM buffer.
-    /// * `b1` - Second input HBM buffer.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn eval_binary_op(opcode: TpuOpCode, elem_type: ElementType, b0: &[u8], b1: &[u8]) -> Vec<u8> {
-        if opcode == TpuOpCode::XorBytes {
-            return b0.iter().zip(b1.iter()).map(|(&x, &y)| x ^ y).collect();
-        }
-        let v0 = elem_type.unpack_to_f64_vec(b0);
-        let v1 = elem_type.unpack_to_f64_vec(b1);
-        if opcode == TpuOpCode::Concatenate {
-            let mut joined = Vec::with_capacity(v0.len() + v1.len());
-            joined.extend_from_slice(&v0);
-            joined.extend_from_slice(&v1);
-            return elem_type.pack_from_f64_slice(&joined);
-        }
-        if opcode == TpuOpCode::Gather {
-            let gathered: Vec<f64> = v1
-                .iter()
-                .map(|&idx| {
-                    let pos = (idx.max(0.0) as usize) % v0.len().max(1);
-                    v0.get(pos).copied().unwrap_or(0.0)
-                })
-                .collect();
-            return elem_type.pack_from_f64_slice(&gathered);
-        }
-        if opcode == TpuOpCode::DynamicSlice {
-            let start = (v1.first().copied().unwrap_or(0.0).max(0.0) as usize) % v0.len().max(1);
-            let rotated: Vec<f64> = (0..v0.len())
-                .map(|i| {
-                    v0.get((start + i) % v0.len().max(1))
-                        .copied()
-                        .unwrap_or(0.0)
-                })
-                .collect();
-            return elem_type.pack_from_f64_slice(&rotated);
-        }
-        if opcode == TpuOpCode::Convolution {
-            let conv: Vec<f64> = (0..v0.len())
-                .map(|i| {
-                    let mut sum = 0.0_f64;
-                    for (k, &w) in v1.iter().enumerate() {
-                        if let Some(&x) = v0.get(i + k) {
-                            sum = x.mul_add(w, sum);
-                        }
-                    }
-                    sum
-                })
-                .collect();
-            return elem_type.pack_from_f64_slice(&conv);
-        }
-        let out_vals: Vec<f64> = v0
-            .iter()
-            .zip(v1.iter())
-            .map(|(&x, &y)| match opcode {
-                TpuOpCode::AddF32 | TpuOpCode::AddS32 => x + y,
-                TpuOpCode::SubF32 => x - y,
-                TpuOpCode::DivF32 => x / y,
-                TpuOpCode::Rem => x % y,
-                TpuOpCode::MaxF32 => x.max(y),
-                TpuOpCode::MinF32 => x.min(y),
-                TpuOpCode::And => f64::from((x as i64 & y as i64) as i32),
-                TpuOpCode::Or => f64::from((x as i64 | y as i64) as i32),
-                TpuOpCode::ShiftLeft => {
-                    let shift = (y.max(0.0) as u32) & 31;
-                    f64::from((x as i32).wrapping_shl(shift))
-                }
-                TpuOpCode::ShiftRightArithmetic => {
-                    let shift = (y.max(0.0) as u32) & 31;
-                    f64::from((x as i32).wrapping_shr(shift))
-                }
-                TpuOpCode::ShiftRightLogical => {
-                    let shift = (y.max(0.0) as u32) & 31;
-                    f64::from((x as i32 as u32).wrapping_shr(shift))
-                }
-                TpuOpCode::CompareEq => f64::from(u8::from((x - y).abs() < 1e-9)),
-                TpuOpCode::CompareLt => f64::from(u8::from(x < y)),
-                TpuOpCode::CompareGt => f64::from(u8::from(x > y)),
-                _ => x * y,
-            })
-            .collect();
-        elem_type.pack_from_f64_slice(&out_vals)
-    }
-
-    /// Evaluates a single [`crate::compiler::TpuInstructionBundle`] with its [`crate::compiler::InstructionAttrs`].
-    ///
-    /// # Arguments
-    ///
-    /// * `bundle` - Lowered [`crate::compiler::TpuInstructionBundle`].
-    /// * `default_elem_type` - Default [`ElementType`] if not overridden by `bundle.attrs`.
-    /// * `operands` - Slice of operand byte slices.
-    #[allow(clippy::too_many_lines, clippy::or_fun_call)]
-    fn eval_bundle_with_attrs(
-        bundle: &crate::compiler::TpuInstructionBundle,
-        default_elem_type: ElementType,
-        operands: &[&[u8]],
-    ) -> Vec<u8> {
-        let out_elem_type = bundle
-            .attrs
-            .output_shape
-            .as_ref()
-            .map_or(default_elem_type, |s| s.element_type);
-        let in_elem_type = bundle
-            .attrs
-            .input_shapes
-            .first()
-            .map_or(out_elem_type, |s| s.element_type);
-        let b0 = operands.first().copied().unwrap_or(&[]);
-
-        match bundle.opcode {
-            TpuOpCode::Constant => {
-                if !bundle.attrs.constant_bytes.is_empty() {
-                    return bundle.attrs.constant_bytes.clone();
-                }
-                return vec![0_u8; 16];
-            }
-            TpuOpCode::Convert => {
-                let vals = in_elem_type.unpack_to_f64_vec(b0);
-                return out_elem_type.pack_from_f64_slice(&vals);
-            }
-            TpuOpCode::Transpose => {
-                let vals = in_elem_type.unpack_to_f64_vec(b0);
-                let in_sh = bundle.attrs.input_shapes.first().cloned().unwrap_or(Shape {
-                    element_type: in_elem_type,
-                    dims: vec![2, 2],
-                    dynamic_dims: vec![false; 2],
-                    layout: MemoryLayout::default_tpu_tiled(2),
-                });
-                let perm = if bundle.attrs.permutation.len() == in_sh.rank() {
-                    bundle.attrs.permutation.clone()
-                } else {
-                    (0..in_sh.rank()).rev().collect()
-                };
-                let out_sh = in_sh.transpose(&perm).unwrap_or(in_sh.clone());
-                let count = out_sh.element_count().min(vals.len());
-                let mut out_vals = Vec::with_capacity(count);
-                for dst_idx in 0..count {
-                    let dst_coords = out_sh.linear_to_coords(dst_idx);
-                    let mut src_coords = vec![0_usize; in_sh.rank()];
-                    for (src_axis, slot) in src_coords.iter_mut().enumerate() {
-                        let dst_axis = perm.iter().position(|&p| p == src_axis).unwrap_or(src_axis);
-                        *slot = dst_coords.get(dst_axis).copied().unwrap_or(0);
-                    }
-                    let src_idx = in_sh.coords_to_linear(&src_coords).unwrap_or(0);
-                    out_vals.push(vals.get(src_idx).copied().unwrap_or(0.0));
-                }
-                return out_elem_type.pack_from_f64_slice(&out_vals);
-            }
-            TpuOpCode::BroadcastInDim => {
-                let vals = in_elem_type.unpack_to_f64_vec(b0);
-                let out_sh = bundle.attrs.output_shape.clone().unwrap_or(Shape {
-                    element_type: out_elem_type,
-                    dims: vec![4],
-                    dynamic_dims: vec![false],
-                    layout: MemoryLayout::default_tpu_tiled(1),
-                });
-                let in_sh = bundle
-                    .attrs
-                    .input_shapes
-                    .first()
-                    .cloned()
-                    .unwrap_or(out_sh.clone());
-                let out_count = out_sh.element_count();
-                let mut out_vals = Vec::with_capacity(out_count);
-                for dst_idx in 0..out_count {
-                    let dst_coords = out_sh.linear_to_coords(dst_idx);
-                    let mut src_coords = vec![0_usize; in_sh.rank()];
-                    for (src_axis, slot) in src_coords.iter_mut().enumerate() {
-                        let dst_axis = bundle
-                            .attrs
-                            .broadcast_dims
-                            .get(src_axis)
-                            .copied()
-                            .unwrap_or(src_axis);
-                        let src_ext =
-                            usize::try_from(in_sh.dims.get(src_axis).copied().unwrap_or(1))
-                                .unwrap_or(1)
-                                .max(1);
-                        let dc = dst_coords.get(dst_axis).copied().unwrap_or(0);
-                        *slot = dc % src_ext;
-                    }
-                    let src_idx = in_sh.coords_to_linear(&src_coords).unwrap_or(0);
-                    out_vals.push(vals.get(src_idx).copied().unwrap_or(0.0));
-                }
-                return out_elem_type.pack_from_f64_slice(&out_vals);
-            }
-            TpuOpCode::Slice => {
-                let vals = in_elem_type.unpack_to_f64_vec(b0);
-                let in_sh = bundle.attrs.input_shapes.first().cloned().unwrap_or(Shape {
-                    element_type: in_elem_type,
-                    dims: vec![4],
-                    dynamic_dims: vec![false],
-                    layout: MemoryLayout::default_tpu_tiled(1),
-                });
-                if !bundle.attrs.slice_starts.is_empty() {
-                    let mut out_vals = Vec::new();
-                    let in_count = in_sh.element_count().min(vals.len());
-                    for idx in 0..in_count {
-                        let coords = in_sh.linear_to_coords(idx);
-                        let mut keep = true;
-                        for (axis, &c) in coords.iter().enumerate() {
-                            let st = bundle.attrs.slice_starts.get(axis).copied().unwrap_or(0);
-                            let lim = bundle
-                                .attrs
-                                .slice_limits
-                                .get(axis)
-                                .copied()
-                                .unwrap_or(usize::MAX);
-                            let stride = bundle
-                                .attrs
-                                .slice_strides
-                                .get(axis)
-                                .copied()
-                                .unwrap_or(1)
-                                .max(1);
-                            if c < st || c >= lim || (c - st) % stride != 0 {
-                                keep = false;
-                                break;
-                            }
-                        }
-                        if keep {
-                            out_vals.push(vals.get(idx).copied().unwrap_or(0.0));
-                        }
-                    }
-                    return out_elem_type.pack_from_f64_slice(&out_vals);
-                }
-                return b0.to_vec();
-            }
-            TpuOpCode::DotGeneralF32 => {
-                let v0 = in_elem_type.unpack_to_f64_vec(b0);
-                let v1 = in_elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
-                return Self::eval_dot_general(out_elem_type, &v0, &v1, &bundle.attrs);
-            }
-            TpuOpCode::Iota => {
-                if let Some(out_sh) = &bundle.attrs.output_shape {
-                    let axis = bundle.attrs.iota_dim.min(out_sh.rank().saturating_sub(1));
-                    let count = out_sh.element_count();
-                    let mut out_vals = Vec::with_capacity(count);
-                    for idx in 0..count {
-                        let coords = out_sh.linear_to_coords(idx);
-                        let c =
-                            u32::try_from(coords.get(axis).copied().unwrap_or(idx)).unwrap_or(0);
-                        out_vals.push(f64::from(c));
-                    }
-                    return out_elem_type.pack_from_f64_slice(&out_vals);
-                }
-            }
-            TpuOpCode::ReduceSumF32 | TpuOpCode::ReduceMax | TpuOpCode::ReduceMin => {
-                let vals = in_elem_type.unpack_to_f64_vec(b0);
-                let scalar = match bundle.opcode {
-                    TpuOpCode::ReduceMax => vals.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-                    TpuOpCode::ReduceMin => vals.iter().copied().fold(f64::INFINITY, f64::min),
-                    _ => vals.iter().sum(),
-                };
-                let out_len = bundle
-                    .attrs
-                    .output_shape
-                    .as_ref()
-                    .map_or(vals.len(), |s| s.element_count().max(1));
-                return out_elem_type.pack_from_f64_slice(&vec![scalar; out_len]);
-            }
-            TpuOpCode::Concatenate if bundle.attrs.concat_dim > 0 => {
-                let v0 = in_elem_type.unpack_to_f64_vec(b0);
-                let v1 = in_elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
-                let mut interleaved = Vec::with_capacity(v0.len() + v1.len());
-                for (&x, &y) in v0.iter().zip(v1.iter()) {
-                    interleaved.push(x);
-                    interleaved.push(y);
-                }
-                return out_elem_type.pack_from_f64_slice(&interleaved);
-            }
-            _ => {}
-        }
-        Self::eval_bundle(bundle.opcode, out_elem_type, operands)
-    }
-
-    /// Evaluates a single [`crate::compiler::TpuInstructionBundle`] against a register bank of byte vectors.
-    ///
-    /// # Arguments
-    ///
-    /// * `opcode` - Instruction [`TpuOpCode`].
-    /// * `elem_type` - Tensor [`ElementType`].
-    /// * `operands` - Slice of operand byte slices.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn eval_bundle(opcode: TpuOpCode, elem_type: ElementType, operands: &[&[u8]]) -> Vec<u8> {
-        if opcode == TpuOpCode::Select {
-            let c = elem_type.unpack_to_f64_vec(operands.first().copied().unwrap_or(&[]));
-            let t = elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
-            let f = elem_type.unpack_to_f64_vec(operands.get(2).copied().unwrap_or(&[]));
-            let sel: Vec<f64> = c
-                .iter()
-                .zip(t.iter().zip(f.iter()))
-                .map(|(&cond, (&tv, &fv))| if cond == 0.0 { fv } else { tv })
-                .collect();
-            elem_type.pack_from_f64_slice(&sel)
-        } else if opcode == TpuOpCode::Scatter || opcode == TpuOpCode::DynamicUpdateSlice {
-            let mut dst = elem_type.unpack_to_f64_vec(operands.first().copied().unwrap_or(&[]));
-            let idx_or_upd = elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
-            let third = elem_type.unpack_to_f64_vec(operands.get(2).copied().unwrap_or(&[]));
-            let len = dst.len().max(1);
-            if opcode == TpuOpCode::Scatter {
-                for (&idx_f, &upd_val) in idx_or_upd.iter().zip(third.iter()) {
-                    let target_pos = (idx_f.max(0.0) as usize) % len;
-                    for (pos, slot) in dst.iter_mut().enumerate() {
-                        if pos == target_pos {
-                            *slot = upd_val;
-                        }
-                    }
-                }
-            } else {
-                let start = (third.first().copied().unwrap_or(0.0).max(0.0) as usize) % len;
-                for (i, &upd_val) in idx_or_upd.iter().enumerate() {
-                    let target_pos = (start + i) % len;
-                    for (pos, slot) in dst.iter_mut().enumerate() {
-                        if pos == target_pos {
-                            *slot = upd_val;
-                        }
-                    }
-                }
-            }
-            elem_type.pack_from_f64_slice(&dst)
-        } else if opcode.is_binary() {
-            Self::eval_binary_op(
-                opcode,
-                elem_type,
-                operands.first().copied().unwrap_or(&[]),
-                operands.get(1).copied().unwrap_or(&[]),
-            )
-        } else {
-            Self::eval_unary_op(opcode, elem_type, operands.first().copied().unwrap_or(&[]))
-        }
-    }
-
-    /// Executes a cross-device collective (`AllReduce`, `AllGather`, or `ReduceScatter`) across multiple
-    /// device buffers on the simulated ICI torus mesh.
-    ///
-    /// # Arguments
-    ///
-    /// * `opcode` - Collective [`TpuOpCode`] (`AllReduceSumF32`, `AllGather`, or `ReduceScatter`).
-    /// * `elem_type` - Element data type.
-    /// * `participants` - Slice of `(DeviceId, input_addr, output_addr)` tuples for each replica.
-    /// * `element_count` - Number of elements per replica input buffer.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError`] if any participant device or buffer address is invalid.
-    #[allow(for_loops_over_fallibles)]
-    pub fn execute_collective(
-        &self,
-        opcode: TpuOpCode,
-        elem_type: ElementType,
-        participants: &[(DeviceId, DeviceAddress, DeviceAddress)],
-        element_count: usize,
-    ) -> LibTpuResult<()> {
-        let mut guard = self.lock_devices()?;
-        let mut replica_vecs: Vec<Vec<f64>> = Vec::with_capacity(participants.len());
-        let byte_len = (element_count * elem_type.bit_size()).div_ceil(8);
-
-        for &(dev_id, in_addr, out_addr) in participants {
-            let dev = guard.get(&dev_id).ok_or(LibTpuError::DeviceNotFound {
-                device_id: dev_id.0,
-            })?;
-            if !dev.allocations.contains_key(&out_addr) {
-                return Err(LibTpuError::ExecutionFailed {
-                    device_id: dev_id.0,
-                    reason: format!("Collective output {out_addr} not found on device {dev_id}"),
-                });
-            }
-            let buf =
-                dev.allocations
-                    .get(&in_addr)
-                    .ok_or_else(|| LibTpuError::ExecutionFailed {
-                        device_id: dev_id.0,
-                        reason: format!("Collective input {in_addr} not found on device {dev_id}"),
-                    })?;
-            let slice = buf.get(..byte_len).unwrap_or(buf.as_slice());
-            replica_vecs.push(elem_type.unpack_to_f64_vec(slice));
-        }
-
-        let mut reduced = vec![0.0_f64; element_count];
-        for r_vec in &replica_vecs {
-            for (dst, &val) in reduced.iter_mut().zip(r_vec.iter()) {
-                *dst += val;
-            }
-        }
-
-        let mut gathered = Vec::with_capacity(element_count * replica_vecs.len());
-        for r_vec in &replica_vecs {
-            gathered.extend_from_slice(r_vec);
-        }
-
-        let chunk_len = (element_count / participants.len().max(1)).max(1);
-        for (rep_idx, &(dev_id, _, out_addr)) in participants.iter().enumerate() {
-            let payload_f64: Vec<f64> = match opcode {
-                TpuOpCode::AllGather => gathered.clone(),
-                TpuOpCode::ReduceScatter => {
-                    let start = (rep_idx * chunk_len).min(reduced.len());
-                    let end = (start + chunk_len).min(reduced.len());
-                    reduced.get(start..end).unwrap_or(&[]).to_vec()
-                }
-                _ => reduced.clone(),
-            };
-            let packed = elem_type.pack_from_f64_slice(&payload_f64);
-            for dev in guard.get_mut(&dev_id) {
-                for out_buf in dev.allocations.get_mut(&out_addr) {
-                    for (dst_b, &src_b) in out_buf.iter_mut().zip(packed.iter()) {
-                        *dst_b = src_b;
-                    }
-                }
-            }
-        }
-        drop(guard);
-        Ok(())
-    }
-}
-
-impl TpuHal for SimulatedTpuHal {
-    fn discover_topology(&self) -> LibTpuResult<TopologySpec> {
-        Ok(self.topology_spec())
-    }
-
-    fn allocate_device_memory(
-        &self,
-        device_id: DeviceId,
-        memory_kind: MemoryKind,
-        size: ByteSize,
-    ) -> LibTpuResult<DeviceAddress> {
-        let mut guard = self.lock_devices()?;
-        let dev = guard
-            .get_mut(&device_id)
-            .ok_or(LibTpuError::DeviceNotFound {
-                device_id: device_id.0,
-            })?;
-        let alloc_size = size.0.max(256);
-        let addr = dev.region_allocator.allocate(alloc_size)?;
-        dev.allocations.insert(addr, vec![0_u8; alloc_size]);
-        dev.allocation_kinds.insert(addr, memory_kind);
-        dev.bytes_in_use += alloc_size;
-        dev.peak_bytes_in_use = dev.peak_bytes_in_use.max(dev.bytes_in_use);
-        dev.num_allocs += 1;
-        dev.largest_alloc_size = dev.largest_alloc_size.max(alloc_size);
-        drop(guard);
-        Ok(addr)
-    }
-
-    fn deallocate_device_memory(
-        &self,
-        device_id: DeviceId,
-        address: DeviceAddress,
-    ) -> LibTpuResult<()> {
-        let mut guard = self.lock_devices()?;
-        let dev = guard
-            .get_mut(&device_id)
-            .ok_or(LibTpuError::DeviceNotFound {
-                device_id: device_id.0,
-            })?;
-        let removed =
-            dev.allocations
-                .remove(&address)
-                .ok_or_else(|| LibTpuError::InvalidArgument {
-                    parameter: "address",
-                    reason: format!("Allocation {address} not found on device {device_id}"),
-                })?;
-        let _ = dev.region_allocator.deallocate(address);
-        dev.allocation_kinds.remove(&address);
-        dev.bytes_in_use = dev.bytes_in_use.saturating_sub(removed.len());
-        drop(guard);
-        Ok(())
-    }
-
-    fn write_device_memory(
-        &self,
-        device_id: DeviceId,
-        address: DeviceAddress,
-        data: &[u8],
-    ) -> LibTpuResult<()> {
-        let mut guard = self.lock_devices()?;
-        let dev = guard
-            .get_mut(&device_id)
-            .ok_or(LibTpuError::DeviceNotFound {
-                device_id: device_id.0,
-            })?;
-        let buf = dev
-            .allocations
-            .get_mut(&address)
-            .ok_or_else(|| LibTpuError::TransferFailed {
-                direction: "H2D",
-                reason: format!("Invalid HBM address {address} on device {device_id}"),
-            })?;
-        let Some(target) = buf.get_mut(..data.len()) else {
-            return Err(LibTpuError::TransferFailed {
-                direction: "H2D",
-                reason: format!(
-                    "Host payload ({} bytes) exceeds HBM buffer ({} bytes)",
-                    data.len(),
-                    buf.len()
-                ),
-            });
-        };
-        target.copy_from_slice(data);
-        let next_tail = self
-            .mmio
-            .get_csr(BAR0_CSR_HBM_DMA_RING_TAIL)
-            .wrapping_add(1);
-        self.mmio.set_csr(BAR0_CSR_HBM_DMA_RING_TAIL, next_tail);
-        self.mmio.set_csr(BAR0_CSR_HBM_DMA_RING_HEAD, next_tail);
-        drop(guard);
-        Ok(())
-    }
-
-    fn read_device_memory(
-        &self,
-        device_id: DeviceId,
-        address: DeviceAddress,
-        out: &mut [u8],
-    ) -> LibTpuResult<()> {
-        let guard = self.lock_devices()?;
-        let dev = guard.get(&device_id).ok_or(LibTpuError::DeviceNotFound {
-            device_id: device_id.0,
-        })?;
-        let buf = dev
-            .allocations
-            .get(&address)
-            .ok_or_else(|| LibTpuError::TransferFailed {
-                direction: "D2H",
-                reason: format!("Invalid HBM address {address} on device {device_id}"),
-            })?;
-        let Some(src) = buf.get(..out.len()) else {
-            return Err(LibTpuError::TransferFailed {
-                direction: "D2H",
-                reason: format!(
-                    "Requested read ({} bytes) exceeds HBM buffer ({} bytes)",
-                    out.len(),
-                    buf.len()
-                ),
-            });
-        };
-        out.copy_from_slice(src);
-        let next_tail = self
-            .mmio
-            .get_csr(BAR0_CSR_HBM_DMA_RING_TAIL)
-            .wrapping_add(1);
-        self.mmio.set_csr(BAR0_CSR_HBM_DMA_RING_TAIL, next_tail);
-        self.mmio.set_csr(BAR0_CSR_HBM_DMA_RING_HEAD, next_tail);
-        drop(guard);
-        Ok(())
-    }
-
-    fn copy_device_to_device(
-        &self,
-        src_device: DeviceId,
-        src_addr: DeviceAddress,
-        dst_device: DeviceId,
-        dst_addr: DeviceAddress,
-        size: ByteSize,
-    ) -> LibTpuResult<()> {
-        let mut temp = vec![0_u8; size.0];
-        self.read_device_memory(src_device, src_addr, &mut temp)?;
-        self.write_device_memory(dst_device, dst_addr, &temp)
-    }
-
-    fn execute_program(
-        &self,
-        device_id: DeviceId,
-        program: &CompiledProgram,
-        inputs: &[DeviceAddress],
-        outputs: &[DeviceAddress],
-    ) -> LibTpuResult<()> {
-        let mut guard = self.lock_devices()?;
-        let dev = guard
-            .get_mut(&device_id)
-            .ok_or(LibTpuError::DeviceNotFound {
-                device_id: device_id.0,
-            })?;
-        if let Some(reason) = &dev.poison_reason {
-            return Err(LibTpuError::ExecutionFailed {
-                device_id: device_id.0,
-                reason: reason.clone(),
-            });
-        }
-        if outputs.is_empty() {
-            return Err(LibTpuError::ExecutionFailed {
-                device_id: device_id.0,
-                reason: String::from("Missing output buffer address"),
-            });
-        }
-        let required_inputs = program.opcode.arity().min(program.parameter_shapes.len());
-        if inputs.len() < required_inputs {
-            return Err(LibTpuError::ExecutionFailed {
-                device_id: device_id.0,
-                reason: format!(
-                    "Operation requires at least {required_inputs} input buffers, got {}",
-                    inputs.len()
-                ),
-            });
-        }
-        let elem_type = program
-            .output_shapes
-            .first()
-            .map_or(ElementType::F32, |s| s.element_type);
-
-        let mut registers: Vec<Vec<u8>> =
-            Vec::with_capacity(inputs.len() + program.instruction_bundles.len() + 1);
-        for (idx, &in_addr) in inputs.iter().enumerate() {
-            let buf =
-                dev.allocations
-                    .get(&in_addr)
-                    .ok_or_else(|| LibTpuError::ExecutionFailed {
-                        device_id: device_id.0,
-                        reason: format!("Input {idx} address {in_addr} not found"),
-                    })?;
-            registers.push(buf.clone());
-        }
-
-        let mut last_result = registers.first().cloned().unwrap_or_default();
-        for bundle in &program.instruction_bundles {
-            let mut op_slices: Vec<&[u8]> = Vec::with_capacity(bundle.operand_slots.len());
-            for &slot in &bundle.operand_slots {
-                let slice = registers.get(slot).map_or(&[][..], Vec::as_slice);
-                op_slices.push(slice);
-            }
-            let evaluated = Self::eval_bundle_with_attrs(bundle, elem_type, &op_slices);
-            last_result.clone_from(&evaluated);
-            registers.push(evaluated);
-        }
-
-        for (out_idx, &out_addr) in outputs.iter().enumerate() {
-            let src_bytes = program
-                .output_slots
-                .get(out_idx)
-                .and_then(|&slot| registers.get(slot))
-                .unwrap_or(&last_result);
-            let out_buf =
-                dev.allocations
-                    .get_mut(&out_addr)
-                    .ok_or_else(|| LibTpuError::ExecutionFailed {
-                        device_id: device_id.0,
-                        reason: format!("Output address {out_addr} not found"),
-                    })?;
-            for (dst_byte, &src_byte) in out_buf.iter_mut().zip(src_bytes.iter()) {
-                *dst_byte = src_byte;
-            }
-        }
-        dev.vm.execute_vliw_stream(&program.encode_vliw_program());
-        self.mmio.set_csr(BAR0_CSR_TENSORCORE_PC, 0);
-        self.mmio.set_csr(BAR0_CSR_TENSORCORE_RUN_CONTROL, 1);
-        self.mmio.set_csr(BAR0_CSR_TENSORCORE_STATUS, 2);
-        let sync = self.mmio.get_csr(BAR0_CSR_SYNC_FLAG_BASE);
-        let next_sync =
-            sync.wrapping_add(u64::try_from(program.instruction_bundles.len()).unwrap_or(1));
-        self.mmio.set_csr(BAR0_CSR_SYNC_FLAG_BASE, next_sync);
-        let reg_map = ChipRegisterMap::for_generation(self.topology.generation);
-        self.mmio.set_csr(reg_map.tc0_pc_csr, 0);
-        self.mmio.set_csr(reg_map.tc0_run_status_csr, 2);
-        self.mmio
-            .set_csr(reg_map.tc0_vwait_sync_flag_state_csr, next_sync);
-        self.mmio.set_csr(reg_map.sc0_run_status_csr, 2);
-        drop(guard);
-        Ok(())
-    }
-
-    fn memory_stats(&self, device_id: DeviceId) -> LibTpuResult<DeviceMemoryStats> {
-        let guard = self.lock_devices()?;
-        let dev = guard.get(&device_id).ok_or(LibTpuError::DeviceNotFound {
-            device_id: device_id.0,
-        })?;
-        let free_bytes =
-            i64::try_from(dev.region_allocator.largest_free_block_bytes()).unwrap_or(0);
-        let in_use = i64::try_from(dev.bytes_in_use).unwrap_or(0);
-        let peak = i64::try_from(dev.peak_bytes_in_use).unwrap_or(0);
-        let largest = i64::try_from(dev.largest_alloc_size).unwrap_or(0);
-        let limit = i64::try_from(dev.capacity_bytes).unwrap_or(0);
-        let stats = DeviceMemoryStats {
-            bytes_in_use: in_use,
-            peak_bytes_in_use: peak,
-            num_allocs: dev.num_allocs,
-            largest_alloc_size: largest,
-            bytes_limit: limit,
-            bytes_reserved: in_use,
-            peak_bytes_reserved: peak,
-            bytes_reservable_limit: limit,
-            largest_free_block_bytes: free_bytes,
-            pool_bytes: in_use,
-            peak_pool_bytes: peak,
-        };
-        drop(guard);
-        Ok(stats)
-    }
-
-    fn clear_memory_stats(&self, device_id: DeviceId) -> LibTpuResult<()> {
-        let mut guard = self.lock_devices()?;
-        let dev = guard
-            .get_mut(&device_id)
-            .ok_or(LibTpuError::DeviceNotFound {
-                device_id: device_id.0,
-            })?;
-        dev.peak_bytes_in_use = dev.bytes_in_use;
-        dev.largest_alloc_size = 0;
-        drop(guard);
-        Ok(())
-    }
-
-    fn poison_device(&self, device_id: DeviceId, reason: String) -> LibTpuResult<()> {
-        self.lock_devices()?
-            .get_mut(&device_id)
-            .ok_or(LibTpuError::DeviceNotFound {
-                device_id: device_id.0,
-            })?
-            .poison_reason = Some(reason);
-        Ok(())
-    }
-}
-
-/// Kernel driver mode used by [`LinuxDeviceHal`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KernelDriverMode {
-    /// Legacy `/dev/accel*` Gasket kernel driver.
-    Gasket,
-    /// Modern `/dev/vfio/vfio` user-space `PCIe` IOMMU driver.
-    Vfio,
-}
-
-/// Injectable OS system call and `PCIe` BAR MMIO interface (`open`, `close`, `ioctl`, `eventfd`, `mmio`)
-/// for [`LinuxDeviceHal`].
-pub trait SyscallProvider: Send + Sync + std::fmt::Debug {
-    /// Opens a device path (e.g., `"/dev/accel0"` or `"/dev/vfio/vfio"`) and returns a file descriptor.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - Device filesystem path.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::HardwareIoError`] on failure.
-    fn open_device(&self, path: &str) -> LibTpuResult<i32>;
-
-    /// Issues an `ioctl` command to an open device file descriptor.
-    ///
-    /// # Arguments
-    ///
-    /// * `fd` - Open file descriptor.
-    /// * `request` - Raw `ioctl` command number (`GASKET_IOCTL_*` or `VFIO_*`).
-    /// * `payload_size` - Size in bytes of the `ioctl` payload structure.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::IoctlFailed`] on failure.
-    fn ioctl_device(&self, fd: i32, request: u64, payload_size: usize) -> LibTpuResult<i32>;
-
-    /// Issues an `ioctl` command passing a mutable byte slice pointing to the `#[repr(C)]` payload.
-    ///
-    /// # Arguments
-    ///
-    /// * `fd` - Open file descriptor.
-    /// * `request` - Raw `ioctl` command number (`GASKET_IOCTL_*` or `VFIO_*`).
-    /// * `payload` - Mutable byte slice backing the `#[repr(C)]` `ioctl` argument structure.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::IoctlFailed`] on failure.
-    fn ioctl_bytes(&self, fd: i32, request: u64, payload: &mut [u8]) -> LibTpuResult<i32> {
-        self.ioctl_device(fd, request, payload.len())
-    }
-
-    /// Issues a strongly-typed `#[repr(C)]` `Pod` `ioctl` command on `fd`.
-    ///
-    /// # Arguments
-    ///
-    /// * `fd` - Open file descriptor.
-    /// * `request` - Raw `ioctl` command number (`GASKET_IOCTL_*` or `VFIO_*`).
-    /// * `payload` - Mutable reference to a `#[repr(C)]` `Pod` structure.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::IoctlFailed`] on failure.
-    fn ioctl_typed<T: Pod>(&self, fd: i32, request: u64, payload: &mut T) -> LibTpuResult<i32>
-    where
-        Self: Sized,
-    {
-        self.ioctl_bytes(fd, request, bytemuck::bytes_of_mut(payload))
-    }
-
-    /// Closes an open device file descriptor.
-    ///
-    /// # Arguments
-    ///
-    /// * `fd` - Open file descriptor to close.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::HardwareIoError`] on failure.
-    fn close_device(&self, fd: i32) -> LibTpuResult<()>;
-}
-
-/// Typed `ioctl` payload passed into [`EmulatedKernelDriverBackend::apply_typed_ioctl`].
-#[derive(Debug, Clone, Copy)]
-pub enum IoctlPayload<'a> {
-    /// Gasket page table map/unmap descriptor.
-    GasketPageTable(&'a GasketPageTableIoctl),
-    /// Gasket interrupt `eventfd` binding descriptor.
-    GasketInterruptEventFd(&'a GasketInterruptEventFd),
-    /// Gasket `dma_buf` page table mapping descriptor.
-    GasketDmaBuf(&'a GasketPageTableDmaBuf),
-    /// VFIO IOMMU DMA mapping descriptor.
-    VfioDmaMap(&'a VfioDmaMapIoctl),
-    /// VFIO IOMMU DMA unmapping descriptor.
-    VfioDmaUnmap(&'a VfioDmaUnmapIoctl),
-    /// VFIO MSI-X interrupt `eventfd` binding descriptor.
-    VfioIrqSet(&'a VfioIrqSetIoctl),
-}
-
-/// Cycle-accurate emulated Linux Gasket/VFIO kernel driver and `PCIe` BAR0/BAR2 MMIO CSR backend.
-#[derive(Debug)]
-pub struct EmulatedKernelDriverBackend {
-    /// BAR0 MMIO 64-bit registers indexed by byte offset.
-    bar0_registers: Mutex<BTreeMap<u64, u64>>,
-    /// Hardware HBM DMA descriptor ring buffer populated by [`LinuxDeviceHal`].
-    dma_ring: Mutex<Vec<HbmDmaRingDescriptor>>,
-    /// Emulated IOMMU page table mapping IOVA addresses to mapped byte sizes.
-    iommu_mappings: Mutex<BTreeMap<u64, u64>>,
-    /// Registered interrupt `eventfd` handles indexed by interrupt vector ID.
-    interrupt_eventfds: Mutex<BTreeMap<u32, i32>>,
-    /// Total BAR0 aperture size in bytes.
-    bar0_size: usize,
-    /// Next allocated file descriptor.
-    next_fd: AtomicI32,
-}
-
-impl Default for EmulatedKernelDriverBackend {
-    fn default() -> Self {
-        Self::new(0x0010_0000)
-    }
-}
-
-impl EmulatedKernelDriverBackend {
-    /// Creates a new [`EmulatedKernelDriverBackend`] with the given BAR0 aperture size.
-    ///
-    /// # Arguments
-    ///
-    /// * `bar0_size` - Size of the simulated `PCIe` BAR0 MMIO region in bytes.
-    #[must_use]
-    pub fn new(bar0_size: usize) -> Self {
-        let mut regs = BTreeMap::new();
-        regs.insert(BAR0_CSR_TENSORCORE_RUN_CONTROL, 0);
-        regs.insert(BAR0_CSR_TENSORCORE_SYNC_FLAG, 1);
-        regs.insert(BAR0_CSR_TENSORCORE_STATUS, 0);
-        regs.insert(BAR0_CSR_SYNC_FLAG_BASE, 1);
-        regs.insert(BAR0_CSR_HBM_DMA_RING_HEAD, 0);
-        regs.insert(BAR0_CSR_HBM_DMA_RING_TAIL, 0);
-        regs.insert(BAR0_CSR_THERMAL_MILLICELSIUS, 45_000);
-        regs.insert(BAR0_CSR_POWER_MILLIWATTS, 175_000);
-        regs.insert(BAR0_CSR_DUTY_CYCLE_PERCENT, 100);
-        Self {
-            bar0_registers: Mutex::new(regs),
-            dma_ring: Mutex::new(Vec::new()),
-            iommu_mappings: Mutex::new(BTreeMap::new()),
-            interrupt_eventfds: Mutex::new(BTreeMap::new()),
-            bar0_size,
-            next_fd: AtomicI32::new(100),
-        }
-    }
-
-    /// Appends a 32-byte [`HbmDmaRingDescriptor`] to the emulated HBM DMA descriptor ring.
-    ///
-    /// # Arguments
-    ///
-    /// * `descriptor` - Hardware DMA ring descriptor to enqueue.
-    pub fn enqueue_dma_descriptor(&self, descriptor: HbmDmaRingDescriptor) {
-        self.dma_ring.lock().push(descriptor);
-    }
-
-    /// Returns the number of descriptors submitted to the HBM DMA descriptor ring.
-    #[must_use]
-    pub fn dma_ring_len(&self) -> usize {
-        self.dma_ring.lock().len()
-    }
-
-    /// Applies a typed [`IoctlPayload`] to the emulated IOMMU page table or interrupt vector table.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - Raw `ioctl` command number.
-    /// * `payload` - Typed [`IoctlPayload`] structure.
-    pub fn apply_typed_ioctl(&self, request: u64, payload: IoctlPayload<'_>) {
-        match payload {
-            IoctlPayload::GasketPageTable(pt) => {
-                let mut guard = self.iommu_mappings.lock();
-                if request == GASKET_IOCTL_UNMAP_BUFFER {
-                    guard.remove(&pt.device_address);
-                } else {
-                    guard.insert(pt.device_address, pt.size);
-                }
-            }
-            IoctlPayload::GasketDmaBuf(db) => {
-                self.iommu_mappings.lock().insert(db.device_address, 4096);
-            }
-            IoctlPayload::VfioDmaMap(vm) => {
-                self.iommu_mappings.lock().insert(vm.iova, vm.size);
-            }
-            IoctlPayload::VfioDmaUnmap(vu) => {
-                self.iommu_mappings.lock().remove(&vu.iova);
-            }
-            IoctlPayload::GasketInterruptEventFd(ge) => {
-                self.interrupt_eventfds.lock().insert(
-                    u32::try_from(ge.interrupt).unwrap_or(0),
-                    i32::try_from(ge.event_fd).unwrap_or(0),
-                );
-            }
-            IoctlPayload::VfioIrqSet(vi) => {
-                self.interrupt_eventfds.lock().insert(vi.index, vi.event_fd);
-            }
-        }
-    }
-
-    /// Returns the number of active IOVA mappings in the emulated IOMMU page table.
-    pub fn mapped_iova_count(&self) -> usize {
-        self.iommu_mappings.lock().len()
-    }
-
-    /// Returns the registered `eventfd` for interrupt `index`, if present.
-    ///
-    /// # Arguments
-    ///
-    /// * `index` - Interrupt vector index.
-    pub fn registered_interrupt_fd(&self, index: u32) -> Option<i32> {
-        self.interrupt_eventfds.lock().get(&index).copied()
-    }
-
-    /// Clears all registered interrupt `eventfd` bindings.
-    pub fn clear_interrupt_fds(&self) {
-        self.interrupt_eventfds.lock().clear();
-    }
-
-    /// Creates a simulated Linux `eventfd` handle.
-    pub fn create_eventfd(&self) -> EventFdHandle {
-        let efd = self.next_fd.fetch_add(1, Ordering::Relaxed);
-        EventFdHandle(efd)
-    }
-
-    /// Reads a 64-bit BAR0 CSR value directly from the register map.
-    ///
-    /// # Arguments
-    ///
-    /// * `csr_offset` - Byte offset of the BAR0 CSR.
-    pub fn get_csr(&self, csr_offset: u64) -> u64 {
-        self.bar0_registers
-            .lock()
-            .get(&csr_offset)
-            .copied()
-            .unwrap_or(0)
-    }
-
-    /// Writes a 64-bit BAR0 CSR value directly into the register map.
-    ///
-    /// # Arguments
-    ///
-    /// * `csr_offset` - Byte offset of the BAR0 CSR.
-    /// * `value` - 64-bit register value to store.
-    pub fn set_csr(&self, csr_offset: u64, value: u64) {
-        self.bar0_registers.lock().insert(csr_offset, value);
-    }
-
-    /// Reads a 64-bit CSR from `PCIe` BAR `bar_index` at `offset`.
-    ///
-    /// # Arguments
-    ///
-    /// * `bar_index` - `PCIe` BAR index (`0` or `2`).
-    /// * `offset` - Byte offset within the BAR.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset + 8 > bar0_size`.
-    pub fn read_mmio_u64(&self, bar_index: u8, offset: MmioOffset) -> LibTpuResult<u64> {
-        if bar_index != 0
-            || usize::try_from(offset.0)
-                .unwrap_or(usize::MAX)
-                .saturating_add(8)
-                > self.bar0_size
-        {
-            return Err(LibTpuError::MmioOutOfBounds {
-                bar_index,
-                offset: offset.0,
-                size: 8,
-            });
-        }
-        let val = self
-            .bar0_registers
-            .lock()
-            .get(&offset.0)
-            .copied()
-            .unwrap_or(0);
-        Ok(val)
-    }
-
-    /// Writes a 64-bit CSR to `PCIe` BAR `bar_index` at `offset`.
-    ///
-    /// # Arguments
-    ///
-    /// * `bar_index` - `PCIe` BAR index (`0` or `2`).
-    /// * `offset` - Byte offset within the BAR.
-    /// * `value` - 64-bit register value to write.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset + 8 > bar0_size`.
-    pub fn write_mmio_u64(
-        &self,
-        bar_index: u8,
-        offset: MmioOffset,
-        value: u64,
-    ) -> LibTpuResult<()> {
-        if bar_index != 0
-            || usize::try_from(offset.0)
-                .unwrap_or(usize::MAX)
-                .saturating_add(8)
-                > self.bar0_size
-        {
-            return Err(LibTpuError::MmioOutOfBounds {
-                bar_index,
-                offset: offset.0,
-                size: 8,
-            });
-        }
-        let mut guard = self.bar0_registers.lock();
-        guard.insert(offset.0, value);
-        if offset.0 == BAR0_CSR_TENSORCORE_RUN_CONTROL && value != 0 {
-            let sync = guard
-                .get(&BAR0_CSR_TENSORCORE_SYNC_FLAG)
-                .copied()
-                .unwrap_or(0);
-            guard.insert(BAR0_CSR_TENSORCORE_SYNC_FLAG, sync.wrapping_add(1));
-        }
-        drop(guard);
-        Ok(())
-    }
-
-    /// Maps a `dma_buf` file descriptor into the Gasket page table (`GASKET_IOCTL_MAP_DMABUF`).
-    ///
-    /// # Arguments
-    ///
-    /// * `fd` - Open Gasket device file descriptor.
-    /// * `payload` - `GasketPageTableDmaBuf` descriptor.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::IoctlFailed`] if the `ioctl` fails.
-    pub fn map_dmabuf(
-        &self,
-        fd: FileDescriptor,
-        payload: &GasketPageTableDmaBuf,
-    ) -> LibTpuResult<()> {
-        self.ioctl_device(fd.0, GASKET_IOCTL_MAP_DMABUF, size_of_val(payload))?;
-        self.apply_typed_ioctl(GASKET_IOCTL_MAP_DMABUF, IoctlPayload::GasketDmaBuf(payload));
-        Ok(())
-    }
-}
-
-impl SyscallProvider for EmulatedKernelDriverBackend {
-    fn open_device(&self, _path: &str) -> LibTpuResult<i32> {
-        let fd = self.next_fd.fetch_add(1, Ordering::Relaxed);
-        Ok(fd)
-    }
-
-    fn ioctl_device(&self, fd: i32, request: u64, _payload_size: usize) -> LibTpuResult<i32> {
-        let _ = IoctlCommand(request);
-        if fd < 0 {
-            return Err(LibTpuError::IoctlFailed {
-                request,
-                errno: 9,
-                message: String::from("EBADF"),
-            });
-        }
-        Ok(0)
-    }
-
-    fn close_device(&self, fd: i32) -> LibTpuResult<()> {
-        if fd < 0 {
-            return Err(LibTpuError::HardwareIoError {
-                operation: "close",
-                errno: 9,
-                message: String::from("EBADF"),
-            });
-        }
-        Ok(())
-    }
-}
-
-/// Alias for [`EmulatedKernelDriverBackend`] (`SimulatedKernelDriverBackend`).
-pub type SimulatedKernelDriverBackend = EmulatedKernelDriverBackend;
-
-/// Virtual `PCIe`/VFIO/Gasket kernel loopback device backend (`VirtualTpuKernelDevice`).
-pub type VirtualTpuKernelDevice = EmulatedKernelDriverBackend;
-
-/// Mock kernel syscall provider for deterministic cross-platform unit testing (`MockKernelSyscalls`).
-pub type MockKernelSyscalls = EmulatedKernelDriverBackend;
-
-/// Real Linux/POSIX syscall provider (`RealLinuxSyscalls`).
-pub type RealLinuxSyscalls = PosixKernelDriverBackend;
-
-/// Injectable kernel driver operations trait (`KernelDriverOps`) extending [`SyscallProvider`].
-pub trait KernelDriverOps: SyscallProvider {}
-impl<T: SyscallProvider + ?Sized> KernelDriverOps for T {}
-
-/// Generic VFS `FIOCLEX` `ioctl` command (`0x20006601` on macOS, `0x5451` on Linux).
-#[cfg(target_os = "macos")]
-pub const POSIX_FIOCLEX_IOCTL: u64 = 0x2000_6601;
-
-/// Generic VFS `FIOCLEX` `ioctl` command (`0x5451` on Linux).
-#[cfg(not(target_os = "macos"))]
-pub const POSIX_FIOCLEX_IOCTL: u64 = 0x5451;
-
-/// Low-level POSIX C library (`libc`) FFI wrappers for [`PosixKernelDriverBackend`].
-mod posix_libc {
-    pub(super) use libc::{
-        MAP_ANON as MAP_ANONYMOUS, MAP_PRIVATE, MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE, close,
-        ioctl, mmap, munmap, open, pipe,
-    };
-}
-
-/// Real POSIX kernel driver backend invoking `libc` `open`, `close`, `ioctl`, `mmap`, `munmap`,
-/// and `pipe`/`eventfd` system calls for `/dev/accel*` and `/dev/vfio/*` device nodes.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct PosixKernelDriverBackend;
-
-impl PosixKernelDriverBackend {
-    /// Creates a new [`PosixKernelDriverBackend`].
-    #[must_use]
-    pub const fn new() -> Self {
-        Self
-    }
-
-    /// Issues a typed `#[repr(C)]` `ioctl` command on `fd` passing a mutable pointer to `payload`.
-    ///
-    /// # Arguments
-    ///
-    /// * `fd` - Open POSIX file descriptor.
-    /// * `request` - Raw `ioctl` command number.
-    /// * `payload` - Mutable reference to a `#[repr(C)]` `ioctl` payload structure.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::IoctlFailed`] if `libc::ioctl` returns `< 0`.
-    pub fn ioctl_with_payload<T>(
-        &self,
-        fd: i32,
-        request: u64,
-        payload: &mut T,
-    ) -> LibTpuResult<i32> {
-        #[allow(clippy::cast_possible_truncation)]
-        let req_ulong = request as libc::c_ulong;
-        let ptr = std::ptr::from_mut::<T>(payload).cast::<libc::c_void>();
-        // SAFETY: `ptr` points to a valid, mutable `T` structure on the stack.
-        let rc = unsafe { posix_libc::ioctl(fd, req_ulong, ptr) };
-        if rc < 0 {
-            let err = std::io::Error::last_os_error();
-            return Err(LibTpuError::IoctlFailed {
-                request,
-                errno: err.raw_os_error().unwrap_or(9),
-                message: err.to_string(),
-            });
-        }
-        Ok(rc)
-    }
-
-    /// Maps a `PCIe` BAR aperture of `size` bytes into a [`MappedBarAperture`].
-    ///
-    /// # Arguments
-    ///
-    /// * `fd` - Open device file descriptor (or `-1` for anonymous mapping).
-    /// * `size` - Mapping byte size (must be `> 0`).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::HardwareIoError`] if `mmap` fails.
-    pub fn mmap_bar_aperture(
-        &self,
-        fd: FileDescriptor,
-        size: ByteSize,
-    ) -> LibTpuResult<MappedBarAperture> {
-        let base_vaddr = self.mmap_bar0(fd.0, size.0)?;
-        Ok(MappedBarAperture { base_vaddr, size })
-    }
-
-    /// Unmaps a [`MappedBarAperture`] previously mapped with [`PosixKernelDriverBackend::mmap_bar_aperture`].
-    ///
-    /// # Arguments
-    ///
-    /// * `aperture` - Mapped BAR aperture to unmap.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::HardwareIoError`] if `munmap` fails.
-    pub fn munmap_bar_aperture(&self, aperture: MappedBarAperture) -> LibTpuResult<()> {
-        self.munmap_bar0(aperture.base_vaddr, aperture.size.0)
-    }
-
-    /// Maps a `PCIe` BAR0 region of `size` bytes on file descriptor `fd` (or anonymous memory when `fd == -1`).
-    ///
-    /// # Arguments
-    ///
-    /// * `fd` - Open device file descriptor (or `-1` for anonymous mapping).
-    /// * `size` - Mapping byte size (must be `> 0`).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::HardwareIoError`] if `mmap` returns `MAP_FAILED`.
-    pub fn mmap_bar0(&self, fd: i32, size: usize) -> LibTpuResult<usize> {
-        let flags = if fd < 0 {
-            posix_libc::MAP_PRIVATE | posix_libc::MAP_ANONYMOUS
-        } else {
-            posix_libc::MAP_SHARED
-        };
-        // SAFETY: `mmap` with `null_mut()` lets the kernel select a page-aligned virtual address.
-        let ptr = unsafe {
-            posix_libc::mmap(
-                std::ptr::null_mut(),
-                size,
-                posix_libc::PROT_READ | posix_libc::PROT_WRITE,
-                flags,
-                fd,
-                0,
-            )
-        };
-        if ptr as usize == usize::MAX {
-            let err = std::io::Error::last_os_error();
-            return Err(LibTpuError::HardwareIoError {
-                operation: "mmap",
-                errno: err.raw_os_error().unwrap_or(22),
-                message: err.to_string(),
-            });
-        }
-        Ok(ptr as usize)
-    }
-
-    /// Unmaps a `PCIe` BAR0 region previously mapped with [`PosixKernelDriverBackend::mmap_bar0`].
-    ///
-    /// # Arguments
-    ///
-    /// * `addr` - Mapped virtual address returned by `mmap_bar0`.
-    /// * `size` - Mapping byte size (must be `> 0`).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::HardwareIoError`] if `munmap` fails.
-    pub fn munmap_bar0(&self, addr: usize, size: usize) -> LibTpuResult<()> {
-        // SAFETY: `munmap` validates `addr` and `size` in the kernel (`size == 0` returns `EINVAL`).
-        let rc = unsafe { posix_libc::munmap(addr as *mut std::ffi::c_void, size) };
-        if rc < 0 {
-            let err = std::io::Error::last_os_error();
-            return Err(LibTpuError::HardwareIoError {
-                operation: "munmap",
-                errno: err.raw_os_error().unwrap_or(22),
-                message: err.to_string(),
-            });
-        }
-        Ok(())
-    }
-
-    /// Allocates an anonymous read-write memory-mapped `PCIe` BAR0 buffer of `size` bytes
-    /// using `memmap2::MmapOptions`.
-    ///
-    /// # Arguments
-    ///
-    /// * `size` - Mapping byte size (must be `> 0` and within OS virtual address limits).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::HardwareIoError`] if `size == 0` or `memmap2` allocation fails.
-    pub fn allocate_anon_bar0_mmap(&self, size: ByteSize) -> LibTpuResult<memmap2::MmapMut> {
-        let req_len = if size.0 == 0 { usize::MAX } else { size.0 };
-        memmap2::MmapOptions::new()
-            .len(req_len)
-            .map_anon()
-            .map_err(|err| LibTpuError::HardwareIoError {
-                operation: "memmap2::map_anon",
-                errno: err
-                    .raw_os_error()
-                    .unwrap_or(nix::errno::Errno::EINVAL as i32),
-                message: err.to_string(),
-            })
-    }
-
-    /// Allocates an OS-backed event notification descriptor (`eventfd` / pipe read end).
-    #[must_use]
-    pub fn create_eventfd(&self) -> EventFdHandle {
-        let mut fds = [0_i32; 2];
-        // SAFETY: `fds` points to a valid 2-element `c_int` array.
-        let _ = unsafe { posix_libc::pipe(fds.as_mut_ptr()) };
-        // SAFETY: Closing the write end of the newly created pipe.
-        let _ = unsafe { posix_libc::close(fds[1]) };
-        EventFdHandle(fds[0])
-    }
-}
-
-impl SyscallProvider for PosixKernelDriverBackend {
-    fn open_device(&self, path: &str) -> LibTpuResult<i32> {
-        let c_path = std::ffi::CString::new(path).map_err(|_| LibTpuError::InvalidArgument {
-            parameter: "path",
-            reason: String::from("Device path contains interior NUL byte"),
-        })?;
-        // SAFETY: `c_path.as_ptr()` is a valid NUL-terminated C string.
-        let fd = unsafe { posix_libc::open(c_path.as_ptr(), posix_libc::O_RDWR) };
-        if fd < 0 {
-            let err = std::io::Error::last_os_error();
-            return Err(LibTpuError::HardwareIoError {
-                operation: "open",
-                errno: err.raw_os_error().unwrap_or(2),
-                message: err.to_string(),
-            });
-        }
-        Ok(fd)
-    }
-
-    fn ioctl_device(&self, fd: i32, request: u64, payload_size: usize) -> LibTpuResult<i32> {
-        let mut arg_buf = vec![0_u8; payload_size.max(64)];
-        self.ioctl_bytes(fd, request, &mut arg_buf)
-    }
-
-    fn ioctl_bytes(&self, fd: i32, request: u64, payload: &mut [u8]) -> LibTpuResult<i32> {
-        #[allow(clippy::cast_possible_truncation)]
-        let req_ulong = request as std::ffi::c_ulong;
-        // SAFETY: `payload` is a valid mutable byte slice whose pointer is passed to the kernel.
-        let rc = unsafe {
-            posix_libc::ioctl(
-                fd,
-                req_ulong,
-                payload.as_mut_ptr().cast::<std::ffi::c_void>(),
-            )
-        };
-        if rc < 0 {
-            let err = std::io::Error::last_os_error();
-            return Err(LibTpuError::IoctlFailed {
-                request,
-                errno: err.raw_os_error().unwrap_or(9),
-                message: err.to_string(),
-            });
-        }
-        Ok(rc)
-    }
-
-    fn close_device(&self, fd: i32) -> LibTpuResult<()> {
-        // SAFETY: `close` is safe for any integer file descriptor (returns `-1` with `EBADF` if invalid).
-        let rc = unsafe { posix_libc::close(fd) };
-        if rc < 0 {
-            let err = std::io::Error::last_os_error();
-            return Err(LibTpuError::HardwareIoError {
-                operation: "close",
-                errno: err.raw_os_error().unwrap_or(9),
-                message: err.to_string(),
-            });
-        }
-        Ok(())
-    }
-}
-
-/// Linux kernel driver HAL wrapping a [`SyscallProvider`], BAR0 MMIO CSR bank, and backing [`SimulatedTpuHal`].
-#[derive(Debug)]
-pub struct LinuxDeviceHal<S: SyscallProvider> {
-    /// Kernel driver mode (`Gasket` or `Vfio`).
-    pub mode: KernelDriverMode,
-    /// Injectable syscall provider.
-    pub syscalls: S,
-    /// Open kernel file descriptor.
-    pub device_fd: i32,
-    /// Emulated `PCIe` BAR0 MMIO CSR bank.
-    pub mmio: EmulatedKernelDriverBackend,
-    /// Backing HBM & execution state.
-    pub inner: SimulatedTpuHal,
-}
-
-impl<S: SyscallProvider> LinuxDeviceHal<S> {
-    /// Opens a Linux TPU device node (`/dev/accel0` or `/dev/vfio/vfio`) and initializes page tables.
-    ///
-    /// # Arguments
-    ///
-    /// * `mode` - Kernel driver mode (`Gasket` vs `Vfio`).
-    /// * `syscalls` - Syscall implementation.
-    /// * `config` - TPU initialization configuration.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError`] if `open_device` or initial page-table `ioctl` fails.
-    pub fn open(mode: KernelDriverMode, syscalls: S, config: &TpuInitConfig) -> LibTpuResult<Self> {
-        let path = match mode {
-            KernelDriverMode::Gasket => "/dev/accel0",
-            KernelDriverMode::Vfio => "/dev/vfio/vfio",
-        };
-        let fd = syscalls.open_device(path)?;
-        if mode == KernelDriverMode::Gasket {
-            syscalls.ioctl_device(
-                fd,
-                GASKET_IOCTL_NUMBER_PAGE_TABLES,
-                size_of::<GasketPageTableIoctl>(),
-            )?;
-            syscalls.ioctl_device(
-                fd,
-                GASKET_IOCTL_PARTITION_PAGE_TABLE,
-                size_of::<GasketPageTableIoctl>(),
-            )?;
-        }
-        Ok(Self {
-            mode,
-            syscalls,
-            device_fd: fd,
-            mmio: EmulatedKernelDriverBackend::default(),
-            inner: SimulatedTpuHal::new(config),
-        })
-    }
-
-    /// Reads the thermal (millicelsius), power (milliwatts), and duty-cycle (%) telemetry CSRs from BAR0.
-    pub fn read_telemetry_csrs(&self) -> (u64, u64, u64) {
-        (
-            self.mmio.get_csr(BAR0_CSR_THERMAL_MILLICELSIUS),
-            self.mmio.get_csr(BAR0_CSR_POWER_MILLIWATTS),
-            self.mmio.get_csr(BAR0_CSR_DUTY_CYCLE_PERCENT),
-        )
-    }
-
-    /// Submits a 32-byte [`HbmDmaRingDescriptor`] into the BAR0 HBM DMA descriptor ring and rings the tail doorbell.
-    ///
-    /// # Arguments
-    ///
-    /// * `src_iova` - Source IOVA or HBM offset.
-    /// * `dst_iova` - Destination IOVA or HBM offset.
-    /// * `length_bytes` - Transfer length in bytes.
-    /// * `direction_flags` - DMA direction code (`0` = H2D, `1` = D2H, `2` = D2D).
-    fn submit_dma_descriptor(
-        &self,
-        src_iova: u64,
-        dst_iova: u64,
-        length_bytes: usize,
-        direction_flags: u32,
-    ) {
-        let next_tail = self
-            .mmio
-            .get_csr(BAR0_CSR_HBM_DMA_RING_TAIL)
-            .wrapping_add(1);
-        let desc = HbmDmaRingDescriptor {
-            src_iova,
-            dst_iova,
-            length_bytes: u32::try_from(length_bytes).unwrap_or(u32::MAX),
-            direction_flags,
-            completion_sync_flag: next_tail,
-        };
-        self.mmio.enqueue_dma_descriptor(desc);
-        self.mmio.set_csr(BAR0_CSR_HBM_DMA_RING_TAIL, next_tail);
-        self.mmio.set_csr(BAR0_CSR_HBM_DMA_RING_HEAD, next_tail);
-    }
-
-    /// Registers an interrupt `eventfd` using the reverse-engineered Gasket or VFIO `ioctl`.
-    ///
-    /// # Arguments
-    ///
-    /// * `event_fd` - Linux `eventfd` descriptor.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::IoctlFailed`] if the kernel rejects the interrupt registration.
-    pub fn register_interrupt_eventfd(&self, event_fd: i32) -> LibTpuResult<()> {
-        if event_fd < 0 {
-            return Err(LibTpuError::InvalidArgument {
-                parameter: "event_fd",
-                reason: String::from("event_fd must be non-negative"),
-            });
-        }
-        match self.mode {
-            KernelDriverMode::Gasket => {
-                let mut payload = GasketInterruptEventFd {
-                    interrupt: 0,
-                    event_fd: u64::try_from(event_fd).unwrap_or(0),
-                    reserved: [0; 2],
-                };
-                self.syscalls.ioctl_typed(
-                    self.device_fd,
-                    GASKET_IOCTL_SET_EVENTFD,
-                    &mut payload,
-                )?;
-                self.mmio.apply_typed_ioctl(
-                    GASKET_IOCTL_SET_EVENTFD,
-                    IoctlPayload::GasketInterruptEventFd(&payload),
-                );
-            }
-            KernelDriverMode::Vfio => {
-                let mut payload = VfioIrqSetIoctl {
-                    argsz: 24,
-                    flags: 0x24,
-                    index: 2,
-                    start: 0,
-                    count: 1,
-                    event_fd,
-                };
-                self.syscalls.ioctl_typed(
-                    self.device_fd,
-                    VFIO_DEVICE_SET_IRQS_IOCTL,
-                    &mut payload,
-                )?;
-                self.mmio.apply_typed_ioctl(
-                    VFIO_DEVICE_SET_IRQS_IOCTL,
-                    IoctlPayload::VfioIrqSet(&payload),
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// Unregisters an interrupt `eventfd` on Gasket devices (`GASKET_IOCTL_CLEAR_EVENTFD`).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::IoctlFailed`] if the `ioctl` fails.
-    pub fn unregister_interrupt_eventfd(&self) -> LibTpuResult<()> {
-        if self.mode == KernelDriverMode::Gasket {
-            self.syscalls
-                .ioctl_device(self.device_fd, GASKET_IOCTL_CLEAR_EVENTFD, 8)?;
-        }
-        self.mmio.clear_interrupt_fds();
-        Ok(())
-    }
-
-    /// Closes the underlying kernel device file descriptor.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LibTpuError::HardwareIoError`] if closing the file descriptor fails.
-    pub fn close(&self) -> LibTpuResult<()> {
-        self.syscalls.close_device(self.device_fd)
-    }
-}
-
-impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
-    fn discover_topology(&self) -> LibTpuResult<TopologySpec> {
-        self.inner.discover_topology()
-    }
-
-    fn allocate_device_memory(
-        &self,
-        device_id: DeviceId,
-        memory_kind: MemoryKind,
-        size: ByteSize,
-    ) -> LibTpuResult<DeviceAddress> {
-        let addr = self
-            .inner
-            .allocate_device_memory(device_id, memory_kind, size)?;
-        match self.mode {
-            KernelDriverMode::Gasket => {
-                let mut payload = GasketPageTableIoctl {
-                    page_table_index: 0,
-                    size: size.0 as u64,
-                    host_address: addr.0,
-                    device_address: addr.0,
-                };
-                self.syscalls
-                    .ioctl_typed(self.device_fd, GASKET_IOCTL_MAP_BUFFER, &mut payload)?;
-                self.mmio.apply_typed_ioctl(
-                    GASKET_IOCTL_MAP_BUFFER,
-                    IoctlPayload::GasketPageTable(&payload),
-                );
-            }
-            KernelDriverMode::Vfio => {
-                let mut payload = VfioDmaMapIoctl {
-                    argsz: 32,
-                    flags: 0x3,
-                    vaddr: addr.0,
-                    iova: addr.0,
-                    size: size.0 as u64,
-                };
-                self.syscalls.ioctl_typed(
-                    self.device_fd,
-                    VFIO_IOMMU_MAP_DMA_IOCTL,
-                    &mut payload,
-                )?;
-                self.mmio.apply_typed_ioctl(
-                    VFIO_IOMMU_MAP_DMA_IOCTL,
-                    IoctlPayload::VfioDmaMap(&payload),
-                );
-            }
-        }
-        Ok(addr)
-    }
-
-    fn deallocate_device_memory(
-        &self,
-        device_id: DeviceId,
-        address: DeviceAddress,
-    ) -> LibTpuResult<()> {
-        match self.mode {
-            KernelDriverMode::Gasket => {
-                let mut payload = GasketPageTableIoctl {
-                    page_table_index: 0,
-                    size: 4096,
-                    host_address: address.0,
-                    device_address: address.0,
-                };
-                self.syscalls.ioctl_typed(
-                    self.device_fd,
-                    GASKET_IOCTL_UNMAP_BUFFER,
-                    &mut payload,
-                )?;
-                self.mmio.apply_typed_ioctl(
-                    GASKET_IOCTL_UNMAP_BUFFER,
-                    IoctlPayload::GasketPageTable(&payload),
-                );
-            }
-            KernelDriverMode::Vfio => {
-                let mut payload = VfioDmaUnmapIoctl {
-                    argsz: 24,
-                    flags: 0,
-                    iova: address.0,
-                    size: 4096,
-                };
-                self.syscalls.ioctl_typed(
-                    self.device_fd,
-                    VFIO_IOMMU_UNMAP_DMA_IOCTL,
-                    &mut payload,
-                )?;
-                self.mmio.apply_typed_ioctl(
-                    VFIO_IOMMU_UNMAP_DMA_IOCTL,
-                    IoctlPayload::VfioDmaUnmap(&payload),
-                );
-            }
-        }
-        self.inner.deallocate_device_memory(device_id, address)
-    }
-
-    fn write_device_memory(
-        &self,
-        device_id: DeviceId,
-        address: DeviceAddress,
-        data: &[u8],
-    ) -> LibTpuResult<()> {
-        self.submit_dma_descriptor(data.as_ptr() as u64, address.0, data.len(), 0);
-        self.inner.write_device_memory(device_id, address, data)
-    }
-
-    fn read_device_memory(
-        &self,
-        device_id: DeviceId,
-        address: DeviceAddress,
-        out: &mut [u8],
-    ) -> LibTpuResult<()> {
-        self.submit_dma_descriptor(address.0, out.as_mut_ptr() as u64, out.len(), 1);
-        self.inner.read_device_memory(device_id, address, out)
-    }
-
-    fn copy_device_to_device(
-        &self,
-        src_device: DeviceId,
-        src_addr: DeviceAddress,
-        dst_device: DeviceId,
-        dst_addr: DeviceAddress,
-        size: ByteSize,
-    ) -> LibTpuResult<()> {
-        self.submit_dma_descriptor(src_addr.0, dst_addr.0, size.0, 2);
-        self.inner
-            .copy_device_to_device(src_device, src_addr, dst_device, dst_addr, size)
-    }
-
-    fn execute_program(
-        &self,
-        device_id: DeviceId,
-        program: &CompiledProgram,
-        inputs: &[DeviceAddress],
-        outputs: &[DeviceAddress],
-    ) -> LibTpuResult<()> {
-        let imem = program.encode_architectural_imem();
-        let mut vm = DeepSeaVm::new();
-        vm.execute_imem_bytes(&imem);
-        let rmap = ChipRegisterMap::for_generation(self.inner.topology.generation);
-        self.mmio
-            .set_csr(rmap.tc0_program_location_csr, imem.len() as u64);
-        self.mmio.set_csr(rmap.tc0_pc_csr, u64::from(vm.pc));
-        self.mmio.set_csr(rmap.tc0_run_status_csr, 1);
-        self.mmio
-            .set_csr(rmap.tc0_vwait_sync_flag_state_csr, vm.cycles_executed);
-        self.mmio.set_csr(BAR0_CSR_TENSORCORE_PC, u64::from(vm.pc));
-        self.mmio.set_csr(BAR0_CSR_TENSORCORE_RUN_CONTROL, 1);
-        self.mmio.set_csr(BAR0_CSR_TENSORCORE_STATUS, 1);
-        let sync = self.mmio.get_csr(BAR0_CSR_SYNC_FLAG_BASE);
-        self.mmio.set_csr(
-            BAR0_CSR_SYNC_FLAG_BASE,
-            sync.wrapping_add(vm.cycles_executed),
-        );
-        self.inner
-            .execute_program(device_id, program, inputs, outputs)
-    }
-
-    fn memory_stats(&self, device_id: DeviceId) -> LibTpuResult<DeviceMemoryStats> {
-        self.inner.memory_stats(device_id)
-    }
-
-    fn clear_memory_stats(&self, device_id: DeviceId) -> LibTpuResult<()> {
-        self.inner.clear_memory_stats(device_id)
-    }
-
-    fn poison_device(&self, device_id: DeviceId, reason: String) -> LibTpuResult<()> {
-        self.inner.poison_device(device_id, reason)
-    }
-}
-
-/// Polymorphic Hardware Abstraction Layer backend dispatching across [`LinuxDeviceHal`]
-/// and [`SimulatedTpuHal`].
-#[derive(Debug)]
-pub enum HalBackend<S: SyscallProvider = EmulatedKernelDriverBackend> {
-    /// Deterministic in-memory TPU hardware simulation backend.
-    Simulated(SimulatedTpuHal),
-    /// Linux Gasket/VFIO kernel driver backend (`LinuxDeviceHal<S>`).
-    Linux(LinuxDeviceHal<S>),
-}
-
-impl HalBackend<EmulatedKernelDriverBackend> {
-    /// Selects and initializes a [`HalBackend`] from `config`.
-    ///
-    /// When `--tpu_driver_mode=simulated` is present in `config.extra_flags`, returns
-    /// [`HalBackend::Simulated`]; otherwise returns [`HalBackend::Linux`] driving the
-    /// Gasket/VFIO protocol stack.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - TPU initialization configuration.
-    #[must_use]
-    pub fn from_config(config: &TpuInitConfig) -> Self {
-        if config
-            .extra_flags
-            .get("--tpu_driver_mode")
-            .is_some_and(|mode| mode == "simulated")
-        {
-            Self::Simulated(SimulatedTpuHal::new(config))
-        } else {
-            Self::Linux(LinuxDeviceHal {
-                mode: KernelDriverMode::Gasket,
-                syscalls: EmulatedKernelDriverBackend::default(),
-                device_fd: 3,
-                mmio: EmulatedKernelDriverBackend::default(),
-                inner: SimulatedTpuHal::new(config),
-            })
-        }
-    }
-}
-
-impl<S: SyscallProvider> TpuHal for HalBackend<S> {
-    fn discover_topology(&self) -> LibTpuResult<TopologySpec> {
-        match self {
-            Self::Simulated(sim) => sim.discover_topology(),
-            Self::Linux(linux) => linux.discover_topology(),
-        }
-    }
-
-    fn allocate_device_memory(
-        &self,
-        device_id: DeviceId,
-        memory_kind: MemoryKind,
-        size: ByteSize,
-    ) -> LibTpuResult<DeviceAddress> {
-        match self {
-            Self::Simulated(sim) => sim.allocate_device_memory(device_id, memory_kind, size),
-            Self::Linux(linux) => linux.allocate_device_memory(device_id, memory_kind, size),
-        }
-    }
-
-    fn deallocate_device_memory(
-        &self,
-        device_id: DeviceId,
-        address: DeviceAddress,
-    ) -> LibTpuResult<()> {
-        match self {
-            Self::Simulated(sim) => sim.deallocate_device_memory(device_id, address),
-            Self::Linux(linux) => linux.deallocate_device_memory(device_id, address),
-        }
-    }
-
-    fn write_device_memory(
-        &self,
-        device_id: DeviceId,
-        address: DeviceAddress,
-        data: &[u8],
-    ) -> LibTpuResult<()> {
-        match self {
-            Self::Simulated(sim) => sim.write_device_memory(device_id, address, data),
-            Self::Linux(linux) => linux.write_device_memory(device_id, address, data),
-        }
-    }
-
-    fn read_device_memory(
-        &self,
-        device_id: DeviceId,
-        address: DeviceAddress,
-        out: &mut [u8],
-    ) -> LibTpuResult<()> {
-        match self {
-            Self::Simulated(sim) => sim.read_device_memory(device_id, address, out),
-            Self::Linux(linux) => linux.read_device_memory(device_id, address, out),
-        }
-    }
-
-    fn copy_device_to_device(
-        &self,
-        src_device: DeviceId,
-        src_addr: DeviceAddress,
-        dst_device: DeviceId,
-        dst_addr: DeviceAddress,
-        size: ByteSize,
-    ) -> LibTpuResult<()> {
-        match self {
-            Self::Simulated(sim) => {
-                sim.copy_device_to_device(src_device, src_addr, dst_device, dst_addr, size)
-            }
-            Self::Linux(linux) => {
-                linux.copy_device_to_device(src_device, src_addr, dst_device, dst_addr, size)
-            }
-        }
-    }
-
-    fn execute_program(
-        &self,
-        device_id: DeviceId,
-        program: &CompiledProgram,
-        inputs: &[DeviceAddress],
-        outputs: &[DeviceAddress],
-    ) -> LibTpuResult<()> {
-        match self {
-            Self::Simulated(sim) => sim.execute_program(device_id, program, inputs, outputs),
-            Self::Linux(linux) => linux.execute_program(device_id, program, inputs, outputs),
-        }
-    }
-
-    fn memory_stats(&self, device_id: DeviceId) -> LibTpuResult<DeviceMemoryStats> {
-        match self {
-            Self::Simulated(sim) => sim.memory_stats(device_id),
-            Self::Linux(linux) => linux.memory_stats(device_id),
-        }
-    }
-
-    fn clear_memory_stats(&self, device_id: DeviceId) -> LibTpuResult<()> {
-        match self {
-            Self::Simulated(sim) => sim.clear_memory_stats(device_id),
-            Self::Linux(linux) => linux.clear_memory_stats(device_id),
-        }
-    }
-
-    fn poison_device(&self, device_id: DeviceId, reason: String) -> LibTpuResult<()> {
-        match self {
-            Self::Simulated(sim) => sim.poison_device(device_id, reason),
-            Self::Linux(linux) => linux.poison_device(device_id, reason),
-        }
-    }
-}
-
-/// Creates the default [`TpuHal`] instance for `config`, routing allocations, DMA ring transfers,
-/// and `TensorCore` execution through [`HalBackend::from_config`].
-///
-/// # Arguments
-///
-/// * `config` - TPU initialization configuration.
-#[must_use]
-pub fn create_default_hal(config: &TpuInitConfig) -> std::sync::Arc<dyn TpuHal> {
-    std::sync::Arc::new(HalBackend::from_config(config))
 }
 
 #[cfg(test)]
@@ -3558,7 +225,15 @@ pub fn create_default_hal(config: &TpuInitConfig) -> std::sync::Arc<dyn TpuHal> 
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use crate::compiler::TpuOpCode;
+    use crate::config::TpuInitConfig;
+    use crate::error::LibTpuError;
+    use crate::types::{
+        ChipCoordinates, ElementType, EventFdHandle, FileDescriptor, MemoryLayout, MmioOffset,
+        PciDeviceId, Shape, TpuGeneration,
+    };
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
     #[derive(Debug)]
     struct MockSyscalls {
@@ -3855,6 +530,112 @@ mod tests {
             .len(),
             8
         );
+        let nd_dot_attrs = crate::compiler::InstructionAttrs {
+            dot_lhs_batch_dims: vec![0],
+            dot_rhs_batch_dims: vec![0],
+            dot_lhs_contracting_dims: vec![2],
+            dot_rhs_contracting_dims: vec![1],
+            input_shapes: vec![
+                Shape {
+                    element_type: ElementType::F32,
+                    dims: vec![1, 2, 2],
+                    dynamic_dims: vec![false; 3],
+                    layout: MemoryLayout::default_tpu_tiled(3),
+                },
+                Shape {
+                    element_type: ElementType::F32,
+                    dims: vec![1, 2, 2],
+                    dynamic_dims: vec![false; 3],
+                    layout: MemoryLayout::default_tpu_tiled(3),
+                },
+            ],
+            output_shape: None,
+            ..crate::compiler::InstructionAttrs::default()
+        };
+        assert_eq!(
+            SimulatedTpuHal::eval_dot_general(
+                ElementType::F32,
+                &[1.0, 2.0, 3.0, 4.0],
+                &[1.0, 0.0, 0.0, 1.0],
+                &nd_dot_attrs,
+            )
+            .len(),
+            16
+        );
+        assert_eq!(
+            SimulatedTpuHal::eval_pad_with_attrs(
+                ElementType::F32,
+                &[1.0, 2.0],
+                0.5,
+                &crate::compiler::InstructionAttrs::default(),
+            )
+            .len(),
+            8
+        );
+        let pad_bundle = crate::compiler::TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::Pad,
+            operand_slots: vec![0, 1],
+            output_slot: 2,
+            sync_flag_id: 1,
+            attrs: crate::compiler::InstructionAttrs {
+                pad_edge_low: vec![1],
+                pad_edge_high: vec![2],
+                pad_interior: vec![1],
+                input_shapes: vec![Shape {
+                    element_type: ElementType::F32,
+                    dims: vec![2],
+                    dynamic_dims: vec![false],
+                    layout: MemoryLayout::default_tpu_tiled(1),
+                }],
+                output_shape: None,
+                ..crate::compiler::InstructionAttrs::default()
+            },
+        };
+        let pad_in = ElementType::F32.pack_from_f64_slice(&[10.0, 20.0]);
+        let pad_v = ElementType::F32.pack_from_f64_slice(&[9.0]);
+        let pad_res = ElementType::F32.unpack_to_f64_vec(&SimulatedTpuHal::eval_bundle_with_attrs(
+            &pad_bundle,
+            ElementType::F32,
+            &[&pad_in, &pad_v],
+        ));
+        assert_eq!(pad_res, vec![9.0, 10.0, 9.0, 20.0, 9.0, 9.0]);
+
+        for r_op in [
+            TpuOpCode::ReduceSumF32,
+            TpuOpCode::ReduceMax,
+            TpuOpCode::ReduceMin,
+        ] {
+            let red_bundle = crate::compiler::TpuInstructionBundle {
+                pc_offset: 0,
+                opcode: r_op,
+                operand_slots: vec![0],
+                output_slot: 1,
+                sync_flag_id: 1,
+                attrs: crate::compiler::InstructionAttrs {
+                    reduce_dims: vec![1],
+                    input_shapes: vec![Shape {
+                        element_type: ElementType::F32,
+                        dims: vec![2, 2],
+                        dynamic_dims: vec![false; 2],
+                        layout: MemoryLayout::default_tpu_tiled(2),
+                    }],
+                    output_shape: Some(Shape {
+                        element_type: ElementType::F32,
+                        dims: vec![2],
+                        dynamic_dims: vec![false],
+                        layout: MemoryLayout::default_tpu_tiled(1),
+                    }),
+                    ..crate::compiler::InstructionAttrs::default()
+                },
+            };
+            let red_in = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
+            assert_eq!(
+                SimulatedTpuHal::eval_bundle_with_attrs(&red_bundle, ElementType::F32, &[&red_in])
+                    .len(),
+                8
+            );
+        }
 
         for src in [
             b"module @id { return }" as &[u8],
@@ -3902,20 +683,40 @@ mod tests {
             b"module @cc { custom_call }",
             b"module @adds { s32_add }",
             b"module @xor { xor_u8 }",
-            b"module @dag { func.func @main(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.add %arg0, %arg1 : tensor<4xf32>\n %0 = stablehlo.multiply %0, %arg1 : tensor<4xf32> } }",
-            b"module @rect_dot { func.func @main(%arg0: tensor<2x3xf32>, %arg1: tensor<3x2xf32>) -> tensor<2x2xf32> { %0 = stablehlo.dot_general %arg0, %arg1 : (tensor<2x3xf32>, tensor<3x2xf32>) -> tensor<2x2xf32>\n return %0 : tensor<2x2xf32> } }",
-            b"module @batch_dot { func.func @main(%arg0: tensor<2x2x2xf32>, %arg1: tensor<2x2x2xf32>) -> tensor<2x2x2xf32> { %0 = stablehlo.dot_general %arg0, %arg1 : (tensor<2x2x2xf32>, tensor<2x2x2xf32>) -> tensor<2x2x2xf32>\n return %0 : tensor<2x2x2xf32> } }",
-            b"module @vec_dot { func.func @main(%arg0: tensor<3xf32>, %arg1: tensor<3xf32>) -> tensor<3xf32> { %0 = stablehlo.dot_general %arg0, %arg1 : (tensor<3xf32>, tensor<3xf32>) -> tensor<3xf32>\n return %0 : tensor<3xf32> } }",
-            b"module @sq_dot { func.func @main(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.dot_general %arg0, %arg1 : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>\n return %0 : tensor<4xf32> } }",
-            b"HloModule hlo_eq=1\nENTRY main {\n p0 = f32[4] parameter(0)\n ROOT r = f32[4] negate(p0)\n}",
-            b"module @trp_nd { func.func @main(%arg0: tensor<2x2xf32>) -> tensor<2x2xf32> { %0 = stablehlo.transpose %arg0, permutation = [1, 0] : tensor<2x2xf32>\n return %0 : tensor<2x2xf32> } }",
-            b"module @trp_def { func.func @main(%arg0: tensor<2x2xf32>) -> tensor<2x2xf32> { %0 = stablehlo.transpose %arg0 : tensor<2x2xf32>\n return %0 : tensor<2x2xf32> } }",
-            b"module @brd_nd { func.func @main(%arg0: tensor<2xf32>) -> tensor<2x2xf32> { %0 = stablehlo.broadcast_in_dim %arg0, broadcast_dimensions = [1] : (tensor<2xf32>) -> tensor<2x2xf32>\n return %0 : tensor<2x2xf32> } }",
-            b"module @slc_nd { func.func @main(%arg0: tensor<4xf32>) -> tensor<2xf32> { %0 = stablehlo.slice %arg0, start_indices = [1], limit_indices = [3], strides = [1] : (tensor<4xf32>) -> tensor<2xf32>\n return %0 : tensor<2xf32> } }",
-            b"module @slc_strided { func.func @main(%arg0: tensor<4xf32>) -> tensor<2xf32> { %0 = stablehlo.slice %arg0, start_indices = [0], limit_indices = [4], strides = [2] : (tensor<4xf32>) -> tensor<2xf32>\n return %0 : tensor<2xf32> } }",
-            b"module @cst_dense { func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.constant dense<3.0> : tensor<4xf32>\n return %0 : tensor<4xf32> } }",
-            b"module @cat_ax1 { func.func @main(%arg0: tensor<2x2xf32>, %arg1: tensor<2x2xf32>) -> tensor<2x4xf32> { %0 = stablehlo.concatenate %arg0, %arg1, dimension = 1 : tensor<2x4xf32>\n return %0 : tensor<2x4xf32> } }",
-            b"HloModule hlo_params\nENTRY main {\n p0 = f32[4] parameter(0)\n ROOT r = f32[4] negate(p0)\n}",
+            b"module @dag { func.func @main(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.add %arg0, %arg1 : tensor<4xf32>
+ %0 = stablehlo.multiply %0, %arg1 : tensor<4xf32> } }",
+            b"module @rect_dot { func.func @main(%arg0: tensor<2x3xf32>, %arg1: tensor<3x2xf32>) -> tensor<2x2xf32> { %0 = stablehlo.dot_general %arg0, %arg1 : (tensor<2x3xf32>, tensor<3x2xf32>) -> tensor<2x2xf32>
+ return %0 : tensor<2x2xf32> } }",
+            b"module @batch_dot { func.func @main(%arg0: tensor<2x2x2xf32>, %arg1: tensor<2x2x2xf32>) -> tensor<2x2x2xf32> { %0 = stablehlo.dot_general %arg0, %arg1 : (tensor<2x2x2xf32>, tensor<2x2x2xf32>) -> tensor<2x2x2xf32>
+ return %0 : tensor<2x2x2xf32> } }",
+            b"module @vec_dot { func.func @main(%arg0: tensor<3xf32>, %arg1: tensor<3xf32>) -> tensor<3xf32> { %0 = stablehlo.dot_general %arg0, %arg1 : (tensor<3xf32>, tensor<3xf32>) -> tensor<3xf32>
+ return %0 : tensor<3xf32> } }",
+            b"module @sq_dot { func.func @main(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.dot_general %arg0, %arg1 : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
+ return %0 : tensor<4xf32> } }",
+            b"HloModule hlo_eq=1
+ENTRY main {
+ p0 = f32[4] parameter(0)
+ ROOT r = f32[4] negate(p0)
+}",
+            b"module @trp_nd { func.func @main(%arg0: tensor<2x2xf32>) -> tensor<2x2xf32> { %0 = stablehlo.transpose %arg0, permutation = [1, 0] : tensor<2x2xf32>
+ return %0 : tensor<2x2xf32> } }",
+            b"module @trp_def { func.func @main(%arg0: tensor<2x2xf32>) -> tensor<2x2xf32> { %0 = stablehlo.transpose %arg0 : tensor<2x2xf32>
+ return %0 : tensor<2x2xf32> } }",
+            b"module @brd_nd { func.func @main(%arg0: tensor<2xf32>) -> tensor<2x2xf32> { %0 = stablehlo.broadcast_in_dim %arg0, broadcast_dimensions = [1] : (tensor<2xf32>) -> tensor<2x2xf32>
+ return %0 : tensor<2x2xf32> } }",
+            b"module @slc_nd { func.func @main(%arg0: tensor<4xf32>) -> tensor<2xf32> { %0 = stablehlo.slice %arg0, start_indices = [1], limit_indices = [3], strides = [1] : (tensor<4xf32>) -> tensor<2xf32>
+ return %0 : tensor<2xf32> } }",
+            b"module @slc_strided { func.func @main(%arg0: tensor<4xf32>) -> tensor<2xf32> { %0 = stablehlo.slice %arg0, start_indices = [0], limit_indices = [4], strides = [2] : (tensor<4xf32>) -> tensor<2xf32>
+ return %0 : tensor<2xf32> } }",
+            b"module @cst_dense { func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.constant dense<3.0> : tensor<4xf32>
+ return %0 : tensor<4xf32> } }",
+            b"module @cat_ax1 { func.func @main(%arg0: tensor<2x2xf32>, %arg1: tensor<2x2xf32>) -> tensor<2x4xf32> { %0 = stablehlo.concatenate %arg0, %arg1, dimension = 1 : tensor<2x4xf32>
+ return %0 : tensor<2x4xf32> } }",
+            b"HloModule hlo_params
+ENTRY main {
+ p0 = f32[4] parameter(0)
+ ROOT r = f32[4] negate(p0)
+}",
         ] {
             for prog in CompiledProgram::compile("mlir", src, b"") {
                 assert!(hal
@@ -3948,6 +749,21 @@ mod tests {
             TpuOpCode::Sort,
             TpuOpCode::RngBitGenerator,
             TpuOpCode::ReduceWindow,
+            TpuOpCode::Expm1,
+            TpuOpCode::Log1p,
+            TpuOpCode::Logistic,
+            TpuOpCode::Tan,
+            TpuOpCode::Cbrt,
+            TpuOpCode::IsFinite,
+            TpuOpCode::RoundNearestEven,
+            TpuOpCode::RoundNearestAfz,
+            TpuOpCode::UniformQuantize,
+            TpuOpCode::UniformDequantize,
+            TpuOpCode::TopK,
+            TpuOpCode::Cholesky,
+            TpuOpCode::Fft,
+            TpuOpCode::CollectivePermute,
+            TpuOpCode::AllToAll,
         ] {
             assert_eq!(
                 SimulatedTpuHal::eval_unary_op(
@@ -3959,6 +775,22 @@ mod tests {
                 8
             );
         }
+        // Test Sign (-1, 0, +1) and 2x2 Cholesky
+        let sign_in = ElementType::F32.pack_from_f64_slice(&[-2.0, 0.0, 3.0]);
+        let sign_out = ElementType::F32.unpack_to_f64_vec(&SimulatedTpuHal::eval_unary_op(
+            TpuOpCode::Sign,
+            ElementType::F32,
+            &sign_in,
+        ));
+        assert_eq!(sign_out, vec![-1.0, 0.0, 1.0]);
+        let chol_in = ElementType::F32.pack_from_f64_slice(&[4.0, 2.0, 2.0, 5.0]);
+        let chol_out = ElementType::F32.unpack_to_f64_vec(&SimulatedTpuHal::eval_unary_op(
+            TpuOpCode::Cholesky,
+            ElementType::F32,
+            &chol_in,
+        ));
+        assert_eq!(chol_out, vec![2.0, 0.0, 1.0, 2.0]);
+
         for b_op in [
             TpuOpCode::ShiftLeft,
             TpuOpCode::ShiftRightArithmetic,
@@ -3966,6 +798,10 @@ mod tests {
             TpuOpCode::Convolution,
             TpuOpCode::Gather,
             TpuOpCode::DynamicSlice,
+            TpuOpCode::Atan2,
+            TpuOpCode::Pow,
+            TpuOpCode::Pad,
+            TpuOpCode::TriangularSolve,
         ] {
             assert_eq!(
                 SimulatedTpuHal::eval_binary_op(b_op, ElementType::F32, &[0_u8; 8], &[0_u8; 8])
@@ -3973,7 +809,47 @@ mod tests {
                 8
             );
         }
-        for t_op in [TpuOpCode::Scatter, TpuOpCode::DynamicUpdateSlice] {
+        // Test 2x2 TriangularSolve (both non-zero and zero diagonal branches) and non-2x2 non-zero diagonal
+        let tri_l = ElementType::F32.pack_from_f64_slice(&[2.0, 0.0, 1.0, 2.0]);
+        let tri_b = ElementType::F32.pack_from_f64_slice(&[4.0, 6.0, 4.0, 7.0]);
+        assert_eq!(
+            SimulatedTpuHal::eval_binary_op(
+                TpuOpCode::TriangularSolve,
+                ElementType::F32,
+                &tri_l,
+                &tri_b
+            )
+            .len(),
+            16
+        );
+        assert_eq!(
+            SimulatedTpuHal::eval_binary_op(
+                TpuOpCode::TriangularSolve,
+                ElementType::F32,
+                &[0_u8; 16],
+                &tri_b
+            )
+            .len(),
+            16
+        );
+        let tri_diag_l = ElementType::F32.pack_from_f64_slice(&[2.0, 0.0]);
+        let tri_diag_b = ElementType::F32.pack_from_f64_slice(&[4.0, 6.0]);
+        assert_eq!(
+            SimulatedTpuHal::eval_binary_op(
+                TpuOpCode::TriangularSolve,
+                ElementType::F32,
+                &tri_diag_l,
+                &tri_diag_b
+            )
+            .len(),
+            8
+        );
+
+        for t_op in [
+            TpuOpCode::Scatter,
+            TpuOpCode::DynamicUpdateSlice,
+            TpuOpCode::Clamp,
+        ] {
             assert_eq!(
                 SimulatedTpuHal::eval_bundle(
                     t_op,
@@ -4007,6 +883,8 @@ mod tests {
             TpuOpCode::AllReduceSumF32,
             TpuOpCode::AllGather,
             TpuOpCode::ReduceScatter,
+            TpuOpCode::CollectivePermute,
+            TpuOpCode::AllToAll,
         ] {
             assert!(
                 hal.execute_collective(
@@ -4587,7 +1465,13 @@ mod tests {
             PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0xffff)),
             None
         );
-        assert_eq!(PciDeviceEnumerator::parse_hex_u16("0x1ae0\n"), Some(0x1ae0));
+        assert_eq!(
+            PciDeviceEnumerator::parse_hex_u16(
+                "0x1ae0
+"
+            ),
+            Some(0x1ae0)
+        );
         assert_eq!(PciDeviceEnumerator::parse_hex_u16("not_hex"), None);
         assert_eq!(
             PciDeviceEnumerator::scan_sysfs(
@@ -4612,25 +1496,77 @@ mod tests {
         let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:0a.0"));
         let _ = std::fs::create_dir_all(dev_dir.join("vfio"));
         // 04.0: Valid Gasket TPU v6e
-        let _ = std::fs::write(sysfs_dir.join("0000:00:04.0/vendor"), "0x1ae0\n");
-        let _ = std::fs::write(sysfs_dir.join("0000:00:04.0/device"), "0x006f\n");
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:04.0/vendor"),
+            "0x1ae0
+",
+        );
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:04.0/device"),
+            "0x006f
+",
+        );
         // 05.0: Valid VFIO TPU v5p
-        let _ = std::fs::write(sysfs_dir.join("0000:00:05.0/vendor"), "0x1ae0\n");
-        let _ = std::fs::write(sysfs_dir.join("0000:00:05.0/device"), "0x005e\n");
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:05.0/vendor"),
+            "0x1ae0
+",
+        );
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:05.0/device"),
+            "0x005e
+",
+        );
         // 06.0: Non-Google vendor
-        let _ = std::fs::write(sysfs_dir.join("0000:00:06.0/vendor"), "0x8086\n");
-        let _ = std::fs::write(sysfs_dir.join("0000:00:06.0/device"), "0x1234\n");
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:06.0/vendor"),
+            "0x8086
+",
+        );
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:06.0/device"),
+            "0x1234
+",
+        );
         // 07.0: Missing device file
-        let _ = std::fs::write(sysfs_dir.join("0000:00:07.0/vendor"), "0x1ae0\n");
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:07.0/vendor"),
+            "0x1ae0
+",
+        );
         // 08.0: Invalid vendor hex
-        let _ = std::fs::write(sysfs_dir.join("0000:00:08.0/vendor"), "bad\n");
-        let _ = std::fs::write(sysfs_dir.join("0000:00:08.0/device"), "0x006f\n");
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:08.0/vendor"),
+            "bad
+",
+        );
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:08.0/device"),
+            "0x006f
+",
+        );
         // 09.0: Invalid device hex
-        let _ = std::fs::write(sysfs_dir.join("0000:00:09.0/vendor"), "0x1ae0\n");
-        let _ = std::fs::write(sysfs_dir.join("0000:00:09.0/device"), "bad\n");
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:09.0/vendor"),
+            "0x1ae0
+",
+        );
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:09.0/device"),
+            "bad
+",
+        );
         // 0a.0: Unknown Google PCI device ID
-        let _ = std::fs::write(sysfs_dir.join("0000:00:0a.0/vendor"), "0x1ae0\n");
-        let _ = std::fs::write(sysfs_dir.join("0000:00:0a.0/device"), "0x9999\n");
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:0a.0/vendor"),
+            "0x1ae0
+",
+        );
+        let _ = std::fs::write(
+            sysfs_dir.join("0000:00:0a.0/device"),
+            "0x9999
+",
+        );
 
         let scanned = PciDeviceEnumerator::scan_sysfs(&sysfs_dir, &dev_dir);
         assert_eq!(scanned.len(), 2);
@@ -4658,6 +1594,11 @@ mod tests {
         }
 
         let mut vm = TpuCoreVmState::default();
+        assert!(
+            PosixKernelDriverBackend
+                .mmap_bar_aperture(FileDescriptor(-1), ByteSize(0))
+                .is_err()
+        );
         assert_eq!(vm.cycles_executed, 0);
         assert!(vm.wait_sync_flag(0, 1, 1).is_err());
         for prog in CompiledProgram::compile("mlir", b"dot_general", b"") {

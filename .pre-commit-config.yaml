@@ -2,8 +2,22 @@ repos:
   - repo: local
     hooks:
       - id: cargo-fmt
-        name: cargo fmt, ruff format & clang-format (auto-format and recheck)
-        entry: python3 scripts/pre_commit.py fmt
+        name: cargo fmt
+        entry: python3 scripts/pre_commit.py cargo-fmt
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: ruff-format
+        name: ruff format
+        entry: python3 scripts/pre_commit.py ruff-format
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: clang-format
+        name: clang-format --style=LLVM
+        entry: python3 scripts/pre_commit.py clang-format
         language: system
         pass_filenames: false
         always_run: true

@@ -121,6 +121,25 @@ def test_client_buffer_executable_and_profiler() -> None:
     i1.close()
     exec_s32.close()
 
+    for dt in libtpu.DataType:
+        assert dt.bit_size() >= 0
+        assert dt.byte_size_for_elements(4) >= 0
+
+    bf16_buf = client.buffer_from_bytes(
+        0, libtpu.DataType.BF16, b"\x00\x3f\x00\x40\x40\x40\x80\x40", [2, 2]
+    )
+    assert bf16_buf.dtype() == libtpu.DataType.BF16
+    assert bf16_buf.shape() == (2, 2)
+    assert bf16_buf.byte_size() == 8
+    assert bf16_buf.to_bytes() == b"\x00\x3f\x00\x40\x40\x40\x80\x40"
+    bf16_buf.close()
+
+    s4_buf = client.buffer_from_bytes(0, libtpu.DataType.S4, b"\x12\x34", [4])
+    assert s4_buf.dtype() == libtpu.DataType.S4
+    assert s4_buf.byte_size() == 2
+    assert s4_buf.to_bytes() == b"\x12\x34"
+    s4_buf.close()
+
     out_buf.close()
     out_buf.close()
     b0.close()

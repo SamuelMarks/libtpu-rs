@@ -48,7 +48,7 @@ pre-commit run --all-files
 - **Code Formatting (`fmt` — Auto-Fix + Recheck)**:
   - Rust: `cargo fmt --all` followed by `cargo fmt --all -- --check`
   - Python: `ruff format python/ scripts/` followed by `ruff format --check python/ scripts/`
-  - C/C++: `clang-format -i -style=LLVM` followed by `clang-format --dry-run --Werror -style=LLVM`
+  - C/C++: `clang-format -i --style=LLVM` followed by `clang-format --dry-run --Werror --style=LLVM`
 - **Build & Compilation (`build`)**:
   - Rust: `cargo build --workspace --all-targets`
   - C/C++: `cmake -B cpp/build -S cpp -DENABLE_COVERAGE=ON && cmake --build cpp/build`

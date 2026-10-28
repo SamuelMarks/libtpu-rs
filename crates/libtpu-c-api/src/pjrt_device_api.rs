@@ -1016,3 +1016,378 @@ pub unsafe extern "C" fn PJRT_Device_ClearMemoryStats(
         )
     }
 }
+
+#[cfg(test)]
+#[allow(
+    for_loops_over_fallibles,
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::similar_names
+)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::pjrt_client_api::{PJRT_Client_Create, PJRT_Client_Destroy};
+    use crate::pjrt_types::{PJRT_Client_Create_Args, PJRT_Client_Destroy_Args};
+
+    #[test]
+    fn test_pjrt_device_description_device_and_memory_api() {
+        // SAFETY: Testing PJRT device description, device, and memory entrypoints with a valid client.
+        unsafe {
+            let mut create_args = PJRT_Client_Create_Args {
+                struct_size: size_of::<PJRT_Client_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                create_options: ptr::null(),
+                num_options: 0,
+                kv_get_callback: ptr::null(),
+                kv_get_user_arg: ptr::null_mut(),
+                kv_put_callback: ptr::null(),
+                kv_put_user_arg: ptr::null_mut(),
+                kv_try_get_callback: ptr::null(),
+                kv_try_get_user_arg: ptr::null_mut(),
+                client: ptr::null_mut(),
+            };
+            assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args).cast()).is_null());
+            let client = create_args.client;
+
+            drop(Box::from_raw(PJRT_Device_GetAttributes(ptr::null_mut())));
+            for &dev0 in (*client).device_ptrs.first() {
+                assert_ne!(format!("{:?}{:?}", *dev0, *(*dev0).desc_ptr), "");
+                let desc0 = (*dev0).desc_ptr;
+                let mut dd_id = crate::pjrt_types::PJRT_DeviceDescription_Id_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_DeviceDescription_Id_Args>(),
+                    extension_start: ptr::null_mut(),
+                    device_description: desc0,
+                    id: -1,
+                    pad: 0,
+                };
+                assert!(PJRT_DeviceDescription_Id(ptr::addr_of_mut!(dd_id).cast()).is_null());
+                assert_eq!(dd_id.id, 0);
+
+                let mut dd_proc = crate::pjrt_types::PJRT_DeviceDescription_ProcessIndex_Args {
+                    struct_size: size_of::<
+                        crate::pjrt_types::PJRT_DeviceDescription_ProcessIndex_Args,
+                    >(),
+                    extension_start: ptr::null_mut(),
+                    device_description: desc0,
+                    process_index: -1,
+                    pad: 0,
+                };
+                assert!(
+                    PJRT_DeviceDescription_ProcessIndex(ptr::addr_of_mut!(dd_proc).cast())
+                        .is_null()
+                );
+                assert_eq!(dd_proc.process_index, 0);
+
+                let mut dd_attrs = crate::pjrt_types::PJRT_DeviceDescription_Attributes_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_DeviceDescription_Attributes_Args>(
+                    ),
+                    extension_start: ptr::null_mut(),
+                    device_description: desc0,
+                    num_attributes: 0,
+                    attributes: ptr::null(),
+                };
+                assert!(
+                    PJRT_DeviceDescription_Attributes(ptr::addr_of_mut!(dd_attrs).cast()).is_null()
+                );
+
+                let mut dd_kind = crate::pjrt_types::PJRT_DeviceDescription_Kind_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_DeviceDescription_Kind_Args>(),
+                    extension_start: ptr::null_mut(),
+                    device_description: desc0,
+                    device_kind: ptr::null(),
+                    device_kind_size: 0,
+                };
+                assert!(PJRT_DeviceDescription_Kind(ptr::addr_of_mut!(dd_kind).cast()).is_null());
+                assert!(dd_kind.device_kind_size > 0);
+
+                let mut dd_dbg = crate::pjrt_types::PJRT_DeviceDescription_DebugString_Args {
+                    struct_size: size_of::<
+                        crate::pjrt_types::PJRT_DeviceDescription_DebugString_Args,
+                    >(),
+                    extension_start: ptr::null_mut(),
+                    device_description: desc0,
+                    debug_string: ptr::null(),
+                    debug_string_size: 0,
+                };
+                assert!(
+                    PJRT_DeviceDescription_DebugString(ptr::addr_of_mut!(dd_dbg).cast()).is_null()
+                );
+                assert!(dd_dbg.debug_string_size > 0);
+
+                let mut dd_str = crate::pjrt_types::PJRT_DeviceDescription_ToString_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_DeviceDescription_ToString_Args>(
+                    ),
+                    extension_start: ptr::null_mut(),
+                    device_description: desc0,
+                    to_string: ptr::null(),
+                    to_string_size: 0,
+                };
+                assert!(
+                    PJRT_DeviceDescription_ToString(ptr::addr_of_mut!(dd_str).cast()).is_null()
+                );
+                assert!(dd_str.to_string_size > 0);
+
+                let mut dv_desc = crate::pjrt_types::PJRT_Device_GetDescription_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Device_GetDescription_Args>(),
+                    extension_start: ptr::null_mut(),
+                    device: dev0,
+                    device_description: ptr::null_mut(),
+                };
+                assert!(PJRT_Device_GetDescription(ptr::addr_of_mut!(dv_desc).cast()).is_null());
+                assert_eq!(dv_desc.device_description, desc0);
+
+                let mut dv_addr = crate::pjrt_types::PJRT_Device_IsAddressable_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Device_IsAddressable_Args>(),
+                    extension_start: ptr::null_mut(),
+                    device: dev0,
+                    is_addressable: false,
+                    pad: [0; 7],
+                };
+                assert!(PJRT_Device_IsAddressable(ptr::addr_of_mut!(dv_addr).cast()).is_null());
+                assert!(dv_addr.is_addressable);
+
+                let mut dv_hw = crate::pjrt_types::PJRT_Device_LocalHardwareId_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Device_LocalHardwareId_Args>(),
+                    extension_start: ptr::null_mut(),
+                    device: dev0,
+                    local_hardware_id: -1,
+                    pad: 0,
+                };
+                assert!(PJRT_Device_LocalHardwareId(ptr::addr_of_mut!(dv_hw).cast()).is_null());
+                assert_eq!(dv_hw.local_hardware_id, 0);
+
+                let mut dv_mems = crate::pjrt_types::PJRT_Device_AddressableMemories_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Device_AddressableMemories_Args>(
+                    ),
+                    extension_start: ptr::null_mut(),
+                    device: dev0,
+                    memories: ptr::null(),
+                    num_memories: 0,
+                };
+                assert!(
+                    PJRT_Device_AddressableMemories(ptr::addr_of_mut!(dv_mems).cast()).is_null()
+                );
+
+                let mut dv_defm = crate::pjrt_types::PJRT_Device_DefaultMemory_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Device_DefaultMemory_Args>(),
+                    extension_start: ptr::null_mut(),
+                    device: dev0,
+                    memory: ptr::null_mut(),
+                };
+                assert!(PJRT_Device_DefaultMemory(ptr::addr_of_mut!(dv_defm).cast()).is_null());
+
+                let host_floats = [1.0_f32, 2.0, 3.0, 4.0];
+                let dims_arr = [4_i64];
+                let mut h2d_args = crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args>(
+                    ),
+                    extension_start: ptr::null_mut(),
+                    client,
+                    data: host_floats.as_ptr().cast(),
+                    element_type: 11,
+                    pad0: 0,
+                    dims: dims_arr.as_ptr(),
+                    num_dims: 1,
+                    byte_strides: ptr::null(),
+                    num_byte_strides: 0,
+                    host_buffer_semantics: 0,
+                    pad1: 0,
+                    device: dev0,
+                    memory: ptr::null_mut(),
+                    device_layout: ptr::null(),
+                    done_with_host_buffer: ptr::null_mut(),
+                    out_buffer: ptr::null_mut(),
+                };
+                assert!(
+                    crate::pjrt_client_api::PJRT_Client_BufferFromHostBuffer(
+                        ptr::addr_of_mut!(h2d_args).cast()
+                    )
+                    .is_null()
+                );
+
+                let mut dv_mstat = crate::pjrt_types::PJRT_Device_MemoryStats_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Device_MemoryStats_Args>(),
+                    extension_start: ptr::null_mut(),
+                    device: dev0,
+                    bytes_in_use: 0,
+                    peak_bytes_in_use: 0,
+                    peak_bytes_in_use_is_set: false,
+                    pad0: [0; 7],
+                    num_allocs: 0,
+                    num_allocs_is_set: false,
+                    pad1: [0; 7],
+                    largest_alloc_size: 0,
+                    largest_alloc_size_is_set: false,
+                    pad2: [0; 7],
+                    bytes_limit: 0,
+                    bytes_limit_is_set: false,
+                    pad3: [0; 7],
+                    bytes_reserved: 0,
+                    bytes_reserved_is_set: false,
+                    pad4: [0; 7],
+                    peak_bytes_reserved: 0,
+                    peak_bytes_reserved_is_set: false,
+                    pad5: [0; 7],
+                    bytes_reservable_limit: 0,
+                    bytes_reservable_limit_is_set: false,
+                    pad6: [0; 7],
+                    largest_free_block_bytes: 0,
+                    largest_free_block_bytes_is_set: false,
+                    pad7: [0; 7],
+                    pool_bytes: 0,
+                    pool_bytes_is_set: false,
+                    pad8: [0; 7],
+                    peak_pool_bytes: 0,
+                    peak_pool_bytes_is_set: false,
+                    pad9: [0; 7],
+                };
+                assert!(PJRT_Device_MemoryStats(ptr::addr_of_mut!(dv_mstat).cast()).is_null());
+                assert!(dv_mstat.bytes_in_use > 0);
+                assert!(dv_mstat.peak_bytes_in_use_is_set);
+                crate::rust_ergonomic_api::libtpu_rs_buffer_destroy(h2d_args.out_buffer);
+
+                let mut dv_clr = crate::pjrt_types::PJRT_Device_ClearMemoryStats_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Device_ClearMemoryStats_Args>(),
+                    extension_start: ptr::null_mut(),
+                    device: dev0,
+                };
+                assert!(PJRT_Device_ClearMemoryStats(ptr::addr_of_mut!(dv_clr).cast()).is_null());
+
+                let mut dv_pois = crate::pjrt_types::PJRT_Device_PoisonExecution_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Device_PoisonExecution_Args>(),
+                    extension_start: ptr::null_mut(),
+                    device: (*client).device_ptrs.last().copied().unwrap_or(dev0),
+                    launch_id: 1,
+                    error_code: 3,
+                    error_message: ptr::null(),
+                    error_message_size: 0,
+                    reserved0: 0,
+                    reserved1: 0,
+                    poisoned: false,
+                    pad: [0; 7],
+                };
+                assert!(PJRT_Device_PoisonExecution(ptr::addr_of_mut!(dv_pois).cast()).is_null());
+                assert!(dv_pois.poisoned);
+                dv_pois.launch_id = -1;
+                assert!(PJRT_Device_PoisonExecution(ptr::addr_of_mut!(dv_pois).cast()).is_null());
+
+                let mut dev_attr_args = crate::pjrt_types::PJRT_Device_GetAttributes_Args {
+                    struct_size: 16,
+                    extension_start: ptr::null_mut(),
+                    device: dev0,
+                    attributes: ptr::null(),
+                    num_attributes: 0,
+                    reserved0: 0,
+                    reserved1: 0,
+                };
+                drop(Box::from_raw(PJRT_Device_GetAttributes(
+                    ptr::addr_of_mut!(dev_attr_args).cast(),
+                )));
+                dev_attr_args.struct_size =
+                    size_of::<crate::pjrt_types::PJRT_Device_GetAttributes_Args>();
+                assert!(
+                    PJRT_Device_GetAttributes(ptr::addr_of_mut!(dev_attr_args).cast()).is_null()
+                );
+                assert_eq!(dev_attr_args.num_attributes, 3);
+
+                let mut ate_create = crate::pjrt_types::PJRT_Device_CreateAsyncTrackingEvent_Args {
+                    struct_size: size_of::<
+                        crate::pjrt_types::PJRT_Device_CreateAsyncTrackingEvent_Args,
+                    >(),
+                    extension_start: ptr::null_mut(),
+                    device: dev0,
+                    description: c"trace".as_ptr(),
+                    description_size: 5,
+                    event: ptr::null_mut(),
+                };
+                assert!(
+                    PJRT_Device_CreateAsyncTrackingEvent(ptr::addr_of_mut!(ate_create).cast())
+                        .is_null()
+                );
+                let mut ate_destroy = crate::pjrt_types::PJRT_AsyncTrackingEvent_Destroy_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_AsyncTrackingEvent_Destroy_Args>(
+                    ),
+                    extension_start: ptr::null_mut(),
+                    event: ate_create.event,
+                };
+                assert!(
+                    PJRT_AsyncTrackingEvent_Destroy(ptr::addr_of_mut!(ate_destroy).cast())
+                        .is_null()
+                );
+            }
+
+            for &mem0 in (*client).memory_ptrs.first() {
+                assert_ne!(format!("{:?}", *mem0), "");
+                let mut mm_id = crate::pjrt_types::PJRT_Memory_Id_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Memory_Id_Args>(),
+                    extension_start: ptr::null_mut(),
+                    memory: mem0,
+                    id: -1,
+                    pad: 0,
+                };
+                assert!(PJRT_Memory_Id(ptr::addr_of_mut!(mm_id).cast()).is_null());
+                assert_eq!(mm_id.id, 0);
+
+                let mut mm_kind = crate::pjrt_types::PJRT_Memory_Kind_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Memory_Kind_Args>(),
+                    extension_start: ptr::null_mut(),
+                    memory: mem0,
+                    kind: ptr::null(),
+                    kind_size: 0,
+                };
+                assert!(PJRT_Memory_Kind(ptr::addr_of_mut!(mm_kind).cast()).is_null());
+                assert!(mm_kind.kind_size > 0);
+
+                let mut mm_dbg = crate::pjrt_types::PJRT_Memory_DebugString_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Memory_DebugString_Args>(),
+                    extension_start: ptr::null_mut(),
+                    memory: mem0,
+                    debug_string: ptr::null(),
+                    debug_string_size: 0,
+                };
+                assert!(PJRT_Memory_DebugString(ptr::addr_of_mut!(mm_dbg).cast()).is_null());
+                assert!(mm_dbg.debug_string_size > 0);
+
+                let mut mm_str = crate::pjrt_types::PJRT_Memory_ToString_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Memory_ToString_Args>(),
+                    extension_start: ptr::null_mut(),
+                    memory: mem0,
+                    to_string: ptr::null(),
+                    to_string_size: 0,
+                };
+                assert!(PJRT_Memory_ToString(ptr::addr_of_mut!(mm_str).cast()).is_null());
+                assert!(mm_str.to_string_size > 0);
+
+                let mut mm_devs = crate::pjrt_types::PJRT_Memory_AddressableByDevices_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Memory_AddressableByDevices_Args>(
+                    ),
+                    extension_start: ptr::null_mut(),
+                    memory: mem0,
+                    devices: ptr::null(),
+                    num_devices: 0,
+                };
+                assert!(
+                    PJRT_Memory_AddressableByDevices(ptr::addr_of_mut!(mm_devs).cast()).is_null()
+                );
+
+                let mut mm_kid = crate::pjrt_types::PJRT_Memory_Kind_Id_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Memory_Kind_Id_Args>(),
+                    extension_start: ptr::null_mut(),
+                    memory: mem0,
+                    kind_id: -1,
+                    pad: 0,
+                };
+                assert!(PJRT_Memory_Kind_Id(ptr::addr_of_mut!(mm_kid).cast()).is_null());
+                assert!(mm_kid.kind_id >= 0);
+            }
+
+            let mut destroy_client_args = PJRT_Client_Destroy_Args {
+                struct_size: size_of::<PJRT_Client_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+            };
+            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_client_args).cast()).is_null());
+        }
+    }
+}

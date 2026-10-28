@@ -54,5 +54,5 @@ message CompiledMemoryStatsProto {
 
 message PjRtExecutableMetadata {
   optional CompiledMemoryStatsProto compiled_memory_stats = 1;
-  optional google.protobuf.Any platform_specific_metadata = 2;
+  bytes platform_specific_metadata = 2;
 }

@@ -83,9 +83,22 @@ libtpu-rs/
 │   │   ├── build.rs                   # Compiles .proto schemas into FileDescriptorSet via protox/prost
 │   │   └── src/
 │   │       ├── lib.rs                 # Crate root & workspace source invariants test
-│   │       ├── elf.rs                 # ELF64/Mach-O forensics, relocations, iced-x86 CFG & proto carver
+│   │       ├── elf.rs                 # ELF64/Mach-O forensics module root & re-exports
+│   │       ├── elf/
+│   │       │   ├── carver.rs          # protodesc_cold Protobuf carver, .proto renderer & filewrapper_toc
+│   │       │   ├── disassembler.rs    # iced-x86 prologue analyzer, CFG builder & ioctl callsite scanner
+│   │       │   ├── manifest.rs        # SHA-256/BLAKE3 digests & golden binary/layout manifest parsers
+│   │       │   ├── relocations.rs     # .rela.dyn resolver & PJRT/SDK/Driver/Itanium C++ vtable reconstructors
+│   │       │   └── symbols.rs         # goblin/object symbol inspector, gimli .eh_frame & C++ demangler
 │   │       ├── error.rs               # Unified LibTpuError enum & PJRT/Abseil/SDK status codes
-│   │       ├── types.rs               # Newtype IDs (derive_more), TpuGeneration, Shape, ElementType
+│   │       ├── types.rs               # Domain primitives module root & re-exports
+│   │       ├── types/
+│   │       │   ├── address.rs         # Memory addresses, sizes, alignments & PCIe/kernel primitives
+│   │       │   ├── element.rs         # ElementType (PJRT_Buffer_Type) & f16/bf16/f8/sub-byte codecs
+│   │       │   ├── enums.rs           # Runtime, PJRT, DMA, collective, routing & memory space enums
+│   │       │   ├── hardware.rs        # TpuGeneration, TpuCoreTypeEnum & 3D torus ChipCoordinates
+│   │       │   ├── ids.rs             # Newtype IDs (derive_more) for topology, handles & registers
+│   │       │   └── shape.rs           # MemoryLayout, Shape (TPU tile permutation) & TypedDeviceBuffer
 │   │       ├── config.rs              # TpuInitConfig & LIBTPU_INIT_ARGS / env variable parser
 │   │       ├── proto.rs               # Wire-compatible Protobuf codecs & prost_reflect DescriptorPool
 │   │       ├── compiler.rs            # HLO/StableHLO lexer, parser, 6-pass compiler & VLIW ISA
@@ -98,13 +111,30 @@ libtpu-rs/
 │   │   ├── cbindgen.toml              # C header generation configuration
 │   │   └── src/
 │   │       ├── lib.rs                 # GetPjrtApi vtable assembly & ABI verification test suite
-│   │       ├── pjrt_types.rs          # PJRT_Api (1,144 B) & 138 #[repr(C)] PJRT_*_Args structs
+│   │       ├── pjrt_types.rs          # PJRT_Api (1,144 B) & 138 #[repr(C)] PJRT_*_Args module root
+│   │       ├── pjrt_types/
+│   │       │   ├── api.rs             # PJRT_Api v0.116 vtable, PJRT_Api_Version & PJRT_Extension_Base
+│   │       │   ├── buffer_args.rs     # #[repr(C)] PJRT_Buffer_*, Stream & AsyncTransferManager args
+│   │       │   ├── client_args.rs     # #[repr(C)] PJRT_Client_* & PJRT_Compile_Args structs
+│   │       │   ├── device_args.rs     # #[repr(C)] PJRT_DeviceDescription_*, Device, Memory & Topology args
+│   │       │   ├── error_args.rs      # #[repr(C)] PJRT_Error_*, Plugin, Event & ExecuteContext args
+│   │       │   ├── executable_args.rs # #[repr(C)] PJRT_Executable_* & PJRT_LoadedExecutable_* args
+│   │       │   └── handles.rs         # Opaque PJRT C handles, common descriptors & PjrtArgsStruct trait
 │   │       ├── pjrt_error_api.rs      # PJRT error, plugin initialization, and event C entrypoints
 │   │       ├── pjrt_client_api.rs     # PJRT client, topology description, and context C entrypoints
 │   │       ├── pjrt_device_api.rs     # PJRT device, device description, and memory C entrypoints
 │   │       ├── pjrt_executable_api.rs # PJRT executable and loaded executable C entrypoints
 │   │       ├── pjrt_buffer_api.rs     # PJRT buffer, stream, and async transfer manager C entrypoints
-│   │       ├── extensions.rs          # 17 PJRT extension structs & 138 extension/profiler C entrypoints
+│   │       ├── extensions.rs          # 17 PJRT extension chain coordinator & runtime state
+│   │       ├── extensions/
+│   │       │   ├── args.rs            # #[repr(C)] extension argument structs, enums & size assertions
+│   │       │   ├── collectives.rs     # PJRT Collectives & CrossHostTransfers extensions
+│   │       │   ├── compiler.rs        # PJRT XlaTransform, Callback, PhaseCompile & Triton extensions
+│   │       │   ├── executable.rs      # PJRT AbiVersion, Shardings, TpuExecutable & Metadata extensions
+│   │       │   ├── megascale.rs       # PJRT MultiSlice & Megascale extensions
+│   │       │   ├── memory.rs          # PJRT HostMemoryAllocator, MemoryDescriptions, Layouts & RawBuffer
+│   │       │   ├── profiler.rs        # PJRT Profiler extension & PLUGIN_Profiler_Api vtable
+│   │       │   └── topology.rs        # PJRT TpuTopology extension (31 topology query entrypoints)
 │   │       ├── tpu_driver_types.rs    # LibtpuSdk_Api (144 B), TpuDriverFn (224 B) & legacy structs
 │   │       ├── sdk_api.rs             # GetLibtpuSdkApi & 17 LibtpuSdk_* C entrypoints
 │   │       ├── legacy_tf_api.rs       # TfTpu_*, TpuDriver_*, TpuProfiler_*, TpuEmbeddingEngine_* & PyInit_sdk
@@ -667,7 +697,7 @@ The repository enforces strict quality gates via `scripts/pre_commit.py`:
 1. **Formatting (`fmt`)**:
    - Rust: `cargo fmt --all -- --check`
    - Python: `ruff format --check python/ scripts/`
-   - C/C++: `clang-format --dry-run --Werror -style=LLVM`
+   - C/C++: `clang-format --dry-run --Werror --style=LLVM`
 2. **Compilation (`build`)**:
    - Rust: `cargo build --workspace --all-targets`
    - C/C++: `cmake -B cpp/build -S cpp -DENABLE_COVERAGE=ON && cmake --build cpp/build`
