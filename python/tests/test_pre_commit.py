@@ -440,12 +440,13 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
     with patch.object(pc, "run_command") as mock_lint:
         assert pc.hook_clippy(tmp_path) == 0
         assert mock_lint.call_count == 5
+        assert (tmp_path / "cpp" / "build" / "doxygen").is_dir()
 
     with patch.object(pc, "run_command") as mock_test:
         assert pc.hook_test(tmp_path) == 0
         assert mock_test.call_count == 5
 
-    (tmp_path / "cpp" / "build").mkdir(parents=True)
+    (tmp_path / "cpp" / "build" / "CMakeCache.txt").write_text("", encoding="utf-8")
     with patch.object(pc, "run_command") as mock_test_existing:
         assert pc.hook_test(tmp_path) == 0
         assert mock_test_existing.call_count == 3

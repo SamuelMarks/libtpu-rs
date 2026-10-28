@@ -2,7 +2,7 @@
 
 `libtpu-rs` is a clean-room, pure-Rust drop-in replacement for the Google Cloud TPU runtime library (`libtpu` v0.0.50). It exports the exact C11 binary ABI expected by OpenXLA PJRT (`GetPjrtApi` v0.116 with 138 vtable slots and 17 chained TPU extensions), `LibtpuSdk_Api` (`GetLibtpuSdkApi`), `TpuDriver_*` (`TpuDriver_Initialize`), `TpuEmbeddingEngine_*` (`SparseCore`), `TpuProfiler_*` (`XSpace`), `TpuTopology_*`, and `TfTpu_*` entrypoints.
 
-Because `libtpu-rs` has zero closed-source binary dependencies and includes both a Linux Gasket/VFIO hardware backend (`/dev/accel*`, `/dev/vfio/*`) and a deterministic in-memory `SimulatedTpuHal` (supporting TPU `v2`, `v3`, `v4`, `v5e`, `v5p`, `v6e`, and `v7x`), you can use it either on physical Cloud TPU VMs or locally on macOS/Linux/Windows workstations for offline TPU compilation, topology simulation, profiling, and testing.
+Because `libtpu-rs` has zero closed-source binary dependencies and includes both a Linux Gasket/VFIO hardware backend (`/dev/accel*`, `/dev/vfio/*`) and a deterministic in-memory `SimulatedTpuHal` (supporting TPU `v2`, `v3`, `v4`, `v4lite`, `v5e`, `v5p`, `v6e`, and `v7x`), you can use it either on physical Cloud TPU VMs or locally on macOS/Linux/Windows workstations for offline TPU compilation, topology simulation, profiling, and testing.
 
 ---
 
@@ -395,10 +395,10 @@ If a precompiled C++ binary (such as a custom TensorFlow serving binary, `sdk.so
 
 #### Linux (`patchelf`): Matching `DT_SONAME` and Injecting `RPATH`
 
-The official `libtpu.so` has `SONAME` set to `libtpu.so`. You can verify or stamp `SONAME` on `libtpu-rs` and patch consumer binaries (`libtorch_xla.so`, `_xlAC.so`, `xla_extension.so`) so they always resolve `libtpu-rs` first:
+`crates/libtpu-c-api/build.rs` automatically stamps `DT_SONAME = libtpu.so` (`-Wl,-soname,libtpu.so`) on Linux/Android builds and `LC_ID_DYLIB = @rpath/libtpu.dylib` (`-Wl,-install_name,@rpath/libtpu.dylib`) on macOS builds. You can also verify `SONAME` or patch consumer binaries (`libtorch_xla.so`, `_XLAC.so`, `xla_extension.so`) with `patchelf` so they always resolve `libtpu-rs` first:
 
 ```bash
-# 1. Ensure DT_SONAME on libtpu-rs is set to "libtpu.so"
+# 1. Verify or explicitly set DT_SONAME on libtpu-rs to "libtpu.so"
 patchelf --set-soname libtpu.so target/release/libtpu.so
 
 # 2. Force jaxlib's xla_extension.so or torch_xla's _XLAC.so to search libtpu-rs's directory first
@@ -406,18 +406,12 @@ XLA_EXT=$(python3 -c "import jaxlib.xla_extension as x; print(x.__file__)")
 patchelf --set-rpath "/abs/path/to/libtpu-rs/target/release:\$ORIGIN" "${XLA_EXT}"
 ```
 
-You can also pass `-C link-arg=-Wl,-soname,libtpu.so` directly via `RUSTFLAGS` when compiling `libtpu-rs` on Linux:
-
-```bash
-RUSTFLAGS="-C link-arg=-Wl,-soname,libtpu.so" cargo build --workspace --release
-```
-
 #### macOS (`install_name_tool`): Rewriting `@rpath/libtpu.dylib`
 
-On macOS, if a binary links against `@rpath/libtpu.dylib` or a hardcoded path:
+On macOS, `build.rs` sets the install name ID of `libtpu.dylib` to `@rpath/libtpu.dylib` automatically. If a consumer binary links against `@rpath/libtpu.dylib` or a hardcoded path, you can rewrite its load command directly:
 
 ```bash
-# Set the install_name ID of libtpu.dylib
+# Verify or set the install_name ID of libtpu.dylib
 install_name_tool -id "@rpath/libtpu.dylib" target/release/libtpu.dylib
 
 # Point any consumer Mach-O binary directly to libtpu-rs
@@ -480,7 +474,7 @@ sudo touch /dev/vfio/vfio /dev/vfio/0 /dev/vfio/1 /dev/vfio/2 /dev/vfio/3
 sudo chmod 666 /dev/accel* /dev/vfio/*
 ```
 
-> **Note**: When `libtpu-rs`'s `PJRT_Client_Create` is called, it uses `SimulatedTpuHal` automatically for full in-memory HLO execution, while `LinuxKernelTpuHal` handles Gasket (`0xdc`) and VFIO (`0x3b`) ioctls when targeting character devices.
+> **Note**: When `libtpu-rs`'s `PJRT_Client_Create` is called, `HalBackend` uses `SimulatedTpuHal` for full in-memory VLIW execution while `LinuxDeviceHal` handles Gasket (`0xdc`) and VFIO (`0x3b`) ioctls and BAR0 MMIO CSRs.
 
 #### Gate 3: Spoofing Google PCI Vendor `0x1ae0` in Userspace (`sitecustomize.py`)
 
@@ -559,7 +553,7 @@ Every `dlopen()` call whose path contains `"libtpu"` (whether `/lib/libtpu.so`, 
 
 ## 3. Environment Variables & `LIBTPU_INIT_ARGS` Reference
 
-`libtpu-rs` parses both standard Cloud TPU environment variables and `LIBTPU_INIT_ARGS` CLI flags via `libtpu_core::config::TpuInitConfig`.
+`libtpu-rs` parses both standard Cloud TPU environment variables and `LIBTPU_INIT_ARGS` CLI flags via `libtpu_core::config::TpuInitConfig` (using `winnow` for 3D mesh bounds and `lexopt` for CLI flags).
 
 ### 3.1 Environment Variables
 
@@ -567,17 +561,19 @@ Every `dlopen()` call whose path contains `"libtpu"` (whether `/lib/libtpu.so`, 
 | :--- | :--- | :--- |
 | `TPU_LIBRARY_PATH` | Auto-resolved | Explicit filesystem path to `libtpu.so` / `libtpu.dylib` / `tpu.dll`. Automatically set by `import libtpu`. |
 | `LIBTPU_INIT_ARGS` | `""` | Whitespace-separated `--tpu_*` and `--xla_tpu_*` runtime flags (see table below). |
-| `TPU_ACCELERATOR_TYPE` | `"v5e"` | Hardware generation (`v2`, `v3`, `v4`, `v5e` / `v5litepod`, `v5p`, `v6e` / `trillium`, `v7x` / `ironwood`). Accepts slice suffixes like `v5litepod-16` or `v6e-8`. |
-| `TPU_CHIPS_PER_HOST_BOUNDS` | `"2,2,1"` | 3D torus dimensions `(x,y,z)` of TPU chips on each host (accepts `"2,2,1"` or `"2x2x1"`). |
+| `TPU_ACCELERATOR_TYPE` | `"v5e"` | Hardware generation (`v2`, `v3`, `v4`, `v4lite`, `v5e` / `v5lite`, `v5p`, `v6e` / `trillium`, `v7x` / `tpu7x` / `ironwood`). |
+| `TPU_CHIPS_PER_HOST_BOUNDS` | `"2,2,1"` | 3D torus dimensions `(x,y,z)` of TPU chips on each host (accepts `"2,2,1"`, `"2x2x1"`, or `"2X2X1"`). |
 | `TPU_HOST_BOUNDS` / `TPU_PROCESS_BOUNDS` | `"1,1,1"` | 3D torus dimensions `(x,y,z)` of hosts in the TPU pod slice. |
 | `TPU_VISIBLE_DEVICES` | All devices | Comma-separated allowlist of logical device IDs visible to the process (e.g., `"0,1,2,3"`). |
 | `TPU_WORKER_ID` | `"0"` | Zero-based process index (`PJRT_Client_ProcessIndex`) of the current worker in a multi-host slice. |
 | `TPU_PREMAPPED_BUFFER_SIZE` | `"67108864"` (64 MiB) | Size in bytes of the pre-mapped DMA host bounce buffer reported by `PJRT_HostMemoryAllocator_Extension`. |
 | `MEGASCALE_NUM_SLICES` | `"1"` | Total number of TPU slices in a Megascale multi-slice workload. |
 | `MEGASCALE_SLICE_ID` | `"0"` | Zero-based slice identifier for the current slice in a Megascale workload. |
-| `TPU_WORKER_HOSTNAMES` | Passthrough | Comma-separated worker hostnames or IP addresses in a multi-host slice. |
-| `TPU_MESH_CONTROLLER_ADDRESS` | Passthrough | Address of the TPU mesh controller coordinator. |
-| `TPU_MESH_CONTROLLER_PORT` | Passthrough | Port of the TPU mesh controller coordinator. |
+| `TPU_WORKER_HOSTNAMES` / `TPU_PROCESS_ADDRESSES` | Passthrough | Comma-separated worker hostnames or IP addresses in a multi-host slice. |
+| `TPU_PROCESS_PORT` | Passthrough | Coordination port for multi-host TPU processes. |
+| `TPU_SKIP_MDS_QUERY` | Passthrough | Skips querying GCE metadata server (`metadata.google.internal`) during initialization. |
+| `TPU_TOPOLOGY` / `TPU_TOPOLOGY_WRAP` | Passthrough | Explicit topology specification and per-axis torus wrap overrides. |
+| `TPU_MESH_CONTROLLER_ADDRESS` / `TPU_MESH_CONTROLLER_PORT` | Passthrough | Address and port of the TPU mesh controller coordinator. |
 | `TPU_STDERR_LOG_LEVEL` / `TPU_MIN_LOG_LEVEL` | Passthrough | Logging verbosity level. |
 | `LIBTPU_CHECKPOINTING_ENABLED` | Passthrough | Enables Megascale/runtime checkpointing support. |
 | `TPU_RUNTIME_METRICS_PORTS` | Passthrough | Ports exposed for runtime telemetry metrics. |
@@ -588,23 +584,25 @@ Flags passed in `LIBTPU_INIT_ARGS` (or via `libtpu.set_init_args([...])` / `TfTp
 
 | Flag | Example | Description |
 | :--- | :--- | :--- |
-| `--tpu_generation=<gen>` / `--xla_tpu_generation=<gen>` | `--tpu_generation=v6e` | Sets the simulated or target TPU hardware generation (`v2`, `v3`, `v4`, `v5e`, `v5p`, `v6e`, `v7x`). |
+| `--tpu_generation=<gen>` / `--xla_tpu_generation=<gen>` | `--tpu_generation=v6e` | Sets the simulated or target TPU hardware generation (`v2`, `v3`, `v4`, `v4lite`, `v5e`, `v5p`, `v6e`, `v7x`). |
 | `--tpu_chips_per_host_bounds=<x,y,z>` | `--tpu_chips_per_host_bounds=4x2x1` | Sets the 3D chip bounds per host. |
 | `--tpu_host_bounds=<x,y,z>` | `--tpu_host_bounds=2,2,1` | Sets the 3D host bounds in the slice. |
 | `--xla_tpu_allow_async_allocations=<bool>` / `--tpu_allow_async_allocations=<bool>` | `--xla_tpu_allow_async_allocations=true` | Enables or disables asynchronous HBM allocations (`true`/`1` or `false`/`0`). |
-| `--xla_tpu_*` (Any custom XLA TPU flag) | `--xla_tpu_enable_ flash_attention=true` | Stored in `TpuInitConfig::extra_flags` and exposed to PJRT plugin attributes and `TpuCompilationEnvironmentProto`. |
+| `--tpu_driver_mode=<mode>` | `--tpu_driver_mode=simulated` | Selects `HalBackend::Simulated` directly when set to `simulated`. |
+| `--xla_tpu_*` (Any custom XLA TPU flag) | `--xla_tpu_enable_flash_attention=true` | Stored in `TpuInitConfig::extra_flags` and exposed to PJRT plugin attributes and `TpuCompilationEnvironmentProto`. |
 
 ### 3.3 Supported TPU Hardware Generations
 
-| Generation Enum | String Aliases | Cores / Chip | Default HBM / Chip | Default VMEM / Core | MXU Dim |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `TpuGeneration::V2` (`2`) | `v2`, `tpu v2` | 2 | 8 GiB | 16 MiB | 128x128 |
-| `TpuGeneration::V3` (`3`) | `v3`, `tpu v3` | 2 | 16 GiB | 16 MiB | 128x128 |
-| `TpuGeneration::V4` (`4`) | `v4`, `tpu v4` | 1 (Megacore) | 32 GiB | 16 MiB | 128x128 |
-| `TpuGeneration::V5e` (`5`) | `v5e`, `v5lite`, `v5litepod`, `tpu v5 lite` | 1 | 16 GiB | 16 MiB | 128x128 |
-| `TpuGeneration::V5p` (`6`) | `v5p`, `tpu v5p` | 2 | 95 GiB | 32 MiB | 128x128 |
-| `TpuGeneration::V6e` (`7`) | `v6e`, `trillium`, `tpu v6e` | 1 | 32 GiB | 32 MiB | 256x256 |
-| `TpuGeneration::V7x` (`8`) | `v7x`, `ironwood`, `tpu v7x` | 2 | 192 GiB | 64 MiB | 256x256 |
+| Generation Enum | String Aliases (`from_name`) | Logical Devices / Chip | HBM / Logical Device | VMEM / Core | SparseCores / Chip | PCIe ID (`0x1ae0`) | MXU Dim |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `TpuGeneration::V2` (`2`) | `v2`, `tpu_v2`, `jellyfish` | 2 (2 `TensorCores`) | 8 GiB (16 GiB/chip) | 16 MiB | 0 | `0x0027` | 128x128 |
+| `TpuGeneration::V3` (`3`) | `v3`, `tpu_v3`, `dragonfish` | 2 (2 `TensorCores`) | 16 GiB (32 GiB/chip) | 16 MiB | 0 | `0x0027` | 128x128 |
+| `TpuGeneration::V4` (`4`) | `v4`, `tpu_v4`, `pufferfish` | 1 (Megacore, 2 `TensorCores`) | 32 GiB | 32 MiB | 4 | `0x0056` | 128x128 |
+| `TpuGeneration::V4Lite` (`9`) | `v4lite`, `tpu_v4lite`, `pufferfish_lite` | 1 (1 `TensorCore`) | 16 GiB | 16 MiB | 0 | `0x005e` | 128x128 |
+| `TpuGeneration::V5e` (`5`) | `v5e`, `v5lite`, `tpu_v5e`, `tpu_v5lite`, `viperfish_lite` | 1 (1 `TensorCore`) | 16 GiB | 32 MiB | 2 | `0x0063` | 128x128 |
+| `TpuGeneration::V5p` (`6`) | `v5p`, `tpu_v5p`, `viperfish` | 1 (Megacore, 2 `TensorCores`) | 95 GiB | 64 MiB | 4 | `0x0062` | 128x128 |
+| `TpuGeneration::V6e` (`7`) | `v6e`, `v6lite`, `tpu_v6e`, `trillium`, `ghostfish` | 1 (1 `TensorCore`) | 32 GiB | 64 MiB | 2 | `0x006f` | 256x256 |
+| `TpuGeneration::V7x` (`8`) | `v7`, `v7x`, `tpu7x`, `tpu_v7x`, `ironwood` | 1 (2 `TensorCores`) | 192 GiB | 64 MiB | 4 | `0x0076` | 256x256 |
 
 ---
 
@@ -805,34 +803,39 @@ fn main() -> LibTpuResult<()> {
 
 ### 5.2 Linux Kernel Gasket & VFIO Hardware Backend
 
-On physical Google Cloud TPU VMs exposing `/dev/accel*` (Gasket driver, ioctl magic `0xdc`) or `/dev/vfio/*` (VFIO PCIe driver, ioctl magic `0x3b`, PCI Vendor `0x1ae0`), you can use `LinuxKernelTpuHal`:
+On physical Google Cloud TPU VMs exposing `/dev/accel*` (Gasket driver, ioctl magic `0xdc`) or `/dev/vfio/*` (VFIO PCIe driver, ioctl magic `0x3b`, PCI Vendor `0x1ae0`), you can use `LinuxDeviceHal` with `RealLinuxSyscalls` (or `EmulatedKernelDriverBackend` / `create_default_hal` for in-memory kernel driver emulation):
 
 ```rust
 use libtpu_core::config::TpuInitConfig;
 use libtpu_core::error::LibTpuResult;
-use libtpu_core::hal::{LinuxKernelTpuHal, SystemIoctlDispatcher, TpuHal};
+use libtpu_core::hal::{
+    KernelDriverMode, LinuxDeviceHal, RealLinuxSyscalls, TpuHal,
+};
 use libtpu_core::pjrt::PjrtCoreClient;
 use libtpu_core::types::ProcessIndex;
 use std::sync::Arc;
 
 fn create_hardware_client() -> LibTpuResult<PjrtCoreClient> {
     let config = TpuInitConfig::default();
-    let hal = Arc::new(LinuxKernelTpuHal::new(
+    let hal: Arc<dyn TpuHal> = Arc::new(LinuxDeviceHal::open(
+        KernelDriverMode::Vfio,
+        RealLinuxSyscalls,
         &config,
-        Arc::new(SystemIoctlDispatcher),
-    ));
+    )?);
     PjrtCoreClient::new(hal, ProcessIndex(0))
 }
 ```
 
 ### 5.3 `SparseCore` Embedding Engine, Legacy `TpuDriver` & `TpuCoreProfiler`
 
-`libtpu_core::driver` provides pure-Rust engines for `SparseCore` embedding partitioning, `XSpace` profiling, and `TpuDriver`:
+`libtpu_core::driver` provides pure-Rust engines for `SparseCore` embedding partitioning (including COO-to-CSR deduplication and `SparseCoreOptimizer` updates for SGD, Adagrad, Adam, FTRL, RMSProp, and AdagradMomentum), `XSpace` profiling, and `TpuDriver`:
 
 ```rust
 use libtpu_core::config::TpuInitConfig;
 use libtpu_core::driver::{TpuCoreDriver, TpuCoreEmbeddingEngine, TpuCoreProfiler};
-use libtpu_core::proto::{EmbeddingTableDescriptorProto, TpuEmbeddingConfigurationProto, XSpaceProto};
+use libtpu_core::proto::{
+    EmbeddingTableDescriptorProto, TpuEmbeddingConfigurationProto, XSpaceProto,
+};
 use libtpu_core::types::{ByteSize, DeviceId};
 
 fn driver_and_embedding_example() {
@@ -844,11 +847,13 @@ fn driver_and_embedding_example() {
             vocabulary_size: 1024,
             dimension: 64,
             num_features: 1,
+            ..EmbeddingTableDescriptorProto::default()
         }],
         mode: 1,
         batch_size_per_tensor_core: 128,
         num_hosts: 1,
         num_tensor_cores: 4,
+        ..TpuEmbeddingConfigurationProto::default()
     };
     let partitioned_bytes = engine.execute_partitioner(&cfg_proto.encode());
     assert!(!partitioned_bytes.is_empty());
@@ -895,8 +900,7 @@ int main(void) {
   assert(st.code == 0);
 
   int32_t num_devices = libtpu_rs_client_device_count(client);
-  printf("Addressable TPU devices: %d
-", num_devices);
+  printf("Addressable TPU devices: %d\n", num_devices);
 
   // Allocate two 4-element F32 buffers (element_type = 11) on Device 0
   int64_t dims[1] = {4};
@@ -913,15 +917,10 @@ int main(void) {
   assert(st.code == 0);
 
   // Compile an HLO add program
-  const char *hlo = "HloModule add
-ENTRY main {
-"
-                    "  a = f32[4] parameter(0)
-"
-                    "  b = f32[4] parameter(1)
-"
-                    "  ROOT res = f32[4] add(a, b)
-}";
+  const char *hlo = "HloModule add\nENTRY main {\n"
+                    "  a = f32[4] parameter(0)\n"
+                    "  b = f32[4] parameter(1)\n"
+                    "  ROOT res = f32[4] add(a, b)\n}";
   PJRT_LoadedExecutable *exec = NULL;
   st = libtpu_rs_compile(client, "hlo", (const uint8_t *)hlo, strlen(hlo), &exec);
   assert(st.code == 0);
@@ -936,8 +935,7 @@ ENTRY main {
   float out_host[4] = {0};
   st = libtpu_rs_buffer_to_host(out_buf, (uint8_t *)out_host, sizeof(out_host));
   assert(st.code == 0);
-  printf("Result: [%.1f, %.1f, %.1f, %.1f]
-",
+  printf("Result: [%.1f, %.1f, %.1f, %.1f]\n",
          out_host[0], out_host[1], out_host[2], out_host[3]);
 
   // Clean up
@@ -978,8 +976,7 @@ void inspect_pjrt_vtable(void) {
   for (const PJRT_Extension_Base *ext = api->extension_start;
        ext != NULL;
        ext = ext->next) {
-    printf("Extension #%zu: type=%d, size=%zu bytes
-",
+    printf("Extension #%zu: type=%d, size=%zu bytes\n",
            ++count, ext->ext_type, ext->struct_size);
   }
   assert(count == 17);
@@ -1009,7 +1006,7 @@ The 17 chained extensions exported by `GetPjrtApi()->extension_start` are:
 
 ## 7. C++20 RAII SDK Usage (`libtpu.hpp`)
 
-`cpp/src/libtpu.hpp` and `cpp/src/libtpu.cpp` provide a modern, zero-exception (`-fno-exceptions`) C++20 RAII wrapper around `libtpu.h` with move-only resource management:
+`cpp/src/libtpu.hpp` and `cpp/src/libtpu.cpp` provide a modern, zero-exception (`-fno-exceptions`) C++20 RAII wrapper around `libtpu.h` with move-only resource management (`Status`, `Client`, `Buffer`, `LoadedExecutable`, `Event`, `Profiler`, `Topology`, `SdkClient`, `PjrtApiView`, `Device`, `Memory`, `Executable`, `PhaseCompiler`, `MegascaleContext`, `EmbeddingEngine`, and `Communicator`):
 
 ```cpp
 #include "libtpu.hpp"
@@ -1022,8 +1019,7 @@ int main() {
   libtpu::Client client;
   libtpu::Status st = libtpu::Client::create(&client);
   assert(st.is_ok());
-  std::printf("TPU devices: %d
-", client.device_count());
+  std::printf("TPU devices: %d\n", client.device_count());
 
   // 2. Allocate device buffers on Device 0
   const int64_t dims[1] = {4};
@@ -1051,28 +1047,30 @@ int main() {
 
   float result[4] = {};
   assert(out_buf.to_host(reinterpret_cast<uint8_t *>(result), sizeof(result)).is_ok());
-  std::printf("Result: [%.1f, %.1f, %.1f, %.1f]
-",
+  std::printf("Result: [%.1f, %.1f, %.1f, %.1f]\n",
               result[0], result[1], result[2], result[3]);
 
-  // 5. Query Topology, Profiler, and LibtpuSdk
+  // 5. Query Topology, Profiler, LibtpuSdk, PhaseCompiler, Megascale & Collectives
   libtpu::Topology topo;
-  std::printf("Topology mesh: %dx%dx%d (gen v%d)
-",
+  std::printf("Topology mesh: %dx%dx%d (gen v%d)\n",
               topo.chip_bounds_x(), topo.chip_bounds_y(), topo.chip_bounds_z(),
               topo.version());
 
   libtpu::Profiler profiler;
   assert(profiler.start());
   assert(profiler.stop());
-  std::printf("Captured XSpace bytes: %zu
-", profiler.collect_size());
+  std::printf("Captured XSpace bytes: %zu\n", profiler.collect_size());
 
   libtpu::SdkClient sdk;
-  std::printf("SDK chip count: %zu, HBM metric values: %zu
-",
+  std::printf("SDK chip count: %zu, HBM metric values: %zu\n",
               sdk.chip_count(),
               sdk.metric_value_count("tpu.runtime.hbm.usage_bytes"));
+
+  libtpu::PhaseCompiler phase_compiler;
+  assert(phase_compiler.phase_count() == 5);
+
+  libtpu::MegascaleContext megascale;
+  assert(megascale.barrier() >= 1);
 
   return 0;
 }
@@ -1082,37 +1080,47 @@ int main() {
 
 ## 8. Supported HLO / `StableHLO` Operations & Compiler Pipeline
 
-`libtpu-core` includes a built-in 6-pass HLO / `StableHLO` compiler (`libtpu_core::compiler::CompiledProgram`) that parses textual MLIR (`"mlir"`), textual HLO (`"hlo"`), and binary protobuf `HloModuleProto` (`"hlo"` / `"hlo_with_config"`).
+`libtpu-core` includes a built-in **14-pass** HLO / `StableHLO` compiler (`libtpu_core::compiler::CompiledProgram`) that parses textual `StableHLO` MLIR (`"mlir"`), MLIR Bytecode (`ML\xefR` container), textual XLA HLO (`"hlo"`), and binary protobuf `HloModuleProto` / `HloModuleProtoWithConfig` (`"hlo"` / `"hlo_with_config"`).
 
-### 8.1 Compilation Phases (`PJRT_PhaseCompile_Extension`)
+### 8.1 Fourteen-Pass Optimization Pipeline & Phased Compilation (`PJRT_PhaseCompile_Extension`)
 
+Every compiled program runs through a deterministic 14-pass lowering and optimization pipeline (`CompiledProgram::run_all_passes()`):
+1. `pass_hlo_verification_and_shape_inference`
+2. `pass_spmd_sharding_propagation`
+3. `pass_spmd_partitioning`
+4. `pass_algebraic_simplifier`
+5. `pass_constant_folding`
+6. `pass_common_subexpression_elimination`
+7. `pass_dot_decomposer`
+8. `pass_tpu_custom_call_lowering` (Mosaic / Pallas / `SparseCore`)
+9. `pass_hlo_operator_fusion`
+10. `pass_tpu_layout_assignment_and_tiling` (assigns type-aware `(8, 128)` / `(16, 256)` tiled TPU layouts)
+11. `pass_vmem_scratchpad_allocation` (linear-scan SSA liveness analysis for on-chip VMEM)
+12. `pass_llo_vliw_bundle_scheduling` (schedules VPU/MXU/EUP/DMA VLIW bundles, `SyncFlag` IDs, and static `CostAnalysis`)
+13. `pass_vliw_bundle_packing` (packs 64-byte `TensorCoreVliwBundle` architectural `IMEM` words)
+14. `pass_binary_emission` (computes SHA-256 fingerprint and emits `LTPUEXEC` / `TpuSerializedExecutableProto` / `DeepseaExecutableProto`)
+
+For ahead-of-time phased compilation debugging (`PJRT_PhaseCompile_GetPhaseNames` / `PJRT_PhaseCompile_RunPhase`), the compiler exposes 5 canonical phases emitting wire-compatible `PjRtPartialProgramProto`:
 1. `hlo_verification`
-2. `tpu_layout_assignment` (assigns `(8, 128)` tiled TPU MXU layouts)
-3. `tpu_memory_planning` (computes HBM and VMEM scratchpad footprint)
-4. `vliw_bundle_emission` (schedules VPU/MXU/DMA VLIW instruction bundles and `SyncFlag` IDs)
-5. `binary_serialization` (emits deterministic `LTPUEXEC` executable payload and `TpuSerializedExecutableProto`)
+2. `tpu_layout_assignment`
+3. `tpu_memory_planning`
+4. `vliw_bundle_emission`
+5. `binary_serialization`
 
-### 8.2 Executed Operations on `SimulatedTpuHal`
+### 8.2 Executed VLIW Operations (`TpuOpCode`) on `SimulatedTpuHal`
 
-When executing compiled programs on `SimulatedTpuHal`, the following HLO / `StableHLO` operations are evaluated deterministically on the HBM buffers:
+When executing compiled programs on `SimulatedTpuHal` and `DeepSeaVm`, all **79 `TpuOpCode` (`0..=78`)** instruction opcodes are evaluated deterministically across all **29 `ElementType`s** (`F32`, `BF16`, `F16`, `F64`, `F8E5M2`, `F8E4M3Fn`, `S32`, `S64`, `S16`, `S8`, `S4`, `U32`, `Pred`, `C64`, etc.):
 
-| Operation (`HloOp`) | Recognized Mnemonics (`StableHLO` / HLO) | Behavior on `F32` / `S32` Tensors |
+| Category | Opcodes (`TpuOpCode`) | Recognized `StableHLO` / HLO Operations |
 | :--- | :--- | :--- |
-| `HloOp::Identity` | `return`, `copy`, `bitcast`, `reshape` | Copies input 0 to output(s). |
-| `HloOp::Add` | `stablehlo.add`, `mhlo.add`, `add` | Elementwise `a[i] + b[i]`. |
-| `HloOp::Subtract` | `stablehlo.subtract`, `mhlo.subtract`, `subtract` | Elementwise `a[i] - b[i]`. |
-| `HloOp::Multiply` | `stablehlo.multiply`, `mhlo.multiply`, `multiply` | Elementwise `a[i] * b[i]`. |
-| `HloOp::Divide` | `stablehlo.divide`, `mhlo.divide`, `divide` | Safe elementwise `a[i] / b[i]`. |
-| `HloOp::Maximum` | `stablehlo.maximum`, `mhlo.maximum`, `maximum` | Elementwise `max(a[i], b[i])`. |
-| `HloOp::Minimum` | `stablehlo.minimum`, `mhlo.minimum`, `minimum` | Elementwise `min(a[i], b[i])`. |
-| `HloOp::Negate` | `stablehlo.negate`, `mhlo.negate`, `negate` | Elementwise `-a[i]`. |
-| `HloOp::Abs` | `stablehlo.abs`, `mhlo.abs`, `abs` | Elementwise `\|a[i]\|`. |
-| `HloOp::Exp` | `stablehlo.exponential`, `mhlo.exponential`, `exponential` | Elementwise `exp(a[i])`. |
-| `HloOp::DotGeneral` | `stablehlo.dot_general`, `stablehlo.dot`, `dot` | Matrix multiplication / dot product. |
-| `HloOp::ReduceSum` | `stablehlo.reduce`, `reduce` | Sum reduction across input elements. |
-| `HloOp::AllReduceSum` | `stablehlo.all_reduce`, `all-reduce` | Cross-replica sum reduction (`a[i] + b[i]`). |
-| `HloOp::AllGather` | `stablehlo.all_gather`, `all-gather` | Concatenates shard slices across inputs. |
-| `HloOp::CustomCall` | `stablehlo.custom_call`, `custom-call` | Custom kernel invocation / passthrough. |
+| **Data Movement, View & Indexing** | `Identity (0)`, `Iota (32)`, `Reverse (33)`, `Reshape (36)`, `Transpose (37)`, `BroadcastInDim (38)`, `Slice (39)`, `Concatenate (40)`, `Convert (41)`, `Constant (42)`, `Gather (51)`, `Scatter (52)`, `DynamicSlice (53)`, `DynamicUpdateSlice (54)`, `Pad (70)` | `copy`, `bitcast`, `iota`, `reverse`, `reshape`, `transpose`, `broadcast_in_dim`, `slice`, `concatenate`, `convert`, `constant`, `gather`, `scatter`, `dynamic_slice`, `dynamic_update_slice`, `pad` |
+| **Elementwise Arithmetic & Quantization** | `AddF32 (1)`, `AddS32 (2)`, `MulF32 (3)`, `SubF32 (5)`, `DivF32 (6)`, `MaxF32 (7)`, `MinF32 (8)`, `NegF32 (10)`, `Abs (16)`, `Floor (22)`, `Ceil (23)`, `Rem (25)`, `Sign (61)`, `RoundNearestEven (65)`, `RoundNearestAfz (66)`, `Pow (68)`, `Clamp (69)`, `UniformQuantize (75)`, `UniformDequantize (76)` | `add`, `multiply`, `subtract`, `divide`, `maximum`, `minimum`, `negate`, `abs`, `floor`, `ceil`, `remainder`, `sign`, `round_nearest_even`, `round_nearest_afz`, `power`, `clamp`, `uniform_quantize`, `uniform_dequantize` |
+| **Transcendentals & Special Math (EUP)** | `ExpF32 (11)`, `TanhF32 (12)`, `Log (17)`, `Sqrt (18)`, `Rsqrt (19)`, `Sine (20)`, `Cosine (21)`, `Expm1 (58)`, `Log1p (59)`, `Logistic (60)`, `Tan (63)`, `Cbrt (64)`, `Atan2 (67)` | `exponential`, `tanh`, `log`, `sqrt`, `rsqrt`, `sine`, `cosine`, `exponential_minus_one`, `log_plus_one`, `logistic`, `tan`, `cbrt`, `atan2` |
+| **Bitwise, Logical, Predicates & PRNG** | `XorBytes (4)`, `Not (24)`, `And (26)`, `Or (27)`, `CompareEq (28)`, `CompareLt (29)`, `CompareGt (30)`, `Select (31)`, `ShiftLeft (45)`, `ShiftRightArithmetic (46)`, `ShiftRightLogical (47)`, `PopulationCount (48)`, `CountLeadingZeros (49)`, `RngBitGenerator (57)`, `IsFinite (62)` | `xor`, `not`, `and`, `or`, `compare` (`EQ`/`LT`/`GT`), `select`, `shift_left`, `shift_right_arithmetic`, `shift_right_logical`, `popcnt`, `clz`, `rng_bit_generator`, `is_finite` |
+| **MXU Contractions & Linear Algebra** | `DotGeneralF32 (9)`, `Convolution (50)`, `Cholesky (71)`, `TriangularSolve (72)`, `Fft (73)` | 2D/3D batched `dot_general` / `dot`, 1D/2D/3D spatial `convolution`, `cholesky`, `triangular_solve`, `fft` |
+| **Reductions, Windowing & Sorting** | `ReduceSumF32 (13)`, `ReduceMax (34)`, `ReduceMin (35)`, `ReduceWindow (55)`, `Sort (56)`, `TopK (74)` | `reduce` (sum/max/min), `reduce_window`, `sort`, `top_k` |
+| **Multi-Chip ICI Collectives** | `AllReduceSumF32 (14)`, `AllGather (43)`, `ReduceScatter (44)`, `CollectivePermute (77)`, `AllToAll (78)` | `all_reduce`, `all_gather`, `reduce_scatter`, `collective_permute`, `all_to_all` |
+| **Custom Calls** | `CustomCall (15)` | `custom_call` (`TpuCustomCall`, `XLA_FFI`, Mosaic / Pallas kernels) |
 
 Additionally, `PJRT_Triton_Compile` compiles Triton MLIR kernels (`tt.func`) into `LTPUTRITON1` payloads with computed VMEM scratchpad sizes.
 

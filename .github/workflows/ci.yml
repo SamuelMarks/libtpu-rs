@@ -108,13 +108,13 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends doxygen graphviz
-          python -m pip install --upgrade pip ruff mypy pytest
+          python -m pip install --upgrade pip ruff mypy pytest pyelftools
 
       - name: Install Doxygen and Python linters (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install doxygen
-          python -m pip install --upgrade pip ruff mypy pytest
+          python -m pip install --upgrade pip ruff mypy pytest pyelftools
 
       - name: Run pre-commit clippy hook (clippy, rustdoc, ruff check, mypy, doxygen)
         run: python3 scripts/pre_commit.py clippy --check
@@ -148,7 +148,7 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends cmake clang llvm
           fi
-          python -m pip install --upgrade pip pytest pytest-cov
+          python -m pip install --upgrade pip pytest pytest-cov pyelftools
 
       - name: Build workspace and run pre-commit test hook (cargo test, pytest, ctest)
         env:
@@ -197,13 +197,13 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends clang clang-format cmake doxygen llvm
-          python -m pip install --upgrade pip ruff mypy pytest pytest-cov pre-commit
+          python -m pip install --upgrade pip ruff mypy pytest pytest-cov pyelftools pre-commit
 
       - name: Install system and Python dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install clang-format doxygen
-          python -m pip install --upgrade pip ruff mypy pytest pytest-cov pre-commit
+          python -m pip install --upgrade pip ruff mypy pytest pytest-cov pyelftools pre-commit
 
       - name: Run full pre-commit pipeline in strict check mode
         env:

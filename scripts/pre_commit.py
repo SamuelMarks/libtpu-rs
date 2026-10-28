@@ -457,6 +457,7 @@ def hook_clippy(repo_root: Path, check_only: bool = False) -> int:
     run_command(["mypy", "--strict", *py_targets], cwd=repo_root)
 
     print("==> [lint] Running Doxygen strict documentation check on C/C++ files...")
+    (repo_root / "cpp" / "build" / "doxygen").mkdir(parents=True, exist_ok=True)
     run_command(["doxygen", "cpp/Doxyfile"], cwd=repo_root)
 
     print("==> [lint] All lint and documentation checks passed with zero warnings.")
@@ -492,7 +493,7 @@ def hook_test(repo_root: Path, check_only: bool = False) -> int:
 
     print("==> [test] Running C/C++ test suite (ctest)...")
     build_dir = repo_root / "cpp" / "build"
-    if not build_dir.exists():
+    if not (build_dir / "CMakeCache.txt").exists():
         run_command(
             ["cmake", "-B", "cpp/build", "-S", "cpp", "-DENABLE_COVERAGE=ON"],
             cwd=repo_root,
@@ -697,6 +698,7 @@ def calculate_cpp_doc_coverage(repo_root: Path, force_run: bool = True) -> tuple
     """
     xml_dir = repo_root / "cpp" / "build" / "doxygen" / "xml"
     if force_run or not xml_dir.exists():
+        (repo_root / "cpp" / "build" / "doxygen").mkdir(parents=True, exist_ok=True)
         run_command(["doxygen", "cpp/Doxyfile"], cwd=repo_root)
 
     total_items = 0
