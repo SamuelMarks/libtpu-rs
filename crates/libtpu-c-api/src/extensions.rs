@@ -79,6 +79,24 @@ pub fn extension_call_count() -> u64 {
 pub unsafe extern "C" fn PJRT_Extension_ValidateArgs(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
+    // SAFETY: Caller upholds `raw_args` contract.
+    unsafe { validate_extension_args_size(raw_args, size_of::<usize>()) }
+}
+
+/// Validates that `raw_args` is non-null and its leading `struct_size` field is at least `min_size`.
+///
+/// # Arguments
+///
+/// * `raw_args` - Opaque pointer to a PJRT extension argument structure whose first field is `size_t struct_size`.
+/// * `min_size` - Minimum required `struct_size` in bytes.
+///
+/// # Safety
+///
+/// `raw_args` must be null or point to a struct beginning with `usize`.
+unsafe fn validate_extension_args_size(
+    raw_args: *mut std::ffi::c_void,
+    min_size: usize,
+) -> *mut PJRT_Error {
     if raw_args.is_null() {
         return box_pjrt_error(LibTpuError::NullPointer {
             parameter: "extension_args",
@@ -86,10 +104,10 @@ pub unsafe extern "C" fn PJRT_Extension_ValidateArgs(
     }
     // SAFETY: `raw_args` is non-null and starts with `usize struct_size`.
     let actual_size = unsafe { *raw_args.cast::<usize>() };
-    if actual_size < size_of::<usize>() {
+    if actual_size < min_size {
         return box_pjrt_error(LibTpuError::InvalidStructSize {
             struct_name: "PJRT_Extension_Base",
-            expected_min: size_of::<usize>(),
+            expected_min: min_size,
             actual: actual_size,
         });
     }
@@ -190,6 +208,7 @@ unsafe fn invoke_typed_extension_handler<T>(
 /// # Arguments
 ///
 /// * `raw_args` - Raw pointer to the extension `_Args` structure.
+/// * `min_size` - Minimum required `struct_size` in bytes (`size_of::<T>()`).
 /// * `handler_ref` - Type-erased pointer to the strongly-typed callback.
 /// * `invoker` - Monomorphized trampoline invoking the strongly-typed callback.
 ///
@@ -198,13 +217,14 @@ unsafe fn invoke_typed_extension_handler<T>(
 /// `raw_args` must be null or point to a valid extension `_Args` structure of type `T`.
 unsafe fn dispatch_erased_extension_args(
     raw_args: *mut std::ffi::c_void,
+    min_size: usize,
     handler_ref: *const std::ffi::c_void,
     invoker: unsafe fn(*mut std::ffi::c_void, *const std::ffi::c_void),
 ) -> *mut PJRT_Error {
     // SAFETY: Caller upholds `raw_args` precondition.
-    let err = unsafe { PJRT_Extension_ValidateArgs(raw_args) };
+    let err = unsafe { validate_extension_args_size(raw_args, min_size) };
     if err.is_null() {
-        // SAFETY: `raw_args` was validated non-null by `PJRT_Extension_ValidateArgs`.
+        // SAFETY: `raw_args` was validated non-null and `>= min_size` by `validate_extension_args_size`.
         unsafe {
             invoker(raw_args, handler_ref);
         }
@@ -230,7 +250,12 @@ pub(super) unsafe fn dispatch_typed_extension_args<T>(
     let handler_ref = ptr::from_ref(&handler).cast::<std::ffi::c_void>();
     // SAFETY: Caller upholds `raw_args` contract; `handler_ref` points to `handler`.
     unsafe {
-        dispatch_erased_extension_args(raw_args, handler_ref, invoke_typed_extension_handler::<T>)
+        dispatch_erased_extension_args(
+            raw_args,
+            size_of::<T>(),
+            handler_ref,
+            invoke_typed_extension_handler::<T>,
+        )
     }
 }
 

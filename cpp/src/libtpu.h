@@ -2553,16 +2553,20 @@ PJRT_Error *PJRT_Megascale_Barrier(void *raw_args);
 PJRT_Error *PJRT_Megascale_GetNumSlices(void *raw_args);
 
 /**
- * @brief Argument structure for `PJRT_Collectives_CreateCommunicator` (`32`
+ * @brief Argument structure for `PJRT_Collectives_CreateCommunicator` (`48`
  * bytes).
  */
 typedef struct PJRT_Collectives_CreateCommunicator_Args {
-  /** @brief Size of this struct (`32`). */
+  /** @brief Size of this struct (`48`). */
   size_t struct_size;
   /** @brief Optional chained `PJRT_Extension_Base*`. */
   PJRT_Extension_Base *extension_start;
   /** @brief Collectives instance handle. */
   void *collectives;
+  /** @brief Clique device IDs pointer. */
+  const int32_t *device_ids;
+  /** @brief Number of devices in clique. */
+  size_t num_devices;
   /** @brief Output communicator handle. */
   void *communicator;
 } PJRT_Collectives_CreateCommunicator_Args;
@@ -2678,6 +2682,25 @@ static_assert(sizeof(TpuPartitionedCall_Params) == 24, "TpuPartCall == 24");
 static_assert(sizeof(XLA_Shape) == 96, "XLA_Shape == 96");
 static_assert(sizeof(TpuEmbeddingEngine_Params) == 56, "TpuEmbed == 56");
 static_assert(sizeof(TpuDriverFn) == 224, "TpuDriverFn == 224");
+static_assert(sizeof(PJRT_HostMemoryAllocator_Allocate_Args) == 64,
+              "HostAlloc == 64");
+static_assert(sizeof(PJRT_ExecutableMetadata) == 16, "ExecMeta == 16");
+static_assert(sizeof(PJRT_DeviceDescription_MemoryDescriptions_Args) == 48,
+              "MemDesc == 48");
+static_assert(sizeof(PJRT_MemoryDescription_Kind_Args) == 48, "MemKind == 48");
+static_assert(sizeof(PJRT_PhaseCompile_GetCompiler_Args) == 32,
+              "PhaseGet == 32");
+static_assert(sizeof(PJRT_PhaseCompile_Destroy_Args) == 24, "PhaseDel == 24");
+static_assert(sizeof(PJRT_PhaseCompile_GetPhaseNames_Args) == 48,
+              "PhaseNames == 48");
+static_assert(sizeof(PJRT_PhaseCompile_RunPhase_Args) == 56, "PhaseRun == 56");
+static_assert(sizeof(PJRT_Megascale_Handle_Args) == 24, "MegaHandle == 24");
+static_assert(sizeof(PJRT_Megascale_Query_Args) == 32, "MegaQuery == 32");
+static_assert(sizeof(PJRT_Collectives_CreateCommunicator_Args) == 48,
+              "CommCreate == 48");
+static_assert(sizeof(PJRT_Communicator_Destroy_Args) == 24, "CommDel == 24");
+static_assert(sizeof(PJRT_Communicator_AllReduce_Args) == 64,
+              "CommAllReduce == 64");
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(PJRT_Extension_Base) == 24, "PJRT_Extension_Base == 24");
 _Static_assert(sizeof(PJRT_Api_Version) == 24, "PJRT_Api_Version == 24");

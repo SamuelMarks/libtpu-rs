@@ -1340,10 +1340,6 @@ mod tests {
                 crate::extensions::PJRT_Communicator_AllGather(ptr::addr_of_mut!(ag_args).cast())
                     .is_null()
             );
-            assert!(
-                crate::extensions::PJRT_Communicator_AllToAll(ptr::addr_of_mut!(ag_args).cast())
-                    .is_null()
-            );
             let mut cp_args = crate::extensions::PJRT_Communicator_CollectivePermute_Args {
                 struct_size: size_of::<crate::extensions::PJRT_Communicator_CollectivePermute_Args>(
                 ),
@@ -1355,6 +1351,10 @@ mod tests {
                 count: 4,
                 event: ptr::null_mut(),
             };
+            assert!(
+                crate::extensions::PJRT_Communicator_AllToAll(ptr::addr_of_mut!(cp_args).cast())
+                    .is_null()
+            );
             assert!(
                 crate::extensions::PJRT_Communicator_CollectivePermute(
                     ptr::addr_of_mut!(cp_args).cast()

@@ -792,7 +792,11 @@ const void *EmbeddingEngine::raw_state() const noexcept {
 
 Communicator::Communicator() noexcept : handle_(nullptr) {
   PJRT_Collectives_CreateCommunicator_Args args{
-      sizeof(PJRT_Collectives_CreateCommunicator_Args), nullptr, nullptr,
+      sizeof(PJRT_Collectives_CreateCommunicator_Args),
+      nullptr,
+      nullptr,
+      nullptr,
+      0,
       nullptr};
   (void)PJRT_Collectives_CreateCommunicator(&args);
   handle_ = args.communicator;
