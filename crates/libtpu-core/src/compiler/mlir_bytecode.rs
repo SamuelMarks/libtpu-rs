@@ -1,5 +1,7 @@
 //! MLIR Bytecode (`ML\xefR`) container decoder, encoder, and `PrefixVarInt` codecs.
 
+use crate::error::{LibTpuError, LibTpuResult};
+
 /// Magic 4-byte header identifying an MLIR bytecode payload (`b"ML\xefR"`).
 pub const MLIR_BYTECODE_MAGIC: &[u8; 4] = b"ML\xefR";
 
@@ -11,23 +13,38 @@ pub const MLIR_BYTECODE_MAGIC: &[u8; 4] = b"ML\xefR";
 /// # Arguments
 ///
 /// * `cursor` - Mutable byte slice cursor.
-#[must_use]
-pub fn decode_mlir_prefix_varint(cursor: &mut &[u8]) -> Option<u64> {
-    let (&first, rest) = cursor.split_first()?;
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::StableHloParseError`] if `cursor` is empty or truncated before the varint completes.
+pub fn decode_mlir_prefix_varint(cursor: &mut &[u8]) -> LibTpuResult<u64> {
+    let (&first, rest) = cursor
+        .split_first()
+        .ok_or_else(|| LibTpuError::StableHloParseError {
+            reason: String::from("Unexpected end of stream reading MLIR PrefixVarInt header byte"),
+        })?;
     if first == 0 {
-        let (tail, after) = rest.split_at_checked(8)?;
+        let (tail, after) =
+            rest.split_at_checked(8)
+                .ok_or_else(|| LibTpuError::StableHloParseError {
+                    reason: String::from("Truncated 9-byte MLIR PrefixVarInt payload"),
+                })?;
         *cursor = after;
-        return Some(u64::from_le(bytemuck::pod_read_unaligned::<u64>(tail)));
+        return Ok(u64::from_le(bytemuck::pod_read_unaligned::<u64>(tail)));
     }
     let extra_bytes = first.trailing_zeros() as usize;
-    let (tail, after) = rest.split_at_checked(extra_bytes)?;
+    let (tail, after) =
+        rest.split_at_checked(extra_bytes)
+            .ok_or_else(|| LibTpuError::StableHloParseError {
+                reason: String::from("Truncated multi-byte MLIR PrefixVarInt payload"),
+            })?;
     *cursor = after;
     let mut val = u64::from(first) >> (extra_bytes + 1);
     for (idx, &b) in tail.iter().enumerate() {
         let shift = (8 - (extra_bytes + 1)) + (idx * 8);
         val |= u64::from(b) << shift;
     }
-    Some(val)
+    Ok(val)
 }
 
 /// Encodes a `u64` value as a single-byte or multi-byte MLIR `PrefixVarInt`.
@@ -55,11 +72,13 @@ pub fn encode_mlir_prefix_varint(value: u64) -> Vec<u8> {
     }
 }
 
-/// Parsed MLIR Bytecode section entry (`section_id`, `length`, `data`).
+/// Parsed MLIR Bytecode section entry (`section_id`, `alignment`, `data`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MlirBytecodeSection {
     /// Section ID (`0` = `kString`, `1` = `kDialect`, `2` = `kAttrType`, `3` = `kAttrTypeOffset`, `4` = `kIR`, `5` = `kResource`).
     pub section_id: u8,
+    /// Optional section byte alignment when the `0x80` alignment flag is set in the section header byte.
+    pub alignment: Option<u64>,
     /// Unmasked section payload bytes.
     pub data: Vec<u8>,
 }
@@ -108,7 +127,7 @@ impl MlirBytecodeHeader {
             }
             1 => {
                 let mut d_cur = sec_data;
-                while let Some(idx_u64) = decode_mlir_prefix_varint(&mut d_cur) {
+                while let Ok(idx_u64) = decode_mlir_prefix_varint(&mut d_cur) {
                     let idx = usize::try_from(idx_u64).unwrap_or(usize::MAX);
                     let name = self
                         .string_table
@@ -128,13 +147,13 @@ impl MlirBytecodeHeader {
             }
             3 => {
                 let mut o_cur = sec_data;
-                while let Some(off) = decode_mlir_prefix_varint(&mut o_cur) {
+                while let Ok(off) = decode_mlir_prefix_varint(&mut o_cur) {
                     self.attr_type_offsets.push(off);
                 }
             }
             4 => {
                 let mut ir_cur = sec_data;
-                while let Some(rec) = decode_mlir_prefix_varint(&mut ir_cur) {
+                while let Ok(rec) = decode_mlir_prefix_varint(&mut ir_cur) {
                     self.ir_op_records.push(rec);
                 }
             }
@@ -154,11 +173,21 @@ impl MlirBytecodeHeader {
     /// # Arguments
     ///
     /// * `bytes` - Raw byte slice beginning with `b"ML\xefR"`.
-    #[must_use]
-    pub fn decode(bytes: &[u8]) -> Option<Self> {
-        let mut cursor = bytes.strip_prefix(MLIR_BYTECODE_MAGIC)?;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::MlirBytecodeDecodeError`] if `bytes` does not start with
+    /// [`MLIR_BYTECODE_MAGIC`].
+    pub fn decode(bytes: &[u8]) -> LibTpuResult<Self> {
+        let mut cursor = bytes.strip_prefix(MLIR_BYTECODE_MAGIC).ok_or(
+            LibTpuError::MlirBytecodeDecodeError {
+                section_id: 0,
+                offset: 0,
+                reason: "Missing ML\\xefR magic header in MLIR bytecode payload",
+            },
+        )?;
         if cursor.is_empty() {
-            return Some(Self {
+            return Ok(Self {
                 version: 1,
                 producer: String::new(),
                 section_count: 0,
@@ -194,12 +223,14 @@ impl MlirBytecodeHeader {
             sec_cursor = after_id;
             let section_id = id_and_align & 0x7F;
             let has_align = (id_and_align & 0x80) != 0;
-            let Some(sec_len_u64) = decode_mlir_prefix_varint(&mut sec_cursor) else {
+            let Ok(sec_len_u64) = decode_mlir_prefix_varint(&mut sec_cursor) else {
                 break;
             };
-            if has_align {
-                let _ = decode_mlir_prefix_varint(&mut sec_cursor);
-            }
+            let alignment = if has_align {
+                decode_mlir_prefix_varint(&mut sec_cursor).ok()
+            } else {
+                None
+            };
             let sec_len = usize::try_from(sec_len_u64).unwrap_or(usize::MAX);
             let Some((sec_data, rest)) = sec_cursor.split_at_checked(sec_len) else {
                 break;
@@ -208,6 +239,7 @@ impl MlirBytecodeHeader {
             hdr.decode_section_payload(section_id, sec_data);
             hdr.sections.push(MlirBytecodeSection {
                 section_id,
+                alignment,
                 data: sec_data.to_vec(),
             });
         }
@@ -216,11 +248,25 @@ impl MlirBytecodeHeader {
         } else {
             hdr.sections.len()
         };
-        Some(hdr)
+        Ok(hdr)
+    }
+
+    /// Strictly parses an MLIR bytecode payload starting with [`MLIR_BYTECODE_MAGIC`] (`b"ML\xefR"`).
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Raw byte slice beginning with `b"ML\xefR"`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::MlirBytecodeDecodeError`] if `bytes` does not start with
+    /// [`MLIR_BYTECODE_MAGIC`].
+    pub fn decode_strict(bytes: &[u8]) -> LibTpuResult<Self> {
+        Self::decode(bytes)
     }
 
     /// Synthesizes a canonical textual `StableHLO` representation from a binary MLIR bytecode header
-    /// when `string_table` or `attr_type_entries` contains dialect/op/type strings.
+    /// when `string_table`, `dialects`, or `attr_type_entries` contains dialect/op/type strings.
     #[must_use]
     pub fn to_synthesized_mlir_text(&self) -> String {
         let mut parts = self.string_table.clone();
@@ -232,7 +278,7 @@ impl MlirBytecodeHeader {
     }
 
     /// Encodes this [`MlirBytecodeHeader`] and all of its [`MlirBytecodeSection`]s into a
-    /// spec-compliant `ML\xefR` bytecode container.
+    /// spec-compliant `ML\xefR` bytecode container preserving section alignment metadata.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
@@ -240,8 +286,12 @@ impl MlirBytecodeHeader {
         out.extend_from_slice(self.producer.as_bytes());
         out.push(0);
         for sec in &self.sections {
-            out.push(sec.section_id & 0x7F);
+            let align_bit = if sec.alignment.is_some() { 0x80 } else { 0 };
+            out.push((sec.section_id & 0x7F) | align_bit);
             out.extend_from_slice(&encode_mlir_prefix_varint(sec.data.len() as u64));
+            if let Some(align) = sec.alignment {
+                out.extend_from_slice(&encode_mlir_prefix_varint(align));
+            }
             out.extend_from_slice(&sec.data);
         }
         out

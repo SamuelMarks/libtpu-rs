@@ -101,6 +101,26 @@ pub struct CompileOptionsProto {
 
 impl_proto_schema_message!(CompileOptionsProto, "xla.CompileOptionsProto");
 
+impl CompileOptionsProto {
+    /// Decodes a [`CompileOptionsProto`] from `bytes`, returning [`CompileOptionsProto::default()`]
+    /// if `bytes` is empty.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Raw serialized `CompileOptionsProto` byte slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::LibTpuError::ProtobufDecodeError`] if `bytes` is non-empty and malformed.
+    pub fn decode_or_empty(bytes: &[u8]) -> crate::error::LibTpuResult<Self> {
+        if bytes.is_empty() {
+            Ok(Self::default())
+        } else {
+            Self::decode(bytes)
+        }
+    }
+}
+
 /// Execution mode enum (`xla.ExecutionModeProto`) for [`ExecuteOptionsProto`].
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, FromPrimitive, IntoPrimitive)]

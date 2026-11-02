@@ -451,6 +451,37 @@ pub struct PJRT_AbiVersion_Holder {
     pub proto_bytes: Vec<u8>,
 }
 
+/// Type alias for a runtime ABI version handle (`PJRT_AbiVersion_Runtime`).
+pub type PJRT_AbiVersion_Runtime = PJRT_AbiVersion_Holder;
+
+/// Type alias for an executable ABI version handle (`PJRT_AbiVersion_Executable`).
+pub type PJRT_AbiVersion_Executable = PJRT_AbiVersion_Holder;
+
+/// Heap-allocated multi-slice configuration handle for `PJRT_MultiSlice_Extension` and `PJRT_Megascale_Extension`.
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct PJRT_MultiSlice_Config {
+    /// Total number of TPU slices in the multi-slice group.
+    pub num_slices: u32,
+    /// Local slice ID within `0..num_slices`.
+    pub slice_id: u32,
+    /// Number of logical devices per slice.
+    pub num_devices_per_slice: u32,
+}
+
+/// Distinct type alias for a Megascale multi-slice configuration handle (`PJRT_Megascale_MultiSliceConfig`).
+pub type PJRT_Megascale_MultiSliceConfig = PJRT_MultiSlice_Config;
+
+/// Heap-allocated client context handle for `PJRT_Megascale_Extension`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_ClientContext {
+    /// Unique Megascale context identifier.
+    pub context_id: u64,
+    /// Active transport type (`0` = Default/ICI, `1` = DCN).
+    pub transport_type: usize,
+}
+
 /// Heap-allocated phase compiler handle for `PJRT_PhaseCompile_Extension` (`PJRT_PhaseCompile_Compiler`).
 #[repr(C)]
 #[derive(Debug)]

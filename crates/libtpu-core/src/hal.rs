@@ -217,11 +217,7 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
 }
 
 #[cfg(test)]
-#[allow(
-    for_loops_over_fallibles,
-    clippy::cognitive_complexity,
-    clippy::too_many_lines
-)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -293,13 +289,13 @@ mod tests {
         assert_ne!(format!("{hal:?}"), "");
         let topo = hal.discover_topology();
         assert!(topo.is_ok());
-        for t in topo {
+        if let Ok(t) = topo {
             assert_eq!(t.devices.len(), 2);
-            for d0 in t.devices.first() {
+            if let Some(d0) = t.devices.first() {
                 assert!(d0.is_addressable);
                 assert_ne!(format!("{d0:?}"), "");
             }
-            for d1 in t.devices.get(1) {
+            if let Some(d1) = t.devices.get(1) {
                 assert!(!d1.is_addressable);
             }
             assert_ne!(format!("{t:?}"), "");
@@ -375,7 +371,7 @@ mod tests {
 
         let stats = hal.memory_stats(DeviceId(0));
         assert!(stats.is_ok());
-        for s in stats {
+        if let Ok(s) = stats {
             assert_eq!(s.num_allocs, 2);
             assert_ne!(format!("{s:?}"), "");
         }
@@ -421,7 +417,7 @@ mod tests {
             hal.read_device_memory(DeviceId(0), DeviceAddress(0), &mut buf)
                 .is_err()
         );
-        for prog in CompiledProgram::compile("mlir", b"return", b"") {
+        if let Ok(prog) = CompiledProgram::compile("mlir", b"return", b"") {
             assert!(hal.execute_program(DeviceId(0), &prog, &[], &[]).is_err());
         }
         assert!(hal.memory_stats(DeviceId(0)).is_err());
@@ -718,7 +714,7 @@ ENTRY main {
  ROOT r = f32[4] negate(p0)
 }",
         ] {
-            for prog in CompiledProgram::compile("mlir", src, b"") {
+            if let Ok(prog) = CompiledProgram::compile("mlir", src, b"") {
                 assert!(hal
                     .execute_program(DeviceId(0), &prog, &[in0, in1, in0], &[out])
                     .is_ok());
@@ -790,6 +786,85 @@ ENTRY main {
             &chol_in,
         ));
         assert_eq!(chol_out, vec![2.0, 0.0, 1.0, 2.0]);
+
+        // Test C64/C128 complex multiply, divide, and DotGeneral
+        // (1 + 2i) * (3 + 4i) = (3 - 8) + (4 + 6)i = -5 + 10i
+        let c64_a = ElementType::C64.pack_from_f64_slice(&[1.0, 2.0, 2.0, 1.0]);
+        let c64_b = ElementType::C64.pack_from_f64_slice(&[3.0, 4.0, 0.0, 0.0]);
+        let c64_mul_bytes =
+            SimulatedTpuHal::eval_binary_op(TpuOpCode::MulF32, ElementType::C64, &c64_a, &c64_b);
+        let c64_mul = ElementType::C64.unpack_to_f64_vec(&c64_mul_bytes);
+        assert_eq!(c64_mul, vec![-5.0, 10.0, 0.0, 0.0]);
+        let c64_div = ElementType::C64.unpack_to_f64_vec(&SimulatedTpuHal::eval_binary_op(
+            TpuOpCode::DivF32,
+            ElementType::C64,
+            &c64_mul_bytes,
+            &c64_b,
+        ));
+        assert_eq!(c64_div, vec![1.0, 2.0, 0.0, 0.0]);
+        let c128_dot = SimulatedTpuHal::eval_dot_general(
+            ElementType::C128,
+            &[1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0],
+            &[3.0, 4.0, 0.0, 0.0, 0.0, 0.0, 3.0, 4.0],
+            &crate::compiler::InstructionAttrs::default(),
+        );
+        let c128_dot_unpacked = ElementType::C128.unpack_to_f64_vec(&c128_dot);
+        assert_eq!(
+            c128_dot_unpacked,
+            vec![-5.0, 10.0, 0.0, 0.0, 0.0, 0.0, -5.0, 10.0]
+        );
+        let c64_dot_1d = SimulatedTpuHal::eval_dot_general(
+            ElementType::C64,
+            &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            &[1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
+            &crate::compiler::InstructionAttrs::default(),
+        );
+        assert_eq!(
+            ElementType::C64.unpack_to_f64_vec(&c64_dot_1d),
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+        );
+
+        // Test N-D Concatenate along axis 1 with explicit input_shapes and output_shape
+        let cat_nd_bundle = crate::compiler::TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::Concatenate,
+            operand_slots: vec![0, 1],
+            output_slot: 2,
+            sync_flag_id: 1,
+            attrs: crate::compiler::InstructionAttrs {
+                concat_dim: 1,
+                input_shapes: vec![
+                    Shape {
+                        element_type: ElementType::F32,
+                        dims: vec![2, 1],
+                        dynamic_dims: vec![false, false],
+                        layout: MemoryLayout::default_tpu_tiled(2),
+                    },
+                    Shape {
+                        element_type: ElementType::F32,
+                        dims: vec![2, 1],
+                        dynamic_dims: vec![false, false],
+                        layout: MemoryLayout::default_tpu_tiled(2),
+                    },
+                ],
+                output_shape: Some(Shape {
+                    element_type: ElementType::F32,
+                    dims: vec![2, 2],
+                    dynamic_dims: vec![false, false],
+                    layout: MemoryLayout::default_tpu_tiled(2),
+                }),
+                ..crate::compiler::InstructionAttrs::default()
+            },
+        };
+        let cat_in0 = ElementType::F32.pack_from_f64_slice(&[1.0, 3.0]);
+        let cat_in1 = ElementType::F32.pack_from_f64_slice(&[2.0, 4.0]);
+        let cat_nd_out =
+            ElementType::F32.unpack_to_f64_vec(&SimulatedTpuHal::eval_bundle_with_attrs(
+                &cat_nd_bundle,
+                ElementType::F32,
+                &[&cat_in0, &cat_in1],
+            ));
+        assert_eq!(cat_nd_out, vec![1.0, 2.0, 3.0, 4.0]);
 
         for b_op in [
             TpuOpCode::ShiftLeft,
@@ -924,7 +999,7 @@ ENTRY main {
             .is_err()
         );
 
-        for id_prog in CompiledProgram::compile("mlir", b"return", b"") {
+        if let Ok(id_prog) = CompiledProgram::compile("mlir", b"return", b"") {
             assert!(
                 hal.execute_program(DeviceId(99), &id_prog, &[in0], &[out])
                     .is_err()
@@ -946,7 +1021,7 @@ ENTRY main {
                     .is_err()
             );
         }
-        for add_prog in CompiledProgram::compile("mlir", b"add", b"") {
+        if let Ok(add_prog) = CompiledProgram::compile("mlir", b"add", b"") {
             assert!(
                 hal.execute_program(DeviceId(0), &add_prog, &[in0], &[out])
                     .is_err()
@@ -979,7 +1054,7 @@ ENTRY main {
             hal.poison_device(DeviceId(0), String::from("injected hardware fault"))
                 .is_ok()
         );
-        for id_prog in CompiledProgram::compile("mlir", b"return", b"") {
+        if let Ok(id_prog) = CompiledProgram::compile("mlir", b"return", b"") {
             assert!(
                 hal.execute_program(DeviceId(0), &id_prog, &[in0], &[out])
                     .is_err()
@@ -1042,9 +1117,11 @@ ENTRY main {
                 .is_ok()
         );
         assert!(backend.write_mmio_u64(0, MmioOffset(0x2000), 42).is_ok());
-        assert!(backend.read_mmio_u64(2, MmioOffset(0)).is_err());
+        assert!(backend.write_mmio_u64(2, MmioOffset(0), 77).is_ok());
+        assert_eq!(backend.read_mmio_u64(2, MmioOffset(0)).ok(), Some(77));
+        assert!(backend.read_mmio_u64(1, MmioOffset(0)).is_err());
         assert!(backend.read_mmio_u64(0, MmioOffset(0x100_0000)).is_err());
-        assert!(backend.write_mmio_u64(2, MmioOffset(0), 1).is_err());
+        assert!(backend.write_mmio_u64(1, MmioOffset(0), 1).is_err());
         assert!(
             backend
                 .write_mmio_u64(0, MmioOffset(0x100_0000), 1)
@@ -1105,7 +1182,7 @@ ENTRY main {
                 &cfg,
             );
             assert!(hal_res.is_ok());
-            for hal in hal_res {
+            if let Ok(hal) = hal_res {
                 assert_ne!(format!("{hal:?}"), "");
                 assert!(hal.discover_topology().is_ok());
                 assert_eq!(hal.read_telemetry_csrs(), (45_000, 175_000, 100));
@@ -1131,7 +1208,7 @@ ENTRY main {
                         .is_ok()
                 );
                 assert_eq!(hal.mmio.dma_ring_len(), 3);
-                for prog in CompiledProgram::compile("mlir", b"return", b"") {
+                if let Ok(prog) = CompiledProgram::compile("mlir", b"return", b"") {
                     assert!(
                         hal.execute_program(DeviceId(0), &prog, &[addr], &[addr2])
                             .is_ok()
@@ -1180,7 +1257,7 @@ ENTRY main {
             );
         }
 
-        for g_hal in LinuxDeviceHal::open(
+        if let Ok(g_hal) = LinuxDeviceHal::open(
             KernelDriverMode::Gasket,
             MockSyscalls {
                 open_err: false,
@@ -1210,7 +1287,7 @@ ENTRY main {
             (KernelDriverMode::Vfio, VFIO_IOMMU_MAP_DMA_IOCTL),
             (KernelDriverMode::Vfio, VFIO_IOMMU_UNMAP_DMA_IOCTL),
         ] {
-            for hal in LinuxDeviceHal::open(
+            if let Ok(hal) = LinuxDeviceHal::open(
                 mode,
                 MockSyscalls {
                     open_err: false,
@@ -1267,7 +1344,7 @@ ENTRY main {
                     .copy_device_to_device(DeviceId(0), b_addr1, DeviceId(0), b_addr2, ByteSize(4))
                     .is_ok()
             );
-            for prog in CompiledProgram::compile("mlir", b"return", b"") {
+            if let Ok(prog) = CompiledProgram::compile("mlir", b"return", b"") {
                 assert!(
                     backend
                         .execute_program(DeviceId(0), &prog, &[b_addr1], &[b_addr2])
@@ -1293,7 +1370,7 @@ ENTRY main {
             );
         }
 
-        for emu_hal in LinuxDeviceHal::open(
+        if let Ok(emu_hal) = LinuxDeviceHal::open(
             KernelDriverMode::Gasket,
             EmulatedKernelDriverBackend::default(),
             &cfg,
@@ -1305,6 +1382,7 @@ ENTRY main {
             syscalls: SimulatedKernelDriverBackend::default(),
             device_fd: -1,
             mmio: SimulatedKernelDriverBackend::default(),
+            iommu_allocators: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
             inner: SimulatedTpuHal::new(&cfg),
         };
         assert!(bad_fd_hal.close().is_err());
@@ -1323,7 +1401,7 @@ ENTRY main {
         assert!(posix.mmap_bar0(0, 0).is_err());
         assert!(posix.munmap_bar0(0x1000, 0).is_err());
 
-        for fd in posix.open_device("/dev/null") {
+        if let Ok(fd) = posix.open_device("/dev/null") {
             let mut flag: i32 = 0;
             assert!(
                 posix
@@ -1340,7 +1418,7 @@ ENTRY main {
                 .is_err()
         );
 
-        for aperture in posix.mmap_bar_aperture(FileDescriptor(-1), ByteSize(4096)) {
+        if let Ok(aperture) = posix.mmap_bar_aperture(FileDescriptor(-1), ByteSize(4096)) {
             assert!(
                 aperture
                     .write_csr_u64(MmioOffset(0), 0xCAFE_BABE_1234_5678)
@@ -1363,6 +1441,7 @@ ENTRY main {
             assert!(posix.munmap_bar_aperture(aperture).is_ok());
         }
         let null_aperture = MappedBarAperture {
+            bar_index: 2,
             base_vaddr: 0,
             size: ByteSize(4096),
         };
@@ -1371,15 +1450,29 @@ ENTRY main {
         assert!(null_aperture.write_csr_u64(MmioOffset(0), 1).is_err());
         assert!(null_aperture.read_csr_u32(MmioOffset(0)).is_err());
         assert!(null_aperture.write_csr_u32(MmioOffset(0), 1).is_err());
+        let unaligned_aperture = MappedBarAperture {
+            bar_index: 0,
+            base_vaddr: 1,
+            size: ByteSize(4096),
+        };
+        assert!(unaligned_aperture.read_csr_u64(MmioOffset(0)).is_err());
+        assert!(unaligned_aperture.write_csr_u64(MmioOffset(0), 1).is_err());
+        assert!(unaligned_aperture.read_csr_u32(MmioOffset(0)).is_err());
+        assert!(unaligned_aperture.write_csr_u32(MmioOffset(0), 1).is_err());
 
         let efd = posix.create_eventfd();
         assert!(efd.0 >= 0);
         assert!(posix.close_device(efd.0).is_ok());
+        if let Ok((r_fd, w_fd)) = posix.create_eventfd_pair() {
+            assert!(posix.close_eventfd_pair(r_fd, w_fd).is_ok());
+            assert!(posix.close_eventfd_pair(EventFdHandle(-1), w_fd).is_err());
+        }
 
         assert!(posix.allocate_anon_bar0_mmap(ByteSize(0)).is_err());
-        for mut mmap_buf in posix.allocate_anon_bar0_mmap(ByteSize(4096)) {
+        assert!(posix.allocate_anon_bar0_mmap(ByteSize(usize::MAX)).is_err());
+        if let Ok(mut mmap_buf) = posix.allocate_anon_bar0_mmap(ByteSize(4096)) {
             assert_eq!(mmap_buf.len(), 4096);
-            for first_byte in mmap_buf.first_mut() {
+            if let Some(first_byte) = mmap_buf.first_mut() {
                 *first_byte = 0xAB;
             }
             assert_eq!(mmap_buf.first().copied(), Some(0xAB));
@@ -1416,6 +1509,7 @@ ENTRY main {
         let mut region = HbmRegionAllocator::new(0x1000_0000, 16384);
         assert_ne!(format!("{region:?}"), "");
         assert_eq!(region.largest_free_block_bytes(), 16384);
+        assert!(region.allocate(0).is_err());
         let b1 = region.allocate(4096).unwrap_or(DeviceAddress(0));
         let b2 = region.allocate(4096).unwrap_or(DeviceAddress(0));
         let b3 = region.allocate(4096).unwrap_or(DeviceAddress(0));
@@ -1429,11 +1523,16 @@ ENTRY main {
         assert_eq!(region.deallocate(b2).ok(), Some(4096));
         assert_eq!(region.largest_free_block_bytes(), 16384);
         let b_keep = region.allocate(4096).unwrap_or(DeviceAddress(0));
+        let b_second = region.allocate(4096).unwrap_or(DeviceAddress(0));
+        assert_eq!(region.allocated_block_size(b_second), Some(4096));
         region.set_capacity(32768);
-        assert_eq!(region.largest_free_block_bytes(), 28672);
-        region.set_capacity(2048);
-        assert_eq!(region.largest_free_block_bytes(), 0);
+        assert_eq!(region.largest_free_block_bytes(), 24576);
         assert_eq!(region.deallocate(b_keep).ok(), Some(4096));
+        region.set_capacity(32768);
+        assert_eq!(region.largest_free_block_bytes(), 24576);
+        region.set_capacity(2048);
+        assert_eq!(region.largest_free_block_bytes(), 2048);
+        assert_eq!(region.deallocate(b_second).ok(), Some(4096));
         region.set_capacity(8192);
         assert_eq!(region.largest_free_block_bytes(), 8192);
 
@@ -1601,19 +1700,63 @@ ENTRY main {
         );
         assert_eq!(vm.cycles_executed, 0);
         assert!(vm.wait_sync_flag(0, 1, 1).is_err());
-        for prog in CompiledProgram::compile("mlir", b"dot_general", b"") {
+        if let Ok(prog) = CompiledProgram::compile("mlir", b"dot_general", b"") {
             vm.execute_vliw_stream(&prog.encode_vliw_program());
             if let Some(ds_exec) = prog.to_tpu_executable_proto().ds_executable {
                 vm.execute_deepsea_proto(&ds_exec);
             }
         }
-        for prog_exp in CompiledProgram::compile("mlir", b"exp_f32", b"") {
+        if let Ok(prog_exp) = CompiledProgram::compile("mlir", b"exp_f32", b"") {
             let mut bundles = prog_exp.encode_vliw_program();
             for (idx, sc_op) in [2_u8, 3, 4, 5].into_iter().enumerate() {
                 if let Some(b0) = bundles.first().copied() {
                     let mut b_mod = b0;
                     b_mod.scalar_slot.opcode = sc_op;
                     b_mod.scalar_slot.dst_sreg = u8::try_from(idx + 1).unwrap_or(1);
+                    bundles.push(b_mod);
+                }
+            }
+            for v_op in [
+                TpuOpCode::AddF32 as u16,
+                TpuOpCode::SubF32 as u16,
+                TpuOpCode::MulF32 as u16,
+                TpuOpCode::DivF32 as u16,
+                TpuOpCode::MaxF32 as u16,
+                TpuOpCode::MinF32 as u16,
+                TpuOpCode::NegF32 as u16,
+                TpuOpCode::Abs as u16,
+                999_u16,
+            ] {
+                if let Some(b0) = bundles.first().copied() {
+                    let mut b_mod = b0;
+                    b_mod.vector_slot.opcode = v_op;
+                    bundles.push(b_mod);
+                }
+            }
+            vm.vreg_words[0] = 2.0_f32.to_bits();
+            vm.vreg_words[1] = 4.0_f32.to_bits();
+            if let Some(b0) = bundles.first().copied() {
+                let mut b_div_nonzero = b0;
+                b_div_nonzero.vector_slot.opcode = TpuOpCode::DivF32 as u16;
+                b_div_nonzero.vector_slot.src0_vreg = 0;
+                b_div_nonzero.vector_slot.src1_vreg = 1;
+                bundles.push(b_div_nonzero);
+            }
+            for x_op in [
+                TpuOpCode::ExpF32 as u8,
+                TpuOpCode::TanhF32 as u8,
+                TpuOpCode::Log as u8,
+                TpuOpCode::Sqrt as u8,
+                TpuOpCode::Rsqrt as u8,
+                TpuOpCode::Sine as u8,
+                TpuOpCode::Cosine as u8,
+                250_u8,
+            ] {
+                if let Some(b0) = bundles.first().copied() {
+                    let mut b_mod = b0;
+                    b_mod.xunary_slot.opcode = x_op;
+                    b_mod.xunary_slot.src_vreg = 0;
+                    b_mod.xunary_slot.dst_vreg = 2;
                     bundles.push(b_mod);
                 }
             }
@@ -1636,5 +1779,17 @@ ENTRY main {
         };
         vm.dispatch_host_command(&hcmd);
         assert_eq!(vm.sreg[0], 77);
+
+        if let Ok(mut prog) =
+            CompiledProgram::compile("mlir", b"module @vm_exec { stablehlo.add }", b"")
+        {
+            let in_bytes = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
+            let exec_res = vm.execute(&prog, vec![in_bytes.clone(), in_bytes.clone()]);
+            assert!(exec_res.is_ok());
+            prog.output_slots = vec![99];
+            assert!(vm.execute(&prog, vec![in_bytes.clone()]).is_err());
+            prog.output_slots.clear();
+            assert!(vm.execute(&prog, vec![in_bytes]).is_err());
+        }
     }
 }

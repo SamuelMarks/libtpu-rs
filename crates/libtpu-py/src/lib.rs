@@ -383,7 +383,7 @@ pub const extern "C" fn PyInit_sdk() -> *const PySdkAbiHeader {
 }
 
 #[cfg(test)]
-#[allow(for_loops_over_fallibles)]
+#[allow(clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -461,7 +461,10 @@ mod tests {
         assert!(!PY_SDK_ABI_HEADER.m_name.is_null());
         assert!(!PY_SDK_ABI_HEADER.m_doc.is_null());
         assert_ne!(format!("{PY_SDK_ABI_HEADER:?}"), "");
-        assert!(PyTpuRuntime::inspect_binary_symbol_names(b"not_a_binary").is_err());
+        assert!(matches!(
+            PyTpuRuntime::inspect_binary_symbol_names(b"not_a_binary"),
+            Err(libtpu_core::error::LibTpuError::GoblinParseFailed(_))
+        ));
         let mut macho_hdr = Vec::with_capacity(32);
         macho_hdr.extend_from_slice(&0xfeed_facf_u32.to_le_bytes());
         macho_hdr.extend_from_slice(&0x0100_0007_u32.to_le_bytes());
@@ -469,42 +472,57 @@ mod tests {
         macho_hdr.extend_from_slice(&6_u32.to_le_bytes());
         macho_hdr.resize(32, 0);
         assert!(PyTpuRuntime::inspect_binary_symbol_names(&macho_hdr).is_ok());
-        assert!(PyTpuRuntime::from_init_args("--tpu_generation=invalid").is_err());
+        assert!(matches!(
+            PyTpuRuntime::from_init_args("--tpu_generation=invalid"),
+            Err(libtpu_core::error::LibTpuError::InvalidArgument {
+                parameter: "generation",
+                ..
+            })
+        ));
 
         let rt_res = PyTpuRuntime::from_init_args("--tpu_generation=v6e");
         assert!(rt_res.is_ok());
-        for rt in rt_res {
+        if let Ok(rt) = rt_res {
             assert_ne!(format!("{rt:?}"), "");
             assert_eq!(rt.generation(), TpuGeneration::V6e);
             assert_eq!(rt.device_count(), 4);
             assert_ne!(rt.serialize_topology(), [] as [u8; 0]);
             let ser_res = rt.compile_and_serialize("mlir", b"module @py_add { stablehlo.add }");
             assert!(ser_res.is_ok());
-            for ser_bytes in ser_res {
+            if let Ok(ser_bytes) = ser_res {
                 let fp = rt.deserialize_executable_fingerprint(&ser_bytes);
                 assert_eq!(fp.ok().map(|s| s.len()), Some(32));
             }
-            assert!(rt.compile_and_serialize("bad", b"").is_err());
-            assert!(rt.deserialize_executable_fingerprint(b"bad").is_err());
+            assert!(matches!(
+                rt.compile_and_serialize("bad", b""),
+                Err(libtpu_core::error::LibTpuError::CompilationFailed { .. })
+            ));
+            assert!(matches!(
+                rt.deserialize_executable_fingerprint(b"bad"),
+                Err(libtpu_core::error::LibTpuError::DeserializationFailed { .. })
+            ));
             let sum = rt.execute_f32_4(
                 DeviceId(0),
                 b"module @py_add { stablehlo.add }",
                 &[1.0, 2.0, 3.0, 4.0],
             );
             assert_eq!(sum.ok(), Some([2.0, 4.0, 6.0, 8.0]));
-            assert!(rt.execute_f32_4(DeviceId(0), b"", &[1.0; 4]).is_err());
-            assert!(
-                rt.execute_f32_4(DeviceId(99), b"module @py_add { stablehlo.add }", &[1.0; 4],)
-                    .is_err()
-            );
+            assert!(matches!(
+                rt.execute_f32_4(DeviceId(0), b"", &[1.0; 4]),
+                Err(libtpu_core::error::LibTpuError::CompilationFailed { .. })
+            ));
+            assert!(matches!(
+                rt.execute_f32_4(DeviceId(99), b"module @py_add { stablehlo.add }", &[1.0; 4]),
+                Err(libtpu_core::error::LibTpuError::DeviceNotFound { device_id: 99 })
+            ));
             let _ = rt
                 .client
                 .hal
                 .poison_device(DeviceId(0), String::from("poisoned"));
-            assert!(
-                rt.execute_f32_4(DeviceId(0), b"module @py_add { stablehlo.add }", &[1.0; 4],)
-                    .is_err()
-            );
+            assert!(matches!(
+                rt.execute_f32_4(DeviceId(0), b"module @py_add { stablehlo.add }", &[1.0; 4]),
+                Err(libtpu_core::error::LibTpuError::ExecutionFailed { device_id: 0, .. })
+            ));
         }
 
         let bridge = PySdkBridge::new(TpuGeneration::V5e);
@@ -516,10 +534,16 @@ mod tests {
                 .get_metric_values("tpu.runtime.hbm.usage_bytes")
                 .is_ok()
         );
-        assert!(bridge.get_metric_values("unknown_metric").is_err());
+        assert!(matches!(
+            bridge.get_metric_values("unknown_metric"),
+            Err(libtpu_core::error::LibTpuError::MetricNotFound { .. })
+        ));
         let xspace = bridge.capture_xspace();
         assert!(xspace.is_ok());
         let _ = bridge.profiler.start();
-        assert!(bridge.capture_xspace().is_err());
+        assert!(matches!(
+            bridge.capture_xspace(),
+            Err(libtpu_core::error::LibTpuError::ProfilerAlreadyActive)
+        ));
     }
 }

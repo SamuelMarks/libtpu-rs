@@ -127,6 +127,15 @@ impl PjrtCoreEvent {
         self.ready.store(true, Ordering::Release);
     }
 
+    /// Fails this event with a [`LibTpuError::EventError`] carrying its [`EventId`].
+    ///
+    /// # Arguments
+    ///
+    /// * `reason` - Failure reason message.
+    pub fn fail_with_reason(&self, reason: String) {
+        self.set(Some(LibTpuError::event_error(self.id, reason)));
+    }
+
     /// Returns the error associated with this event, if any (`PJRT_Event_Error`).
     #[must_use]
     pub fn get_error(&self) -> Option<LibTpuError> {
@@ -375,6 +384,8 @@ pub struct PjrtCoreBuffer {
     ready_error: Mutex<Option<LibTpuError>>,
     /// Atomic deletion flag (`PJRT_Buffer_Delete` / `PJRT_Buffer_IsDeleted`).
     deleted: AtomicBool,
+    /// Atomic alias-fulfillment flag (`PJRT_Client_FulfillAliasBuffer`).
+    fulfilled: AtomicBool,
     /// External reference count (`PJRT_Buffer_IncreaseExternalReferenceCount`).
     external_ref_count: AtomicI64,
 }
@@ -405,6 +416,7 @@ impl PjrtCoreBuffer {
             hal,
             ready_error: Mutex::new(None),
             deleted: AtomicBool::new(false),
+            fulfilled: AtomicBool::new(false),
             external_ref_count: AtomicI64::new(1),
         }
     }
@@ -439,12 +451,14 @@ impl PjrtCoreBuffer {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError`] if either buffer is deleted or if the device copy fails.
+    /// Returns [`LibTpuError::BufferDeleted`] if either buffer is deleted,
+    /// [`LibTpuError::AliasAlreadyFulfilled`] if already fulfilled, or [`LibTpuError`] if the device copy fails.
     pub fn fulfill_from(&self, src: &Self) -> LibTpuResult<()> {
         if self.is_deleted() {
-            return Err(LibTpuError::BufferDeleted {
-                buffer_id: self.id.0,
-            });
+            return Err(LibTpuError::buffer_deleted(self.id));
+        }
+        if self.fulfilled.swap(true, Ordering::AcqRel) {
+            return Err(LibTpuError::alias_already_fulfilled(self.id));
         }
         let bytes = src.to_host_bytes()?;
         let copy_len = self.shape.unpadded_byte_size().0.min(bytes.len());
@@ -651,6 +665,30 @@ impl PjrtCoreCopyToDeviceStream {
         Ok(ev)
     }
 
+    /// Flushes accumulated `staged_bytes` into a target [`PjrtCoreBuffer`] on the device HBM.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - Destination [`PjrtCoreBuffer`] to populate with staged bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `target` is deleted or the HBM write fails.
+    pub fn flush_to_buffer(&self, target: &PjrtCoreBuffer) -> LibTpuResult<()> {
+        if target.is_deleted() {
+            return Err(LibTpuError::BufferDeleted {
+                buffer_id: target.id.0,
+            });
+        }
+        let data = self.staged_data();
+        if !data.is_empty() {
+            target
+                .hal
+                .write_device_memory(target.device_id, target.address, &data)?;
+        }
+        Ok(())
+    }
+
     /// Returns a snapshot of the accumulated staged bytes written via [`PjrtCoreCopyToDeviceStream::add_chunk_data`].
     #[must_use]
     pub fn staged_data(&self) -> Vec<u8> {
@@ -796,6 +834,30 @@ impl PjrtCoreLoadedExecutable {
         self.hal
             .execute_program(device_id, &self.executable.program, &in_addrs, &out_addrs)?;
         Ok(out_buffers)
+    }
+
+    /// Executes the loaded program across all `addressable_devices` (`PJRT_LoadedExecutable_Execute`),
+    /// returning one `Vec<PjrtCoreBuffer>` output list per addressable device.
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_id` - Default output memory space ID.
+    /// * `per_device_inputs` - Slice of input buffer slices, one per addressable device.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if the executable or any input buffer is deleted or if execution fails.
+    pub fn execute_all_devices(
+        &self,
+        memory_id: MemorySpaceId,
+        per_device_inputs: &[&[&PjrtCoreBuffer]],
+    ) -> LibTpuResult<Vec<Vec<PjrtCoreBuffer>>> {
+        let mut all_outputs = Vec::with_capacity(self.addressable_devices.len());
+        for (idx, &dev_id) in self.addressable_devices.iter().enumerate() {
+            let dev_inputs = per_device_inputs.get(idx).copied().unwrap_or(&[]);
+            all_outputs.push(self.execute_on_device(dev_id, memory_id, dev_inputs)?);
+        }
+        Ok(all_outputs)
     }
 }
 
@@ -1096,9 +1158,9 @@ impl PjrtCoreClient {
     /// * `config` - Initialization configuration.
     #[must_use]
     pub fn from_config(config: &TpuInitConfig) -> Self {
-        let sim = SimulatedTpuHal::new(config);
-        let spec = sim.topology_spec();
-        let hal = crate::hal::create_default_hal(config);
+        let backend = crate::hal::HalBackend::from_config(config);
+        let spec = backend.topology_spec();
+        let hal: Arc<dyn TpuHal> = Arc::new(backend);
         Self::from_topology(hal, spec, config.process_index)
     }
 
@@ -1192,9 +1254,13 @@ impl PjrtCoreClient {
                 ),
             });
         }
-        Ok(self
-            .devices
-            .iter()
+        let mut sorted_devs: Vec<&PjrtCoreDevice> = self.devices.iter().collect();
+        sorted_devs.sort_by_key(|d| {
+            let c = d.description.spec.chip_coords;
+            (c.z, c.y, c.x, d.description.spec.core_on_chip.0)
+        });
+        Ok(sorted_devs
+            .into_iter()
             .take(needed)
             .map(|d| i32::try_from(d.description.spec.device_id.0).unwrap_or(0))
             .collect())
@@ -1459,11 +1525,7 @@ impl PjrtCoreClient {
 }
 
 #[cfg(test)]
-#[allow(
-    for_loops_over_fallibles,
-    clippy::cognitive_complexity,
-    clippy::too_many_lines
-)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -1562,7 +1624,7 @@ mod tests {
             )
             .is_err()
         );
-        for p in CompiledProgram::compile("mlir", b"return", b"") {
+        if let Ok(p) = CompiledProgram::compile("mlir", b"return", b"") {
             assert!(fhal.execute_program(DeviceId(0), &p, &[], &[]).is_err());
         }
         assert!(fhal.memory_stats(DeviceId(0)).is_err());
@@ -1621,7 +1683,12 @@ mod tests {
         };
 
         let _sim_client = PjrtCoreClient::from_simulated(&cfg);
-        for client in PjrtCoreClient::with_simulated_hal(&cfg) {
+        let mut sim_mode_cfg = cfg.clone();
+        sim_mode_cfg
+            .extra_flags
+            .insert(String::from("--tpu_driver_mode"), String::from("simulated"));
+        let _sim_mode_client = PjrtCoreClient::from_config(&sim_mode_cfg);
+        if let Ok(client) = PjrtCoreClient::with_simulated_hal(&cfg) {
             assert_ne!(format!("{client:?}"), "");
             assert_ne!(format!("{:?}", client.topology), "");
             assert_ne!(format!("{:?}", client.devices), "");
@@ -1664,7 +1731,7 @@ mod tests {
             assert!(client.default_device_assignment(0, 1).is_err());
             assert!(client.default_device_assignment(10, 10).is_err());
 
-            for shape in Shape::new(ElementType::F32, vec![4], None, None) {
+            if let Ok(shape) = Shape::new(ElementType::F32, vec![4], None, None) {
                 let mut host_in0 = Vec::new();
                 let mut host_in1 = Vec::new();
                 for f in [1.0_f32, 2.0, 3.0, 4.0] {
@@ -1687,148 +1754,141 @@ mod tests {
                         .buffer_from_host(DeviceId(0), shape.clone(), &vec![0_u8; 4096])
                         .is_err()
                 );
-                for buf0 in &buf0_res {
-                    for buf1 in &buf1_res {
-                        for empty_buf in &empty_buf_res {
-                            assert_ne!(format!("{buf0:?}"), "");
-                            assert_eq!(buf0.inc_external_ref(), 2);
-                            assert_eq!(buf0.dec_external_ref(), 1);
+                if let (Ok(buf0), Ok(buf1), Ok(empty_buf)) = (&buf0_res, &buf1_res, &empty_buf_res)
+                {
+                    assert_ne!(format!("{buf0:?}"), "");
+                    let flush_stream = PjrtCoreCopyToDeviceStream::new(16, 16);
+                    assert!(flush_stream.flush_to_buffer(buf0).is_ok());
+                    assert!(flush_stream.add_chunk_data(&host_in0).is_ok());
+                    assert!(flush_stream.flush_to_buffer(buf0).is_ok());
+                    assert_eq!(buf0.inc_external_ref(), 2);
+                    assert_eq!(buf0.dec_external_ref(), 1);
 
-                            let copied_res = buf0.copy_to_device(DeviceId(0), MemorySpaceId(0));
-                            assert!(copied_res.is_ok());
-                            assert!(buf0.copy_to_device(DeviceId(99), MemorySpaceId(0)).is_err());
-                            assert!(buf0.ready_error().is_none());
-                            assert!(buf0.ready_event().get_error().is_none());
-                            assert!(buf1.fulfill_from(buf0).is_ok());
-                            buf0.set_error(LibTpuError::ProfilerNotActive);
-                            assert!(buf0.ready_error().is_some());
-                            assert!(buf0.ready_event().get_error().is_some());
-                            let bitcast_res = buf0.bitcast(ElementType::S32, vec![4]);
-                            assert!(bitcast_res.is_ok());
-                            assert!(buf0.bitcast(ElementType::Invalid, vec![4]).is_err());
+                    let copied_res = buf0.copy_to_device(DeviceId(0), MemorySpaceId(0));
+                    assert!(copied_res.is_ok());
+                    assert!(buf0.copy_to_device(DeviceId(99), MemorySpaceId(0)).is_err());
+                    assert!(buf0.ready_error().is_none());
+                    assert!(buf0.ready_event().get_error().is_none());
+                    assert!(buf1.fulfill_from(buf0).is_ok());
+                    assert!(buf1.fulfill_from(buf0).is_err());
+                    let ev_fail = PjrtCoreEvent::pending();
+                    ev_fail.fail_with_reason(String::from("ev_failed"));
+                    assert!(ev_fail.await_ready().is_err());
+                    buf0.set_error(LibTpuError::ProfilerNotActive);
+                    assert!(buf0.ready_error().is_some());
+                    assert!(buf0.ready_event().get_error().is_some());
+                    let bitcast_res = buf0.bitcast(ElementType::S32, vec![4]);
+                    assert!(bitcast_res.is_ok());
+                    assert!(buf0.bitcast(ElementType::Invalid, vec![4]).is_err());
 
-                            let bad_dev_buf = PjrtCoreBuffer::new(
-                                DeviceId(99),
-                                MemorySpaceId(0),
-                                shape.clone(),
-                                DeviceAddress(0x1000),
-                                Arc::clone(&client.hal),
-                            );
-                            assert!(bad_dev_buf.bitcast(ElementType::S32, vec![4]).is_err());
+                    let bad_dev_buf = PjrtCoreBuffer::new(
+                        DeviceId(99),
+                        MemorySpaceId(0),
+                        shape.clone(),
+                        DeviceAddress(0x1000),
+                        Arc::clone(&client.hal),
+                    );
+                    assert!(bad_dev_buf.bitcast(ElementType::S32, vec![4]).is_err());
 
-                            for hs in Shape::new(
-                                ElementType::F32,
-                                vec![1024 * 1024 * 1024 * 32],
-                                None,
-                                None,
-                            ) {
-                                assert!(client.buffer_from_host(DeviceId(0), hs, &[]).is_err());
-                            }
+                    if let Ok(hs) =
+                        Shape::new(ElementType::F32, vec![1024 * 1024 * 1024 * 32], None, None)
+                    {
+                        assert!(client.buffer_from_host(DeviceId(0), hs, &[]).is_err());
+                    }
 
-                            let bad_addr_buf = PjrtCoreBuffer::new(
-                                DeviceId(0),
-                                MemorySpaceId(0),
-                                shape.clone(),
-                                DeviceAddress(0xdead_beef),
-                                Arc::clone(&client.hal),
-                            );
-                            assert!(bad_addr_buf.to_host_bytes().is_err());
-                            assert!(
-                                bad_addr_buf
-                                    .copy_to_device(DeviceId(0), MemorySpaceId(0))
-                                    .is_err()
-                            );
-                            assert!(bad_addr_buf.bitcast(ElementType::S32, vec![4]).is_err());
-                            assert!(bad_addr_buf.delete().is_err());
+                    let bad_addr_buf = PjrtCoreBuffer::new(
+                        DeviceId(0),
+                        MemorySpaceId(0),
+                        shape.clone(),
+                        DeviceAddress(0xdead_beef),
+                        Arc::clone(&client.hal),
+                    );
+                    assert!(bad_addr_buf.to_host_bytes().is_err());
+                    assert!(
+                        bad_addr_buf
+                            .copy_to_device(DeviceId(0), MemorySpaceId(0))
+                            .is_err()
+                    );
+                    assert!(bad_addr_buf.bitcast(ElementType::S32, vec![4]).is_err());
+                    assert!(bad_addr_buf.delete().is_err());
 
-                            let loaded_res = client.compile_and_load(
+                    let loaded_res =
+                        client.compile_and_load("mlir", b"module @add { stablehlo.add }", b"");
+                    assert!(loaded_res.is_ok());
+                    assert!(client.compile_and_load("bad_fmt", b"code", b"").is_err());
+                    assert!(
+                        client
+                            .compile_and_load(
                                 "mlir",
-                                b"module @add { stablehlo.add }",
-                                b"",
-                            );
-                            assert!(loaded_res.is_ok());
-                            assert!(client.compile_and_load("bad_fmt", b"code", b"").is_err());
-                            assert!(
-                                client
-                                    .compile_and_load(
-                                        "mlir",
-                                        b"return",
-                                        &[0xff, 0xff, 0xff, 0xff, 0xff, 0x7f]
-                                    )
-                                    .is_err()
-                            );
-                            for loaded in loaded_res {
-                                assert_ne!(format!("{loaded:?}"), "");
-                                assert_ne!(format!("{:?}", loaded.executable), "");
-                                let _ = loaded.executable.cost_analysis();
-                                let _ = loaded.executable.compiled_memory_stats();
+                                b"return",
+                                &[0xff, 0xff, 0xff, 0xff, 0xff, 0x7f]
+                            )
+                            .is_err()
+                    );
+                    if let Ok(loaded) = loaded_res {
+                        assert_ne!(format!("{loaded:?}"), "");
+                        assert_ne!(format!("{:?}", loaded.executable), "");
+                        let _ = loaded.executable.cost_analysis();
+                        let _ = loaded.executable.compiled_memory_stats();
 
-                                let serialized_exec = loaded.executable.program.serialize();
-                                assert!(client.deserialize_and_load(&serialized_exec).is_ok());
-                                assert!(client.deserialize_and_load(b"bad").is_err());
+                        let serialized_exec = loaded.executable.program.serialize();
+                        assert!(client.deserialize_and_load(&serialized_exec).is_ok());
+                        assert!(client.deserialize_and_load(b"bad").is_err());
 
-                                let outs_res = loaded.execute_on_device(
+                        let outs_res =
+                            loaded.execute_on_device(DeviceId(0), MemorySpaceId(0), &[buf0, buf1]);
+                        assert!(outs_res.is_ok());
+                        if let Ok(outs) = outs_res
+                            && let Some(out0) = outs.first()
+                        {
+                            let host_out = out0.to_host_bytes();
+                            assert!(host_out.is_ok());
+                        }
+                        let all_outs = loaded
+                            .execute_all_devices(MemorySpaceId(0), &[&[buf0, buf1], &[buf0, buf1]]);
+                        assert!(all_outs.is_ok());
+                        assert!(
+                            loaded
+                                .execute_on_device(DeviceId(99), MemorySpaceId(0), &[buf0, buf1])
+                                .is_err()
+                        );
+                        assert!(
+                            loaded
+                                .execute_on_device(DeviceId(0), MemorySpaceId(0), &[buf0])
+                                .is_err()
+                        );
+
+                        assert!(empty_buf.delete().is_ok());
+                        assert!(empty_buf.delete().is_ok());
+                        assert!(empty_buf.is_deleted());
+                        let del_stream = PjrtCoreCopyToDeviceStream::new(16, 16);
+                        assert!(del_stream.flush_to_buffer(empty_buf).is_err());
+                        assert!(empty_buf.fulfill_from(buf0).is_err());
+                        assert!(buf0.fulfill_from(empty_buf).is_err());
+                        assert!(empty_buf.to_host_bytes().is_err());
+                        assert!(
+                            empty_buf
+                                .copy_to_device(DeviceId(0), MemorySpaceId(0))
+                                .is_err()
+                        );
+                        assert!(empty_buf.bitcast(ElementType::S32, vec![4]).is_err());
+                        assert!(
+                            loaded
+                                .execute_on_device(
                                     DeviceId(0),
                                     MemorySpaceId(0),
-                                    &[buf0, buf1],
-                                );
-                                assert!(outs_res.is_ok());
-                                for outs in outs_res {
-                                    for out0 in outs.first() {
-                                        let host_out = out0.to_host_bytes();
-                                        assert!(host_out.is_ok());
-                                    }
-                                }
-                                assert!(
-                                    loaded
-                                        .execute_on_device(
-                                            DeviceId(99),
-                                            MemorySpaceId(0),
-                                            &[buf0, buf1]
-                                        )
-                                        .is_err()
-                                );
-                                assert!(
-                                    loaded
-                                        .execute_on_device(DeviceId(0), MemorySpaceId(0), &[buf0])
-                                        .is_err()
-                                );
+                                    &[empty_buf, buf1]
+                                )
+                                .is_err()
+                        );
 
-                                assert!(empty_buf.delete().is_ok());
-                                assert!(empty_buf.delete().is_ok());
-                                assert!(empty_buf.is_deleted());
-                                assert!(empty_buf.fulfill_from(buf0).is_err());
-                                assert!(buf0.fulfill_from(empty_buf).is_err());
-                                assert!(empty_buf.to_host_bytes().is_err());
-                                assert!(
-                                    empty_buf
-                                        .copy_to_device(DeviceId(0), MemorySpaceId(0))
-                                        .is_err()
-                                );
-                                assert!(empty_buf.bitcast(ElementType::S32, vec![4]).is_err());
-                                assert!(
-                                    loaded
-                                        .execute_on_device(
-                                            DeviceId(0),
-                                            MemorySpaceId(0),
-                                            &[empty_buf, buf1]
-                                        )
-                                        .is_err()
-                                );
-
-                                loaded.delete();
-                                assert!(loaded.is_deleted());
-                                assert!(
-                                    loaded
-                                        .execute_on_device(
-                                            DeviceId(0),
-                                            MemorySpaceId(0),
-                                            &[buf0, buf1]
-                                        )
-                                        .is_err()
-                                );
-                            }
-                        }
+                        loaded.delete();
+                        assert!(loaded.is_deleted());
+                        assert!(
+                            loaded
+                                .execute_on_device(DeviceId(0), MemorySpaceId(0), &[buf0, buf1])
+                                .is_err()
+                        );
                     }
                 }
 
@@ -1848,7 +1908,7 @@ mod tests {
                     )
                     .is_err()
                 );
-                for mgr in mgr_res {
+                if let Ok(mgr) = mgr_res {
                     assert_ne!(format!("{mgr:?}"), "");
                     assert!(mgr.transfer_data(0, &host_in0).is_ok());
                     assert!(mgr.transfer_data(99, &host_in0).is_err());
@@ -1885,7 +1945,7 @@ mod tests {
                 local_topo.devices,
                 [] as [crate::proto::DistributedDeviceProto; 0]
             );
-            for global_topo in client.exchange_global_topology_proto(2) {
+            if let Ok(global_topo) = client.exchange_global_topology_proto(2) {
                 assert_eq!(global_topo.processes.len(), 2);
                 assert!(client.kv_get("global_topology").is_some());
             }

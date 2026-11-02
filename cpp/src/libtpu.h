@@ -84,6 +84,9 @@ typedef struct TfTpuOrdinalSelector TfTpuOrdinalSelector;
 typedef struct TpuEmbeddingEngineState TpuEmbeddingEngineState;
 /** @brief Opaque TPU driver handle (`TpuDriver`). */
 typedef struct TpuDriver TpuDriver;
+/** @brief Opaque PJRT collectives communicator handle
+ * (`PJRT_Collectives_Communicator`). */
+typedef struct PJRT_Collectives_Communicator PJRT_Collectives_Communicator;
 
 /** @brief Void-returning PJRT C API vtable function pointer (`PjrtVoidFn`). */
 typedef void (*PjrtVoidFn)(void *args);
@@ -626,6 +629,28 @@ typedef struct PJRT_Client_BufferFromHostBuffer_Args {
 } PJRT_Client_BufferFromHostBuffer_Args;
 
 /**
+ * @brief Key-value property descriptor (`PJRT_NamedValue`, `64` bytes).
+ */
+typedef struct PJRT_NamedValue {
+  /** @brief Size of this struct (`64`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Property name C string pointer. */
+  const char *name;
+  /** @brief Property name byte length. */
+  size_t name_size;
+  /** @brief Value type discriminant (`PJRT_NamedValue_Type`). */
+  int32_t value_type;
+  /** @brief Explicit 4-byte alignment padding. */
+  int32_t kind_pad;
+  /** @brief 64-bit union payload (or `float` bit-pattern in low 32 bits). */
+  uint64_t value_payload;
+  /** @brief Array length when `value_type` is an array type. */
+  size_t value_size;
+} PJRT_NamedValue;
+
+/**
  * @brief Argument structure for `PJRT_Executable_GetCostAnalysis` (`40` bytes).
  */
 typedef struct PJRT_Executable_GetCostAnalysis_Args {
@@ -790,6 +815,31 @@ typedef struct PJRT_Executable_OptimizedProgram_Args {
 } PJRT_Executable_OptimizedProgram_Args;
 
 /**
+ * @brief Inline 80-byte output layout structure embedded in
+ * `PJRT_Buffer_GetMemoryLayout_Args`.
+ */
+typedef struct PJRT_Buffer_MemoryLayout_Output {
+  /** @brief Size of this struct (`80`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Minor-to-major dimension ordering or byte strides pointer. */
+  const int64_t *minor_to_major;
+  /** @brief Number of minor-to-major dimensions or byte strides. */
+  size_t minor_to_major_size;
+  /** @brief Flattened tile dimensions pointer. */
+  const int64_t *tile_dims;
+  /** @brief Tile dimension counts array pointer. */
+  const size_t *tile_dim_sizes;
+  /** @brief Number of tiles. */
+  size_t num_tiles;
+  /** @brief Layout type discriminant (`0` = `Tiled`, `1` = `Strides`). */
+  size_t layout_type;
+  /** @brief Reserved layout union padding words. */
+  size_t reserved[2];
+} PJRT_Buffer_MemoryLayout_Output;
+
+/**
  * @brief Argument structure for `PJRT_Buffer_GetMemoryLayout` (`104` bytes).
  */
 typedef struct PJRT_Buffer_GetMemoryLayout_Args {
@@ -799,9 +849,8 @@ typedef struct PJRT_Buffer_GetMemoryLayout_Args {
   PJRT_Extension_Base *extension_start;
   /** @brief Buffer handle. */
   const PJRT_Buffer *buffer;
-  /** @brief Inline `PJRT_Buffer_MemoryLayout` words (`10` words = `80` bytes).
-   */
-  size_t layout_words[10];
+  /** @brief Output inline `PJRT_Buffer_MemoryLayout_Output` (`80` bytes). */
+  PJRT_Buffer_MemoryLayout_Output layout;
 } PJRT_Buffer_GetMemoryLayout_Args;
 
 /**
@@ -851,6 +900,23 @@ typedef struct PJRT_LoadedExecutable_GetExecutable_Args {
   /** @brief Output `PJRT_Executable*`. */
   PJRT_Executable *executable;
 } PJRT_LoadedExecutable_GetExecutable_Args;
+
+/**
+ * @brief Argument structure for `PJRT_LoadedExecutable_AddressableDevices`
+ * (`40` bytes).
+ */
+typedef struct PJRT_LoadedExecutable_AddressableDevices_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Loaded executable handle. */
+  const PJRT_LoadedExecutable *executable;
+  /** @brief Output array of addressable `PJRT_Device*` pointers. */
+  PJRT_Device *const *addressable_devices;
+  /** @brief Output number of addressable devices. */
+  size_t num_addressable_devices;
+} PJRT_LoadedExecutable_AddressableDevices_Args;
 
 /**
  * @brief Argument structure for `PJRT_LoadedExecutable_Execute` (`80` bytes).
@@ -2390,12 +2456,19 @@ typedef struct PJRT_MemoryDescription_Kind_Args {
 PJRT_Error *PJRT_MemoryDescriptions_Get(void *raw_args);
 
 /**
- * @brief Queries memory space kind (`PJRT_MemoryDescriptions_Destroy` /
- * `PJRT_MemoryDescription_Kind`).
- * @param raw_args Pointer to `PJRT_MemoryDescription_Kind_Args`.
+ * @brief Destroys memory space descriptions
+ * (`PJRT_MemoryDescriptions_Destroy`).
+ * @param raw_args Pointer to `PJRT_Metadata_Destroy_Args`.
  * @return `nullptr` on success or `PJRT_Error*` on failure.
  */
 PJRT_Error *PJRT_MemoryDescriptions_Destroy(void *raw_args);
+
+/**
+ * @brief Queries memory space kind (`PJRT_MemoryDescription_Kind`).
+ * @param raw_args Pointer to `PJRT_MemoryDescription_Kind_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_MemoryDescription_Kind(void *raw_args);
 
 /**
  * @brief Argument structure for `PJRT_PhaseCompile_GetCompiler` (`32` bytes).

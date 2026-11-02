@@ -92,6 +92,8 @@ pub struct TpuInitConfig {
     pub megascale_slice_id: u32,
     /// Whether asynchronous HBM allocations are enabled.
     pub allow_async_allocations: bool,
+    /// Scoped VMEM limit in KiB (`--xla_tpu_scoped_vmem_limit_kib`).
+    pub xla_tpu_scoped_vmem_limit_kib: u64,
     /// Additional parsed `--xla_tpu_*` and `--tpu_*` key-value flags from `LIBTPU_INIT_ARGS`.
     pub extra_flags: BTreeMap<String, String>,
 }
@@ -108,6 +110,7 @@ impl Default for TpuInitConfig {
             megascale_num_slices: 1,
             megascale_slice_id: 0,
             allow_async_allocations: true,
+            xla_tpu_scoped_vmem_limit_kib: 16384,
             extra_flags: BTreeMap::new(),
         }
     }
@@ -186,7 +189,7 @@ impl TpuInitConfig {
                 .and_then(|v| v.to_str())
                 .unwrap_or("true");
             match key_owned.as_str() {
-                "tpu_generation" | "xla_tpu_generation" => {
+                "tpu_generation" | "xla_tpu_generation" | "tpu_version" => {
                     self.generation = TpuGeneration::from_name(value)?;
                 }
                 "xla_tpu_allow_async_allocations" | "tpu_allow_async_allocations" => {
@@ -200,6 +203,24 @@ impl TpuInitConfig {
                             });
                         }
                     };
+                }
+                "xla_tpu_scoped_vmem_limit_kib" => {
+                    self.xla_tpu_scoped_vmem_limit_kib =
+                        value
+                            .parse::<u64>()
+                            .map_err(|_| LibTpuError::InvalidArgument {
+                                parameter: "xla_tpu_scoped_vmem_limit_kib",
+                                reason: format!("Expected u64 KiB limit, got '{value}'"),
+                            })?;
+                }
+                "process_index" => {
+                    let pid = value
+                        .parse::<i32>()
+                        .map_err(|_| LibTpuError::InvalidArgument {
+                            parameter: "process_index",
+                            reason: format!("Expected i32 process index, got '{value}'"),
+                        })?;
+                    self.process_index = ProcessIndex(pid);
                 }
                 "tpu_chips_per_host_bounds" => {
                     self.chips_per_host_bounds = Self::parse_bounds(value)?;
@@ -336,7 +357,7 @@ impl TpuInitConfig {
 }
 
 #[cfg(test)]
-#[allow(for_loops_over_fallibles, clippy::cognitive_complexity)]
+#[allow(clippy::cognitive_complexity)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -362,11 +383,13 @@ mod tests {
 
         assert!(cfg
             .apply_init_args(
-                "--tpu_generation=v6e --xla_tpu_allow_async_allocations=false --tpu_chips_per_host_bounds=4x2x1 --tpu_host_bounds=2,1,1 --tpu_driver_mode=vfio --xla_tpu_use_sparse_core=true --xla_tpu_custom_flag"
+                "--tpu_generation=v6e --xla_tpu_allow_async_allocations=false --xla_tpu_scoped_vmem_limit_kib=32768 --process_index=2 --tpu_chips_per_host_bounds=4x2x1 --tpu_host_bounds=2,1,1 --tpu_driver_mode=vfio --xla_tpu_use_sparse_core=true --xla_tpu_custom_flag"
             )
             .is_ok());
         assert_eq!(cfg.generation, TpuGeneration::V6e);
         assert!(!cfg.allow_async_allocations);
+        assert_eq!(cfg.xla_tpu_scoped_vmem_limit_kib, 32768);
+        assert_eq!(cfg.process_index, ProcessIndex(2));
         assert_eq!(cfg.chips_per_host(), 8);
         assert_eq!(cfg.total_hosts(), 2);
         assert_eq!(
@@ -391,6 +414,11 @@ mod tests {
             cfg.apply_init_args("--xla_tpu_allow_async_allocations=maybe")
                 .is_err()
         );
+        assert!(
+            cfg.apply_init_args("--xla_tpu_scoped_vmem_limit_kib=bad")
+                .is_err()
+        );
+        assert!(cfg.apply_init_args("--process_index=bad").is_err());
         assert!(cfg.apply_init_args("--tpu_generation=invalid").is_err());
         assert!(
             cfg.apply_init_args("--tpu_chips_per_host_bounds=bad")
@@ -431,7 +459,7 @@ mod tests {
 
         let cfg = TpuInitConfig::from_env_map(&env);
         assert!(cfg.is_ok());
-        for c in cfg {
+        if let Ok(c) = cfg {
             assert_eq!(c.generation, TpuGeneration::V4);
             assert_eq!(c.total_hosts(), 2);
             assert_eq!(c.process_index, ProcessIndex(1));

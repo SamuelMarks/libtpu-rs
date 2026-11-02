@@ -122,7 +122,7 @@ int64_t Buffer::dimension(size_t axis) const noexcept {
   PJRT_Buffer_Dimensions_Args args{sizeof(PJRT_Buffer_Dimensions_Args), nullptr,
                                    handle_, nullptr, 0};
   (void)GetPjrtApi()->pjrt_buffer_dimensions(&args);
-  return args.dims[axis];
+  return axis < args.num_dims ? args.dims[axis] : -1;
 }
 
 DataType Buffer::element_type() const noexcept {
@@ -137,9 +137,9 @@ size_t Buffer::tile_count() const noexcept {
       sizeof(PJRT_Buffer_GetMemoryLayout_Args),
       nullptr,
       handle_,
-      {0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+      {0, nullptr, nullptr, 0, nullptr, nullptr, 0, 0, {0, 0}}};
   (void)GetPjrtApi()->pjrt_buffer_get_memory_layout(&args);
-  return args.layout_words[6];
+  return args.layout.num_tiles;
 }
 
 Status Buffer::copy_to_device(PJRT_Client *client, uint32_t dst_device_id,
@@ -152,13 +152,15 @@ Status Buffer::copy_to_device(PJRT_Client *client, uint32_t dst_device_id,
     PJRT_Buffer_CopyToDevice_Args cp_args{sizeof(PJRT_Buffer_CopyToDevice_Args),
                                           nullptr, handle_, look_args.device,
                                           nullptr};
-    (void)GetPjrtApi()->pjrt_buffer_copy_to_device(&cp_args);
+    err = GetPjrtApi()->pjrt_buffer_copy_to_device(&cp_args);
     *out_buffer = Buffer(cp_args.dst_buffer);
   }
   return pjrt_error_to_status(err);
 }
 
 const PJRT_Buffer *Buffer::raw() const noexcept { return handle_; }
+
+PJRT_Buffer *Buffer::raw_mut() noexcept { return handle_; }
 
 LoadedExecutable::LoadedExecutable(PJRT_LoadedExecutable *handle) noexcept
     : handle_(handle) {}
@@ -190,6 +192,16 @@ Status LoadedExecutable::execute(uint32_t device_id,
                                  size_t num_inputs, PJRT_Buffer **outputs_out,
                                  size_t num_outputs) const noexcept {
   (void)num_outputs;
+  PJRT_LoadedExecutable_AddressableDevices_Args dev_args{
+      sizeof(PJRT_LoadedExecutable_AddressableDevices_Args), nullptr, handle_,
+      nullptr, 0};
+  (void)GetPjrtApi()->pjrt_loaded_executable_addressable_devices(&dev_args);
+  if (static_cast<size_t>(device_id) >= dev_args.num_addressable_devices) {
+    return Status(
+        LibTpuCStatus{static_cast<int32_t>(ErrorCode::NotFound), nullptr},
+        "Device ordinal out of range");
+  }
+  PJRT_Device *target_dev = dev_args.addressable_devices[device_id];
   const PJRT_Buffer *const *arg_lists[1] = {inputs};
   PJRT_Buffer **out_lists[1] = {outputs_out};
   PJRT_LoadedExecutable_Execute_Args ex_args{
@@ -198,11 +210,11 @@ Status LoadedExecutable::execute(uint32_t device_id,
       handle_,
       nullptr,
       arg_lists,
-      static_cast<size_t>(device_id) + 1U,
+      1U,
       num_inputs,
       out_lists,
       nullptr,
-      nullptr};
+      target_dev};
   return pjrt_error_to_status(
       GetPjrtApi()->pjrt_loaded_executable_execute(&ex_args));
 }
@@ -222,7 +234,6 @@ Status LoadedExecutable::execute_binary(uint32_t device_id,
 
 Status LoadedExecutable::serialize(uint8_t *out_bytes, size_t max_len,
                                    size_t *out_len) const noexcept {
-  (void)max_len;
   PJRT_LoadedExecutable_GetExecutable_Args get_ex_args{
       sizeof(PJRT_LoadedExecutable_GetExecutable_Args), nullptr, handle_,
       nullptr};
@@ -240,22 +251,30 @@ Status LoadedExecutable::serialize(uint8_t *out_bytes, size_t max_len,
       reinterpret_cast<const uint8_t *>(ser_args.serialized_bytes);
   size_t len = ser_args.serialized_bytes_size;
   *out_len = len;
-  for (size_t i = 0; i < len; ++i) {
+  size_t copy_len = max_len < len ? max_len : len;
+  for (size_t i = 0; i < copy_len; ++i) {
     out_bytes[i] = src[i];
+  }
+  ser_args.serialized_executable_deleter(ser_args.serialized_executable);
+  if (max_len < len) {
+    return Status(
+        LibTpuCStatus{static_cast<int32_t>(ErrorCode::ResourceExhausted),
+                      nullptr},
+        "Serialize output buffer too small");
   }
   return Status(LibTpuCStatus{0, nullptr}, "");
 }
 
 size_t LoadedExecutable::fingerprint(char *out_buf,
                                      size_t buf_len) const noexcept {
-  (void)buf_len;
   PJRT_LoadedExecutable_Fingerprint_Args fp_args{
       sizeof(PJRT_LoadedExecutable_Fingerprint_Args), nullptr, handle_, nullptr,
       0};
   (void)GetPjrtApi()->pjrt_loaded_executable_fingerprint(&fp_args);
   const char *src = fp_args.executable_fingerprint;
   size_t len = fp_args.executable_fingerprint_size;
-  for (size_t i = 0; i < len; ++i) {
+  size_t copy_len = buf_len < len ? buf_len : len;
+  for (size_t i = 0; i < copy_len; ++i) {
     out_buf[i] = src[i];
   }
   return len;
@@ -270,7 +289,16 @@ float LoadedExecutable::flops() const noexcept {
       sizeof(PJRT_Executable_GetCostAnalysis_Args), nullptr,
       get_ex_args.executable, nullptr, 0};
   (void)GetPjrtApi()->pjrt_executable_get_cost_analysis(&cost_args);
-  return static_cast<float>(cost_args.num_properties);
+  const PJRT_NamedValue *props =
+      static_cast<const PJRT_NamedValue *>(cost_args.properties);
+  uint32_t raw_bits = static_cast<uint32_t>(props[0].value_payload);
+  float val = 0.0F;
+  const uint8_t *src = reinterpret_cast<const uint8_t *>(&raw_bits);
+  uint8_t *dst = reinterpret_cast<uint8_t *>(&val);
+  for (size_t i = 0; i < sizeof(float); ++i) {
+    dst[i] = src[i];
+  }
+  return val;
 }
 
 size_t LoadedExecutable::num_outputs() const noexcept {
@@ -466,7 +494,7 @@ Status Client::buffer_from_host(uint32_t device_id, DataType dtype,
         nullptr,
         nullptr,
         nullptr};
-    (void)GetPjrtApi()->pjrt_client_buffer_from_host_buffer(&h2d_args);
+    err = GetPjrtApi()->pjrt_client_buffer_from_host_buffer(&h2d_args);
     *buffer_out = Buffer(h2d_args.buffer);
   }
   return pjrt_error_to_status(err);
@@ -790,6 +818,10 @@ const void *EmbeddingEngine::raw_state() const noexcept {
   return TpuEmbeddingEngineState_GetState(state_);
 }
 
+const TpuEmbeddingEngineState *EmbeddingEngine::state_handle() const noexcept {
+  return state_;
+}
+
 Communicator::Communicator() noexcept : handle_(nullptr) {
   PJRT_Collectives_CreateCommunicator_Args args{
       sizeof(PJRT_Collectives_CreateCommunicator_Args),
@@ -799,7 +831,7 @@ Communicator::Communicator() noexcept : handle_(nullptr) {
       0,
       nullptr};
   (void)PJRT_Collectives_CreateCommunicator(&args);
-  handle_ = args.communicator;
+  handle_ = static_cast<PJRT_Collectives_Communicator *>(args.communicator);
 }
 
 Communicator::~Communicator() noexcept {
@@ -808,14 +840,14 @@ Communicator::~Communicator() noexcept {
   (void)PJRT_Communicator_Destroy(&args);
 }
 
-Status Communicator::all_reduce(const Buffer &send_buf, Buffer *recv_buf,
+Status Communicator::all_reduce(Buffer &send_buf, Buffer *recv_buf,
                                 size_t count) noexcept {
   PJRT_Communicator_AllReduce_Args args{
       sizeof(PJRT_Communicator_AllReduce_Args),
       nullptr,
       handle_,
-      const_cast<PJRT_Buffer *>(send_buf.raw()),
-      const_cast<PJRT_Buffer *>(recv_buf->raw()),
+      send_buf.raw_mut(),
+      recv_buf->raw_mut(),
       0,
       0,
       count,

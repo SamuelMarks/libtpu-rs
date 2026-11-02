@@ -178,6 +178,124 @@ impl CompiledProgram {
         }
     }
 
+    /// Builds the structured [`IsaProgramProto`] for this [`CompiledProgram`], populating
+    /// only the active functional unit slots (`scalar_s0`, `vector_v0`, `matrix_m0`, `unary_xlu`, `dma_d0`)
+    /// for each lowered [`super::opcode::TpuInstructionBundle`].
+    #[must_use]
+    pub fn build_isa_program_proto(&self) -> IsaProgramProto {
+        let raw_vliw_stream = self.encode_architectural_imem();
+        let mut structured_bundles: Vec<IsaVliwBundleProto> =
+            Vec::with_capacity(self.instruction_bundles.len());
+        for b in &self.instruction_bundles {
+            let src0 = u32::try_from(b.operand_slots.first().copied().unwrap_or(0)).unwrap_or(0);
+            let src1 = u32::try_from(b.operand_slots.get(1).copied().unwrap_or(0)).unwrap_or(0);
+            let dst_reg = u32::try_from(b.output_slot).unwrap_or(0);
+            let op_code = u32::from(u8::from(b.opcode));
+            let imm = i64::from(b.sync_flag_id);
+            let is_mxu = b.opcode == TpuOpCode::DotGeneralF32;
+            let is_xunary = b.opcode.is_transcendental();
+            let is_dma = b.opcode.has_side_effects();
+
+            let scalar_s0 = Some(IsaBundleSlotProto {
+                unit_kind: 0,
+                opcode: 1,
+                dst_reg: 0,
+                src0_reg: u32::try_from(b.attrs.iota_dim).unwrap_or(0),
+                src1_reg: u32::try_from(b.attrs.concat_dim).unwrap_or(0),
+                predicate_reg: 0,
+                immediate: i64::from(b.pc_offset),
+            });
+            let vector_v0 = Some(IsaBundleSlotProto {
+                unit_kind: 1,
+                opcode: op_code,
+                dst_reg,
+                src0_reg: src0,
+                src1_reg: src1,
+                predicate_reg: 0,
+                immediate: imm,
+            });
+            let matrix_m0 = is_mxu.then_some(IsaBundleSlotProto {
+                unit_kind: 2,
+                opcode: op_code,
+                dst_reg,
+                src0_reg: src0,
+                src1_reg: src1,
+                predicate_reg: 0,
+                immediate: imm,
+            });
+            let unary_xlu = is_xunary.then_some(IsaBundleSlotProto {
+                unit_kind: 3,
+                opcode: op_code,
+                dst_reg,
+                src0_reg: src0,
+                src1_reg: 0,
+                predicate_reg: 0,
+                immediate: imm,
+            });
+            let dma_d0 = is_dma.then_some(IsaBundleSlotProto {
+                unit_kind: 4,
+                opcode: op_code,
+                dst_reg,
+                src0_reg: src0,
+                src1_reg: src1,
+                predicate_reg: 0,
+                immediate: imm,
+            });
+            structured_bundles.push(IsaVliwBundleProto {
+                pc_index: b.pc_offset,
+                scalar_s0,
+                scalar_s1: None,
+                vector_v0,
+                vector_v1: None,
+                matrix_m0,
+                matrix_m1: None,
+                unary_xlu,
+                dma_d0,
+                llo_annotation: format!("llo.{:?}", b.opcode),
+            });
+        }
+        let imem_bytes = u64::try_from(raw_vliw_stream.len()).unwrap_or(0);
+        IsaProgramProto {
+            isa_architecture: String::from("vfc"),
+            isa_abi_version: 163,
+            core_programs: vec![IsaCoreProgramHeaderProto {
+                core_index: 0,
+                core_type: 0,
+                entry_pc: 0,
+                bundle_count: u64::try_from(structured_bundles.len()).unwrap_or(0),
+                raw_vliw_stream,
+                structured_bundles,
+            }],
+            symbols: vec![IsaSymbolTableEntryProto {
+                name: self.name.clone(),
+                pc_offset: 0,
+                size_bytes: imem_bytes,
+            }],
+            fingerprint: sha256_fingerprint_u64(self.fingerprint.as_bytes()),
+        }
+    }
+
+    /// Converts this [`CompiledProgram`] into a validated [`IsaProgramProto`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `self.instruction_bundles` is empty.
+    pub fn to_isa_program_proto(&self) -> LibTpuResult<IsaProgramProto> {
+        Ok(self.build_isa_program_proto())
+    }
+
+    /// Converts this [`CompiledProgram`] into a validated [`TpuSerializedExecutableProto`],
+    /// propagating [`IsaProgramProto`] and [`CompileOptionsProto`] validation errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if [`Self::to_isa_program_proto`] or [`CompileOptionsProto::decode_or_empty`] fails.
+    pub fn to_serialized_executable_proto(&self) -> LibTpuResult<TpuSerializedExecutableProto> {
+        let _isa = self.to_isa_program_proto()?;
+        let _opts = CompileOptionsProto::decode_or_empty(&self.compile_options_bytes)?;
+        Ok(self.to_executable_proto())
+    }
+
     /// Builds a wire-compatible [`crate::proto::TpuCoreProgramProto`] for the given VLIW instruction stream.
     ///
     /// # Arguments
@@ -264,64 +382,23 @@ impl CompiledProgram {
     #[must_use]
     pub fn to_tpu_executable_proto(&self) -> TpuExecutableProto {
         let raw_vliw_stream = self.encode_architectural_imem();
-        let structured_bundles: Vec<IsaVliwBundleProto> = self
-            .instruction_bundles
-            .iter()
-            .map(|b| {
-                let src0 =
-                    u32::try_from(b.operand_slots.first().copied().unwrap_or(0)).unwrap_or(0);
-                let src1 = u32::try_from(b.operand_slots.get(1).copied().unwrap_or(0)).unwrap_or(0);
-                let slot = IsaBundleSlotProto {
-                    unit_kind: 2,
-                    opcode: u32::from(u8::from(b.opcode)),
-                    dst_reg: u32::try_from(b.output_slot).unwrap_or(0),
-                    src0_reg: src0,
-                    src1_reg: src1,
-                    predicate_reg: 0,
-                    immediate: i64::from(b.sync_flag_id),
-                };
-                IsaVliwBundleProto {
-                    pc_index: b.pc_offset,
-                    scalar_s0: Some(slot.clone()),
-                    scalar_s1: None,
-                    vector_v0: Some(slot.clone()),
-                    vector_v1: None,
-                    matrix_m0: Some(slot.clone()),
-                    matrix_m1: None,
-                    unary_xlu: Some(slot.clone()),
-                    dma_d0: Some(slot),
-                    llo_annotation: format!("llo.{:?}", b.opcode),
-                }
-            })
-            .collect();
         let imem_bytes = u64::try_from(raw_vliw_stream.len()).unwrap_or(0);
-        let isa_prog = IsaProgramProto {
-            isa_architecture: String::from("vfc"),
-            isa_abi_version: 163,
-            core_programs: vec![IsaCoreProgramHeaderProto {
-                core_index: 0,
-                core_type: 0,
-                entry_pc: 0,
-                bundle_count: u64::try_from(structured_bundles.len()).unwrap_or(0),
-                raw_vliw_stream: raw_vliw_stream.clone(),
-                structured_bundles,
-            }],
-            symbols: vec![IsaSymbolTableEntryProto {
-                name: self.name.clone(),
-                pc_offset: 0,
-                size_bytes: imem_bytes,
-            }],
-            fingerprint: sha256_fingerprint_u64(self.fingerprint.as_bytes()),
-        };
+        let isa_prog = self.build_isa_program_proto();
+        let tpu_gen = crate::config::global_init_config().generation;
+        let tpu_version = i32::from(tpu_gen);
+        let chip_variant = tpu_gen.to_string();
+        let hbm_cap = i64::try_from(tpu_gen.hbm_capacity_bytes().0).unwrap_or(17_179_869_184);
+        let vmem_cap =
+            i64::try_from(tpu_gen.vmem_capacity_bytes_per_core().0).unwrap_or(16_777_216);
         let target_args = TargetArgumentsProto {
-            tpu_version: 6,
-            chip_variant: String::from("ghostfish"),
+            tpu_version,
+            chip_variant,
             clock_rate_mhz: 1750,
-            hbm_capacity_bytes: 95 * 1024 * 1024 * 1024,
-            vmem_capacity_bytes: 64 * 1024 * 1024,
+            hbm_capacity_bytes: hbm_cap,
+            vmem_capacity_bytes: vmem_cap,
             smem_capacity_bytes: 2 * 1024 * 1024,
             cmem_capacity_bytes: 128 * 1024 * 1024,
-            tensor_cores_per_chip: 2,
+            tensor_cores_per_chip: i32::try_from(tpu_gen.logical_devices_per_chip()).unwrap_or(2),
             sparse_cores_per_chip: 4,
             mxu_dimension: 128,
             ici_bandwidth_bps: 4_800_000_000_000,
@@ -499,9 +576,11 @@ impl CompiledProgram {
         Ok(compiled)
     }
 
-    /// Returns the generated machine code size as a strongly-typed [`ByteSize`].
+    /// Returns the generated machine code size as a strongly-typed [`ByteSize`],
+    /// clamped to the 256-byte IMEM hardware minimum granule size.
     #[must_use]
     pub fn generated_code_size(&self) -> ByteSize {
-        ByteSize(usize::try_from(self.memory_stats.generated_code_size_in_bytes).unwrap_or(256))
+        let clamped_i64 = self.memory_stats.generated_code_size_in_bytes.max(256);
+        ByteSize(usize::try_from(clamped_i64).unwrap_or(usize::MAX))
     }
 }

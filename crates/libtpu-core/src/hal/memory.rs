@@ -47,23 +47,39 @@ impl HbmRegionAllocator {
         }
     }
 
-    /// Resizes the total capacity of the allocator and resets free blocks around active allocations.
+    /// Resizes the total capacity of the allocator and rebuilds exact free intervals across
+    /// `[base_address, base_address + new_capacity)` around all active allocations.
     ///
     /// # Arguments
     ///
     /// * `new_capacity` - New total capacity in bytes.
     pub fn set_capacity(&mut self, new_capacity: usize) {
         self.capacity_bytes = new_capacity;
-        let used: usize = self.allocated_blocks.values().sum();
         self.free_blocks.clear();
-        if new_capacity > used {
-            let next_start = self
-                .allocated_blocks
-                .iter()
-                .next_back()
-                .map_or(self.base_address, |(&addr, &len)| addr + len as u64);
-            self.free_blocks.insert(next_start, new_capacity - used);
+        let limit_addr = self.base_address.saturating_add(new_capacity as u64);
+        let mut cursor = self.base_address;
+        for (&alloc_start, &alloc_len) in &self.allocated_blocks {
+            let gap_end = alloc_start.min(limit_addr);
+            if gap_end > cursor {
+                let gap_len = usize::try_from(gap_end - cursor).unwrap_or(0);
+                self.free_blocks.insert(cursor, gap_len);
+            }
+            cursor = cursor.max(alloc_start.saturating_add(alloc_len as u64));
         }
+        if cursor < limit_addr {
+            let tail_len = usize::try_from(limit_addr - cursor).unwrap_or(0);
+            self.free_blocks.insert(cursor, tail_len);
+        }
+    }
+
+    /// Returns the page-aligned byte length of an active allocation at `address`, if present.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - [`DeviceAddress`] to query.
+    #[must_use]
+    pub fn allocated_block_size(&self, address: DeviceAddress) -> Option<usize> {
+        self.allocated_blocks.get(&address.0).copied()
     }
 
     /// Allocates a page-aligned (`4096`-byte) block of at least `requested_bytes` using first-fit
@@ -71,12 +87,19 @@ impl HbmRegionAllocator {
     ///
     /// # Arguments
     ///
-    /// * `requested_bytes` - Number of bytes requested.
+    /// * `requested_bytes` - Number of bytes requested (`> 0`).
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::OutOfMemory`] if no contiguous free block is large enough.
+    /// Returns [`LibTpuError::InvalidArgument`] if `requested_bytes == 0`, or
+    /// [`LibTpuError::OutOfMemory`] if no contiguous free block is large enough.
     pub fn allocate(&mut self, requested_bytes: usize) -> LibTpuResult<DeviceAddress> {
+        if requested_bytes == 0 {
+            return Err(LibTpuError::InvalidArgument {
+                parameter: "requested_bytes",
+                reason: String::from("Allocation size must be greater than zero"),
+            });
+        }
         let aligned_size = requested_bytes.max(256).div_ceil(4096) * 4096;
         let candidate = self
             .free_blocks
@@ -148,6 +171,8 @@ impl HbmRegionAllocator {
 /// Safe volatile MMIO wrapper around an `mmap`-ed `PCIe` BAR0/BAR2 virtual memory aperture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MappedBarAperture {
+    /// `PCIe` Base Address Register index (`0` for BAR0 CSRs, `2` for BAR2 HBM).
+    pub bar_index: u8,
     /// Base user-space virtual address returned by `mmap`.
     pub base_vaddr: usize,
     /// Total mapped aperture length in bytes.
@@ -163,17 +188,22 @@ impl MappedBarAperture {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` is unaligned or exceeds `self.size`.
+    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` or `base_vaddr + offset` is unaligned or exceeds `self.size`.
     pub fn read_csr_u64(&self, offset: MmioOffset) -> LibTpuResult<u64> {
         let off = usize::try_from(offset.0).unwrap_or(usize::MAX);
-        if (off & 7) != 0 || off.saturating_add(8) > self.size.0 || self.base_vaddr == 0 {
+        let addr = self.base_vaddr.saturating_add(off);
+        if (off & 7) != 0
+            || (addr & 7) != 0
+            || off.saturating_add(8) > self.size.0
+            || self.base_vaddr == 0
+        {
             return Err(LibTpuError::MmioOutOfBounds {
-                bar_index: 0,
+                bar_index: self.bar_index,
                 offset: offset.0,
                 size: 8,
             });
         }
-        let reg_ptr = (self.base_vaddr + off) as *const u64;
+        let reg_ptr = addr as *const u64;
         // SAFETY: `reg_ptr` is 8-byte aligned and within `[base_vaddr, base_vaddr + size)`.
         let val = unsafe { std::ptr::read_volatile(reg_ptr) };
         Ok(val)
@@ -188,17 +218,22 @@ impl MappedBarAperture {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` is unaligned or exceeds `self.size`.
+    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` or `base_vaddr + offset` is unaligned or exceeds `self.size`.
     pub fn write_csr_u64(&self, offset: MmioOffset, value: u64) -> LibTpuResult<()> {
         let off = usize::try_from(offset.0).unwrap_or(usize::MAX);
-        if (off & 7) != 0 || off.saturating_add(8) > self.size.0 || self.base_vaddr == 0 {
+        let addr = self.base_vaddr.saturating_add(off);
+        if (off & 7) != 0
+            || (addr & 7) != 0
+            || off.saturating_add(8) > self.size.0
+            || self.base_vaddr == 0
+        {
             return Err(LibTpuError::MmioOutOfBounds {
-                bar_index: 0,
+                bar_index: self.bar_index,
                 offset: offset.0,
                 size: 8,
             });
         }
-        let reg_ptr = (self.base_vaddr + off) as *mut u64;
+        let reg_ptr = addr as *mut u64;
         // SAFETY: `reg_ptr` is 8-byte aligned and within `[base_vaddr, base_vaddr + size)`.
         unsafe {
             std::ptr::write_volatile(reg_ptr, value);
@@ -214,17 +249,22 @@ impl MappedBarAperture {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` is unaligned or exceeds `self.size`.
+    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` or `base_vaddr + offset` is unaligned or exceeds `self.size`.
     pub fn read_csr_u32(&self, offset: MmioOffset) -> LibTpuResult<u32> {
         let off = usize::try_from(offset.0).unwrap_or(usize::MAX);
-        if (off & 3) != 0 || off.saturating_add(4) > self.size.0 || self.base_vaddr == 0 {
+        let addr = self.base_vaddr.saturating_add(off);
+        if (off & 3) != 0
+            || (addr & 3) != 0
+            || off.saturating_add(4) > self.size.0
+            || self.base_vaddr == 0
+        {
             return Err(LibTpuError::MmioOutOfBounds {
-                bar_index: 0,
+                bar_index: self.bar_index,
                 offset: offset.0,
                 size: 4,
             });
         }
-        let reg_ptr = (self.base_vaddr + off) as *const u32;
+        let reg_ptr = addr as *const u32;
         // SAFETY: `reg_ptr` is 4-byte aligned and within `[base_vaddr, base_vaddr + size)`.
         let val = unsafe { std::ptr::read_volatile(reg_ptr) };
         Ok(val)
@@ -239,17 +279,22 @@ impl MappedBarAperture {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` is unaligned or exceeds `self.size`.
+    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset` or `base_vaddr + offset` is unaligned or exceeds `self.size`.
     pub fn write_csr_u32(&self, offset: MmioOffset, value: u32) -> LibTpuResult<()> {
         let off = usize::try_from(offset.0).unwrap_or(usize::MAX);
-        if (off & 3) != 0 || off.saturating_add(4) > self.size.0 || self.base_vaddr == 0 {
+        let addr = self.base_vaddr.saturating_add(off);
+        if (off & 3) != 0
+            || (addr & 3) != 0
+            || off.saturating_add(4) > self.size.0
+            || self.base_vaddr == 0
+        {
             return Err(LibTpuError::MmioOutOfBounds {
-                bar_index: 0,
+                bar_index: self.bar_index,
                 offset: offset.0,
                 size: 4,
             });
         }
-        let reg_ptr = (self.base_vaddr + off) as *mut u32;
+        let reg_ptr = addr as *mut u32;
         // SAFETY: `reg_ptr` is 4-byte aligned and within `[base_vaddr, base_vaddr + size)`.
         unsafe {
             std::ptr::write_volatile(reg_ptr, value);

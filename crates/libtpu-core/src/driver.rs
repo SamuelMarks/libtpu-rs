@@ -376,6 +376,41 @@ impl TpuCoreEmbeddingEngine {
         self.tables.insert(table_name, data);
     }
 
+    /// Writes embedding table parameters into HBM after validating that `table_name` is non-empty
+    /// and that `data` matches the existing partitioned table capacity when already configured.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_name` - Name of the embedding table.
+    /// * `data` - Serialized embedding weights.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `table_name` is empty or [`LibTpuError::BufferSizeMismatch`]
+    /// if `table_name` was partitioned with a different byte size.
+    pub fn write_parameters_validated(
+        &mut self,
+        table_name: &str,
+        data: Vec<u8>,
+    ) -> LibTpuResult<()> {
+        if table_name.is_empty() {
+            return Err(LibTpuError::InvalidArgument {
+                parameter: "table_name",
+                reason: String::from("Embedding table name cannot be empty"),
+            });
+        }
+        if let Some(existing) = self.tables.get(table_name)
+            && existing.len() != data.len()
+        {
+            return Err(LibTpuError::BufferSizeMismatch {
+                expected_bytes: existing.len(),
+                actual_bytes: data.len(),
+            });
+        }
+        self.tables.insert(String::from(table_name), data);
+        Ok(())
+    }
+
     /// Reads embedding table parameters from HBM (`TpuEmbeddingEngine_ReadParameters`).
     ///
     /// # Arguments
@@ -384,6 +419,24 @@ impl TpuCoreEmbeddingEngine {
     #[must_use]
     pub fn read_parameters(&self, table_name: &str) -> Option<&[u8]> {
         self.tables.get(table_name).map(Vec::as_slice)
+    }
+
+    /// Reads embedding table parameters from HBM or returns [`LibTpuError::EmbeddingTableNotFound`].
+    ///
+    /// # Arguments
+    ///
+    /// * `table_name` - Name of the embedding table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EmbeddingTableNotFound`] if `table_name` is not present.
+    pub fn read_parameters_validated(&self, table_name: &str) -> LibTpuResult<&[u8]> {
+        self.tables
+            .get(table_name)
+            .map(Vec::as_slice)
+            .ok_or_else(|| LibTpuError::EmbeddingTableNotFound {
+                table_name: String::from(table_name),
+            })
     }
 
     /// Enqueues a sparse embedding lookup batch (`TpuEmbeddingEngine_EnqueueTensorBatch`).
@@ -741,6 +794,17 @@ impl TpuCoreDriver {
     }
 }
 
+/// Strongly-typed descriptor for a registered SDK diagnostic debug callback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RegisteredDebugCallback {
+    /// Unique callback registration identifier.
+    pub id: CallbackId,
+    /// C function pointer address (`extern "C" fn(*mut c_void)`).
+    pub callback_addr: usize,
+    /// Opaque user data pointer address.
+    pub user_data_addr: usize,
+}
+
 /// Core backing state for `LibtpuSdk_Client` (`GetLibtpuSdkApi`).
 #[derive(Debug)]
 pub struct LibtpuSdkCoreClient {
@@ -752,8 +816,8 @@ pub struct LibtpuSdkCoreClient {
     pub chip_coordinates: Vec<ChipCoordinates>,
     /// Runtime metrics map (`metric_name -> (description, values)`).
     pub metrics: Mutex<BTreeMap<String, (String, Vec<f64>)>>,
-    /// Registered debug callbacks (`callback_id -> (fn_ptr_addr, user_data_addr)`).
-    pub debug_callbacks: Mutex<BTreeMap<CallbackId, (usize, usize)>>,
+    /// Registered debug callbacks (`callback_id -> RegisteredDebugCallback`).
+    pub debug_callbacks: Mutex<BTreeMap<CallbackId, RegisteredDebugCallback>>,
     /// Monotonic counter for assigning debug callback IDs.
     next_callback_id: AtomicU64,
 }
@@ -768,6 +832,16 @@ impl LibtpuSdkCoreClient {
     /// Creates a new [`LibtpuSdkCoreClient`] with default telemetry metrics.
     #[must_use]
     pub fn new() -> Self {
+        Self::from_config(&TpuInitConfig::default())
+    }
+
+    /// Creates a new [`LibtpuSdkCoreClient`] configured from an explicit [`TpuInitConfig`] snapshot.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - TPU initialization configuration snapshot.
+    #[must_use]
+    pub fn from_config(config: &TpuInitConfig) -> Self {
         let mut metrics = BTreeMap::new();
         metrics.insert(
             String::from("tpu.runtime.hbm.usage_bytes"),
@@ -804,15 +878,18 @@ impl LibtpuSdkCoreClient {
                 vec![125.0],
             ),
         );
+        let mut chip_coordinates = Vec::new();
+        for z in 0..config.chips_per_host_bounds.z {
+            for y in 0..config.chips_per_host_bounds.y {
+                for x in 0..config.chips_per_host_bounds.x {
+                    chip_coordinates.push(ChipCoordinates::new(x, y, z));
+                }
+            }
+        }
         Self {
-            hostname: String::from("tpu-worker-0"),
-            generation: TpuGeneration::V5e,
-            chip_coordinates: vec![
-                ChipCoordinates::new(0, 0, 0),
-                ChipCoordinates::new(1, 0, 0),
-                ChipCoordinates::new(0, 1, 0),
-                ChipCoordinates::new(1, 1, 0),
-            ],
+            hostname: format!("tpu-worker-{}", config.process_index.0),
+            generation: config.generation,
+            chip_coordinates,
             metrics: Mutex::new(metrics),
             debug_callbacks: Mutex::new(BTreeMap::new()),
             next_callback_id: AtomicU64::new(1),
@@ -895,9 +972,14 @@ impl LibtpuSdkCoreClient {
         user_data_addr: usize,
     ) -> CallbackId {
         let id = CallbackId(self.next_callback_id.fetch_add(1, Ordering::Relaxed));
-        self.debug_callbacks
-            .lock()
-            .insert(id, (callback_addr, user_data_addr));
+        self.debug_callbacks.lock().insert(
+            id,
+            RegisteredDebugCallback {
+                id,
+                callback_addr,
+                user_data_addr,
+            },
+        );
         id
     }
 
@@ -918,9 +1000,9 @@ impl LibtpuSdkCoreClient {
             .ok_or(LibTpuError::CallbackNotFound { callback_id: id.0 })
     }
 
-    /// Returns a snapshot of all registered debug `(callback_addr, user_data_addr)` pairs.
+    /// Returns a snapshot of all registered [`RegisteredDebugCallback`] descriptors.
     #[must_use]
-    pub fn registered_debug_callbacks(&self) -> Vec<(usize, usize)> {
+    pub fn registered_debug_callbacks(&self) -> Vec<RegisteredDebugCallback> {
         self.debug_callbacks.lock().values().copied().collect()
     }
 
@@ -934,14 +1016,37 @@ impl LibtpuSdkCoreClient {
             self.chip_coordinates.len()
         )
     }
+
+    /// Refreshes per-device HBM usage and utilization metrics from the active [`TpuHal`].
+    ///
+    /// # Arguments
+    ///
+    /// * `hal` - Active hardware abstraction layer to sample.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if querying device memory statistics fails.
+    pub fn refresh_from_hal(&self, hal: &dyn TpuHal) -> LibTpuResult<()> {
+        let mut hbm_usage = Vec::with_capacity(self.chip_coordinates.len());
+        for idx in 0..self.chip_coordinates.len() {
+            let dev_id = DeviceId(u32::try_from(idx).unwrap_or(0));
+            let stats = hal.memory_stats(dev_id)?;
+            #[allow(clippy::cast_precision_loss)]
+            hbm_usage.push(stats.bytes_in_use as f64);
+        }
+        self.metrics.lock().insert(
+            String::from("tpu.runtime.hbm.usage_bytes"),
+            (
+                String::from("Current HBM memory bytes in use per logical TPU device"),
+                hbm_usage,
+            ),
+        );
+        Ok(())
+    }
 }
 
 #[cfg(test)]
-#[allow(
-    for_loops_over_fallibles,
-    clippy::cognitive_complexity,
-    clippy::too_many_lines
-)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -1023,6 +1128,24 @@ mod tests {
         emb.write_parameters(String::from("vocab"), vec![1, 2, 3, 4]);
         assert_eq!(emb.read_parameters("vocab"), Some(&[1_u8, 2, 3, 4][..]));
         assert_eq!(emb.read_parameters("missing"), None);
+        assert!(
+            emb.write_parameters_validated("", vec![1, 2, 3, 4])
+                .is_err()
+        );
+        assert!(emb.write_parameters_validated("vocab", vec![1, 2]).is_err());
+        assert!(
+            emb.write_parameters_validated("vocab", vec![5, 6, 7, 8])
+                .is_ok()
+        );
+        assert!(
+            emb.write_parameters_validated("new_tbl", vec![9, 10])
+                .is_ok()
+        );
+        assert_eq!(
+            emb.read_parameters_validated("vocab").ok(),
+            Some(&[5_u8, 6, 7, 8][..])
+        );
+        assert!(emb.read_parameters_validated("missing").is_err());
 
         let (uniq_ids, uniq_weights, csr_masks) =
             emb.deduplicate_coo_to_csr(&[(0, 10, 1.5), (2, 10, 0.5), (1, 25, 2.0)]);
@@ -1086,7 +1209,7 @@ mod tests {
             drv.transfer_device_to_device(DeviceId(0), addr, DeviceId(0), addr2, ByteSize(4))
                 .is_ok()
         );
-        for prog in drv.compile(b"HloModule test") {
+        if let Ok(prog) = drv.compile(b"HloModule test") {
             assert!(
                 drv.execute_program(DeviceId(0), &prog, &[addr], &[addr2])
                     .is_ok()
@@ -1110,12 +1233,26 @@ mod tests {
                 .is_err()
         );
         assert_eq!(sdk.list_metric_names().len(), 5);
+        assert!(sdk.refresh_from_hal(&*drv.hal).is_ok());
+        let mut sdk_bad = LibtpuSdkCoreClient::new();
+        sdk_bad.chip_coordinates.push(ChipCoordinates::new(9, 9, 9));
+        assert!(sdk_bad.refresh_from_hal(&*drv.hal).is_err());
         assert!(sdk.get_metric("tpu.runtime.hbm.usage_bytes").is_ok());
         assert!(sdk.get_metric("unknown").is_err());
         let cb_id = sdk.register_debug_callback(0x1234, 0x5678);
-        assert_eq!(sdk.registered_debug_callbacks(), vec![(0x1234, 0x5678)]);
+        let expected_cb = RegisteredDebugCallback {
+            id: cb_id,
+            callback_addr: 0x1234,
+            user_data_addr: 0x5678,
+        };
+        assert_eq!(expected_cb.clone(), expected_cb);
+        assert_ne!(format!("{expected_cb:?}"), "");
+        assert_eq!(sdk.registered_debug_callbacks(), vec![expected_cb]);
         assert!(sdk.unregister_debug_callback(cb_id).is_ok());
-        assert_eq!(sdk.registered_debug_callbacks(), [] as [(usize, usize); 0]);
+        assert_eq!(
+            sdk.registered_debug_callbacks(),
+            [] as [RegisteredDebugCallback; 0]
+        );
         assert!(sdk.unregister_debug_callback(cb_id).is_err());
         assert!(sdk.core_state_summary().contains("READY"));
     }

@@ -235,6 +235,7 @@ def get_augmented_env() -> dict[str, str]:
             paths.insert(0, str(candidate))
 
     env["PATH"] = os.pathsep.join(paths)
+    env["CARGO_TARGET_DIR"] = str(get_repo_root() / "target")
     return env
 
 
@@ -604,6 +605,35 @@ def calculate_rust_doc_coverage(repo_root: Path, force_run: bool = True) -> tupl
     return with_docs + rs_arg_docs, total_items + rs_arg_total
 
 
+def _split_top_level_commas(text: str) -> list[str]:
+    """Splits a Rust parameter list on top-level commas, ignoring nested `<>`/`()`/`[]`.
+
+    Args:
+        text: Raw parameter list string inside `fn name(...)`.
+
+    Returns:
+        List of top-level parameter segments.
+    """
+    segments: list[str] = []
+    current: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch in "([{<":
+            depth += 1
+            current.append(ch)
+        elif ch in ")]}>":
+            depth = max(0, depth - 1)
+            current.append(ch)
+        elif ch == "," and depth == 0:
+            segments.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        segments.append("".join(current))
+    return segments
+
+
 def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
     """Calculates documented vs total parameters across all Rust `fn` items.
 
@@ -618,7 +648,7 @@ def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
         return 0, 0
 
     fn_re = re.compile(
-        r"((?:\s*///[^\n]*\n)+(?:\s*#\[[^\n]*\n)*)\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:unsafe\s+)?(?:extern\s+\"C\"\s+)?fn\s+([A-Za-z0-9_]+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)",
+        r"((?:\s*///[^\n]*\n)+(?:\s*#\[[^\n]*\n)*)\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:unsafe\s+)?(?:extern\s+\"C\"\s+)?fn\s+([A-Za-z0-9_]+)",
         re.MULTILINE,
     )
     param_re = re.compile(r"^\s*(?:mut\s+)?([A-Za-z0-9_]+)\s*:")
@@ -628,8 +658,20 @@ def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
     for rs_file in sorted(crates_dir.rglob("*.rs")):
         text = rs_file.read_text(encoding="utf-8")
         for match in fn_re.finditer(text):
-            doc_block, _fn_name, raw_params = match.groups()
-            for raw_param in raw_params.split(","):
+            doc_block, _fn_name = match.groups()
+            open_paren = text.find("(", match.end())
+            if open_paren == -1:
+                continue
+            depth = 1
+            idx = open_paren + 1
+            while idx < len(text) and depth > 0:
+                if text[idx] == "(":
+                    depth += 1
+                elif text[idx] == ")":
+                    depth -= 1
+                idx += 1
+            raw_params = text[open_paren + 1 : idx - 1]
+            for raw_param in _split_top_level_commas(raw_params):
                 stripped = raw_param.strip()
                 if not stripped or stripped in ("self", "&self", "&mut self"):
                     continue
@@ -676,11 +718,20 @@ def calculate_python_doc_coverage(repo_root: Path) -> tuple[int, int]:
                 doc = ast.get_docstring(node) or ""
                 if doc:
                     with_docs += 1
-                for arg in node.args.args:
+                all_args = (
+                    list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+                )
+                if node.args.vararg is not None:
+                    all_args.append(node.args.vararg)
+                if node.args.kwarg is not None:
+                    all_args.append(node.args.kwarg)
+                for arg in all_args:
                     if arg.arg in ("self", "cls"):
                         continue
                     total_items += 1
-                    if "Args:" in doc and f"{arg.arg}:" in doc:
+                    if "Args:" in doc and (
+                        f"{arg.arg}:" in doc or f"*{arg.arg}:" in doc or f"**{arg.arg}:" in doc
+                    ):
                         with_docs += 1
 
     return with_docs, total_items
@@ -1089,8 +1140,16 @@ def verify_rust_and_c_abi_sources(repo_root: Path) -> list[str]:
 
     for rs_file in sorted((repo_root / "crates").rglob("*.rs")):
         rs_text = rs_file.read_text(encoding="utf-8")
-        if ".unwrap(" in rs_text or ".expect(" in rs_text:
-            errors.append(f"Forbidden .unwrap() or .expect() found in {rs_file.name}")
+        if (
+            ".unwrap(" in rs_text
+            or ".expect(" in rs_text
+            or "panic!(" in rs_text
+            or "todo!(" in rs_text
+            or "unimplemented!(" in rs_text
+            or "for_loops_over_fallibles" in rs_text
+            or "Box<dyn std::error::Error>" in rs_text
+        ):
+            errors.append(f"Forbidden .unwrap()/.expect()/panic!() found in {rs_file.name}")
 
     return errors
 

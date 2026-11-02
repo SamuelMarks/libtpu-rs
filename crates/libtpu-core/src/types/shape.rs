@@ -9,7 +9,6 @@ use crate::types::address::{ByteSize, DeviceAddress};
 use crate::types::element::ElementType;
 use crate::types::ids::{BufferId, DeviceId};
 use smallvec::SmallVec;
-use std::marker::PhantomData;
 
 /// Stack-inlined dimension vector capable of storing up to 6 tensor dimensions without heap allocation.
 pub type DimVec = SmallVec<[i64; 6]>;
@@ -555,12 +554,12 @@ impl Shape {
 pub type TensorShape = Shape;
 
 /// Typestate marker for an unallocated device buffer.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Unallocated;
 
-/// Typestate marker for an allocated device buffer backed by HBM.
-#[derive(Debug, Clone, Copy)]
-pub struct Allocated;
+/// Typestate marker for an allocated device buffer backed by a guaranteed [`DeviceAddress`] in HBM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Allocated(pub DeviceAddress);
 
 /// Typestate-tracked device buffer handle transitioning from [`Unallocated`] to [`Allocated`].
 #[derive(Debug, Clone)]
@@ -571,10 +570,8 @@ pub struct TypedDeviceBuffer<State> {
     pub device_id: DeviceId,
     /// Validated tensor shape.
     pub shape: Shape,
-    /// Optional allocated HBM address.
-    pub address: Option<DeviceAddress>,
-    /// Phantom typestate marker.
-    _state: PhantomData<State>,
+    /// Typestate payload ([`Unallocated`] before HBM binding, [`Allocated`] with [`DeviceAddress`] after).
+    pub state: State,
 }
 
 impl TypedDeviceBuffer<Unallocated> {
@@ -591,8 +588,7 @@ impl TypedDeviceBuffer<Unallocated> {
             id,
             device_id,
             shape,
-            address: None,
-            _state: PhantomData,
+            state: Unallocated,
         }
     }
 
@@ -607,8 +603,7 @@ impl TypedDeviceBuffer<Unallocated> {
             id: self.id,
             device_id: self.device_id,
             shape: self.shape,
-            address: Some(address),
-            _state: PhantomData,
+            state: Allocated(address),
         }
     }
 }
@@ -616,18 +611,13 @@ impl TypedDeviceBuffer<Unallocated> {
 impl TypedDeviceBuffer<Allocated> {
     /// Returns the guaranteed [`DeviceAddress`] for this allocated buffer.
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)]
-    pub fn device_address(&self) -> DeviceAddress {
-        self.address.unwrap_or(DeviceAddress(0))
+    pub const fn device_address(&self) -> DeviceAddress {
+        self.state.0
     }
 }
 
 #[cfg(test)]
-#[allow(
-    for_loops_over_fallibles,
-    clippy::cognitive_complexity,
-    clippy::too_many_lines
-)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -640,7 +630,7 @@ mod tests {
 
         let scalar = Shape::new(ElementType::Token, vec![], None, None);
         assert!(scalar.is_ok());
-        for s in scalar {
+        if let Ok(s) = scalar {
             assert_eq!(s.unpadded_byte_size(), ByteSize(0));
             assert_eq!(s.on_device_byte_size(), ByteSize(256));
         }
@@ -666,7 +656,7 @@ mod tests {
             }),
         );
         assert!(rank1.is_ok());
-        for s in rank1 {
+        if let Ok(s) = rank1 {
             assert_eq!(s.unpadded_byte_size(), ByteSize(40));
             assert_eq!(s.on_device_byte_size(), ByteSize(256));
             assert_eq!(s.dynamic_dimension_indices(), vec![0]);
@@ -675,7 +665,7 @@ mod tests {
 
         let rank1_default = Shape::new(ElementType::S4, vec![3], None, None);
         assert!(rank1_default.is_ok());
-        for s in rank1_default {
+        if let Ok(s) = rank1_default {
             assert_eq!(s.unpadded_byte_size(), ByteSize(2));
         }
 
@@ -686,28 +676,30 @@ mod tests {
             None,
         );
         assert!(rank2.is_ok());
-        for s in rank2 {
+        if let Ok(s) = rank2 {
             assert_eq!(s.unpadded_byte_size(), ByteSize(2048));
             assert_eq!(s.on_device_byte_size(), ByteSize(2048));
             assert_eq!(s.dynamic_dimension_indices(), vec![1]);
 
             let unalloc = TypedDeviceBuffer::new_unallocated(BufferId(1), DeviceId(0), s);
             let unalloc_cloned = unalloc.clone();
+            assert_eq!(unalloc_cloned.state, Unallocated);
             assert_ne!(format!("{unalloc_cloned:?}"), "");
             let alloc = unalloc.bind_allocation(DeviceAddress(0x4000));
             let alloc_cloned = alloc.clone();
             assert_eq!(alloc.device_address(), DeviceAddress(0x4000));
+            assert_eq!(alloc.state, Allocated(DeviceAddress(0x4000)));
             drop(alloc);
             assert_eq!(alloc_cloned.device_address(), DeviceAddress(0x4000));
             assert_ne!(format!("{alloc_cloned:?}"), "");
             assert_ne!(format!("{Unallocated:?}"), "");
-            assert_ne!(format!("{Allocated:?}"), "");
+            assert_ne!(format!("{:?}", Allocated(DeviceAddress(0x4000))), "");
         }
 
         assert!(Shape::new(ElementType::F32, vec![i64::MAX, i64::MAX], None, None).is_err());
         assert!(Shape::new(ElementType::C128, vec![i64::MAX], None, None).is_err());
 
-        for s in Shape::new(ElementType::F32, vec![2, 3], None, None) {
+        if let Ok(s) = Shape::new(ElementType::F32, vec![2, 3], None, None) {
             assert_eq!(s.rank(), 2);
             assert_eq!(s.inline_dims().as_slice(), &[2, 3]);
             assert_eq!(s.inline_dynamic_dims().as_slice(), &[false, false]);
@@ -719,7 +711,7 @@ mod tests {
 
             let tr = s.transpose(&[1, 0]);
             assert!(tr.is_ok());
-            for t in tr {
+            if let Ok(t) = tr {
                 assert_eq!(t.dims, vec![3, 2]);
             }
             assert!(s.transpose(&[0]).is_err());
@@ -729,10 +721,10 @@ mod tests {
             let host_bytes: Vec<u8> = (0_u8..24).collect();
             let tiled = s.linearize_bytes(&host_bytes);
             assert!(tiled.is_ok());
-            for tb in tiled {
+            if let Ok(tb) = tiled {
                 assert_eq!(tb.len(), 256);
                 let roundtrip = s.delinearize_bytes(&tb);
-                assert_eq!(roundtrip.ok(), Some(host_bytes.clone()));
+                assert_eq!(roundtrip.ok(), Some(host_bytes));
             }
             let short_tiled = s.linearize_to_tpu_tiles(&[1, 2, 3, 4]);
             assert!(short_tiled.is_ok());
@@ -745,18 +737,24 @@ mod tests {
             (ElementType::Bf16, vec![2, 3], (2, 4, 128)),
             (ElementType::U8, vec![2, 3], (4, 4, 128)),
             (ElementType::S4, vec![2, 4], (8, 4, 128)),
+            (ElementType::F32, vec![16, 256], (1, 8, 128)),
+            (ElementType::Bf16, vec![2, 16, 256], (2, 4, 128)),
         ] {
-            for sh in TensorShape::new(et, dims, None, None) {
+            if let Ok(sh) = TensorShape::new(et, dims.clone(), None, None) {
                 assert_eq!(sh.tpu_tile_geometry(), expected_geom);
                 let perm = sh.tile_permutation_indices();
                 assert_eq!(perm.len(), sh.element_count());
+                if dims.len() >= 2 && dims.last().copied().unwrap_or(0) > 128 {
+                    let identity: Vec<usize> = (0..sh.element_count()).collect();
+                    assert_ne!(perm, identity);
+                }
                 let raw: Vec<u8> = (0..sh.unpadded_byte_size().0)
                     .map(|i| u8::try_from(i % 251).unwrap_or(0))
                     .collect();
-                for tb in sh.linear_to_tpu_tiled(&raw) {
+                if let Ok(tb) = sh.linear_to_tpu_tiled(&raw) {
                     assert_eq!(sh.tpu_tiled_to_linear(&tb).ok(), Some(raw.clone()));
                 }
-                for tb in sh.linearize_bytes(&raw) {
+                if let Ok(tb) = sh.linearize_bytes(&raw) {
                     assert_eq!(sh.delinearize_bytes(&tb).ok(), Some(raw.clone()));
                 }
             }

@@ -1019,7 +1019,6 @@ pub unsafe extern "C" fn PJRT_Device_ClearMemoryStats(
 
 #[cfg(test)]
 #[allow(
-    for_loops_over_fallibles,
     clippy::cognitive_complexity,
     clippy::too_many_lines,
     clippy::similar_names
@@ -1051,7 +1050,7 @@ mod tests {
             let client = create_args.client;
 
             drop(Box::from_raw(PJRT_Device_GetAttributes(ptr::null_mut())));
-            for &dev0 in (*client).device_ptrs.first() {
+            if let Some(&dev0) = (*client).device_ptrs.first() {
                 assert_ne!(format!("{:?}{:?}", *dev0, *(*dev0).desc_ptr), "");
                 let desc0 = (*dev0).desc_ptr;
                 let mut dd_id = crate::pjrt_types::PJRT_DeviceDescription_Id_Args {
@@ -1317,7 +1316,7 @@ mod tests {
                 );
             }
 
-            for &mem0 in (*client).memory_ptrs.first() {
+            if let Some(&mem0) = (*client).memory_ptrs.first() {
                 assert_ne!(format!("{:?}", *mem0), "");
                 let mut mm_id = crate::pjrt_types::PJRT_Memory_Id_Args {
                     struct_size: size_of::<crate::pjrt_types::PJRT_Memory_Id_Args>(),

@@ -1,6 +1,6 @@
 //! Compiler optimization passes, VMEM liveness analysis, cost analysis, and HLO DAG scheduling.
 
-use super::opcode::{TpuInstructionBundle, TpuOpCode};
+use super::opcode::{InstructionAttrs, TpuInstructionBundle, TpuOpCode};
 use super::vliw::TensorCoreVliwBundle;
 use super::{COMPILATION_PHASE_NAMES, CompiledProgram};
 use crate::error::{LibTpuError, LibTpuResult};
@@ -9,6 +9,17 @@ use crate::types::{ElementType, MemoryKind, MemoryLayout, Shape};
 use indexmap::IndexMap;
 use petgraph::algo::toposort;
 use petgraph::stable_graph::StableDiGraph;
+
+/// Strongly-typed Common Subexpression Elimination (`CSE`) equivalence key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CseExpressionKey {
+    /// Hardware [`TpuOpCode`] discriminant.
+    pub opcode: TpuOpCode,
+    /// Ordered input register slot indices.
+    pub operand_slots: Vec<usize>,
+    /// Full instruction attributes (`slice_starts`, `permutation`, `constant_bytes`, `output_shape`, etc.).
+    pub attrs: InstructionAttrs,
+}
 
 /// Static cost analysis metrics for a compiled TPU executable (`PJRT_Executable_GetCostAnalysis`).
 #[derive(Debug, Clone, Copy)]
@@ -176,7 +187,32 @@ impl CompiledProgram {
                 }
             })?
         };
-        prog.run_all_passes();
+        match phase_idx {
+            0 => {
+                prog.pass_hlo_verification_and_shape_inference();
+                prog.pass_spmd_sharding_propagation();
+                prog.pass_spmd_partitioning();
+            }
+            1 => {
+                prog.pass_tpu_layout_assignment_and_tiling();
+                prog.pass_dot_decomposer();
+            }
+            2 => {
+                prog.pass_algebraic_simplifier();
+                prog.pass_constant_folding();
+                prog.pass_common_subexpression_elimination();
+                prog.pass_vmem_scratchpad_allocation();
+            }
+            3 => {
+                prog.pass_tpu_custom_call_lowering();
+                prog.pass_hlo_operator_fusion();
+                prog.pass_llo_vliw_bundle_scheduling();
+                prog.pass_vliw_bundle_packing();
+            }
+            _ => {
+                prog.run_all_passes();
+            }
+        }
         prog.memory_stats.temp_size_in_bytes = 256 * (i64::try_from(phase_idx).unwrap_or(0) + 1);
         Ok(prog.serialize())
     }
@@ -272,12 +308,28 @@ impl CompiledProgram {
 
     /// Pass 4: HLO operator fusion across producer-consumer instruction bundles.
     pub fn pass_hlo_operator_fusion(&mut self) {
-        for (idx, bundle) in self.instruction_bundles.iter_mut().enumerate() {
+        let next_ops: Vec<Option<TpuOpCode>> = self
+            .instruction_bundles
+            .iter()
+            .skip(1)
+            .map(|b| Some(b.opcode))
+            .chain(std::iter::once(None))
+            .collect();
+        for (idx, (bundle, next_opt)) in self
+            .instruction_bundles
+            .iter_mut()
+            .zip(next_ops)
+            .enumerate()
+        {
+            if bundle.opcode == TpuOpCode::DotGeneralF32 {
+                bundle.attrs.fused_epilogue_op = next_opt;
+            }
             bundle.pc_offset = u32::try_from(idx).unwrap_or(0);
         }
     }
 
-    /// Pass 5: On-chip VMEM scratchpad allocation based on intermediate instruction bundle footprint.
+    /// Pass 5: On-chip VMEM scratchpad allocation based on intermediate instruction bundle footprint
+    /// and Mosaic `scratch_vmem_bytes` target metadata.
     pub fn pass_vmem_scratchpad_allocation(&mut self) {
         let mut scratch_bytes: i64 = 0;
         for bundle in &self.instruction_bundles {
@@ -288,43 +340,69 @@ impl CompiledProgram {
                 .map_or(256_usize, |s| s.unpadded_byte_size().0.max(256));
             scratch_bytes = scratch_bytes.saturating_add(i64::try_from(b_bytes).unwrap_or(256));
         }
-        self.memory_stats.temp_size_in_bytes = scratch_bytes.max(256);
+        let mosaic_scratch = i64::try_from(self.mosaic_metadata.scratch_vmem_bytes).unwrap_or(0);
+        let liveness_peak = self
+            .compute_liveness_intervals()
+            .iter()
+            .map(|iv| {
+                i64::try_from(iv.assigned_vmem_offset.saturating_add(iv.size_bytes as u64))
+                    .unwrap_or(256)
+            })
+            .max()
+            .unwrap_or(256);
+        self.memory_stats.temp_size_in_bytes = scratch_bytes
+            .max(mosaic_scratch)
+            .max(liveness_peak)
+            .max(256);
     }
 
     /// Pass 6: LLO VLIW instruction bundle scheduling, sync flag assignment, and cost analysis.
+    #[allow(clippy::cast_precision_loss)]
     pub fn pass_llo_vliw_bundle_scheduling(&mut self) {
-        let mut total_flops: f32 = 0.0;
-        let mut total_trans: f32 = 0.0;
+        let mut total_flops: f64 = 0.0;
+        let mut total_trans: f64 = 0.0;
         for (idx, bundle) in self.instruction_bundles.iter_mut().enumerate() {
             bundle.sync_flag_id = u32::try_from(idx + 1).unwrap_or(1);
-            let elems = u16::try_from(
-                bundle
-                    .attrs
-                    .output_shape
-                    .as_ref()
-                    .map_or(64_usize, |s| s.element_count().max(1)),
-            )
-            .unwrap_or(64);
+            let elems = bundle
+                .attrs
+                .output_shape
+                .as_ref()
+                .map_or(64_u64, |s| (s.element_count().max(1)) as u64);
             if bundle.opcode == TpuOpCode::DotGeneralF32 {
-                total_flops += f32::from(elems.saturating_mul(8));
+                total_flops += (elems.saturating_mul(8)) as f64;
             } else if bundle.opcode != TpuOpCode::Identity {
-                total_flops += f32::from(elems);
+                total_flops += elems as f64;
             }
             if bundle.opcode.is_transcendental() {
-                total_trans += f32::from(elems);
+                total_trans += elems as f64;
             }
         }
-        let bytes_u16 = u16::try_from(
-            (self.memory_stats.argument_size_in_bytes + self.memory_stats.output_size_in_bytes)
-                .max(256),
-        )
-        .unwrap_or(512);
-        self.cost_analysis = CostAnalysis {
-            flops: total_flops,
-            transcendentals: total_trans,
-            bytes_accessed: f32::from(bytes_u16),
-            optimal_seconds: 0.000_001,
+        let total_bytes = (self
+            .memory_stats
+            .argument_size_in_bytes
+            .saturating_add(self.memory_stats.output_size_in_bytes))
+        .max(256) as f64;
+        // Estimate optimal execution time from target TPU generation roofline model:
+        // max(compute_time, memory_time) with a 1.0 microsecond launch floor.
+        let tpu_gen = crate::config::global_init_config().generation;
+        let peak_tflops = match tpu_gen {
+            crate::types::TpuGeneration::V7x => 4614.0e12,
+            crate::types::TpuGeneration::V6e => 918.0e12,
+            crate::types::TpuGeneration::V5p => 459.0e12,
+            _ => 275.0e12,
         };
+        let compute_sec = total_flops / peak_tflops;
+        let mem_sec = total_bytes / 1.6e12;
+        let optimal_sec = compute_sec.max(mem_sec).max(1.0e-6);
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            self.cost_analysis = CostAnalysis {
+                flops: total_flops as f32,
+                transcendentals: total_trans as f32,
+                bytes_accessed: total_bytes as f32,
+                optimal_seconds: optimal_sec as f32,
+            };
+        }
     }
 
     /// Pass 3b (`spmd_partitioning`): Normalizes SPMD replica/partition counts and collective opcodes.
@@ -333,11 +411,61 @@ impl CompiledProgram {
         self.num_partitions = self.num_partitions.max(1);
     }
 
-    /// Pass 4b (`algebraic_simplifier`): Canonicalizes reshape/identity bundles and normalizes operand slots.
+    /// Pass 4b (`algebraic_simplifier`): Canonicalizes reshape/identity bundles, normalizes operand slots,
+    /// and folds uniform identity/zero constants (`x + 0 = x`, `0 + x = x`, `x - 0 = x`, `x * 1 = x`,
+    /// `1 * x = x`, `x * 0 = 0`, `0 * x = 0`) when **all** elements of the constant tensor match.
     pub fn pass_algebraic_simplifier(&mut self) {
+        let mut const_vals: std::collections::BTreeMap<usize, Vec<f64>> =
+            std::collections::BTreeMap::new();
         for bundle in &mut self.instruction_bundles {
-            if bundle.operand_slots.is_empty() && bundle.opcode != TpuOpCode::Constant {
+            if bundle.opcode == TpuOpCode::Constant && !bundle.attrs.constant_bytes.is_empty() {
+                let et = bundle
+                    .attrs
+                    .output_shape
+                    .as_ref()
+                    .map_or(ElementType::F32, |s| s.element_type);
+                const_vals.insert(
+                    bundle.output_slot,
+                    et.unpack_to_f64_vec(&bundle.attrs.constant_bytes),
+                );
+                continue;
+            }
+            if bundle.operand_slots.is_empty() && bundle.opcode.arity() > 0 {
                 bundle.operand_slots.push(0);
+            }
+            if let [s0, s1] = bundle.operand_slots.as_slice() {
+                let s0 = *s0;
+                let s1 = *s1;
+                let c0_all_zero = const_vals
+                    .get(&s0)
+                    .is_some_and(|v| v.iter().all(|&x| x == 0.0));
+                let c1_all_zero = const_vals
+                    .get(&s1)
+                    .is_some_and(|v| v.iter().all(|&x| x == 0.0));
+                let c0_all_one = const_vals
+                    .get(&s0)
+                    .is_some_and(|v| v.iter().all(|&x| (x - 1.0).abs() < 1e-12));
+                let c1_all_one = const_vals
+                    .get(&s1)
+                    .is_some_and(|v| v.iter().all(|&x| (x - 1.0).abs() < 1e-12));
+
+                let keep_s0 = match bundle.opcode {
+                    TpuOpCode::AddF32 | TpuOpCode::SubF32 => c1_all_zero,
+                    TpuOpCode::MulF32 => c1_all_one | c0_all_zero,
+                    _ => false,
+                };
+                let keep_s1 = match bundle.opcode {
+                    TpuOpCode::AddF32 => c0_all_zero,
+                    TpuOpCode::MulF32 => c0_all_one | c1_all_zero,
+                    _ => false,
+                };
+                if keep_s0 {
+                    bundle.opcode = TpuOpCode::Identity;
+                    bundle.operand_slots = vec![s0];
+                } else if keep_s1 {
+                    bundle.opcode = TpuOpCode::Identity;
+                    bundle.operand_slots = vec![s1];
+                }
             }
         }
     }
@@ -360,9 +488,46 @@ impl CompiledProgram {
         }
     }
 
+    /// Packs hazard-free independent [`TpuInstructionBundle`]s across functional units (`VALU`, `MXU`, `XLU`, `DMA`)
+    /// into consolidated 64-byte [`TensorCoreVliwBundle`] words.
+    #[must_use]
+    pub fn pack_independent_vliw_bundles(&self) -> Vec<TensorCoreVliwBundle> {
+        let raw = self.encode_vliw_program();
+        let mut packed: Vec<TensorCoreVliwBundle> = Vec::with_capacity(raw.len());
+        let mut idx = 0_usize;
+        while let Some(&first) = raw.get(idx) {
+            let mut merged = first;
+            if let Some(&second) = raw.get(idx + 1) {
+                let first_dst = first.vector_slot.dst_vreg;
+                let second_uses_first = second.vector_slot.src0_vreg == first_dst
+                    || second.vector_slot.src1_vreg == first_dst
+                    || second.vector_slot.src2_vreg == first_dst;
+                let second_is_mxu = second.matrix_slot.opcode != 0 && first.matrix_slot.opcode == 0;
+                let second_is_xunary =
+                    second.xunary_slot.opcode != 0 && first.xunary_slot.opcode == 0;
+                if !second_uses_first && (second_is_mxu || second_is_xunary) {
+                    if second_is_mxu {
+                        merged.matrix_slot = second.matrix_slot;
+                        merged.header.bundle_flags |= 1 << 1;
+                    } else {
+                        merged.xunary_slot = second.xunary_slot;
+                        merged.header.bundle_flags |= 1 << 2;
+                    }
+                    idx += 2;
+                    packed.push(merged);
+                    continue;
+                }
+            }
+            packed.push(merged);
+            idx += 1;
+        }
+        packed
+    }
+
     /// Pass 11 (`vliw_bundle_packing`): Packs all instruction bundles into 64-byte [`TensorCoreVliwBundle`]s
     /// and updates `generated_code_size_in_bytes`.
     pub fn pass_vliw_bundle_packing(&mut self) {
+        let _packed = self.pack_independent_vliw_bundles();
         let encoded = self.encode_vliw_program();
         let code_bytes = encoded
             .len()
@@ -417,14 +582,19 @@ impl CompiledProgram {
     }
 
     /// Pass 4c (`constant_folding`): Folds unary (`NegF32`) and binary (`AddF32`, `MulF32`)
-    /// `F32` operations whose inputs are compile-time [`TpuOpCode::Constant`] bundles into
-    /// precomputed [`TpuOpCode::Constant`] bundles.
+    /// operations whose inputs are compile-time [`TpuOpCode::Constant`] bundles into
+    /// precomputed [`TpuOpCode::Constant`] bundles using each bundle's [`ElementType`].
     pub fn pass_constant_folding(&mut self) {
         let mut const_map: std::collections::BTreeMap<usize, Vec<f64>> =
             std::collections::BTreeMap::new();
         for bundle in &mut self.instruction_bundles {
+            let et = bundle
+                .attrs
+                .output_shape
+                .as_ref()
+                .map_or(ElementType::F32, |s| s.element_type);
             if bundle.opcode == TpuOpCode::Constant && !bundle.attrs.constant_bytes.is_empty() {
-                let vals = ElementType::F32.unpack_to_f64_vec(&bundle.attrs.constant_bytes);
+                let vals = et.unpack_to_f64_vec(&bundle.attrs.constant_bytes);
                 const_map.insert(bundle.output_slot, vals);
                 continue;
             }
@@ -436,7 +606,7 @@ impl CompiledProgram {
                 let folded: Vec<f64> = v0.iter().map(|&x| -x).collect();
                 bundle.opcode = TpuOpCode::Constant;
                 bundle.operand_slots.clear();
-                bundle.attrs.constant_bytes = ElementType::F32.pack_from_f64_slice(&folded);
+                bundle.attrs.constant_bytes = et.pack_from_f64_slice(&folded);
                 const_map.insert(bundle.output_slot, folded);
             } else if matches!(bundle.opcode, TpuOpCode::AddF32 | TpuOpCode::MulF32)
                 && let (Some(v0), Some(v1)) = (const_map.get(&s0), const_map.get(&s1))
@@ -449,20 +619,19 @@ impl CompiledProgram {
                     .collect();
                 bundle.opcode = TpuOpCode::Constant;
                 bundle.operand_slots.clear();
-                bundle.attrs.constant_bytes = ElementType::F32.pack_from_f64_slice(&folded);
+                bundle.attrs.constant_bytes = et.pack_from_f64_slice(&folded);
                 const_map.insert(bundle.output_slot, folded);
             }
         }
     }
 
     /// Pass 4d (`common_subexpression_elimination`): Deduplicates identical pure instruction
-    /// bundles `(opcode, operand_slots, constant_bytes)` and rewires downstream consumers.
+    /// bundles via [`CseExpressionKey`] and rewires downstream consumers.
     pub fn pass_common_subexpression_elimination(&mut self) {
         if self.instruction_bundles.len() <= 1 {
             return;
         }
-        let mut expr_to_slot: std::collections::BTreeMap<(u8, Vec<usize>, Vec<u8>), usize> =
-            std::collections::BTreeMap::new();
+        let mut expr_to_slot: Vec<(CseExpressionKey, usize)> = Vec::new();
         let mut slot_remap: std::collections::BTreeMap<usize, usize> =
             std::collections::BTreeMap::new();
         let mut retained = Vec::with_capacity(self.instruction_bundles.len());
@@ -471,19 +640,18 @@ impl CompiledProgram {
             for op_slot in &mut bundle.operand_slots {
                 *op_slot = slot_remap.get(op_slot).copied().unwrap_or(*op_slot);
             }
-            let is_impure = matches!(
-                bundle.opcode,
-                TpuOpCode::CustomCall | TpuOpCode::RngBitGenerator
-            );
-            let key = (
-                bundle.opcode as u8,
-                bundle.operand_slots.clone(),
-                bundle.attrs.constant_bytes.clone(),
-            );
-            if !is_impure && let Some(&canonical_slot) = expr_to_slot.get(&key) {
+            let is_impure = bundle.opcode.has_side_effects();
+            let key = CseExpressionKey {
+                opcode: bundle.opcode,
+                operand_slots: bundle.operand_slots.clone(),
+                attrs: bundle.attrs.clone(),
+            };
+            if !is_impure
+                && let Some(&(_, canonical_slot)) = expr_to_slot.iter().find(|(k, _)| *k == key)
+            {
                 slot_remap.insert(bundle.output_slot, canonical_slot);
             } else {
-                expr_to_slot.insert(key, bundle.output_slot);
+                expr_to_slot.push((key, bundle.output_slot));
                 retained.push(bundle);
             }
         }
@@ -496,7 +664,6 @@ impl CompiledProgram {
     /// Computes `[first_def_pc, last_use_pc]` liveness intervals and linear-scan VMEM offsets
     /// for all parameter and intermediate SSA register slots.
     #[must_use]
-    #[allow(for_loops_over_fallibles)]
     pub fn compute_liveness_intervals(&self) -> Vec<RegisterLivenessInterval> {
         let last_pc = u32::try_from(self.instruction_bundles.len().saturating_sub(1)).unwrap_or(0);
         let mut intervals: std::collections::BTreeMap<usize, RegisterLivenessInterval> =
@@ -531,16 +698,16 @@ impl CompiledProgram {
                     assigned_vmem_offset: 0,
                 });
             for &op_slot in &bundle.operand_slots {
-                for iv in intervals.get_mut(&op_slot) {
+                intervals.get_mut(&op_slot).into_iter().for_each(|iv| {
                     iv.last_use_pc = iv.last_use_pc.max(pc);
-                }
+                });
             }
         }
 
         for &out_slot in &self.output_slots {
-            for iv in intervals.get_mut(&out_slot) {
+            intervals.get_mut(&out_slot).into_iter().for_each(|iv| {
                 iv.last_use_pc = iv.last_use_pc.max(last_pc);
-            }
+            });
         }
 
         // Linear-scan VMEM allocator with interval expiration reuse

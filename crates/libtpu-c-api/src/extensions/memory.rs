@@ -46,6 +46,59 @@ static MEMORY_DESCRIPTION_HANDLES: SyncMemoryDescriptionHandles = SyncMemoryDesc
     ptr::addr_of!(STATIC_MEMORY_DESCRIPTIONS[3]).cast::<std::ffi::c_void>(),
 ]);
 
+/// Deleter callback for host memory buffers allocated via [`PJRT_HostMemoryAllocator_Allocate`].
+///
+/// # Arguments
+///
+/// * `holder` - Opaque [`crate::pjrt_types::PjrtSerializedArtifact`] pointer (or null).
+///
+/// # Safety
+///
+/// `holder` must be null or a pointer returned by [`PJRT_HostMemoryAllocator_Allocate`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pjrt_host_memory_deleter(holder: *mut std::ffi::c_void) {
+    pjrt_serialized_artifact_deleter(holder);
+}
+
+/// Strongly-typed handler for [`PJRT_HostMemoryAllocator_Allocate`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_HostMemoryAllocator_Allocate_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_HostMemoryAllocator_Allocate_Args`].
+unsafe fn handle_host_memory_allocate(args: &mut PJRT_HostMemoryAllocator_Allocate_Args) {
+    let alloc_len = args.size.max(64);
+    let (ptr, _, holder) = box_serialized_artifact(vec![0_u8; alloc_len]);
+    args.ptr = ptr.cast_mut().cast::<std::ffi::c_void>();
+    args.deleter = (pjrt_host_memory_deleter as *const ()).cast::<std::ffi::c_void>();
+    args.deleter_arg = holder.cast::<std::ffi::c_void>();
+}
+
+/// Allocates a host memory buffer (`PJRT_HostMemoryAllocator_Allocate`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to [`PJRT_HostMemoryAllocator_Allocate_Args`].
+///
+/// # Safety
+///
+/// `raw_args` must be null or a valid pointer to [`PJRT_HostMemoryAllocator_Allocate_Args`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PJRT_HostMemoryAllocator_Allocate(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    unsafe {
+        dispatch_typed_extension_args::<PJRT_HostMemoryAllocator_Allocate_Args>(
+            raw_args,
+            handle_host_memory_allocate,
+        )
+    }
+}
+
 /// Strongly-typed handler for [`PJRT_HostMemoryAllocator_Get`].
 ///
 /// # Arguments
@@ -59,14 +112,11 @@ unsafe fn handle_host_memory_allocator_get(args: &mut PJRT_HostMemoryAllocator_G
     let cap = global_init_config().premapped_buffer_size.0;
     if args.struct_size >= size_of::<PJRT_HostMemoryAllocator_Allocate_Args>() {
         // SAFETY: `args.struct_size >= 64` guarantees `args` is a valid `PJRT_HostMemoryAllocator_Allocate_Args`.
-        let alloc_args =
-            unsafe { &mut *ptr::from_mut(args).cast::<PJRT_HostMemoryAllocator_Allocate_Args>() };
-        let alloc_len = alloc_args.size.max(64);
-        let (ptr, _, holder) = box_serialized_artifact(vec![0_u8; alloc_len]);
-        alloc_args.ptr = ptr.cast_mut().cast::<std::ffi::c_void>();
-        alloc_args.deleter =
-            (pjrt_serialized_artifact_deleter as *const ()).cast::<std::ffi::c_void>();
-        alloc_args.deleter_arg = holder.cast::<std::ffi::c_void>();
+        unsafe {
+            handle_host_memory_allocate(
+                &mut *ptr::from_mut(args).cast::<PJRT_HostMemoryAllocator_Allocate_Args>(),
+            );
+        }
     } else {
         args.allocator_out = cap;
     }
@@ -247,6 +297,50 @@ pub unsafe extern "C" fn PJRT_MemoryDescriptions_Get(
     }
 }
 
+/// Strongly-typed handler for [`PJRT_MemoryDescription_Kind`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_MemoryDescription_Kind_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_MemoryDescription_Kind_Args`].
+unsafe fn handle_memory_description_kind(args: &mut PJRT_MemoryDescription_Kind_Args) {
+    let desc = if args.memory_description.is_null() {
+        &STATIC_MEMORY_DESCRIPTIONS[0]
+    } else {
+        // SAFETY: `memory_description` is a pointer into `STATIC_MEMORY_DESCRIPTIONS`.
+        unsafe { &*args.memory_description.cast::<PJRT_MemoryDescription>() }
+    };
+    let kind_name = desc.kind.as_str();
+    args.kind = kind_name.as_ptr().cast();
+    args.kind_size = kind_name.len();
+    args.kind_id = desc.kind_id;
+}
+
+/// Queries the kind and kind ID of a `PJRT_MemoryDescription` (`PJRT_MemoryDescription_Kind`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to [`PJRT_MemoryDescription_Kind_Args`].
+///
+/// # Safety
+///
+/// `raw_args` must be null or a valid pointer to [`PJRT_MemoryDescription_Kind_Args`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PJRT_MemoryDescription_Kind(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    unsafe {
+        dispatch_typed_extension_args::<PJRT_MemoryDescription_Kind_Args>(
+            raw_args,
+            handle_memory_description_kind,
+        )
+    }
+}
+
 /// Strongly-typed handler for [`PJRT_MemoryDescriptions_Destroy`] (`24`-byte destroy or `48`-byte kind query).
 ///
 /// # Arguments
@@ -259,22 +353,11 @@ pub unsafe extern "C" fn PJRT_MemoryDescriptions_Get(
 unsafe fn handle_memory_descriptions_destroy(args: &mut PJRT_Metadata_Destroy_Args) {
     if args.struct_size >= size_of::<PJRT_MemoryDescription_Kind_Args>() {
         // SAFETY: `args.struct_size >= 48` guarantees `args` is a valid `PJRT_MemoryDescription_Kind_Args`.
-        let kind_args =
-            unsafe { &mut *ptr::from_mut(args).cast::<PJRT_MemoryDescription_Kind_Args>() };
-        let desc = if kind_args.memory_description.is_null() {
-            &STATIC_MEMORY_DESCRIPTIONS[0]
-        } else {
-            // SAFETY: `memory_description` is a pointer into `STATIC_MEMORY_DESCRIPTIONS`.
-            unsafe {
-                &*kind_args
-                    .memory_description
-                    .cast::<PJRT_MemoryDescription>()
-            }
-        };
-        let kind_name = desc.kind.as_str();
-        kind_args.kind = kind_name.as_ptr().cast();
-        kind_args.kind_size = kind_name.len();
-        kind_args.kind_id = desc.kind_id;
+        unsafe {
+            handle_memory_description_kind(
+                &mut *ptr::from_mut(args).cast::<PJRT_MemoryDescription_Kind_Args>(),
+            );
+        }
     } else {
         args.metadata = ptr::null_mut();
     }

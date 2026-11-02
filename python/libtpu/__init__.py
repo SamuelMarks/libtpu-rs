@@ -510,6 +510,33 @@ class _PjrtExecutableDeserializeAndLoadArgs(ctypes.Structure):
     ]
 
 
+class _PjrtNamedValue(ctypes.Structure):
+    """C ABI structure matching `PJRT_NamedValue` (`48` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("name", ctypes.c_void_p),
+        ("name_size", ctypes.c_size_t),
+        ("value_type", ctypes.c_int32),
+        ("value_type_pad", ctypes.c_uint32),
+        ("value_payload", ctypes.c_uint64),
+        ("value_size", ctypes.c_size_t),
+    ]
+
+
+class _PjrtLoadedExecutableAddressableDevicesArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_LoadedExecutable_AddressableDevices_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("executable", ctypes.c_void_p),
+        ("addressable_devices", ctypes.c_void_p),
+        ("num_addressable_devices", ctypes.c_size_t),
+    ]
+
+
 class _PjrtLoadedExecutableFingerprintArgs(ctypes.Structure):
     """C ABI structure matching `PJRT_LoadedExecutable_Fingerprint_Args` (`40` bytes)."""
 
@@ -522,13 +549,21 @@ class _PjrtLoadedExecutableFingerprintArgs(ctypes.Structure):
     ]
 
 
+_CDLL_CACHE: dict[str, ctypes.CDLL] = {}
+_SERIALIZED_DELETER_TYPE = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
+
+
 def _load_cdll() -> ctypes.CDLL:
     """Loads the `libtpu` shared library and configures C function prototypes.
 
     Returns:
         Configured `ctypes.CDLL` handle.
     """
-    lib = ctypes.CDLL(get_library_path())
+    lib_path = get_library_path()
+    cached = _CDLL_CACHE.get(lib_path)
+    if cached is not None:
+        return cached
+    lib = ctypes.CDLL(lib_path)
 
     lib.PJRT_Error_Destroy.argtypes = [ctypes.POINTER(_PjrtErrorDestroyArgs)]
     lib.PJRT_Error_Destroy.restype = None
@@ -598,6 +633,11 @@ def _load_cdll() -> ctypes.CDLL:
     ]
     lib.PJRT_LoadedExecutable_GetExecutable.restype = ctypes.c_void_p
 
+    lib.PJRT_LoadedExecutable_AddressableDevices.argtypes = [
+        ctypes.POINTER(_PjrtLoadedExecutableAddressableDevicesArgs)
+    ]
+    lib.PJRT_LoadedExecutable_AddressableDevices.restype = ctypes.c_void_p
+
     lib.PJRT_LoadedExecutable_Execute.argtypes = [ctypes.POINTER(_PjrtLoadedExecutableExecuteArgs)]
     lib.PJRT_LoadedExecutable_Execute.restype = ctypes.c_void_p
 
@@ -643,6 +683,7 @@ def _load_cdll() -> ctypes.CDLL:
     ]
     lib.TpuProfiler_CollectData.restype = None
 
+    _CDLL_CACHE[lib_path] = lib
     return lib
 
 
@@ -783,6 +824,18 @@ class TpuBuffer:
             self._lib.PJRT_Buffer_Destroy(ctypes.byref(del_args))
             self._handle = ctypes.c_void_p(0)
 
+    def __enter__(self) -> TpuBuffer:
+        """Enters a context manager block returning `self`."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `TpuBuffer` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+        """
+        self.close()
+
 
 class TpuExecutable:
     """Strongly-typed wrapper over a compiled `PJRT_LoadedExecutable*`."""
@@ -813,6 +866,20 @@ class TpuExecutable:
         Returns:
             List of output `TpuBuffer` objects.
         """
+        dev_args = _PjrtLoadedExecutableAddressableDevicesArgs(
+            ctypes.sizeof(_PjrtLoadedExecutableAddressableDevicesArgs),
+            0,
+            self._handle.value or 0,
+            0,
+            0,
+        )
+        self._lib.PJRT_LoadedExecutable_AddressableDevices(ctypes.byref(dev_args))
+        num_devs = int(dev_args.num_addressable_devices)
+        if device_id < 0 or device_id >= num_devs:
+            raise TpuError(5, f"Device {device_id} not found (addressable={num_devs})")
+        devs_arr = (ctypes.c_void_p * num_devs).from_address(int(dev_args.addressable_devices or 0))
+        target_dev = int(devs_arr[device_id] or 0)
+
         in_arr_type = ctypes.c_void_p * len(inputs)
         in_ptrs = in_arr_type(*(b._handle.value or 0 for b in inputs))
         in_lists = (ctypes.c_void_p * 1)(ctypes.addressof(in_ptrs))
@@ -825,11 +892,11 @@ class TpuExecutable:
             self._handle.value or 0,
             0,
             ctypes.addressof(in_lists),
-            device_id + 1,
+            1,
             len(inputs),
             ctypes.addressof(out_lists),
             0,
-            0,
+            target_dev,
         )
         err = self._lib.PJRT_LoadedExecutable_Execute(ctypes.byref(ex_args))
         _check_pjrt_error(self._lib, err)
@@ -879,9 +946,12 @@ class TpuExecutable:
             0,
         )
         self._lib.PJRT_Executable_Serialize(ctypes.byref(ser_args))
-        return ctypes.string_at(
+        payload = ctypes.string_at(
             int(ser_args.serialized_bytes or 0), int(ser_args.serialized_bytes_size)
         )
+        deleter = _SERIALIZED_DELETER_TYPE(int(ser_args.serialized_executable_deleter or 0))
+        deleter(ser_args.serialized_executable)
+        return payload
 
     def fingerprint(self) -> str:
         """Returns the 32-character hexadecimal fingerprint via `PJRT_LoadedExecutable_Fingerprint`.
@@ -922,7 +992,9 @@ class TpuExecutable:
             0,
         )
         self._lib.PJRT_Executable_GetCostAnalysis(ctypes.byref(cost_args))
-        return float(cost_args.num_properties)
+        prop0 = _PjrtNamedValue.from_address(int(cost_args.properties or 0))
+        raw_u32 = int(prop0.value_payload) & 0xFFFFFFFF
+        return float(struct.unpack("<f", struct.pack("<I", raw_u32))[0])
 
     def optimized_program_bytes(self) -> bytes:
         """Returns the optimized HLO program bytes via `PJRT_Executable_OptimizedProgram`.
@@ -959,6 +1031,18 @@ class TpuExecutable:
             )
             self._lib.PJRT_LoadedExecutable_Destroy(ctypes.byref(del_args))
             self._handle = ctypes.c_void_p(0)
+
+    def __enter__(self) -> TpuExecutable:
+        """Enters a context manager block returning `self`."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `TpuExecutable` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+        """
+        self.close()
 
 
 class TpuProfiler:
@@ -1019,6 +1103,18 @@ class TpuProfiler:
         if self._status.value:
             self._lib.TpuStatus_Free(self._status)
             self._status = ctypes.c_void_p(0)
+
+    def __enter__(self) -> TpuProfiler:
+        """Enters a context manager block returning `self`."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `TpuProfiler` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+        """
+        self.close()
 
 
 class TpuClient:
@@ -1258,6 +1354,18 @@ class TpuClient:
             )
             self._lib.PJRT_Client_Destroy(ctypes.byref(del_args))
             self._handle = ctypes.c_void_p(0)
+
+    def __enter__(self) -> TpuClient:
+        """Enters a context manager block returning `self`."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `TpuClient` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+        """
+        self.close()
 
 
 Client = TpuClient

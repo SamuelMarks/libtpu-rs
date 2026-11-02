@@ -305,12 +305,44 @@ fn write_synthetic_dependency_protos(
     Ok(())
 }
 
+/// Unified build-script error enum for `libtpu-core` schema staging and compilation.
+#[derive(Debug)]
+enum BuildError {
+    /// Filesystem I/O failure during `.proto` staging or `FileDescriptorSet` emission.
+    Io(std::io::Error),
+    /// `protox` schema compilation failure.
+    Protox(protox::Error),
+}
+
+impl std::fmt::Display for BuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "I/O error: {e}"),
+            Self::Protox(e) => write!(f, "protox error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for BuildError {}
+
+impl From<std::io::Error> for BuildError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Io(err)
+    }
+}
+
+impl From<protox::Error> for BuildError {
+    fn from(err: protox::Error) -> Self {
+        Self::Protox(err)
+    }
+}
+
 /// Entrypoint for `cargo` build script execution.
 ///
 /// # Errors
 ///
-/// Returns an error if `protox` or `prost-build` fails to compile the staged schemas.
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// Returns [`BuildError`] if `protox` or `prost-build` fails to compile the staged schemas.
+fn main() -> Result<(), BuildError> {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default());
     let proto_dir = manifest_dir
         .join("../../docs/reverse_engineering/protos")

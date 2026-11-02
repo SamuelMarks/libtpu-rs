@@ -15,7 +15,6 @@ pub use stream::*;
 
 #[cfg(test)]
 #[allow(
-    for_loops_over_fallibles,
     clippy::cognitive_complexity,
     clippy::too_many_lines,
     clippy::similar_names,
@@ -66,7 +65,52 @@ mod tests {
             assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args).cast()).is_null());
             let client = create_args.client;
 
-            for mgr in PjrtCoreAsyncTransferManager::create(
+            assert!(
+                alloc_shaped_pjrt_buffer_checked(
+                    client,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    999,
+                    ptr::null(),
+                    0
+                )
+                .is_err()
+            );
+            let neg_dim = [-1_i64];
+            assert!(
+                alloc_shaped_pjrt_buffer_checked(
+                    client,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    11,
+                    neg_dim.as_ptr(),
+                    1
+                )
+                .is_err()
+            );
+            if let Ok(chk_buf) = alloc_shaped_pjrt_buffer_checked(
+                client,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                11,
+                ptr::null(),
+                0,
+            ) {
+                libtpu_rs_buffer_destroy(chk_buf);
+            }
+            let pos_dim = [4_i64];
+            if let Ok(chk_buf2) = alloc_shaped_pjrt_buffer_checked(
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+                11,
+                pos_dim.as_ptr(),
+                1,
+            ) {
+                libtpu_rs_buffer_destroy(chk_buf2);
+            }
+
+            if let Ok(mgr) = PjrtCoreAsyncTransferManager::create(
                 DeviceId(0),
                 libtpu_core::types::MemorySpaceId(0),
                 Vec::new(),
@@ -152,12 +196,23 @@ mod tests {
                 struct_size: size_of::<crate::pjrt_types::PJRT_Buffer_GetMemoryLayout_Args>(),
                 extension_start: ptr::null_mut(),
                 buffer: buf_in,
-                layout_words: [0; 10],
+                layout: crate::pjrt_types::PJRT_Buffer_MemoryLayout_Output {
+                    struct_size: 0,
+                    extension_start: ptr::null_mut(),
+                    minor_to_major: ptr::null(),
+                    minor_to_major_size: 0,
+                    tile_dims: ptr::null(),
+                    tile_dim_sizes: ptr::null(),
+                    num_tiles: 0,
+                    layout_type: 0,
+                    reserved: [0, 0],
+                },
             };
             assert!(PJRT_Buffer_GetMemoryLayout(ptr::addr_of_mut!(bf_gml).cast()).is_null());
-            assert_eq!(bf_gml.layout_words[0], 80);
-            assert_eq!(bf_gml.layout_words[3], 1);
-            assert_eq!(bf_gml.layout_words[6], 1);
+            assert_eq!(bf_gml.layout.struct_size, 80);
+            assert_eq!(bf_gml.layout.minor_to_major_size, 1);
+            assert_eq!(bf_gml.layout.num_tiles, 1);
+            assert_eq!(bf_gml.layout.layout_type, 0);
             (*buf_in).inner.shape.layout = libtpu_core::types::MemoryLayout::Strides {
                 byte_strides: vec![4],
             };
@@ -280,6 +335,25 @@ mod tests {
                 future_ready_callback: ptr::null(),
             };
             assert!(PJRT_Buffer_CopyRawToHostFuture(ptr::addr_of_mut!(bf_crhf).cast()).is_null());
+            assert!(!bf_crhf.callback_data.is_null());
+            assert!(!bf_crhf.future_ready_callback.is_null());
+            let mut future_dst = [0.0_f32; 4];
+            pjrt_copy_raw_to_host_future_ready_cb(
+                bf_crhf.callback_data,
+                0,
+                ptr::null(),
+                0,
+                future_dst.as_mut_ptr().cast(),
+            );
+            assert_eq!(future_dst, [1.0, 2.0, 3.0, 4.0]);
+            drop(Box::from_raw(bf_crhf.event));
+            pjrt_copy_raw_to_host_future_ready_cb(
+                ptr::null_mut(),
+                0,
+                ptr::null(),
+                0,
+                ptr::null_mut(),
+            );
 
             let mut bf_don = crate::pjrt_types::PJRT_Buffer_DonateWithControlDependency_Args {
                 struct_size: size_of::<
@@ -295,6 +369,9 @@ mod tests {
                 PJRT_Buffer_DonateWithControlDependency(ptr::addr_of_mut!(bf_don).cast()).is_null()
             );
             assert_eq!(bf_don.out_buffer, buf_in);
+            assert!(!bf_don.dependency_callback.is_null());
+            pjrt_donate_control_dependency_cb(bf_don.callback_data, 0, ptr::null(), 0);
+            pjrt_donate_control_dependency_cb(ptr::null_mut(), 0, ptr::null(), 0);
 
             let mut et_args = crate::pjrt_types::PJRT_Buffer_ElementType_Args {
                 struct_size: size_of::<crate::pjrt_types::PJRT_Buffer_ElementType_Args>(),
@@ -326,7 +403,7 @@ mod tests {
             assert!(!c2d_args.dst_buffer.is_null());
             libtpu_rs_buffer_destroy(c2d_args.dst_buffer);
 
-            for &mem0 in (*client).memory_ptrs.first() {
+            if let Some(&mem0) = (*client).memory_ptrs.first() {
                 let mut c2m_args = crate::pjrt_types::PJRT_Buffer_CopyToMemory_Args {
                     struct_size: size_of::<crate::pjrt_types::PJRT_Buffer_CopyToMemory_Args>(),
                     extension_start: ptr::null_mut(),
@@ -485,14 +562,26 @@ mod tests {
                 event: ptr::null_mut(),
             };
             assert!(PJRT_Buffer_CopyRawToHost(ptr::addr_of_mut!(raw_copy_h).cast()).is_null());
+            drop(Box::from_raw(raw_copy_h.event));
             raw_copy_h.offset = 9999;
-            assert!(PJRT_Buffer_CopyRawToHost(ptr::addr_of_mut!(raw_copy_h).cast()).is_null());
+            let oob_err = PJRT_Buffer_CopyRawToHost(ptr::addr_of_mut!(raw_copy_h).cast());
+            assert!(!oob_err.is_null());
+            drop(Box::from_raw(oob_err));
+            raw_copy_h.offset = -1;
+            let neg_off_err = PJRT_Buffer_CopyRawToHost(ptr::addr_of_mut!(raw_copy_h).cast());
+            assert!(!neg_off_err.is_null());
+            drop(Box::from_raw(neg_off_err));
+            raw_copy_h.offset = 0;
+            raw_copy_h.transfer_size = -1;
+            let neg_req_err = PJRT_Buffer_CopyRawToHost(ptr::addr_of_mut!(raw_copy_h).cast());
+            assert!(!neg_req_err.is_null());
+            drop(Box::from_raw(neg_req_err));
 
             let raw_host_bytes: Vec<u8> = [1.0_f32, 2.0, 3.0, 4.0]
                 .into_iter()
                 .flat_map(f32::to_le_bytes)
                 .collect();
-            for tm_inner in libtpu_core::pjrt::PjrtCoreAsyncTransferManager::create(
+            if let Ok(tm_inner) = libtpu_core::pjrt::PjrtCoreAsyncTransferManager::create(
                 DeviceId(0),
                 libtpu_core::types::MemorySpaceId(0),
                 vec![(*buf_in).inner.shape.clone()],
@@ -745,16 +834,25 @@ mod tests {
 
             bc_args.dims = ptr::null();
             bc_args.num_dims = 0;
-            bc_args.element_type = 999;
+            bc_args.element_type = 11;
             bc_args.out_buffer = ptr::null_mut();
             assert!(PJRT_Buffer_Bitcast(ptr::addr_of_mut!(bc_args).cast()).is_null());
             libtpu_rs_buffer_destroy(bc_args.out_buffer);
 
+            bc_args.element_type = 999;
+            bc_args.out_buffer = ptr::null_mut();
+            let bad_et_bc_err = PJRT_Buffer_Bitcast(ptr::addr_of_mut!(bc_args).cast());
+            assert!(!bad_et_bc_err.is_null());
+            drop(Box::from_raw(bad_et_bc_err));
+
+            bc_args.element_type = 11;
             let bad_bc_dims = [-1_i64];
             bc_args.dims = bad_bc_dims.as_ptr();
             bc_args.num_dims = 1;
             bc_args.out_buffer = ptr::null_mut();
-            assert!(PJRT_Buffer_Bitcast(ptr::addr_of_mut!(bc_args).cast()).is_null());
+            let bad_dims_bc_err = PJRT_Buffer_Bitcast(ptr::addr_of_mut!(bc_args).cast());
+            assert!(!bad_dims_bc_err.is_null());
+            drop(Box::from_raw(bad_dims_bc_err));
             assert!(bc_args.out_buffer.is_null());
 
             let mut del_b_args = crate::pjrt_types::PJRT_Buffer_Destroy_Args {

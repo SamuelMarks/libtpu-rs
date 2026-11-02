@@ -442,8 +442,8 @@ mod tests {
                 extension_start: ptr::null_mut(),
                 topology: (*client).topology_ptr,
                 program: ptr::addr_of!(prog),
-                compile_options: c"opts".as_ptr(),
-                compile_options_size: 4,
+                compile_options: ptr::null(),
+                compile_options_size: 0,
                 client,
                 executable: ptr::null_mut(),
             };
@@ -454,6 +454,13 @@ mod tests {
                 extension_start: ptr::null_mut(),
                 executable: aot_args.executable,
             };
+            assert!(PJRT_Executable_Destroy(ptr::addr_of_mut!(aot_del).cast()).is_null());
+            let valid_opts = libtpu_core::proto::CompileOptionsProto::default().encode();
+            aot_args.compile_options = valid_opts.as_ptr().cast();
+            aot_args.compile_options_size = valid_opts.len();
+            aot_args.executable = ptr::null_mut();
+            assert!(PJRT_Compile(ptr::addr_of_mut!(aot_args).cast()).is_null());
+            aot_del.executable = aot_args.executable;
             assert!(PJRT_Executable_Destroy(ptr::addr_of_mut!(aot_del).cast()).is_null());
             let empty_prog = PJRT_Program {
                 struct_size: size_of::<PJRT_Program>(),
@@ -479,7 +486,10 @@ mod tests {
                 format_size: 4,
             };
             aot_args.program = ptr::addr_of!(bad_aot_prog);
-            assert!(PJRT_Compile(ptr::addr_of_mut!(aot_args).cast()).is_null());
+            aot_args.executable = ptr::null_mut();
+            let bad_aot_err = PJRT_Compile(ptr::addr_of_mut!(aot_args).cast());
+            assert!(!bad_aot_err.is_null());
+            drop(Box::from_raw(bad_aot_err));
             assert!(aot_args.executable.is_null());
 
             unsafe extern "C" fn test_view_deleter(arg: *mut std::ffi::c_void) {

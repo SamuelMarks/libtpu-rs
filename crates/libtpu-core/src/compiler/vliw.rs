@@ -168,6 +168,35 @@ impl TensorCoreVliwBundle {
         Ok(bundle)
     }
 
+    /// Converts a logical [`TpuInstructionBundle`] into an architectural 64-byte [`TensorCoreVliwBundle`],
+    /// validating that all register slot indices fit within the 8-bit physical register bank (`0..256`).
+    ///
+    /// # Arguments
+    ///
+    /// * `bundle` - Logical instruction bundle to encode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::RegisterIndexOverflow`] if `output_slot` or any operand slot index is `>= 256`.
+    pub fn from_ir_bundle(bundle: &TpuInstructionBundle) -> LibTpuResult<Self> {
+        const MAX_PHYSICAL_REGISTERS: usize = 255;
+        if bundle.output_slot > MAX_PHYSICAL_REGISTERS {
+            return Err(LibTpuError::RegisterIndexOverflow {
+                slot_index: bundle.output_slot,
+                max_registers: MAX_PHYSICAL_REGISTERS,
+            });
+        }
+        for &op_slot in &bundle.operand_slots {
+            if op_slot > MAX_PHYSICAL_REGISTERS {
+                return Err(LibTpuError::RegisterIndexOverflow {
+                    slot_index: op_slot,
+                    max_registers: MAX_PHYSICAL_REGISTERS,
+                });
+            }
+        }
+        Ok(bundle.encode_architectural_bundle())
+    }
+
     /// Reconstructs a logical [`TpuInstructionBundle`] from this 64-byte [`TensorCoreVliwBundle`].
     ///
     /// # Errors
@@ -194,13 +223,23 @@ impl TensorCoreVliwBundle {
         if arity >= 3 {
             operand_slots.push(self.vector_slot.src2_vreg as usize);
         }
+        let mut attrs = InstructionAttrs {
+            iota_dim: usize::from(self.scalar_slot.src0_sreg),
+            concat_dim: usize::from(self.scalar_slot.src1_sreg),
+            ..InstructionAttrs::default()
+        };
+        if self.xunary_slot.perm_mode != 0 {
+            attrs
+                .reduce_dims
+                .push(usize::from(self.xunary_slot.perm_mode.saturating_sub(1)));
+        }
         Ok(TpuInstructionBundle {
             pc_offset: self.header.pc_offset,
             opcode,
             operand_slots,
             output_slot: self.vector_slot.dst_vreg as usize,
             sync_flag_id: self.dma_slot.sync_flag_id,
-            attrs: InstructionAttrs::default(),
+            attrs,
         })
     }
 }
@@ -241,6 +280,13 @@ impl TpuInstructionBundle {
         let et_raw = self.attrs.output_shape.as_ref().map_or(11_u8, |sh| {
             u8::try_from(sh.element_type.as_raw()).unwrap_or(11)
         });
+        let iota_u8 = u8::try_from(self.attrs.iota_dim).unwrap_or(0);
+        let concat_u8 = u8::try_from(self.attrs.concat_dim).unwrap_or(0);
+        let red_mode = self
+            .attrs
+            .reduce_dims
+            .first()
+            .map_or(0_u8, |&d| u8::try_from(d.saturating_add(1)).unwrap_or(0));
 
         let is_mxu = self.opcode == TpuOpCode::DotGeneralF32;
         let is_xunary = self.opcode.is_transcendental();
@@ -262,8 +308,8 @@ impl TpuInstructionBundle {
             scalar_slot: ScalarAluSlot {
                 opcode: 1,
                 dst_sreg: 0,
-                src0_sreg: 0,
-                src1_sreg: 0,
+                src0_sreg: iota_u8,
+                src1_sreg: concat_u8,
                 imm32: self.pc_offset,
             },
             vector_slot: VectorAluSlot {
@@ -286,7 +332,7 @@ impl TpuInstructionBundle {
             },
             xunary_slot: ExtendedUnarySlot {
                 opcode: if is_xunary { self.opcode as u8 } else { 0 },
-                perm_mode: 0,
+                perm_mode: red_mode,
                 dst_vreg: u16::try_from(dst).unwrap_or(0),
                 src_vreg: u16::try_from(s0).unwrap_or(0),
                 imm16: 0,

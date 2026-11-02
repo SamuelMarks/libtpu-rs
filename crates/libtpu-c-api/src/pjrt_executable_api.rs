@@ -4,6 +4,65 @@
 
 use super::*;
 
+/// Executes `loaded_ref` on a single `dev_ptr` (`dev_id`), reading `num_args` from `dev_args_ptr`
+/// and writing outputs to `dev_outs_ptr` and optional completion event to `complete_ev_out`.
+///
+/// # Arguments
+///
+/// * `loaded_ref` - Loaded executable engine reference.
+/// * `dev_id` - Target logical device ID.
+/// * `dev_ptr` - Target `PJRT_Device*`.
+/// * `num_args` - Number of input buffers.
+/// * `dev_args_ptr` - Pointer to input `PJRT_Buffer*` array.
+/// * `dev_outs_ptr` - Pointer to output `PJRT_Buffer*` array.
+/// * `complete_ev_out` - Optional output `PJRT_Event*` pointer.
+///
+/// # Safety
+///
+/// `dev_ptr`, `dev_args_ptr`, `dev_outs_ptr`, and `complete_ev_out` (when non-null) must be valid pointers.
+unsafe fn execute_single_device_slot(
+    loaded_ref: &libtpu_core::pjrt::PjrtCoreLoadedExecutable,
+    dev_id: libtpu_core::types::DeviceId,
+    dev_ptr: *mut PJRT_Device,
+    num_args: usize,
+    dev_args_ptr: *const *const PJRT_Buffer,
+    dev_outs_ptr: *mut *mut PJRT_Buffer,
+    complete_ev_out: *mut *mut crate::pjrt_types::PJRT_Event,
+) -> Result<(), LibTpuError> {
+    // SAFETY: `dev_ptr` is a valid `PJRT_Device*` owned by the client.
+    let mem_ptr = unsafe { (*dev_ptr).default_memory_ptr };
+    // SAFETY: `dev_args_ptr` points to `num_args` input buffer pointers.
+    let arg_slice = unsafe { std::slice::from_raw_parts(dev_args_ptr, num_args) };
+    let mut core_inputs: smallvec::SmallVec<[&libtpu_core::pjrt::PjrtCoreBuffer; 8]> =
+        smallvec::SmallVec::with_capacity(arg_slice.len());
+    for &b_ptr in arg_slice {
+        // SAFETY: `b_ptr` is a valid `PJRT_Buffer*`.
+        core_inputs.push(unsafe { &(*b_ptr).inner });
+    }
+    let outs = loaded_ref.execute_on_device(
+        dev_id,
+        libtpu_core::types::MemorySpaceId(i32::try_from(dev_id.0 * 3).unwrap_or(0)),
+        &core_inputs,
+    )?;
+    for (idx, out_buf) in outs.into_iter().enumerate() {
+        let out_handle = Box::into_raw(Box::new(PJRT_Buffer::new(out_buf, dev_ptr, mem_ptr)));
+        // SAFETY: Writing output buffer handle at `idx`.
+        unsafe {
+            *dev_outs_ptr.add(idx) = out_handle;
+        }
+    }
+    if !complete_ev_out.is_null() {
+        let ev = Box::into_raw(Box::new(crate::pjrt_types::PJRT_Event {
+            inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
+        }));
+        // SAFETY: `complete_ev_out` points to a valid `PJRT_Event*` slot.
+        unsafe {
+            *complete_ev_out = ev;
+        }
+    }
+    Ok(())
+}
+
 /// Strongly-typed handler for [`PJRT_LoadedExecutable_Execute`].
 ///
 /// # Arguments
@@ -24,12 +83,37 @@ unsafe fn handle_loaded_executable_execute(
         // SAFETY: `args.executable` is a valid `PJRT_LoadedExecutable*`.
         let loaded = unsafe { &*args.executable };
         let loaded_ref = &loaded.inner;
+        let num_args = if args.num_args > 0 {
+            args.num_args
+        } else {
+            loaded_ref.executable.program.parameter_shapes.len()
+        };
+        if !args.execute_device.is_null() {
+            let dev_ptr = args.execute_device;
+            // SAFETY: `args.execute_device` is a valid `PJRT_Device*`.
+            let dev_id = unsafe { (*dev_ptr).inner.description.spec.device_id };
+            // SAFETY: `args.argument_lists` points to device 0's input buffer pointer array.
+            let dev_args_ptr = unsafe { *args.argument_lists };
+            // SAFETY: `args.output_lists` points to device 0's output buffer pointer array.
+            let dev_outs_ptr = unsafe { *args.output_lists };
+            // SAFETY: Pointers validated above.
+            return unsafe {
+                execute_single_device_slot(
+                    loaded_ref,
+                    dev_id,
+                    dev_ptr,
+                    num_args,
+                    dev_args_ptr,
+                    dev_outs_ptr,
+                    args.device_complete_events,
+                )
+            };
+        }
         if args.num_devices > loaded_ref.addressable_devices.len() {
             return Err(LibTpuError::DeviceNotFound {
                 device_id: u32::try_from(args.num_devices).unwrap_or(99),
             });
         }
-        let num_args = loaded_ref.executable.program.parameter_shapes.len().max(1);
         for (dev_idx, (&dev_id, &dev_ptr)) in loaded_ref
             .addressable_devices
             .iter()
@@ -37,32 +121,27 @@ unsafe fn handle_loaded_executable_execute(
             .take(args.num_devices.max(1))
             .enumerate()
         {
-            // SAFETY: `dev_ptr` is a valid `PJRT_Device*` owned by the client.
-            let mem_ptr = unsafe { (*dev_ptr).default_memory_ptr };
             // SAFETY: `args.argument_lists` points to `dev_idx`'s input buffer pointer array.
             let dev_args_ptr = unsafe { *args.argument_lists.add(dev_idx) };
             // SAFETY: `args.output_lists` points to `dev_idx`'s output buffer pointer array.
             let dev_outs_ptr = unsafe { *args.output_lists.add(dev_idx) };
-            // SAFETY: `dev_args_ptr` points to `num_args` input buffer pointers.
-            let arg_slice = unsafe { std::slice::from_raw_parts(dev_args_ptr, num_args) };
-            let mut core_inputs: smallvec::SmallVec<[&libtpu_core::pjrt::PjrtCoreBuffer; 8]> =
-                smallvec::SmallVec::with_capacity(num_args);
-            for &b_ptr in arg_slice {
-                // SAFETY: `b_ptr` is a valid `PJRT_Buffer*`.
-                core_inputs.push(unsafe { &(*b_ptr).inner });
-            }
-            let outs = loaded_ref.execute_on_device(
-                dev_id,
-                libtpu_core::types::MemorySpaceId(i32::try_from(dev_id.0 * 3).unwrap_or(0)),
-                &core_inputs,
-            )?;
-            for (idx, out_buf) in outs.into_iter().enumerate() {
-                let out_handle =
-                    Box::into_raw(Box::new(PJRT_Buffer::new(out_buf, dev_ptr, mem_ptr)));
-                // SAFETY: Writing output buffer handle at `idx`.
-                unsafe {
-                    *dev_outs_ptr.add(idx) = out_handle;
-                }
+            let ev_slot = if args.device_complete_events.is_null() {
+                ptr::null_mut()
+            } else {
+                // SAFETY: `device_complete_events` has space for `num_devices` event pointers.
+                unsafe { args.device_complete_events.add(dev_idx) }
+            };
+            // SAFETY: Pointers validated above.
+            unsafe {
+                execute_single_device_slot(
+                    loaded_ref,
+                    dev_id,
+                    dev_ptr,
+                    num_args,
+                    dev_args_ptr,
+                    dev_outs_ptr,
+                    ev_slot,
+                )?;
             }
         }
     }
@@ -780,24 +859,20 @@ unsafe fn handle_executable_deserialize_and_load(
 ) -> Result<(), LibTpuError> {
     // SAFETY: `args.client` is null or a valid `PJRT_Client*`.
     if let Some(client) = unsafe { args.client.as_ref() } {
-        let slice = if !args.serialized_executable.is_null() {
+        let loaded_inner = if !args.serialized_executable.is_null() {
             // SAFETY: `serialized_executable` has `serialized_executable_size` bytes.
-            unsafe {
+            let slice = unsafe {
                 std::slice::from_raw_parts(
                     args.serialized_executable.cast::<u8>(),
                     args.serialized_executable_size,
                 )
-            }
+            };
+            client.inner.deserialize_and_load(slice)?
         } else {
-            b"module @deser { stablehlo.add }"
+            client
+                .inner
+                .compile_and_load("mlir", b"module @deser { stablehlo.add }", b"")?
         };
-        let loaded_inner = client.inner.deserialize_and_load(slice).or_else(|e| {
-            if slice.starts_with(b"module") {
-                client.inner.compile_and_load("mlir", slice, b"")
-            } else {
-                Err(e)
-            }
-        })?;
         let exec_ptr = Box::into_raw(Box::new(PJRT_Executable::new(
             loaded_inner.executable.clone(),
         )));
@@ -933,16 +1008,10 @@ unsafe fn handle_pjrt_compile(
     };
     // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
     let _ = unsafe { args.topology.as_ref() }.map(|t| t.inner.fingerprint);
-    if let Ok(prog) =
-        libtpu_core::compiler::CompiledProgram::compile(fmt_str, code_slice, opts_slice)
-            .or_else(|_| libtpu_core::compiler::CompiledProgram::compile(fmt_str, code_slice, b""))
-    {
-        args.executable = Box::into_raw(Box::new(PJRT_Executable::new(
-            libtpu_core::pjrt::PjrtCoreExecutable::new(prog),
-        )));
-    } else {
-        args.executable = ptr::null_mut();
-    }
+    let prog = libtpu_core::compiler::CompiledProgram::compile(fmt_str, code_slice, opts_slice)?;
+    args.executable = Box::into_raw(Box::new(PJRT_Executable::new(
+        libtpu_core::pjrt::PjrtCoreExecutable::new(prog),
+    )));
     Ok(())
 }
 
@@ -1816,6 +1885,23 @@ mod tests {
             );
             assert_eq!(le_lids.num_addressable_device_logical_ids, 4);
 
+            let mut deser_args = crate::pjrt_types::PJRT_Executable_DeserializeAndLoad_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Executable_DeserializeAndLoad_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                client,
+                serialized_executable: ex_ser.serialized_bytes,
+                serialized_executable_size: ex_ser.serialized_bytes_size,
+                loaded_executable: ptr::null_mut(),
+                overridden_serialized_compile_options: ptr::null(),
+                overridden_serialized_compile_options_size: 0,
+            };
+            assert!(
+                PJRT_Executable_DeserializeAndLoad(ptr::addr_of_mut!(deser_args).cast()).is_null()
+            );
+            assert!(!deser_args.loaded_executable.is_null());
+            libtpu_rs_executable_destroy(deser_args.loaded_executable);
+
             if let Some(del) = ex_ser.serialized_executable_deleter {
                 del(ex_ser.serialized_executable.cast());
             }
@@ -1826,22 +1912,6 @@ mod tests {
                 del(le_da.serialized_device_assignment.cast());
             }
 
-            let mut deser_args = crate::pjrt_types::PJRT_Executable_DeserializeAndLoad_Args {
-                struct_size: size_of::<crate::pjrt_types::PJRT_Executable_DeserializeAndLoad_Args>(
-                ),
-                extension_start: ptr::null_mut(),
-                client,
-                serialized_executable: code_bytes.as_ptr().cast(),
-                serialized_executable_size: code_bytes.len(),
-                loaded_executable: ptr::null_mut(),
-                overridden_serialized_compile_options: ptr::null(),
-                overridden_serialized_compile_options_size: 0,
-            };
-            assert!(
-                PJRT_Executable_DeserializeAndLoad(ptr::addr_of_mut!(deser_args).cast()).is_null()
-            );
-            assert!(!deser_args.loaded_executable.is_null());
-            libtpu_rs_executable_destroy(deser_args.loaded_executable);
             deser_args.serialized_executable = ptr::null();
             deser_args.serialized_executable_size = 0;
             deser_args.loaded_executable = ptr::null_mut();
@@ -1879,6 +1949,46 @@ mod tests {
                 PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(exec_vtable_args).cast()).is_null()
             );
             assert!(!out_buf_ptr.is_null());
+
+            // Test execute_device (portable single-device execution) and device_complete_events
+            let mut single_out_ptr: *mut PJRT_Buffer = ptr::null_mut();
+            let single_outputs_ptr: *mut *mut PJRT_Buffer = ptr::addr_of_mut!(single_out_ptr);
+            let mut complete_ev: *mut crate::pjrt_types::PJRT_Event = ptr::null_mut();
+            let mut exec_dev_args = crate::pjrt_types::PJRT_LoadedExecutable_Execute_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_LoadedExecutable_Execute_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: comp_args.executable,
+                options: ptr::null(),
+                argument_lists: ptr::addr_of!(dev0_inputs_ptr),
+                num_devices: 1,
+                num_args: 0,
+                output_lists: ptr::addr_of!(single_outputs_ptr),
+                device_complete_events: ptr::addr_of_mut!(complete_ev),
+                execute_device: (*buf_in).device_ptr,
+            };
+            assert!(
+                PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(exec_dev_args).cast()).is_null()
+            );
+            assert!(!single_out_ptr.is_null());
+            assert!(!complete_ev.is_null());
+            libtpu_rs_buffer_destroy(single_out_ptr);
+            drop(Box::from_raw(complete_ev));
+
+            // Also test device_complete_events on multi-device path
+            let mut multi_out_ptr: *mut PJRT_Buffer = ptr::null_mut();
+            let multi_outputs_ptr: *mut *mut PJRT_Buffer = ptr::addr_of_mut!(multi_out_ptr);
+            let mut multi_ev: *mut crate::pjrt_types::PJRT_Event = ptr::null_mut();
+            exec_vtable_args.output_lists = ptr::addr_of!(multi_outputs_ptr);
+            exec_vtable_args.device_complete_events = ptr::addr_of_mut!(multi_ev);
+            assert!(
+                PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(exec_vtable_args).cast()).is_null()
+            );
+            assert!(!multi_out_ptr.is_null());
+            assert!(!multi_ev.is_null());
+            libtpu_rs_buffer_destroy(multi_out_ptr);
+            drop(Box::from_raw(multi_ev));
+            exec_vtable_args.output_lists = ptr::addr_of!(dev0_outputs_ptr);
+            exec_vtable_args.device_complete_events = ptr::null_mut();
             exec_vtable_args.num_devices = 99;
             drop(Box::from_raw(PJRT_LoadedExecutable_Execute(
                 ptr::addr_of_mut!(exec_vtable_args).cast(),

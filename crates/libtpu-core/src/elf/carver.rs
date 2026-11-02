@@ -634,11 +634,7 @@ pub fn decompress_brotli_csr_table(compressed: &[u8]) -> LibTpuResult<Vec<u8>> {
 }
 
 #[cfg(test)]
-#[allow(
-    for_loops_over_fallibles,
-    clippy::indexing_slicing,
-    clippy::too_many_lines
-)]
+#[allow(clippy::indexing_slicing, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -727,7 +723,7 @@ mod tests {
         assert_eq!(carved[0].clone(), carved[0]);
         assert_ne!(format!("{:?}", carved[0]), "");
 
-        for decoded in decode_carved_file_descriptor(&carved[0]) {
+        if let Ok(decoded) = decode_carved_file_descriptor(&carved[0]) {
             assert_eq!(decoded.message_type.len(), 1);
             let rendered = render_proto_schema(&decoded);
             assert!(rendered.contains(r#"syntax = "proto3";"#));
@@ -736,7 +732,7 @@ mod tests {
             assert!(rendered.contains("enum PrimitiveType"));
             assert!(rendered.contains("message TileProto"));
         }
-        for decoded2 in decode_carved_file_descriptor(&carved[1]) {
+        if let Ok(decoded2) = decode_carved_file_descriptor(&carved[1]) {
             let rendered2 = render_proto_schema(&decoded2);
             assert!(rendered2.contains(r#"syntax = "proto2";"#));
             assert!(rendered2.contains("UnnamedEnum"));
@@ -997,7 +993,7 @@ mod tests {
         let raw_csr = b"asic_sw.tools.RegisterTranslatorData: vlc_pf_csrs";
         let mut compressor = brotli::CompressorReader::new(&raw_csr[..], 4096, 5, 20);
         let _ = compressor.read_to_end(&mut compressed_csr);
-        for decompressed in decompress_brotli_csr_table(&compressed_csr) {
+        if let Ok(decompressed) = decompress_brotli_csr_table(&compressed_csr) {
             assert_eq!(decompressed, raw_csr);
         }
         assert!(decompress_brotli_csr_table(&[0xFF, 0xFF, 0xFF]).is_err());
@@ -1060,7 +1056,7 @@ mod tests {
 
         let closure_ok = verify_descriptor_topological_closure(&carved_descs);
         assert!(closure_ok.is_ok());
-        for ordered in closure_ok {
+        if let Ok(ordered) = closure_ok {
             assert_eq!(ordered, vec!["xla/xla_data.proto", "xla/hlo.proto"]);
         }
         let mut broken_carved = carved_descs;

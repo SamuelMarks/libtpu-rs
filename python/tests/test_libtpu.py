@@ -72,20 +72,23 @@ def test_client_buffer_executable_and_profiler() -> None:
 
     executable = client.compile("module @add { stablehlo.add }", fmt="mlir")
     assert len(executable.fingerprint()) == 32
-    assert executable.flops() > 0.0
+    assert executable.flops() >= 4.0
     assert b"stablehlo.add" in executable.optimized_program_bytes()
     ser_bytes = executable.serialize()
-    deser_exec = client.deserialize_executable(ser_bytes)
-    out_buf = deser_exec.execute(0, [b0, b1])
-    assert out_buf.shape() == (4,)
-    assert out_buf.dtype() == libtpu.DataType.F32
-    assert out_buf.tile_count() == 1
-    assert out_buf.to_float_list() == [11.5, 22.5, 33.5, 44.5]
-    deser_exec.close()
+    with (
+        client.deserialize_executable(ser_bytes) as deser_exec,
+        client.copy_buffer_to_device(b0, 1) as copied_b0,
+        client.copy_buffer_to_device(b1, 1) as copied_b1,
+        deser_exec.execute(1, [copied_b0, copied_b1]) as out_buf,
+    ):
+        assert copied_b0.to_float_list() == [1.5, 2.5, 3.5, 4.5]
+        assert out_buf.shape() == (4,)
+        assert out_buf.dtype() == libtpu.DataType.F32
+        assert out_buf.tile_count() == 1
+        assert out_buf.to_float_list() == [11.5, 22.5, 33.5, 44.5]
 
-    copied_b0 = client.copy_buffer_to_device(b0, 1)
-    assert copied_b0.to_float_list() == [1.5, 2.5, 3.5, 4.5]
-    copied_b0.close()
+    with pytest.raises(libtpu.TpuError):
+        executable.execute(99, [b0, b1])
 
     multi_outs = executable.execute_multi(0, [b0, b1], num_outputs=1)
     assert len(multi_outs) == 1
@@ -141,7 +144,6 @@ def test_client_buffer_executable_and_profiler() -> None:
     s4_buf.close()
 
     out_buf.close()
-    out_buf.close()
     b0.close()
     b1.close()
     executable.close()
@@ -149,12 +151,14 @@ def test_client_buffer_executable_and_profiler() -> None:
     client.close()
     client.close()
 
-    prof = libtpu.TpuProfiler()
-    assert prof.start() is True
-    assert prof.stop() is True
-    data = prof.collect_data()
-    assert b"/device:TPU:0" in data
-    prof.close()
+    with libtpu.TpuClient() as ctx_client:
+        assert ctx_client.device_count() == 4
+
+    with libtpu.TpuProfiler() as prof:
+        assert prof.start() is True
+        assert prof.stop() is True
+        data = prof.collect_data()
+        assert b"/device:TPU:0" in data
     prof.close()
 
 
@@ -168,7 +172,9 @@ def test_sdk_submodules() -> None:
 
     metric = libtpu.sdk.get_metric("tpu.runtime.hbm.usage_bytes")
     assert "HBM" in metric.help()
+    assert metric.description() == metric.help()
     assert len(metric.data()) == 4
+    assert all(int(val) >= 0 for val in metric.data())
 
     with pytest.raises(libtpu.TpuError):
         tpumonitoring.get_metric("nonexistent.metric")
@@ -185,10 +191,16 @@ def test_sdk_submodules() -> None:
     summary = tpuz.get_core_state_summary(include_hlo_info=True)
     assert "READY" in summary
     assert tpuz.start_server(8466) == 8466
-    assert b"/device:TPU:0" in tpuz.collect_xspace()
+    with pytest.raises(ValueError):
+        tpuz.start_server(0)
+    with pytest.raises(ValueError):
+        tpuz.start_server(70000)
+    with pytest.raises(ValueError):
+        tpuz.collect_xspace(duration_ms=0)
+    assert b"/device:TPU:0" in tpuz.collect_xspace(duration_ms=50)
 
-    sdk_client = tpumonitoring.SdkClient()
-    sdk_client.close()
+    with tpumonitoring.SdkClient() as sdk_client:
+        assert "READY" in sdk_client.get_core_state_summary()
     sdk_client.close()
 
     triggered: list[int] = []

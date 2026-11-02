@@ -321,7 +321,7 @@ unsafe fn handle_buffer_get_memory_layout(
     args: &mut crate::pjrt_types::PJRT_Buffer_GetMemoryLayout_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `buffer` is null or a valid `PJRT_Buffer*`.
-    let (m2m_ptr, m2m_len, tile_dims_ptr, tile_sizes_ptr, num_tiles) =
+    let (m2m_ptr, m2m_len, tile_dims_ptr, tile_sizes_ptr, num_tiles, layout_type) =
         unsafe { args.buffer.as_ref() }.map_or(
             (
                 ptr::null(),
@@ -329,6 +329,7 @@ unsafe fn handle_buffer_get_memory_layout(
                 DEFAULT_TILE_DIMS.as_ptr(),
                 DEFAULT_TILE_DIM_SIZES.as_ptr(),
                 1_usize,
+                0_usize,
             ),
             |b| match &b.inner.shape.layout {
                 libtpu_core::types::MemoryLayout::Tiled { minor_to_major, .. } => (
@@ -337,6 +338,7 @@ unsafe fn handle_buffer_get_memory_layout(
                     b.tile_dims_flat.as_ptr(),
                     b.tile_dim_sizes.as_ptr(),
                     b.tile_dim_sizes.len(),
+                    0_usize,
                 ),
                 libtpu_core::types::MemoryLayout::Strides { byte_strides } => (
                     byte_strides.as_ptr(),
@@ -344,21 +346,21 @@ unsafe fn handle_buffer_get_memory_layout(
                     b.tile_dims_flat.as_ptr(),
                     b.tile_dim_sizes.as_ptr(),
                     b.tile_dim_sizes.len(),
+                    1_usize,
                 ),
             },
         );
-    args.layout_words = [
-        80,
-        0,
-        m2m_ptr as usize,
-        m2m_len,
-        tile_dims_ptr as usize,
-        tile_sizes_ptr as usize,
+    args.layout = crate::pjrt_types::PJRT_Buffer_MemoryLayout_Output {
+        struct_size: 80,
+        extension_start: ptr::null_mut(),
+        minor_to_major: m2m_ptr,
+        minor_to_major_size: m2m_len,
+        tile_dims: tile_dims_ptr,
+        tile_dim_sizes: tile_sizes_ptr,
         num_tiles,
-        0,
-        0,
-        0,
-    ];
+        layout_type,
+        reserved: [0, 0],
+    };
     Ok(())
 }
 
@@ -845,16 +847,14 @@ unsafe fn handle_buffer_copy_to_memory(
     // SAFETY: `buffer` and `dst_memory` are null or valid pointers.
     let (buf_opt, mem_opt) = unsafe { (args.buffer.as_ref(), args.dst_memory.as_ref()) };
     args.dst_buffer = match (buf_opt, mem_opt) {
-        (Some(b), Some(m)) => b
-            .inner
-            .copy_to_device(b.inner.device_id, m.inner.id)
-            .map_or(ptr::null_mut(), |copied| {
-                Box::into_raw(Box::new(PJRT_Buffer::new(
-                    copied,
-                    b.device_ptr,
-                    args.dst_memory,
-                )))
-            }),
+        (Some(b), Some(m)) => {
+            let copied = b.inner.copy_to_device(b.inner.device_id, m.inner.id)?;
+            Box::into_raw(Box::new(PJRT_Buffer::new(
+                copied,
+                b.device_ptr,
+                args.dst_memory,
+            )))
+        }
         _ => ptr::null_mut(),
     };
     Ok(())
@@ -897,14 +897,24 @@ unsafe fn handle_buffer_copy_raw_to_host(
     if !any_null(&[args.buffer as usize, args.dst as usize]) {
         // SAFETY: `args.buffer` is non-null.
         let b = unsafe { &*args.buffer };
-        let bytes = b.inner.to_host_bytes().unwrap_or_default();
-        let off = usize::try_from(args.offset.max(0)).unwrap_or(0);
-        let req = usize::try_from(args.transfer_size.max(0)).unwrap_or(0);
-        let slice = bytes.get(off..).unwrap_or(&[]);
-        let n = req.min(slice.len());
-        // SAFETY: Caller's `dst` has capacity for at least `n` bytes.
+        let bytes = b.inner.to_host_bytes()?;
+        let off = usize::try_from(args.offset).map_err(|_| LibTpuError::BufferSizeMismatch {
+            expected_bytes: bytes.len(),
+            actual_bytes: usize::MAX,
+        })?;
+        let req =
+            usize::try_from(args.transfer_size).map_err(|_| LibTpuError::BufferSizeMismatch {
+                expected_bytes: bytes.len(),
+                actual_bytes: usize::MAX,
+            })?;
+        let end = off.saturating_add(req);
+        let slice = bytes.get(off..end).ok_or(LibTpuError::BufferSizeMismatch {
+            expected_bytes: bytes.len(),
+            actual_bytes: end,
+        })?;
+        // SAFETY: Caller's `dst` has capacity for at least `req` bytes.
         unsafe {
-            ptr::copy_nonoverlapping(slice.as_ptr(), args.dst.cast::<u8>(), n);
+            ptr::copy_nonoverlapping(slice.as_ptr(), args.dst.cast::<u8>(), slice.len());
         }
     }
     args.event = Box::into_raw(Box::new(crate::pjrt_types::PJRT_Event {
@@ -935,6 +945,38 @@ pub unsafe extern "C" fn PJRT_Buffer_CopyRawToHost(
     }
 }
 
+/// Callback invoked when a [`PJRT_Buffer_CopyRawToHostFuture`] host destination pointer becomes ready.
+///
+/// # Arguments
+///
+/// * `callback_data` - Opaque transfer state pointer (or null).
+/// * `_error_code` - PJRT status code (`0` for OK).
+/// * `_error_message` - Optional error message string pointer.
+/// * `_error_message_size` - Length of `_error_message` in bytes.
+/// * `dst` - Host destination buffer pointer to populate.
+///
+/// # Safety
+///
+/// `callback_data` must be null or allocated by [`PJRT_Buffer_CopyRawToHostFuture`], and `dst`
+/// must be null or point to at least `transfer_size` writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pjrt_copy_raw_to_host_future_ready_cb(
+    callback_data: *mut std::ffi::c_void,
+    _error_code: i32,
+    _error_message: *const std::ffi::c_char,
+    _error_message_size: usize,
+    dst: *mut std::ffi::c_void,
+) {
+    if !any_null(&[callback_data as usize, dst as usize]) {
+        // SAFETY: `callback_data` was allocated via `Box::into_raw(Box::new(Vec<u8>))`.
+        let payload = unsafe { Box::from_raw(callback_data.cast::<Vec<u8>>()) };
+        // SAFETY: Caller's `dst` has capacity for `payload.len()` bytes.
+        unsafe {
+            ptr::copy_nonoverlapping(payload.as_ptr(), dst.cast::<u8>(), payload.len());
+        }
+    }
+}
+
 /// Populates [`crate::pjrt_types::PJRT_Buffer_CopyRawToHostFuture_Args`].
 ///
 /// # Arguments
@@ -948,7 +990,17 @@ unsafe fn handle_buffer_copy_raw_to_host_future(
     args: &mut crate::pjrt_types::PJRT_Buffer_CopyRawToHostFuture_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `buffer` is null or a valid `PJRT_Buffer*`.
-    let _ = unsafe { args.buffer.as_ref() }.map(|b| b.inner.shape.unpadded_byte_size().0);
+    if let Some(b) = unsafe { args.buffer.as_ref() } {
+        let bytes = b.inner.to_host_bytes().unwrap_or_default();
+        let off = usize::try_from(args.offset.max(0)).unwrap_or(0);
+        let req = usize::try_from(args.transfer_size.max(0)).unwrap_or(0);
+        let slice = bytes
+            .get(off..off.saturating_add(req).min(bytes.len()))
+            .unwrap_or(&[]);
+        args.callback_data = Box::into_raw(Box::new(slice.to_vec())).cast();
+        args.future_ready_callback =
+            pjrt_copy_raw_to_host_future_ready_cb as *const std::ffi::c_void;
+    }
     args.event = Box::into_raw(Box::new(crate::pjrt_types::PJRT_Event {
         inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
     }));
@@ -977,6 +1029,32 @@ pub unsafe extern "C" fn PJRT_Buffer_CopyRawToHostFuture(
     }
 }
 
+/// Control-dependency completion callback for [`PJRT_Buffer_DonateWithControlDependency`].
+///
+/// # Arguments
+///
+/// * `callback_data` - Opaque donated [`PJRT_Buffer`] pointer (or null).
+/// * `_error_code` - Status code (`0` for OK).
+/// * `_error_message` - Optional error message string pointer.
+/// * `_error_message_size` - Length of `_error_message` in bytes.
+///
+/// # Safety
+///
+/// `callback_data` must be null or a valid [`PJRT_Buffer`] pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn pjrt_donate_control_dependency_cb(
+    callback_data: *mut std::ffi::c_void,
+    _error_code: i32,
+    _error_message: *const std::ffi::c_char,
+    _error_message_size: usize,
+) {
+    if !callback_data.is_null() {
+        // SAFETY: `callback_data` is a valid `PJRT_Buffer*`.
+        let buf = unsafe { &*callback_data.cast::<PJRT_Buffer>() };
+        let _ = buf.inner.ready_event();
+    }
+}
+
 /// Populates [`crate::pjrt_types::PJRT_Buffer_DonateWithControlDependency_Args`].
 ///
 /// # Arguments
@@ -989,6 +1067,13 @@ pub unsafe extern "C" fn PJRT_Buffer_CopyRawToHostFuture(
 unsafe fn handle_buffer_donate_with_control_dependency(
     args: &mut crate::pjrt_types::PJRT_Buffer_DonateWithControlDependency_Args,
 ) -> Result<(), LibTpuError> {
+    // SAFETY: `args.buffer` is null or a valid `PJRT_Buffer*`.
+    if let Some(buf_ref) = unsafe { args.buffer.as_ref() } {
+        buf_ref.inner.inc_external_ref();
+        buf_ref.inner.dec_external_ref();
+        args.callback_data = args.buffer.cast();
+        args.dependency_callback = pjrt_donate_control_dependency_cb as *const std::ffi::c_void;
+    }
     args.out_buffer = args.buffer;
     Ok(())
 }
@@ -1029,21 +1114,19 @@ unsafe fn handle_buffer_bitcast(
 ) -> Result<(), LibTpuError> {
     // SAFETY: `args.buffer` is null or a valid `PJRT_Buffer*`.
     if let Some(buf_ref) = unsafe { args.buffer.as_ref() } {
-        let elem_type =
-            ElementType::from_raw(args.element_type).unwrap_or(buf_ref.inner.shape.element_type);
+        let elem_type = ElementType::from_raw(args.element_type)?;
         let dims = if !args.dims.is_null() {
             // SAFETY: `args.dims` points to `args.num_dims` `i64` dimensions.
             unsafe { std::slice::from_raw_parts(args.dims, args.num_dims).to_vec() }
         } else {
             buf_ref.inner.shape.dims.clone()
         };
-        if let Ok(bitcast_core) = buf_ref.inner.bitcast(elem_type, dims) {
-            args.out_buffer = Box::into_raw(Box::new(PJRT_Buffer::new(
-                bitcast_core,
-                buf_ref.device_ptr,
-                buf_ref.memory_ptr,
-            )));
-        }
+        let bitcast_core = buf_ref.inner.bitcast(elem_type, dims)?;
+        args.out_buffer = Box::into_raw(Box::new(PJRT_Buffer::new(
+            bitcast_core,
+            buf_ref.device_ptr,
+            buf_ref.memory_ptr,
+        )));
     }
     Ok(())
 }

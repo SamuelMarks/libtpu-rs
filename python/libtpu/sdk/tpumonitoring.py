@@ -196,6 +196,14 @@ class LibtpuSdkMetric:
         """
         return self._description
 
+    def description(self) -> str:
+        """Returns the human-readable description of this metric (`description()`).
+
+        Returns:
+            Metric description string.
+        """
+        return self._description
+
     def data(self) -> list[str]:
         """Returns the metric value strings across TPU cores.
 
@@ -230,13 +238,20 @@ def _check_sdk_error(cdll: ctypes.CDLL, err_ptr: int | None) -> None:
         raise libtpu.TpuError(code, text)
 
 
+_SDK_CDLL_CACHE: dict[str, ctypes.CDLL] = {}
+
+
 def _bind_sdk_cdll() -> ctypes.CDLL:
     """Loads `libtpu` and configures the `LibtpuSdk_*` C function prototypes.
 
     Returns:
         Configured `ctypes.CDLL` handle.
     """
-    cdll = ctypes.CDLL(libtpu.get_library_path())
+    lib_path = libtpu.get_library_path()
+    cached = _SDK_CDLL_CACHE.get(lib_path)
+    if cached is not None:
+        return cached
+    cdll = ctypes.CDLL(lib_path)
 
     cdll.LibtpuSdk_Error_GetMessage.argtypes = [ctypes.POINTER(_ErrorGetMessageArgs)]
     cdll.LibtpuSdk_Error_GetMessage.restype = None
@@ -285,6 +300,7 @@ def _bind_sdk_cdll() -> ctypes.CDLL:
     cdll.LibtpuSdk_RuntimeStatus_Destroy.argtypes = [ctypes.POINTER(_RuntimeStatusDestroyArgs)]
     cdll.LibtpuSdk_RuntimeStatus_Destroy.restype = ctypes.c_void_p
 
+    _SDK_CDLL_CACHE[lib_path] = cdll
     return cdll
 
 
@@ -360,6 +376,18 @@ class SdkClient:
             err = self._cdll.LibtpuSdk_Client_Destroy(ctypes.byref(cli_args))
             self._handle = 0
             _check_sdk_error(self._cdll, err)
+
+    def __enter__(self) -> SdkClient:
+        """Enters a context manager block returning `self`."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `SdkClient` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+        """
+        self.close()
 
 
 def list_supported_metrics() -> list[str]:

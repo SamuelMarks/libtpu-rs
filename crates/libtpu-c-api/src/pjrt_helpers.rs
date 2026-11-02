@@ -328,6 +328,51 @@ pub(crate) fn box_default_topology_description() -> *mut PJRT_TopologyDescriptio
     box_topology_description(libtpu_core::pjrt::PjrtCoreTopology::new(spec))
 }
 
+/// Strictly validates `raw_element_type` and `dims_ptr` and allocates a [`PJRT_Buffer`] on `client_ptr`, `device_ptr`, and `memory_ptr`.
+///
+/// # Arguments
+///
+/// * `client_ptr` - Optional owning `PJRT_Client*`.
+/// * `device_ptr` - Optional target `PJRT_Device*`.
+/// * `memory_ptr` - Optional target `PJRT_Memory*`.
+/// * `raw_element_type` - Raw `PJRT_Buffer_Type` (`i32`).
+/// * `dims_ptr` - Optional dimensions array pointer.
+/// * `num_dims` - Number of dimensions.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError`] if `raw_element_type` or `dims_ptr` is invalid.
+///
+/// # Safety
+///
+/// `client_ptr`, `device_ptr`, `memory_ptr`, and `dims_ptr` must be null or valid pointers.
+#[inline]
+pub unsafe fn alloc_shaped_pjrt_buffer_checked(
+    client_ptr: *mut PJRT_Client,
+    device_ptr: *mut PJRT_Device,
+    memory_ptr: *mut PJRT_Memory,
+    raw_element_type: i32,
+    dims_ptr: *const i64,
+    num_dims: usize,
+) -> Result<*mut PJRT_Buffer, LibTpuError> {
+    let elem = ElementType::from_raw(raw_element_type)?;
+    let dims = if dims_ptr.is_null() {
+        vec![4]
+    } else {
+        // SAFETY: `dims_ptr` is non-null and points to `num_dims` `i64` elements.
+        unsafe { std::slice::from_raw_parts(dims_ptr, num_dims).to_vec() }
+    };
+    let _shape = Shape::new(elem, dims, None, None)?;
+    Ok(alloc_shaped_pjrt_buffer(
+        client_ptr,
+        device_ptr,
+        memory_ptr,
+        raw_element_type,
+        dims_ptr,
+        num_dims,
+    ))
+}
+
 /// Allocates a [`PJRT_Buffer`] on `client_ptr`, `device_ptr`, and `memory_ptr`.
 ///
 /// # Arguments

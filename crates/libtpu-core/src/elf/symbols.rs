@@ -540,11 +540,7 @@ pub(super) fn build_synthetic_elf64() -> Vec<u8> {
 }
 
 #[cfg(test)]
-#[allow(
-    for_loops_over_fallibles,
-    clippy::indexing_slicing,
-    clippy::too_many_lines
-)]
+#[allow(clippy::indexing_slicing, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -554,11 +550,11 @@ mod tests {
         let elf_bytes = build_synthetic_elf64();
         let report_res = inspect_binary_symbols(&elf_bytes);
         assert!(report_res.is_ok());
-        for report in report_res {
+        if let Ok(report) = report_res {
             assert_eq!(report.format, BinaryFormatKind::Elf);
             assert!(report.section_names.iter().any(|s| s == ".dynsym"));
             assert_eq!(report.exported_symbols.len(), 2);
-            for sym in report.exported_symbols.last() {
+            if let Some(sym) = report.exported_symbols.last() {
                 assert_eq!(sym.name, "GetPjrtApi");
                 assert_eq!(sym.address, 0x1000);
                 assert_eq!(sym.size, 32);
@@ -576,13 +572,13 @@ mod tests {
         macho_buf[0..4].copy_from_slice(&0xfeed_facf_u32.to_le_bytes());
         macho_buf[4..8].copy_from_slice(&0x0100_0007_u32.to_le_bytes());
         macho_buf[12..16].copy_from_slice(&6_u32.to_le_bytes());
-        for macho_rep in inspect_binary_symbols(&macho_buf) {
+        if let Ok(macho_rep) = inspect_binary_symbols(&macho_buf) {
             assert_eq!(macho_rep.format, BinaryFormatKind::MachO);
         }
 
         let obj_res = inspect_object_crate_sections(&elf_bytes);
         assert!(obj_res.is_ok());
-        for obj_rep in obj_res {
+        if let Ok(obj_rep) = obj_res {
             assert!(obj_rep.is_64);
             assert!(obj_rep.is_little_endian);
             assert!(obj_rep.section_names.iter().any(|s| s == ".dynsym"));
@@ -594,7 +590,7 @@ mod tests {
             );
             assert_eq!(obj_rep.clone(), obj_rep);
             assert_ne!(format!("{obj_rep:?}"), "");
-            for sec in obj_rep.sections.first() {
+            if let Some(sec) = obj_rep.sections.first() {
                 assert_eq!(sec.clone(), *sec);
                 assert_ne!(format!("{sec:?}"), "");
             }
@@ -622,7 +618,7 @@ mod tests {
 
         let fdes = parse_eh_frame_fde_ranges(&eh, 0x09CE_E1B8);
         assert!(fdes.is_ok());
-        for list in fdes {
+        if let Ok(list) = fdes {
             assert_eq!(list.len(), 1);
             assert_eq!(list[0].initial_address, 0x0B4F_9B90);
             assert_eq!(list[0].len, 32);

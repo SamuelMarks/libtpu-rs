@@ -113,17 +113,14 @@ impl CollectiveReductionOp {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::InvalidArgument`] if `raw` is outside `0..=3`.
-    pub fn from_raw(raw: i32) -> LibTpuResult<Self> {
+    /// Returns [`LibTpuError::InvalidReductionOp`] if `raw` is outside `0..=3`.
+    pub const fn from_raw(raw: i32) -> LibTpuResult<Self> {
         match raw {
             0 => Ok(Self::Sum),
             1 => Ok(Self::Product),
             2 => Ok(Self::Min),
             3 => Ok(Self::Max),
-            _ => Err(LibTpuError::InvalidArgument {
-                parameter: "reduction_op",
-                reason: format!("Unknown CollectiveReductionOp discriminant {raw}"),
-            }),
+            _ => Err(LibTpuError::InvalidReductionOp { raw_op: raw }),
         }
     }
 
@@ -423,11 +420,7 @@ impl MemoryKind {
 }
 
 #[cfg(test)]
-#[allow(
-    for_loops_over_fallibles,
-    clippy::cognitive_complexity,
-    clippy::too_many_lines
-)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -456,7 +449,7 @@ mod tests {
         for raw in 0..=3 {
             let op = CollectiveReductionOp::from_raw(raw);
             assert!(op.is_ok());
-            for o in op {
+            if let Ok(o) = op {
                 assert_eq!(o.as_raw(), raw);
                 assert_ne!(o.to_string(), "");
                 assert_ne!(format!("{o:?}"), "");
@@ -467,7 +460,7 @@ mod tests {
         for hcmd_raw in 0..=8_i32 {
             let parsed = HostCommandOpcode::try_from(hcmd_raw);
             assert!(parsed.is_ok());
-            for op in parsed {
+            if let Ok(op) = parsed {
                 assert_eq!(i32::from(op), hcmd_raw);
                 assert_ne!(op.to_string(), "");
                 assert_ne!(format!("{op:?}"), "");
@@ -478,7 +471,7 @@ mod tests {
         for raw_dir in 0..=3_u32 {
             let dir = DmaDirection::try_from(raw_dir);
             assert!(dir.is_ok());
-            for d in dir {
+            if let Ok(d) = dir {
                 assert_eq!(u32::from(d), raw_dir);
                 assert_ne!(d.to_string(), "");
                 assert_ne!(format!("{d:?}"), "");

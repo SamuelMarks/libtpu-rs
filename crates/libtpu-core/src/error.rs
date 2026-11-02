@@ -255,6 +255,28 @@ impl From<std::io::Error> for IoErrorWrapper {
 #[display("POSIX syscall error: {_0}")]
 pub struct RustixErrnoWrapper(#[error(not(source))] pub rustix::io::Errno);
 
+/// Wrapper struct for `winnow::error::ContextError` combinator parse errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error)]
+#[display("Winnow parser error: {_0}")]
+pub struct WinnowErrorWrapper(#[error(not(source))] pub String);
+
+impl From<winnow::error::ContextError> for WinnowErrorWrapper {
+    fn from(err: winnow::error::ContextError) -> Self {
+        Self(err.to_string())
+    }
+}
+
+/// Wrapper struct for `serde_json::Error` JSON serialization/deserialization errors to enable `From` conversion into [`LibTpuError`].
+#[derive(Debug, Clone, PartialEq, Eq, Display, Error)]
+#[display("JSON serialization error: {_0}")]
+pub struct SerdeJsonErrorWrapper(#[error(not(source))] pub String);
+
+impl From<serde_json::Error> for SerdeJsonErrorWrapper {
+    fn from(err: serde_json::Error) -> Self {
+        Self(err.to_string())
+    }
+}
+
 /// Structured diagnostic payload attached to a [`LibTpuError`] for `PJRT_Error_ForEachPayload`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorPayload {
@@ -604,11 +626,54 @@ pub enum LibTpuError {
     },
 
     /// Parsing of an XLA `HloModuleProto` or textual HLO module failed.
-    #[display("HLO parse error: {reason}")]
+    #[display("HLO parse error at {line}:{column}: {reason}")]
     #[from(ignore)]
     HloParseError {
+        /// 1-based line number where the parse error occurred.
+        line: usize,
+        /// 1-based column number where the parse error occurred.
+        column: usize,
         /// Detailed HLO parser diagnostic.
         reason: String,
+    },
+
+    /// Requested compilation phase name is invalid (`InvalidCompilationPhase`).
+    #[display("Invalid compilation phase '{phase_name}'")]
+    #[from(ignore)]
+    InvalidCompilationPhase {
+        /// Invalid compilation phase name.
+        phase_name: String,
+    },
+
+    /// A named parameter failed UTF-8 validation with an underlying [`Utf8ErrorWrapper`] (`InvalidUtf8Argument`).
+    #[display("Parameter '{parameter}' is not valid UTF-8: {source}")]
+    #[from(ignore)]
+    InvalidUtf8Argument {
+        /// Name of the parameter containing invalid UTF-8 bytes.
+        parameter: &'static str,
+        /// Underlying UTF-8 validation error wrapper.
+        #[error(not(source))]
+        source: Utf8ErrorWrapper,
+    },
+
+    /// Operating system `eventfd` or pipe creation/signaling failed (`EventFdError`).
+    #[display("EventFd error during {operation} (errno={errno}): {message}")]
+    #[from(ignore)]
+    EventFdError {
+        /// Name of the `eventfd` syscall or operation.
+        operation: &'static str,
+        /// OS error number.
+        errno: i32,
+        /// Human-readable OS error message.
+        message: String,
+    },
+
+    /// Checked integer arithmetic or conversion overflowed (`IntegerOverflow`).
+    #[display("Integer overflow in {context}")]
+    #[from(ignore)]
+    IntegerOverflow {
+        /// Context where the integer overflow occurred.
+        context: &'static str,
     },
 
     /// Parsing of an MLIR `StableHLO` module failed.
@@ -1073,6 +1138,118 @@ pub enum LibTpuError {
         /// Failure reason string.
         reason: String,
     },
+
+    /// Register slot index exceeded physical 8-bit VLIW bundle encoding capacity (`RegisterIndexOverflow`).
+    #[display("Register slot index {slot_index} exceeds maximum encoding capacity {max_registers}")]
+    #[from(ignore)]
+    RegisterIndexOverflow {
+        /// Requested logical or physical register slot index.
+        slot_index: usize,
+        /// Maximum representable register index.
+        max_registers: usize,
+    },
+
+    /// Tensor dimension rank exceeded maximum supported hardware rank (`InvalidDimensionCount`).
+    #[display("Invalid dimension count {num_dims}: maximum supported rank is {max_dims}")]
+    #[from(ignore)]
+    InvalidDimensionCount {
+        /// Number of dimensions provided.
+        num_dims: usize,
+        /// Maximum supported tensor rank.
+        max_dims: usize,
+    },
+
+    /// Host buffer byte size did not match the required tensor byte size (`BufferSizeMismatch`).
+    #[display("Buffer size mismatch: expected {expected_bytes} bytes, got {actual_bytes} bytes")]
+    #[from(ignore)]
+    BufferSizeMismatch {
+        /// Expected byte count.
+        expected_bytes: usize,
+        /// Actual byte count provided by caller.
+        actual_bytes: usize,
+    },
+
+    /// Requested compilation phase name is not recognized by the phased compiler (`UnknownCompilationPhase`).
+    #[display("Unknown compilation phase '{phase_name}'")]
+    #[from(ignore)]
+    UnknownCompilationPhase {
+        /// Unrecognized compilation phase identifier.
+        phase_name: String,
+    },
+
+    /// Requested Megascale transport type discriminant is invalid (`InvalidTransportType`).
+    #[display("Invalid Megascale transport type discriminant: {transport_type}")]
+    #[from(ignore)]
+    InvalidTransportType {
+        /// Raw transport type integer value.
+        transport_type: usize,
+    },
+
+    /// Requested debug or telemetry callback identifier is invalid or unregistered (`InvalidCallbackId`).
+    #[display("Invalid or unregistered callback ID: {callback_id}")]
+    #[from(ignore)]
+    InvalidCallbackId {
+        /// Raw 64-bit signed callback identifier.
+        callback_id: i64,
+    },
+
+    /// A `winnow` parser combinator failed while lexing or parsing HLO / `StableHLO` text.
+    #[display("{_0}")]
+    WinnowParseFailed(#[error(not(source))] WinnowErrorWrapper),
+
+    /// Lexing of a textual HLO or `StableHLO` MLIR token stream failed (`HloLexerError`).
+    #[display("HLO lexer error at byte offset {offset} ('{snippet}'): {reason}")]
+    #[from(ignore)]
+    HloLexerError {
+        /// Zero-based byte offset where lexing failed.
+        offset: usize,
+        /// Source text snippet around the failure offset.
+        snippet: String,
+        /// Lexer diagnostic explanation.
+        reason: String,
+    },
+
+    /// Raw instruction opcode byte or integer did not match a valid `TpuOpCode` (`InvalidOpcode`).
+    #[display("Invalid TPU instruction opcode: {raw_opcode:#x}")]
+    #[from(ignore)]
+    InvalidOpcode {
+        /// Raw numeric opcode discriminant.
+        raw_opcode: u16,
+    },
+
+    /// Raw collective reduction operation discriminant did not match `0..=3` (`InvalidReductionOp`).
+    #[display("Invalid collective reduction operation discriminant: {raw_op}")]
+    #[from(ignore)]
+    InvalidReductionOp {
+        /// Raw reduction operation integer code.
+        raw_op: i32,
+    },
+
+    /// JSON serialization or deserialization failed for a protobuf or manifest structure (`JsonSerializationError`).
+    #[display("JSON serialization failed for '{target}': {reason}")]
+    #[from(ignore)]
+    JsonSerializationError {
+        /// Name of the target message or structure.
+        target: &'static str,
+        /// Serialization or deserialization failure reason.
+        reason: String,
+    },
+
+    /// A `serde_json` operation failed (`JsonSerializationFailed`).
+    #[display("{_0}")]
+    JsonSerializationFailed(#[error(not(source))] SerdeJsonErrorWrapper),
+}
+
+impl From<serde_json::Error> for LibTpuError {
+    fn from(err: serde_json::Error) -> Self {
+        Self::JsonSerializationFailed(SerdeJsonErrorWrapper::from(err))
+    }
+}
+
+impl From<winnow::error::ContextError> for LibTpuError {
+    fn from(err: winnow::error::ContextError) -> Self {
+        Self::WinnowParseFailed(WinnowErrorWrapper::from(err))
+    }
 }
 
 impl From<prost::DecodeError> for LibTpuError {
@@ -1138,6 +1315,7 @@ impl From<rustix::io::Errno> for LibTpuError {
 impl LibTpuError {
     /// Maps this [`LibTpuError`] to its corresponding [`PjrtErrorCode`].
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub const fn error_code(&self) -> PjrtErrorCode {
         match self {
             Self::NullPointer { .. }
@@ -1161,6 +1339,8 @@ impl LibTpuError {
             | Self::CppDemangleFailed(_)
             | Self::BinaryFormatError { .. }
             | Self::HloParseError { .. }
+            | Self::InvalidCompilationPhase { .. }
+            | Self::InvalidUtf8Argument { .. }
             | Self::StableHloParseError { .. }
             | Self::UnsupportedGeneration { .. }
             | Self::BufferShapeMismatch { .. }
@@ -1172,7 +1352,17 @@ impl LibTpuError {
             | Self::ElfInspectionError { .. }
             | Self::BrotliDecompressionError { .. }
             | Self::Utf8ConversionFailed(_)
-            | Self::Utf8ConversionError { .. } => PjrtErrorCode::InvalidArgument,
+            | Self::Utf8ConversionError { .. }
+            | Self::InvalidDimensionCount { .. }
+            | Self::BufferSizeMismatch { .. }
+            | Self::UnknownCompilationPhase { .. }
+            | Self::InvalidTransportType { .. }
+            | Self::WinnowParseFailed(_)
+            | Self::HloLexerError { .. }
+            | Self::InvalidOpcode { .. }
+            | Self::InvalidReductionOp { .. }
+            | Self::JsonSerializationError { .. }
+            | Self::JsonSerializationFailed(_) => PjrtErrorCode::InvalidArgument,
             Self::UnsupportedApiVersion { .. } | Self::UnimplementedOperation { .. } => {
                 PjrtErrorCode::Unimplemented
             }
@@ -1184,6 +1374,7 @@ impl LibTpuError {
             | Self::EmbeddingTableNotFound { .. }
             | Self::MetricNotFound { .. }
             | Self::CallbackNotFound { .. }
+            | Self::InvalidCallbackId { .. }
             | Self::TransformNotFound { .. }
             | Self::ExtensionNotFound { .. } => PjrtErrorCode::NotFound,
             Self::DeviceNotAddressable { .. }
@@ -1198,8 +1389,10 @@ impl LibTpuError {
             Self::OutOfMemory { .. }
             | Self::OutOfDeviceMemory { .. }
             | Self::RegisterAllocationFailed { .. }
+            | Self::RegisterIndexOverflow { .. }
             | Self::DmaMappingFailed { .. } => PjrtErrorCode::ResourceExhausted,
             Self::NumericOverflow { .. }
+            | Self::IntegerOverflow { .. }
             | Self::StreamOverflow { .. }
             | Self::MmioOutOfBounds { .. } => PjrtErrorCode::OutOfRange,
             Self::MegascaleBarrierTimeout { .. } | Self::SyncFlagTimeout { .. } => {
@@ -1224,6 +1417,7 @@ impl LibTpuError {
             | Self::EventFailed { .. }
             | Self::LockPoisoned { .. } => PjrtErrorCode::Internal,
             Self::HardwareIoError { .. }
+            | Self::EventFdError { .. }
             | Self::SysfsDiscoveryFailed { .. }
             | Self::IoctlFailed { .. }
             | Self::VfioIommuError { .. }
@@ -1269,6 +1463,36 @@ impl LibTpuError {
         LibtpuSdkErrorCode::from_pjrt_code(self.error_code())
     }
 
+    /// Returns the raw 32-bit signed C status code (`PJRT_Error_Code` / `TpuStatus` discriminant).
+    #[must_use]
+    pub const fn to_c_status_code(&self) -> i32 {
+        self.error_code().as_raw()
+    }
+
+    /// Returns the high-level semantic subsystem category for this [`LibTpuError`].
+    #[must_use]
+    pub const fn category(&self) -> &'static str {
+        match self.error_code() {
+            PjrtErrorCode::InvalidArgument | PjrtErrorCode::OutOfRange => "validation",
+            PjrtErrorCode::NotFound => "lookup",
+            PjrtErrorCode::FailedPrecondition | PjrtErrorCode::AlreadyExists => "state",
+            PjrtErrorCode::ResourceExhausted => "memory",
+            PjrtErrorCode::DeadlineExceeded => "timeout",
+            PjrtErrorCode::Unavailable => "io",
+            PjrtErrorCode::Unimplemented => "abi",
+            _ => "runtime",
+        }
+    }
+
+    /// Returns `true` if the operation that produced this [`LibTpuError`] is transient and retriable.
+    #[must_use]
+    pub const fn is_retriable(&self) -> bool {
+        matches!(
+            self.error_code(),
+            PjrtErrorCode::Unavailable | PjrtErrorCode::DeadlineExceeded
+        )
+    }
+
     /// Returns structured diagnostic [`ErrorPayload`] entries for `PJRT_Error_ForEachPayload`.
     #[must_use]
     pub fn payloads(&self) -> Vec<ErrorPayload> {
@@ -1308,7 +1532,7 @@ impl LibTpuError {
                 ));
             }
             Self::CompilationFailed { reason }
-            | Self::HloParseError { reason }
+            | Self::HloParseError { reason, .. }
             | Self::StableHloParseError { reason } => {
                 out.push(ErrorPayload::new(
                     String::from("type.googleapis.com/tensorflow.tpu.CompilationResultProto"),
@@ -1376,13 +1600,156 @@ impl LibTpuError {
             Self::AsyncTransferError { .. } | Self::EventError { .. } | Self::EventFailed { .. }
         )
     }
+
+    /// Constructs a [`LibTpuError::DeviceNotFound`] from a strongly-typed [`crate::types::DeviceId`].
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Strongly-typed missing device identifier.
+    #[must_use]
+    pub const fn device_not_found(device_id: crate::types::DeviceId) -> Self {
+        Self::DeviceNotFound {
+            device_id: device_id.0,
+        }
+    }
+
+    /// Constructs a [`LibTpuError::MemorySpaceNotFound`] from a strongly-typed [`crate::types::MemorySpaceId`].
+    ///
+    /// # Arguments
+    ///
+    /// * `memory_id` - Strongly-typed missing memory space identifier.
+    #[must_use]
+    pub const fn memory_space_not_found(memory_id: crate::types::MemorySpaceId) -> Self {
+        Self::MemorySpaceNotFound {
+            memory_id: memory_id.0,
+        }
+    }
+
+    /// Constructs a [`LibTpuError::InvalidDeviceAddress`] from a strongly-typed [`crate::types::DeviceAddress`].
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - Strongly-typed invalid HBM device address.
+    #[must_use]
+    pub const fn invalid_device_address(address: crate::types::DeviceAddress) -> Self {
+        Self::InvalidDeviceAddress { address: address.0 }
+    }
+
+    /// Constructs a [`LibTpuError::OutOfMemory`] from strongly-typed [`crate::types::ByteSize`] quantities.
+    ///
+    /// # Arguments
+    ///
+    /// * `requested` - Requested allocation byte size.
+    /// * `available` - Available device memory byte size.
+    #[must_use]
+    pub const fn out_of_memory(
+        requested: crate::types::ByteSize,
+        available: crate::types::ByteSize,
+    ) -> Self {
+        Self::OutOfMemory {
+            requested_bytes: requested.0,
+            available_bytes: available.0,
+        }
+    }
+
+    /// Constructs a [`LibTpuError::BufferDeleted`] from a strongly-typed [`crate::types::BufferId`].
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer_id` - Strongly-typed deleted buffer identifier.
+    #[must_use]
+    pub const fn buffer_deleted(buffer_id: crate::types::BufferId) -> Self {
+        Self::BufferDeleted {
+            buffer_id: buffer_id.0,
+        }
+    }
+
+    /// Constructs a [`LibTpuError::AliasAlreadyFulfilled`] from a strongly-typed [`crate::types::BufferId`].
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer_id` - Strongly-typed alias buffer identifier.
+    #[must_use]
+    pub const fn alias_already_fulfilled(buffer_id: crate::types::BufferId) -> Self {
+        Self::AliasAlreadyFulfilled {
+            buffer_id: buffer_id.0,
+        }
+    }
+
+    /// Constructs a [`LibTpuError::ExecutableDeleted`] from a strongly-typed [`crate::types::ExecutableId`].
+    ///
+    /// # Arguments
+    ///
+    /// * `executable_id` - Strongly-typed deleted executable identifier.
+    #[must_use]
+    pub const fn executable_deleted(executable_id: crate::types::ExecutableId) -> Self {
+        Self::ExecutableDeleted {
+            executable_id: executable_id.0,
+        }
+    }
+
+    /// Constructs a [`LibTpuError::HostNotFound`] from a strongly-typed [`crate::types::HostId`].
+    ///
+    /// # Arguments
+    ///
+    /// * `host_id` - Strongly-typed missing host identifier.
+    #[must_use]
+    pub const fn host_not_found(host_id: crate::types::HostId) -> Self {
+        Self::HostNotFound { host_id: host_id.0 }
+    }
+
+    /// Constructs a [`LibTpuError::EventError`] from a strongly-typed [`crate::types::EventId`].
+    ///
+    /// # Arguments
+    ///
+    /// * `event_id` - Strongly-typed failed event identifier.
+    /// * `reason` - Failure reason message.
+    #[must_use]
+    pub const fn event_error(event_id: crate::types::EventId, reason: String) -> Self {
+        Self::EventError {
+            event_id: event_id.0,
+            reason,
+        }
+    }
+
+    /// Constructs a [`LibTpuError::CallbackNotFound`] from a strongly-typed [`crate::types::CallbackId`].
+    ///
+    /// # Arguments
+    ///
+    /// * `callback_id` - Strongly-typed missing callback identifier.
+    #[must_use]
+    pub const fn callback_not_found(callback_id: crate::types::CallbackId) -> Self {
+        Self::CallbackNotFound {
+            callback_id: callback_id.0,
+        }
+    }
+
+    /// Constructs a [`LibTpuError::CollectiveError`] from a strongly-typed [`crate::types::CommunicatorId`].
+    ///
+    /// # Arguments
+    ///
+    /// * `communicator_id` - Strongly-typed collective communicator identifier.
+    /// * `op_name` - Collective operation name.
+    /// * `reason` - Failure diagnostic string.
+    #[must_use]
+    pub const fn collective_error(
+        communicator_id: crate::types::CommunicatorId,
+        op_name: &'static str,
+        reason: String,
+    ) -> Self {
+        Self::CollectiveError {
+            communicator_id: communicator_id.0,
+            op_name,
+            reason,
+        }
+    }
 }
 
 /// Alias for `Result<T, LibTpuError>` used throughout `libtpu-rs`.
 pub type LibTpuResult<T> = Result<T, LibTpuError>;
 
 #[cfg(test)]
-#[allow(for_loops_over_fallibles, clippy::too_many_lines)]
+#[allow(clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -1507,16 +1874,26 @@ mod tests {
     #[test]
     fn test_all_libtpu_error_variants_display_and_codes() {
         let invalid_utf8 = vec![0xff_u8, 0xfe_u8];
-        for utf8_err in std::str::from_utf8(invalid_utf8.as_slice()).err() {
+        let utf8_res = std::str::from_utf8(invalid_utf8.as_slice());
+        assert!(utf8_res.is_err());
+        if let Err(utf8_err) = utf8_res {
             let wrapper = Utf8ErrorWrapper::from(utf8_err);
             assert!(wrapper.source().is_none());
             let cloned_wrapper = wrapper.clone();
             assert_ne!(format!("{cloned_wrapper:?}"), "");
-            let err_from_utf8 = LibTpuError::from(wrapper);
+            let err_from_utf8 = LibTpuError::from(wrapper.clone());
             assert_eq!(err_from_utf8.error_code(), PjrtErrorCode::InvalidArgument);
+            let named_utf8 = LibTpuError::InvalidUtf8Argument {
+                parameter: "program",
+                source: wrapper,
+            };
+            assert_eq!(named_utf8.error_code(), PjrtErrorCode::InvalidArgument);
+            assert_ne!(named_utf8.to_string(), "");
         }
 
-        for prost_dec_err in <u64 as prost::Message>::decode(&[0x80_u8][..]).err() {
+        let prost_dec_res = <u64 as prost::Message>::decode(&[0x80_u8][..]);
+        assert!(prost_dec_res.is_err());
+        if let Err(prost_dec_err) = prost_dec_res {
             let err = LibTpuError::from(prost_dec_err);
             assert_eq!(err.error_code(), PjrtErrorCode::InvalidArgument);
             assert_ne!(err.to_string(), "");
@@ -1524,7 +1901,9 @@ mod tests {
 
         let mut zero_buf = [0_u8; 0];
         let mut zero_slice: &mut [u8] = &mut zero_buf;
-        for prost_enc_err in <u64 as prost::Message>::encode(&1_u64, &mut zero_slice).err() {
+        let prost_enc_res = <u64 as prost::Message>::encode(&1_u64, &mut zero_slice);
+        assert!(prost_enc_res.is_err());
+        if let Err(prost_enc_err) = prost_enc_res {
             let err = LibTpuError::from(prost_enc_err);
             assert_eq!(err.error_code(), PjrtErrorCode::Internal);
             assert_ne!(err.to_string(), "");
@@ -1536,6 +1915,64 @@ mod tests {
         );
         assert_eq!(i32::from(LibtpuSdkErrorCode::Ok), 0);
         assert_eq!(i32::from(PjrtErrorCode::Ok), 0);
+        assert_eq!(
+            LibTpuError::device_not_found(crate::types::DeviceId(7)),
+            LibTpuError::DeviceNotFound { device_id: 7 }
+        );
+        assert_eq!(
+            LibTpuError::memory_space_not_found(crate::types::MemorySpaceId(3)),
+            LibTpuError::MemorySpaceNotFound { memory_id: 3 }
+        );
+        assert_eq!(
+            LibTpuError::invalid_device_address(crate::types::DeviceAddress(0x1000)),
+            LibTpuError::InvalidDeviceAddress { address: 0x1000 }
+        );
+        assert_eq!(
+            LibTpuError::out_of_memory(crate::types::ByteSize(512), crate::types::ByteSize(256)),
+            LibTpuError::OutOfMemory {
+                requested_bytes: 512,
+                available_bytes: 256
+            }
+        );
+        assert_eq!(
+            LibTpuError::buffer_deleted(crate::types::BufferId(11)),
+            LibTpuError::BufferDeleted { buffer_id: 11 }
+        );
+        assert_eq!(
+            LibTpuError::alias_already_fulfilled(crate::types::BufferId(12)),
+            LibTpuError::AliasAlreadyFulfilled { buffer_id: 12 }
+        );
+        assert_eq!(
+            LibTpuError::executable_deleted(crate::types::ExecutableId(13)),
+            LibTpuError::ExecutableDeleted { executable_id: 13 }
+        );
+        assert_eq!(
+            LibTpuError::host_not_found(crate::types::HostId(14)),
+            LibTpuError::HostNotFound { host_id: 14 }
+        );
+        assert_eq!(
+            LibTpuError::event_error(crate::types::EventId(15), String::from("ev_err")),
+            LibTpuError::EventError {
+                event_id: 15,
+                reason: String::from("ev_err")
+            }
+        );
+        assert_eq!(
+            LibTpuError::callback_not_found(crate::types::CallbackId(16)),
+            LibTpuError::CallbackNotFound { callback_id: 16 }
+        );
+        assert_eq!(
+            LibTpuError::collective_error(
+                crate::types::CommunicatorId(17),
+                "AllReduce",
+                String::from("comm_err")
+            ),
+            LibTpuError::CollectiveError {
+                communicator_id: 17,
+                op_name: "AllReduce",
+                reason: String::from("comm_err")
+            }
+        );
 
         let variants: Vec<(LibTpuError, PjrtErrorCode)> = vec![
             (
@@ -1737,9 +2174,31 @@ mod tests {
             ),
             (
                 LibTpuError::HloParseError {
+                    line: 1,
+                    column: 5,
                     reason: String::from("missing ENTRY"),
                 },
                 PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::InvalidCompilationPhase {
+                    phase_name: String::from("bad_phase"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::EventFdError {
+                    operation: "eventfd",
+                    errno: 24,
+                    message: String::from("EMFILE"),
+                },
+                PjrtErrorCode::Unavailable,
+            ),
+            (
+                LibTpuError::IntegerOverflow {
+                    context: "cost_flops",
+                },
+                PjrtErrorCode::OutOfRange,
             ),
             (
                 LibTpuError::StableHloParseError {
@@ -2072,6 +2531,79 @@ mod tests {
                 },
                 PjrtErrorCode::Internal,
             ),
+            (
+                LibTpuError::RegisterIndexOverflow {
+                    slot_index: 300,
+                    max_registers: 255,
+                },
+                PjrtErrorCode::ResourceExhausted,
+            ),
+            (
+                LibTpuError::InvalidDimensionCount {
+                    num_dims: 16,
+                    max_dims: 8,
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::BufferSizeMismatch {
+                    expected_bytes: 64,
+                    actual_bytes: 16,
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::UnknownCompilationPhase {
+                    phase_name: String::from("unknown_phase"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::InvalidTransportType { transport_type: 99 },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::InvalidCallbackId { callback_id: -1 },
+                PjrtErrorCode::NotFound,
+            ),
+            (
+                LibTpuError::from(winnow::error::ContextError::new()),
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::HloLexerError {
+                    offset: 4,
+                    snippet: String::from("@bad"),
+                    reason: String::from("unexpected token"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::InvalidOpcode { raw_opcode: 0xff },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::InvalidReductionOp { raw_op: 99 },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::JsonSerializationError {
+                    target: "DynamicMessage",
+                    reason: String::from("invalid json"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                serde_json::from_str::<serde_json::Value>("invalid").map_or_else(
+                    LibTpuError::from,
+                    |_| {
+                        LibTpuError::JsonSerializationFailed(SerdeJsonErrorWrapper(String::from(
+                            "bad json",
+                        )))
+                    },
+                ),
+                PjrtErrorCode::InvalidArgument,
+            ),
         ];
 
         for (err, expected_code) in variants {
@@ -2081,6 +2613,15 @@ mod tests {
             assert_eq!(cloned.pjrt_error_code(), expected_code);
             assert_eq!(cloned.abseil_code(), expected_code);
             assert_eq!(cloned.abseil_status_code(), expected_code);
+            assert_eq!(cloned.to_c_status_code(), expected_code.as_raw());
+            assert_ne!(cloned.category(), "");
+            assert_eq!(
+                cloned.is_retriable(),
+                matches!(
+                    expected_code,
+                    PjrtErrorCode::Unavailable | PjrtErrorCode::DeadlineExceeded
+                )
+            );
             assert_eq!(
                 cloned.sdk_error_code(),
                 LibtpuSdkErrorCode::from_pjrt_code(expected_code)

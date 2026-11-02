@@ -12,8 +12,12 @@ def start_server(port: int = 8466) -> int:
     """
     ...
 
-def collect_xspace() -> bytes:
-    """Captures a one-shot `tensorflow.profiler.XSpace` hardware trace payload."""
+def collect_xspace(duration_ms: int = 100) -> bytes:
+    """Captures a one-shot `tensorflow.profiler.XSpace` hardware trace payload.
+
+    Args:
+        duration_ms: Trace collection window in milliseconds (must be `> 0`).
+    """
     ...
 
 __all__: list[str]

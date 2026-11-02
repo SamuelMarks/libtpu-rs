@@ -4,20 +4,20 @@ use super::{
     BAR0_CSR_DUTY_CYCLE_PERCENT, BAR0_CSR_HBM_DMA_RING_HEAD, BAR0_CSR_HBM_DMA_RING_TAIL,
     BAR0_CSR_POWER_MILLIWATTS, BAR0_CSR_SYNC_FLAG_BASE, BAR0_CSR_TENSORCORE_PC,
     BAR0_CSR_TENSORCORE_RUN_CONTROL, BAR0_CSR_TENSORCORE_STATUS, BAR0_CSR_THERMAL_MILLICELSIUS,
-    ChipRegisterMap, DeepSeaVm, DeviceMemoryStats, EmulatedKernelDriverBackend,
-    GASKET_IOCTL_CLEAR_EVENTFD, GASKET_IOCTL_MAP_BUFFER, GASKET_IOCTL_NUMBER_PAGE_TABLES,
-    GASKET_IOCTL_PARTITION_PAGE_TABLE, GASKET_IOCTL_SET_EVENTFD, GASKET_IOCTL_UNMAP_BUFFER,
-    GasketInterruptEventFd, GasketPageTableIoctl, HbmDmaRingDescriptor, IoctlPayload,
-    KernelDriverMode, SimulatedTpuHal, SyscallProvider, TopologySpec, TpuHal,
-    VFIO_DEVICE_SET_IRQS_IOCTL, VFIO_IOMMU_MAP_DMA_IOCTL, VFIO_IOMMU_UNMAP_DMA_IOCTL,
-    VfioDmaMapIoctl, VfioDmaUnmapIoctl, VfioIrqSetIoctl,
+    ChipRegisterMap, DeviceMemoryStats, EmulatedKernelDriverBackend, GASKET_IOCTL_CLEAR_EVENTFD,
+    GASKET_IOCTL_MAP_BUFFER, GASKET_IOCTL_NUMBER_PAGE_TABLES, GASKET_IOCTL_PARTITION_PAGE_TABLE,
+    GASKET_IOCTL_SET_EVENTFD, GASKET_IOCTL_UNMAP_BUFFER, GasketInterruptEventFd,
+    GasketPageTableIoctl, HbmDmaRingDescriptor, IoctlPayload, KernelDriverMode, SimulatedTpuHal,
+    SyscallProvider, TopologySpec, TpuHal, VFIO_DEVICE_SET_IRQS_IOCTL, VFIO_IOMMU_MAP_DMA_IOCTL,
+    VFIO_IOMMU_UNMAP_DMA_IOCTL, VfioDmaMapIoctl, VfioDmaUnmapIoctl, VfioIrqSetIoctl,
 };
 use crate::compiler::CompiledProgram;
 use crate::config::TpuInitConfig;
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::types::{ByteSize, DeviceAddress, DeviceId, MemoryKind};
 
-/// Linux kernel driver HAL wrapping a [`SyscallProvider`], BAR0 MMIO CSR bank, and backing [`SimulatedTpuHal`].
+/// Linux kernel driver HAL wrapping a [`SyscallProvider`], per-device IOMMU [`super::HbmRegionAllocator`] tables,
+/// BAR0 MMIO CSR bank, and backing [`SimulatedTpuHal`] execution engine.
 #[derive(Debug)]
 pub struct LinuxDeviceHal<S: SyscallProvider> {
     /// Kernel driver mode (`Gasket` or `Vfio`).
@@ -28,11 +28,33 @@ pub struct LinuxDeviceHal<S: SyscallProvider> {
     pub device_fd: i32,
     /// Emulated `PCIe` BAR0 MMIO CSR bank.
     pub mmio: EmulatedKernelDriverBackend,
+    /// Per-device IOMMU / page-table [`super::HbmRegionAllocator`] tracking mapped IOVA blocks.
+    pub iommu_allocators:
+        parking_lot::Mutex<std::collections::BTreeMap<DeviceId, super::HbmRegionAllocator>>,
     /// Backing HBM & execution state.
     pub inner: SimulatedTpuHal,
 }
 
 impl<S: SyscallProvider> LinuxDeviceHal<S> {
+    /// Builds the per-device IOMMU [`super::HbmRegionAllocator`] map for `topology`.
+    ///
+    /// # Arguments
+    ///
+    /// * `topology` - Discovered TPU [`TopologySpec`].
+    fn build_iommu_allocators(
+        topology: &TopologySpec,
+    ) -> parking_lot::Mutex<std::collections::BTreeMap<DeviceId, super::HbmRegionAllocator>> {
+        let mut map = std::collections::BTreeMap::new();
+        let cap = topology.generation.hbm_capacity_bytes().0;
+        for dev in &topology.devices {
+            map.insert(
+                dev.device_id,
+                super::HbmRegionAllocator::new(0x1000_0000, cap),
+            );
+        }
+        parking_lot::Mutex::new(map)
+    }
+
     /// Opens a Linux TPU device node (`/dev/accel0` or `/dev/vfio/vfio`) and initializes page tables.
     ///
     /// # Arguments
@@ -62,12 +84,16 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
                 size_of::<GasketPageTableIoctl>(),
             )?;
         }
+        let inner = SimulatedTpuHal::new(config);
+        let iommu_allocators = Self::build_iommu_allocators(&inner.topology);
+        let mmio = inner.mmio.clone();
         Ok(Self {
             mode,
             syscalls,
             device_fd: fd,
-            mmio: EmulatedKernelDriverBackend::default(),
-            inner: SimulatedTpuHal::new(config),
+            mmio,
+            iommu_allocators,
+            inner,
         })
     }
 
@@ -205,6 +231,11 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
         let addr = self
             .inner
             .allocate_device_memory(device_id, memory_kind, size)?;
+        let _ = self
+            .iommu_allocators
+            .lock()
+            .get_mut(&device_id)
+            .map(|alloc| alloc.allocate(size.0.max(256)));
         match self.mode {
             KernelDriverMode::Gasket => {
                 let mut payload = GasketPageTableIoctl {
@@ -247,11 +278,17 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
         device_id: DeviceId,
         address: DeviceAddress,
     ) -> LibTpuResult<()> {
+        let _ = self
+            .iommu_allocators
+            .lock()
+            .get_mut(&device_id)
+            .map(|alloc| alloc.deallocate(address));
+        let unmap_size = self.inner.allocated_block_size(device_id, address) as u64;
         match self.mode {
             KernelDriverMode::Gasket => {
                 let mut payload = GasketPageTableIoctl {
                     page_table_index: 0,
-                    size: 4096,
+                    size: unmap_size,
                     host_address: address.0,
                     device_address: address.0,
                 };
@@ -270,7 +307,7 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
                     argsz: 24,
                     flags: 0,
                     iova: address.0,
-                    size: 4096,
+                    size: unmap_size,
                 };
                 self.syscalls.ioctl_typed(
                     self.device_fd,
@@ -326,26 +363,23 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
         inputs: &[DeviceAddress],
         outputs: &[DeviceAddress],
     ) -> LibTpuResult<()> {
-        let imem = program.encode_architectural_imem();
-        let mut vm = DeepSeaVm::new();
-        vm.execute_imem_bytes(&imem);
+        self.inner
+            .execute_program(device_id, program, inputs, outputs)?;
+        let imem_len = program.encode_architectural_imem().len() as u64;
+        let pc = self.inner.mmio.get_csr(BAR0_CSR_TENSORCORE_PC);
+        let next_sync = self.inner.mmio.get_csr(BAR0_CSR_SYNC_FLAG_BASE);
         let rmap = ChipRegisterMap::for_generation(self.inner.topology.generation);
-        self.mmio
-            .set_csr(rmap.tc0_program_location_csr, imem.len() as u64);
-        self.mmio.set_csr(rmap.tc0_pc_csr, u64::from(vm.pc));
+        self.mmio.set_csr(rmap.tc0_program_location_csr, imem_len);
+        self.mmio.set_csr(rmap.tc0_pc_csr, pc);
         self.mmio.set_csr(rmap.tc0_run_status_csr, 1);
         self.mmio
-            .set_csr(rmap.tc0_vwait_sync_flag_state_csr, vm.cycles_executed);
-        self.mmio.set_csr(BAR0_CSR_TENSORCORE_PC, u64::from(vm.pc));
+            .set_csr(rmap.tc0_vwait_sync_flag_state_csr, next_sync);
+        self.mmio.set_csr(BAR0_CSR_TENSORCORE_PC, pc);
         self.mmio.set_csr(BAR0_CSR_TENSORCORE_RUN_CONTROL, 1);
         self.mmio.set_csr(BAR0_CSR_TENSORCORE_STATUS, 1);
-        let sync = self.mmio.get_csr(BAR0_CSR_SYNC_FLAG_BASE);
-        self.mmio.set_csr(
-            BAR0_CSR_SYNC_FLAG_BASE,
-            sync.wrapping_add(vm.cycles_executed),
-        );
-        self.inner
-            .execute_program(device_id, program, inputs, outputs)
+        self.mmio.set_csr(BAR0_CSR_SYNC_FLAG_BASE, next_sync);
+        self.mmio.record_execution_telemetry(next_sync);
+        Ok(())
     }
 
     fn memory_stats(&self, device_id: DeviceId) -> LibTpuResult<DeviceMemoryStats> {
@@ -376,7 +410,7 @@ impl HalBackend<EmulatedKernelDriverBackend> {
     ///
     /// When `--tpu_driver_mode=simulated` is present in `config.extra_flags`, returns
     /// [`HalBackend::Simulated`]; otherwise returns [`HalBackend::Linux`] driving the
-    /// Gasket/VFIO protocol stack.
+    /// Gasket/VFIO protocol stack via [`LinuxDeviceHal::open`].
     ///
     /// # Arguments
     ///
@@ -390,13 +424,31 @@ impl HalBackend<EmulatedKernelDriverBackend> {
         {
             Self::Simulated(SimulatedTpuHal::new(config))
         } else {
+            let syscalls = EmulatedKernelDriverBackend::default();
+            let fd = syscalls.open_device("/dev/accel0").unwrap_or(3);
+            let inner = SimulatedTpuHal::new(config);
+            let iommu_allocators =
+                LinuxDeviceHal::<EmulatedKernelDriverBackend>::build_iommu_allocators(
+                    &inner.topology,
+                );
+            let mmio = inner.mmio.clone();
             Self::Linux(LinuxDeviceHal {
                 mode: KernelDriverMode::Gasket,
-                syscalls: EmulatedKernelDriverBackend::default(),
-                device_fd: 3,
-                mmio: EmulatedKernelDriverBackend::default(),
-                inner: SimulatedTpuHal::new(config),
+                syscalls,
+                device_fd: fd,
+                mmio,
+                iommu_allocators,
+                inner,
             })
+        }
+    }
+
+    /// Returns a cloned copy of the discovered [`TopologySpec`] for this backend.
+    #[must_use]
+    pub fn topology_spec(&self) -> TopologySpec {
+        match self {
+            Self::Simulated(sim) => sim.topology_spec(),
+            Self::Linux(linux) => linux.inner.topology_spec(),
         }
     }
 }

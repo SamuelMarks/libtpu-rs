@@ -205,6 +205,24 @@ impl SimulatedTpuHal {
         drop(guard);
         Ok(())
     }
+
+    /// Queries the page-aligned byte length of an allocated HBM region at `address` on `device_id`.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Target logical TPU device.
+    /// * `address` - Allocated HBM [`DeviceAddress`].
+    #[must_use]
+    pub fn allocated_block_size(&self, device_id: DeviceId, address: DeviceAddress) -> usize {
+        self.lock_devices()
+            .ok()
+            .and_then(|guard| {
+                guard
+                    .get(&device_id)
+                    .and_then(|dev| dev.region_allocator.allocated_block_size(address))
+            })
+            .unwrap_or(4096)
+    }
 }
 
 impl TpuHal for SimulatedTpuHal {
@@ -402,6 +420,8 @@ impl TpuHal for SimulatedTpuHal {
         let evaluated_outputs =
             dev.vm
                 .execute_compiled_program(program, input_buffers, outputs.len());
+        let vm_pc = dev.vm.pc;
+        let vm_cycles = dev.vm.cycles_executed;
 
         for (&out_addr, src_bytes) in outputs.iter().zip(evaluated_outputs.iter()) {
             let out_buf =
@@ -415,15 +435,16 @@ impl TpuHal for SimulatedTpuHal {
                 *dst_byte = src_byte;
             }
         }
-        self.mmio.set_csr(BAR0_CSR_TENSORCORE_PC, 0);
+        self.mmio.set_csr(BAR0_CSR_TENSORCORE_PC, u64::from(vm_pc));
         self.mmio.set_csr(BAR0_CSR_TENSORCORE_RUN_CONTROL, 1);
         self.mmio.set_csr(BAR0_CSR_TENSORCORE_STATUS, 2);
         let sync = self.mmio.get_csr(BAR0_CSR_SYNC_FLAG_BASE);
         let next_sync =
             sync.wrapping_add(u64::try_from(program.instruction_bundles.len()).unwrap_or(1));
         self.mmio.set_csr(BAR0_CSR_SYNC_FLAG_BASE, next_sync);
+        self.mmio.record_execution_telemetry(vm_cycles);
         let reg_map = ChipRegisterMap::for_generation(self.topology.generation);
-        self.mmio.set_csr(reg_map.tc0_pc_csr, 0);
+        self.mmio.set_csr(reg_map.tc0_pc_csr, u64::from(vm_pc));
         self.mmio.set_csr(reg_map.tc0_run_status_csr, 2);
         self.mmio
             .set_csr(reg_map.tc0_vwait_sync_flag_state_csr, next_sync);

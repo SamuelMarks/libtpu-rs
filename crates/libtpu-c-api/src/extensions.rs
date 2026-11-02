@@ -150,8 +150,12 @@ pub struct ExtensionRuntimeState {
     pub raw_buffers: usize,
     /// Whether the active TPU topology is a subslice topology.
     pub is_subslice_topology: bool,
-    /// Heap-allocated [`crate::pjrt_types::PjrtSerializedArtifact`] buffers whose lifetime is managed by extension state or explicit deleters.
+    /// Bounded 64-slot ring buffer of heap-allocated byte slices backing extension queries without unbounded growth.
     pub serialized_artifacts: Vec<Box<[u8]>>,
+    /// Write cursor into `serialized_artifacts`.
+    pub serialized_artifact_cursor: usize,
+    /// Keyed registry of buffers allocated by `PJRT_PhaseCompile_Extension` freed by `PJRT_PhaseCompile_CBuffersDestroy`.
+    pub phase_compile_buffers: std::collections::BTreeMap<usize, Box<[u8]>>,
 }
 
 /// Process-wide [`ExtensionRuntimeState`] singleton.
@@ -162,8 +166,8 @@ pub(super) fn extension_state() -> &'static Mutex<ExtensionRuntimeState> {
     EXTENSION_STATE.get_or_init(|| Mutex::new(ExtensionRuntimeState::default()))
 }
 
-/// Allocates an immutable heap-backed byte slice registered in [`ExtensionRuntimeState::serialized_artifacts`]
-/// so that multiple concurrent or sequential extension queries never overwrite each other's buffers.
+/// Allocates an immutable heap-backed byte slice registered in the bounded 64-slot ring buffer
+/// [`ExtensionRuntimeState::serialized_artifacts`] so sequential extension queries never leak memory.
 ///
 /// # Arguments
 ///
@@ -172,8 +176,44 @@ pub(super) fn alloc_extension_bytes(bytes: Vec<u8>) -> (*const u8, usize) {
     let boxed: Box<[u8]> = bytes.into_boxed_slice();
     let ptr = boxed.as_ptr();
     let len = boxed.len();
-    extension_state().lock().serialized_artifacts.push(boxed);
+    let mut st = extension_state().lock();
+    let idx = st.serialized_artifact_cursor & 63;
+    if let Some(slot) = st.serialized_artifacts.get_mut(idx) {
+        *slot = boxed;
+        st.serialized_artifact_cursor = st.serialized_artifact_cursor.wrapping_add(1);
+    } else {
+        st.serialized_artifacts.push(boxed);
+    }
+    drop(st);
     (ptr, len)
+}
+
+/// Allocates a heap-backed C buffer registered in [`ExtensionRuntimeState::phase_compile_buffers`]
+/// so [`PJRT_PhaseCompile_CBuffersDestroy`] frees the exact buffer passed to it.
+///
+/// # Arguments
+///
+/// * `bytes` - Phase compilation output bytes.
+pub(super) fn alloc_phase_compile_buffer(bytes: Vec<u8>) -> (*const u8, usize) {
+    let boxed: Box<[u8]> = bytes.into_boxed_slice();
+    let ptr = boxed.as_ptr();
+    let len = boxed.len();
+    let mut st = extension_state().lock();
+    st.phase_compile_buffers.insert(ptr as usize, boxed);
+    drop(st);
+    (ptr, len)
+}
+
+/// Frees a phase compilation buffer previously allocated by [`alloc_phase_compile_buffer`].
+///
+/// # Arguments
+///
+/// * `handle` - Buffer pointer to remove and drop.
+pub(super) fn free_phase_compile_buffer(handle: *mut std::ffi::c_void) {
+    if !handle.is_null() {
+        let mut st = extension_state().lock();
+        let _ = st.phase_compile_buffers.remove(&(handle as usize));
+    }
 }
 
 /// Returns the singleton [`Mutex<TpuCoreProfiler>`] backing `PLUGIN_Profiler_Api`.
@@ -1790,6 +1830,14 @@ mod tests {
             };
             assert!(PJRT_HostMemoryAllocator_Get(ptr::addr_of_mut!(host_alloc64).cast()).is_null());
             assert!(!host_alloc64.ptr.is_null());
+            pjrt_host_memory_deleter(host_alloc64.deleter_arg);
+            host_alloc64.ptr = ptr::null_mut();
+            assert!(
+                PJRT_HostMemoryAllocator_Allocate(ptr::addr_of_mut!(host_alloc64).cast()).is_null()
+            );
+            assert!(!host_alloc64.ptr.is_null());
+            pjrt_host_memory_deleter(host_alloc64.deleter_arg);
+            pjrt_host_memory_deleter(ptr::null_mut());
             let mut mem_desc48 = PJRT_DeviceDescription_MemoryDescriptions_Args {
                 struct_size: size_of::<PJRT_DeviceDescription_MemoryDescriptions_Args>(),
                 extension_start: ptr::null_mut(),
@@ -1811,15 +1859,15 @@ mod tests {
                 kind_id: -1,
                 pad: 0,
             };
+            assert!(PJRT_MemoryDescription_Kind(ptr::addr_of_mut!(mem_kind48).cast()).is_null());
+            assert_eq!(mem_kind48.kind_id, 1);
+            assert_eq!(mem_kind48.kind_size, 4);
             assert!(
                 PJRT_MemoryDescriptions_Destroy(ptr::addr_of_mut!(mem_kind48).cast()).is_null()
             );
             assert_eq!(mem_kind48.kind_id, 1);
-            assert_eq!(mem_kind48.kind_size, 4);
             mem_kind48.memory_description = ptr::null();
-            assert!(
-                PJRT_MemoryDescriptions_Destroy(ptr::addr_of_mut!(mem_kind48).cast()).is_null()
-            );
+            assert!(PJRT_MemoryDescription_Kind(ptr::addr_of_mut!(mem_kind48).cast()).is_null());
             assert_eq!(mem_kind48.kind_id, 0);
             let cb_sb = PJRT_Callback_Tpu_SliceBuilderArgs {
                 struct_size: 16,
@@ -2177,6 +2225,19 @@ mod tests {
                 output_status: 0,
             };
             assert!(PJRT_PhaseCompile_RunPhase(ptr::addr_of_mut!(pc_run_real).cast()).is_null());
+            pc_run_real.phase_name = c"spmd_partitioning".as_ptr();
+            assert!(PJRT_PhaseCompile_RunPhase(ptr::addr_of_mut!(pc_run_real).cast()).is_null());
+            for i in 0..70_u8 {
+                let _ = alloc_extension_bytes(vec![i]);
+            }
+            let mut ms_tr = PJRT_Megascale_Query_Args {
+                struct_size: size_of::<PJRT_Megascale_Query_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: 2,
+                out_value: 0,
+            };
+            assert!(PJRT_Megascale_SetTransportType(ptr::addr_of_mut!(ms_tr).cast()).is_null());
+            assert_eq!(ms_tr.out_value, 2);
             let mut pc_del_real = PJRT_PhaseCompile_Destroy_Args {
                 struct_size: size_of::<PJRT_PhaseCompile_Destroy_Args>(),
                 extension_start: ptr::null_mut(),
@@ -2185,6 +2246,66 @@ mod tests {
             assert!(
                 PJRT_PhaseCompile_DestroyCompiler(ptr::addr_of_mut!(pc_del_real).cast()).is_null()
             );
+            let (pc_buf_ptr, _) = alloc_phase_compile_buffer(vec![1, 2, 3, 4]);
+            pc_del_real.handle = pc_buf_ptr.cast_mut().cast();
+            assert!(
+                PJRT_PhaseCompile_CBuffersDestroy(ptr::addr_of_mut!(pc_del_real).cast()).is_null()
+            );
+            assert!(pc_del_real.handle.is_null());
+
+            let mut ms_ctx_create = PJRT_Megascale_Query_Args {
+                struct_size: size_of::<PJRT_Megascale_Query_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: 0,
+                out_value: 0,
+            };
+            assert!(
+                PJRT_Megascale_CreateClientContext(ptr::addr_of_mut!(ms_ctx_create).cast())
+                    .is_null()
+            );
+            assert_ne!(ms_ctx_create.out_value, 0);
+            let mut ms_ctx_del = PJRT_Megascale_Handle_Args {
+                struct_size: size_of::<PJRT_Megascale_Handle_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: ms_ctx_create.out_value as *mut std::ffi::c_void,
+            };
+            assert!(
+                PJRT_Megascale_DeleteClientContext(ptr::addr_of_mut!(ms_ctx_del).cast()).is_null()
+            );
+            assert!(ms_ctx_del.handle.is_null());
+
+            let mut ms_cfg_create = PJRT_Megascale_Query_Args {
+                struct_size: size_of::<PJRT_Megascale_Query_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: 0,
+                out_value: 0,
+            };
+            assert!(
+                PJRT_Megascale_CreateMultiSliceConfig(ptr::addr_of_mut!(ms_cfg_create).cast())
+                    .is_null()
+            );
+            let mut ms_cfg_del = PJRT_Megascale_Handle_Args {
+                struct_size: size_of::<PJRT_Megascale_Handle_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: ms_cfg_create.out_value as *mut std::ffi::c_void,
+            };
+            assert!(
+                PJRT_Megascale_DeleteMultiSliceConfig(ptr::addr_of_mut!(ms_cfg_del).cast())
+                    .is_null()
+            );
+            assert!(ms_cfg_del.handle.is_null());
+
+            assert!(
+                PJRT_Megascale_CreateDefaultConfig(ptr::addr_of_mut!(ms_cfg_create).cast())
+                    .is_null()
+            );
+            let mut ms_ext_del = PJRT_MultiSlice_Config_Destroy_Args {
+                struct_size: size_of::<PJRT_MultiSlice_Config_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                config: ms_cfg_create.out_value as *mut std::ffi::c_void,
+            };
+            assert!(PJRT_MultiSlice_Config_Destroy(ptr::addr_of_mut!(ms_ext_del).cast()).is_null());
+            assert!(ms_ext_del.config.is_null());
 
             let mut tpu_mem_stats = PJRT_TpuExecutable_GetCompiledMemoryStats_Args {
                 struct_size: size_of::<PJRT_TpuExecutable_GetCompiledMemoryStats_Args>(),

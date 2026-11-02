@@ -85,6 +85,30 @@ pub struct PJRT_Buffer_DynamicDimensionIndices_Args {
     pub num_dynamic_dimensions: usize,
 }
 
+/// Inline 80-byte output layout structure embedded in [`PJRT_Buffer_GetMemoryLayout_Args`].
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Buffer_MemoryLayout_Output {
+    /// Size of this struct (`80`).
+    pub struct_size: usize,
+    /// Extension pointer (`NULL`).
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Minor-to-major dimension ordering or byte strides pointer.
+    pub minor_to_major: *const i64,
+    /// Number of minor-to-major dimensions or byte strides.
+    pub minor_to_major_size: usize,
+    /// Flattened tile dimensions pointer.
+    pub tile_dims: *const i64,
+    /// Tile dimension counts array pointer.
+    pub tile_dim_sizes: *const usize,
+    /// Number of tiles.
+    pub num_tiles: usize,
+    /// Layout type discriminant (`0` = `Tiled`, `1` = `Strides`).
+    pub layout_type: usize,
+    /// Reserved layout union padding words.
+    pub reserved: [usize; 2],
+}
+
 /// Argument structure for `PJRT_Buffer_GetMemoryLayout` (`104` bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -95,8 +119,8 @@ pub struct PJRT_Buffer_GetMemoryLayout_Args {
     pub extension_start: *mut PJRT_Extension_Base,
     /// Buffer handle.
     pub buffer: *const PJRT_Buffer,
-    /// Output inline `PJRT_Buffer_MemoryLayout` (`80` bytes = `10` words).
-    pub layout_words: [usize; 10],
+    /// Output inline [`PJRT_Buffer_MemoryLayout_Output`] (`80` bytes).
+    pub layout: PJRT_Buffer_MemoryLayout_Output,
 }
 
 /// Argument structure for `PJRT_Buffer_OnDeviceSizeInBytes` (`32` bytes).

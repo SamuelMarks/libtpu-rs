@@ -166,7 +166,12 @@ unsafe fn execute_collective_buffers(
         let mut src_bytes = src.inner.to_host_bytes().unwrap_or_default();
         if let Some(op) = reduction_op {
             let dst_bytes = dst.inner.to_host_bytes().unwrap_or_default();
-            src_bytes = apply_elementwise_f32_reduction(&src_bytes, &dst_bytes, op);
+            src_bytes = apply_elementwise_reduction(
+                src.inner.shape.element_type,
+                &src_bytes,
+                &dst_bytes,
+                op,
+            );
         }
         let _ =
             dst.inner
@@ -181,31 +186,33 @@ unsafe fn execute_collective_buffers(
     .cast::<std::ffi::c_void>()
 }
 
-/// Applies an element-wise [`CollectiveReductionOp`] across two 32-bit float byte slices.
+/// Applies an element-wise [`CollectiveReductionOp`] across two tensor byte slices using `elem_type`.
 ///
 /// # Arguments
 ///
+/// * `elem_type` - Tensor [`libtpu_core::types::ElementType`].
 /// * `lhs` - Send buffer byte slice.
 /// * `rhs` - Existing receive buffer byte slice.
 /// * `op` - [`CollectiveReductionOp`] (`Sum`, `Product`, `Min`, `Max`).
-fn apply_elementwise_f32_reduction(lhs: &[u8], rhs: &[u8], op: CollectiveReductionOp) -> Vec<u8> {
-    let mut out = Vec::with_capacity(lhs.len());
-    for (l_chunk, r_chunk) in lhs.chunks_exact(4).zip(rhs.chunks_exact(4)) {
-        let mut la = [0_u8; 4];
-        let mut ra = [0_u8; 4];
-        la.copy_from_slice(l_chunk);
-        ra.copy_from_slice(r_chunk);
-        let lv = f32::from_le_bytes(la);
-        let rv = f32::from_le_bytes(ra);
-        let res = match op {
+fn apply_elementwise_reduction(
+    elem_type: libtpu_core::types::ElementType,
+    lhs: &[u8],
+    rhs: &[u8],
+    op: CollectiveReductionOp,
+) -> Vec<u8> {
+    let l_vals = elem_type.unpack_to_f64_vec(lhs);
+    let r_vals = elem_type.unpack_to_f64_vec(rhs);
+    let reduced: Vec<f64> = l_vals
+        .iter()
+        .zip(r_vals.iter())
+        .map(|(&lv, &rv)| match op {
             CollectiveReductionOp::Sum => lv + rv,
             CollectiveReductionOp::Product => lv * rv,
             CollectiveReductionOp::Min => lv.min(rv),
             CollectiveReductionOp::Max => lv.max(rv),
-        };
-        out.extend_from_slice(&res.to_le_bytes());
-    }
-    out
+        })
+        .collect();
+    elem_type.pack_from_f64_slice(&reduced)
 }
 
 /// Strongly-typed handler for [`PJRT_Communicator_AllReduce`] and [`PJRT_Communicator_ReduceScatter`].

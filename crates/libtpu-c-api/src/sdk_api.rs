@@ -20,6 +20,11 @@ pub unsafe extern "C" fn LibtpuSdk_Error_GetMessage(raw_args: *mut std::ffi::c_v
     // SAFETY: `args_ptr` is non-null.
     let err_ptr = unsafe { (*args_ptr).error };
     if err_ptr.is_null() {
+        // SAFETY: Deterministically zero output fields when error handle is null.
+        unsafe {
+            (*args_ptr).message = c"".as_ptr();
+            (*args_ptr).message_size = 0;
+        }
         return;
     }
     // SAFETY: `err_ptr` is non-null.
@@ -50,8 +55,9 @@ pub unsafe extern "C" fn LibtpuSdk_Error_Destroy(raw_args: *mut std::ffi::c_void
     // SAFETY: `args_ptr` is non-null.
     let err_ptr = unsafe { (*args_ptr).error };
     if !err_ptr.is_null() {
-        // SAFETY: `err_ptr` was allocated by `box_sdk_error`.
+        // SAFETY: `err_ptr` was allocated by `box_sdk_error`; clear pointer to prevent double free.
         unsafe {
+            (*args_ptr).error = ptr::null_mut();
             drop(Box::from_raw(err_ptr));
         }
     }
@@ -123,6 +129,7 @@ pub unsafe extern "C" fn LibtpuSdk_Client_Create(
         inner,
         host_names,
         coords_entries,
+        metric_names: Vec::new(),
         metrics: Vec::new(),
     }));
     // SAFETY: `args_ptr` is non-null.
@@ -325,12 +332,22 @@ pub unsafe extern "C" fn LibtpuSdk_GetMetric(
                 vals.iter().map(|v| to_c_string(&v.to_string())).collect();
             let value_ptrs: Vec<*const c_char> =
                 value_cstrings.iter().map(|cs| cs.as_ptr()).collect();
-            let mut boxed_metric = Box::new(LibtpuSdk_Metric {
+            let new_metric = LibtpuSdk_Metric {
                 description,
                 value_cstrings,
                 value_ptrs,
-            });
+            };
+            if let Some(idx) = client_ref
+                .metric_names
+                .iter()
+                .position(|n| n == metric_name.as_ref())
+            {
+                let _ = client_ref.metrics.remove(idx);
+                let _ = client_ref.metric_names.remove(idx);
+            }
+            let mut boxed_metric = Box::new(new_metric);
             let metric_handle: *mut LibtpuSdk_Metric = ptr::from_mut(&mut *boxed_metric);
+            client_ref.metric_names.push(metric_name.into_owned());
             client_ref.metrics.push(boxed_metric);
             // SAFETY: Writing output metric pointer.
             unsafe {
@@ -604,14 +621,14 @@ pub unsafe extern "C" fn LibtpuSdk_TriggerDebugCallbacks(client: *const LibtpuSd
     // SAFETY: `client` is non-null.
     let callbacks = unsafe { (*client).inner.registered_debug_callbacks() };
     let mut invoked = 0_usize;
-    for (fn_addr, user_data) in callbacks {
-        if fn_addr >= 0x10000 {
+    for reg_cb in callbacks {
+        if reg_cb.callback_addr >= 0x10000 {
             // SAFETY: Caller registered a valid `extern "C" fn(*mut c_void)` function pointer.
             let cb: unsafe extern "C" fn(*mut std::ffi::c_void) =
-                unsafe { std::mem::transmute(fn_addr) };
+                unsafe { std::mem::transmute(reg_cb.callback_addr) };
             // SAFETY: Invoking registered C callback with its opaque `user_data` pointer.
             unsafe {
-                cb(user_data as *mut std::ffi::c_void);
+                cb(reg_cb.user_data_addr as *mut std::ffi::c_void);
             }
         }
         invoked = invoked.saturating_add(1);
@@ -799,6 +816,8 @@ mod tests {
             met_args.metric_name = c"tpu.runtime.hbm.usage_bytes".as_ptr();
             assert!(LibtpuSdk_GetMetric(ptr::addr_of_mut!(met_args).cast()).is_null());
             assert!(!met_args.metric.is_null());
+            assert!(LibtpuSdk_GetMetric(ptr::addr_of_mut!(met_args).cast()).is_null());
+            assert_eq!((*sdk_cli_args.client).metrics.len(), 1);
             assert_ne!(format!("{:?}", *met_args.metric), "");
 
             drop(Box::from_raw(LibtpuSdk_GetMetricDescription(

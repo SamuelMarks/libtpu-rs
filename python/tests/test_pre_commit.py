@@ -175,8 +175,9 @@ def test_coverage_calculators(tmp_path: Path) -> None:
     rs_crate.mkdir(parents=True)
     (rs_crate / "lib.rs").write_text(
         f"/// Docs.{NL}/// # Arguments{NL}/// * `x` - X value.{NL}"
-        f"pub fn documented(&self, x: i32, y: i32, (a, b): (u8, u8)) {{}}{NL}"
-        f"/// Docs.{NL}pub fn no_args() {{}}{NL}",
+        f"pub fn documented(&self, x: (i32, i32), y: i32, (a, b): (u8, u8)) {{}}{NL}"
+        f"/// Docs.{NL}pub fn no_args() {{}}{NL}"
+        f"/// Malformed.{NL}pub fn missing_paren{NL}",
         encoding="utf-8",
     )
     assert pc.calculate_rust_arg_doc_coverage(tmp_path) == (1, 2)
@@ -186,8 +187,10 @@ def test_coverage_calculators(tmp_path: Path) -> None:
     (py_pkg / "mod.py").write_text(
         f'"""Module doc."""{NL}{NL}'
         f'class Cls:{NL}    """Class doc."""{NL}'
-        f"    def m(self, a: int) -> None:{NL}"
-        f'        """Method.{NL}{NL}        Args:{NL}            a: A.{NL}        """{NL}{NL}'
+        f"    def m(self, a: int, *var: int, **kw: int) -> None:{NL}"
+        f'        """Method.{NL}{NL}        Args:{NL}'
+        f"            a: A.{NL}            *var: V.{NL}"
+        f'            **kw: K.{NL}        """{NL}{NL}'
         f'def fn(b: int) -> None:{NL}    """Fn doc."""{NL}',
         encoding="utf-8",
     )
@@ -198,7 +201,7 @@ def test_coverage_calculators(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     py_docs, py_total = pc.calculate_python_doc_coverage(tmp_path)
-    assert (py_docs, py_total) == (5, 9)
+    assert (py_docs, py_total) == (7, 11)
 
     xml_dir = tmp_path / "cpp" / "build" / "doxygen" / "xml"
     xml_dir.mkdir(parents=True)
@@ -422,6 +425,8 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
     with patch.object(pc, "run_command") as mock_run:
         assert pc.hook_fmt(tmp_path, check_only=False) == 0
         assert mock_run.call_count == 6
+        called_cmds = [call.args[0] for call in mock_run.call_args_list]
+        assert ["cargo", "fmt", "--all", "--", "--check"] in called_cmds
         assert pc.hook_fmt(tmp_path, check_only=True) == 0
         assert mock_run.call_count == 9
 
@@ -436,10 +441,23 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
     with patch.object(pc, "run_command") as mock_build:
         assert pc.hook_build(tmp_path) == 0
         assert mock_build.call_count == 3
+        build_cmds = [call.args[0] for call in mock_build.call_args_list]
+        assert ["cargo", "build", "--workspace", "--all-targets"] in build_cmds
 
     with patch.object(pc, "run_command") as mock_lint:
         assert pc.hook_clippy(tmp_path) == 0
         assert mock_lint.call_count == 5
+        lint_cmds = [call.args[0] for call in mock_lint.call_args_list]
+        assert [
+            "cargo",
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings",
+        ] in lint_cmds
         assert (tmp_path / "cpp" / "build" / "doxygen").is_dir()
 
     with patch.object(pc, "run_command") as mock_test:
@@ -581,7 +599,7 @@ def test_abi_compatibility_hook(tmp_path: Path) -> None:
     assert any("Python wheel API symbol" in e for e in src_errs)
     assert any("Forbidden dependency anyhow/thiserror" in e for e in src_errs)
     assert any("LibTpuError in error.rs must derive" in e for e in src_errs)
-    assert any("Forbidden .unwrap() or .expect()" in e for e in src_errs)
+    assert any("Forbidden .unwrap()" in e for e in src_errs)
 
     # Test hook_abi source error branch
     assert pc.hook_abi(tmp_path) == 1

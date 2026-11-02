@@ -50,10 +50,16 @@ unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(),
 
     let mut device_ptrs = Vec::with_capacity(inner.devices.len());
     let mut addressable_device_ptrs = Vec::new();
-    for (d, dev_mems) in inner.devices.iter().zip(memory_ptrs.chunks(3)) {
+    for d in &inner.devices {
+        let dev_mems: Vec<*mut PJRT_Memory> = memory_ptrs
+            .iter()
+            .copied()
+            // SAFETY: Every pointer in `memory_ptrs` was allocated just above.
+            .filter(|&m_ptr| unsafe { d.memory_space_ids.contains(&(*m_ptr).inner.id) })
+            .collect();
         let desc_ptr = Box::into_raw(Box::new(PJRT_DeviceDescription::new(d.description.clone())));
         let default_memory_ptr = dev_mems.first().copied().unwrap_or(ptr::null_mut());
-        let addressable_memory_ptrs = dev_mems.to_vec();
+        let addressable_memory_ptrs = dev_mems.clone();
         let dev_ptr = Box::into_raw(Box::new(PJRT_Device {
             inner: d.clone(),
             desc_ptr,
@@ -61,7 +67,7 @@ unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(),
             addressable_memory_ptrs,
             hal: std::sync::Arc::clone(&inner.hal),
         }));
-        for &m_ptr in dev_mems {
+        for &m_ptr in &dev_mems {
             // SAFETY: `m_ptr` was allocated in `memory_ptrs` above.
             unsafe {
                 (*m_ptr).addressable_by_device_ptrs.push(dev_ptr);

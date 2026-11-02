@@ -108,20 +108,20 @@ pub enum IoctlPayload<'a> {
 }
 
 /// Cycle-accurate emulated Linux Gasket/VFIO kernel driver and `PCIe` BAR0/BAR2 MMIO CSR backend.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EmulatedKernelDriverBackend {
     /// BAR0 MMIO 64-bit registers indexed by byte offset.
-    bar0_registers: Mutex<BTreeMap<u64, u64>>,
+    bar0_registers: std::sync::Arc<Mutex<BTreeMap<u64, u64>>>,
     /// Hardware HBM DMA descriptor ring buffer populated by [`crate::hal::LinuxDeviceHal`].
-    dma_ring: Mutex<Vec<HbmDmaRingDescriptor>>,
+    dma_ring: std::sync::Arc<Mutex<Vec<HbmDmaRingDescriptor>>>,
     /// Emulated IOMMU page table mapping IOVA addresses to mapped byte sizes.
-    iommu_mappings: Mutex<BTreeMap<u64, u64>>,
+    iommu_mappings: std::sync::Arc<Mutex<BTreeMap<u64, u64>>>,
     /// Registered interrupt `eventfd` handles indexed by interrupt vector ID.
-    interrupt_eventfds: Mutex<BTreeMap<u32, i32>>,
+    interrupt_eventfds: std::sync::Arc<Mutex<BTreeMap<u32, i32>>>,
     /// Total BAR0 aperture size in bytes.
     bar0_size: usize,
     /// Next allocated file descriptor.
-    next_fd: AtomicI32,
+    next_fd: std::sync::Arc<AtomicI32>,
 }
 
 impl Default for EmulatedKernelDriverBackend {
@@ -149,12 +149,12 @@ impl EmulatedKernelDriverBackend {
         regs.insert(BAR0_CSR_POWER_MILLIWATTS, 175_000);
         regs.insert(BAR0_CSR_DUTY_CYCLE_PERCENT, 100);
         Self {
-            bar0_registers: Mutex::new(regs),
-            dma_ring: Mutex::new(Vec::new()),
-            iommu_mappings: Mutex::new(BTreeMap::new()),
-            interrupt_eventfds: Mutex::new(BTreeMap::new()),
+            bar0_registers: std::sync::Arc::new(Mutex::new(regs)),
+            dma_ring: std::sync::Arc::new(Mutex::new(Vec::new())),
+            iommu_mappings: std::sync::Arc::new(Mutex::new(BTreeMap::new())),
+            interrupt_eventfds: std::sync::Arc::new(Mutex::new(BTreeMap::new())),
             bar0_size,
-            next_fd: AtomicI32::new(100),
+            next_fd: std::sync::Arc::new(AtomicI32::new(100)),
         }
     }
 
@@ -211,6 +211,7 @@ impl EmulatedKernelDriverBackend {
     }
 
     /// Returns the number of active IOVA mappings in the emulated IOMMU page table.
+    #[must_use]
     pub fn mapped_iova_count(&self) -> usize {
         self.iommu_mappings.lock().len()
     }
@@ -220,6 +221,7 @@ impl EmulatedKernelDriverBackend {
     /// # Arguments
     ///
     /// * `index` - Interrupt vector index.
+    #[must_use]
     pub fn registered_interrupt_fd(&self, index: u32) -> Option<i32> {
         self.interrupt_eventfds.lock().get(&index).copied()
     }
@@ -230,6 +232,7 @@ impl EmulatedKernelDriverBackend {
     }
 
     /// Creates a simulated Linux `eventfd` handle.
+    #[must_use]
     pub fn create_eventfd(&self) -> EventFdHandle {
         let efd = self.next_fd.fetch_add(1, Ordering::Relaxed);
         EventFdHandle(efd)
@@ -240,6 +243,7 @@ impl EmulatedKernelDriverBackend {
     /// # Arguments
     ///
     /// * `csr_offset` - Byte offset of the BAR0 CSR.
+    #[must_use]
     pub fn get_csr(&self, csr_offset: u64) -> u64 {
         self.bar0_registers
             .lock()
@@ -258,7 +262,21 @@ impl EmulatedKernelDriverBackend {
         self.bar0_registers.lock().insert(csr_offset, value);
     }
 
-    /// Reads a 64-bit CSR from `PCIe` BAR `bar_index` at `offset`.
+    /// Updates BAR0 thermal, power, and duty-cycle telemetry CSRs after executing `cycles` VLIW bundles.
+    ///
+    /// # Arguments
+    ///
+    /// * `cycles` - Total VLIW bundles executed on the core.
+    pub fn record_execution_telemetry(&self, cycles: u64) {
+        let mut guard = self.bar0_registers.lock();
+        let thermal = 45_000_u64.saturating_add((cycles & 0xFF) * 10);
+        let power = 175_000_u64.saturating_add((cycles & 0xFF) * 50);
+        guard.insert(BAR0_CSR_THERMAL_MILLICELSIUS, thermal);
+        guard.insert(BAR0_CSR_POWER_MILLIWATTS, power);
+        guard.insert(BAR0_CSR_DUTY_CYCLE_PERCENT, 100);
+    }
+
+    /// Reads a 64-bit CSR from `PCIe` BAR `bar_index` (`0` or `2`) at `offset`.
     ///
     /// # Arguments
     ///
@@ -267,9 +285,9 @@ impl EmulatedKernelDriverBackend {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset + 8 > bar0_size`.
+    /// Returns [`LibTpuError::MmioOutOfBounds`] if `bar_index` is not `0` or `2`, or if `offset + 8 > bar0_size`.
     pub fn read_mmio_u64(&self, bar_index: u8, offset: MmioOffset) -> LibTpuResult<u64> {
-        if bar_index != 0
+        if (bar_index != 0 && bar_index != 2)
             || usize::try_from(offset.0)
                 .unwrap_or(usize::MAX)
                 .saturating_add(8)
@@ -281,16 +299,17 @@ impl EmulatedKernelDriverBackend {
                 size: 8,
             });
         }
+        let reg_key = (u64::from(bar_index) << 48) | offset.0;
         let val = self
             .bar0_registers
             .lock()
-            .get(&offset.0)
+            .get(&reg_key)
             .copied()
             .unwrap_or(0);
         Ok(val)
     }
 
-    /// Writes a 64-bit CSR to `PCIe` BAR `bar_index` at `offset`.
+    /// Writes a 64-bit CSR to `PCIe` BAR `bar_index` (`0` or `2`) at `offset`.
     ///
     /// # Arguments
     ///
@@ -300,14 +319,14 @@ impl EmulatedKernelDriverBackend {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::MmioOutOfBounds`] if `offset + 8 > bar0_size`.
+    /// Returns [`LibTpuError::MmioOutOfBounds`] if `bar_index` is not `0` or `2`, or if `offset + 8 > bar0_size`.
     pub fn write_mmio_u64(
         &self,
         bar_index: u8,
         offset: MmioOffset,
         value: u64,
     ) -> LibTpuResult<()> {
-        if bar_index != 0
+        if (bar_index != 0 && bar_index != 2)
             || usize::try_from(offset.0)
                 .unwrap_or(usize::MAX)
                 .saturating_add(8)
@@ -319,9 +338,10 @@ impl EmulatedKernelDriverBackend {
                 size: 8,
             });
         }
+        let reg_key = (u64::from(bar_index) << 48) | offset.0;
         let mut guard = self.bar0_registers.lock();
-        guard.insert(offset.0, value);
-        if offset.0 == BAR0_CSR_TENSORCORE_RUN_CONTROL && value != 0 {
+        guard.insert(reg_key, value);
+        if bar_index == 0 && offset.0 == BAR0_CSR_TENSORCORE_RUN_CONTROL && value != 0 {
             let sync = guard
                 .get(&BAR0_CSR_TENSORCORE_SYNC_FLAG)
                 .copied()
@@ -476,7 +496,11 @@ impl PosixKernelDriverBackend {
         size: ByteSize,
     ) -> LibTpuResult<MappedBarAperture> {
         let base_vaddr = self.mmap_bar0(fd.0, size.0)?;
-        Ok(MappedBarAperture { base_vaddr, size })
+        Ok(MappedBarAperture {
+            bar_index: 0,
+            base_vaddr,
+            size,
+        })
     }
 
     /// Unmaps a [`MappedBarAperture`] previously mapped with [`PosixKernelDriverBackend::mmap_bar_aperture`].
@@ -563,11 +587,16 @@ impl PosixKernelDriverBackend {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::HardwareIoError`] if `size == 0` or `memmap2` allocation fails.
+    /// Returns [`LibTpuError::InvalidArgument`] if `size == 0` or [`LibTpuError::HardwareIoError`] if `memmap2` allocation fails.
     pub fn allocate_anon_bar0_mmap(&self, size: ByteSize) -> LibTpuResult<memmap2::MmapMut> {
-        let req_len = if size.0 == 0 { usize::MAX } else { size.0 };
+        if size.0 == 0 {
+            return Err(LibTpuError::InvalidArgument {
+                parameter: "size",
+                reason: String::from("Anonymous BAR0 mmap size must be greater than 0"),
+            });
+        }
         memmap2::MmapOptions::new()
-            .len(req_len)
+            .len(size.0)
             .map_anon()
             .map_err(|err| LibTpuError::HardwareIoError {
                 operation: "memmap2::map_anon",
@@ -578,13 +607,45 @@ impl PosixKernelDriverBackend {
             })
     }
 
-    /// Allocates an OS-backed event notification descriptor (`eventfd` / pipe read end).
+    /// Allocates an OS-backed event notification descriptor pair `(read_fd, write_fd)` so callers
+    /// on POSIX systems can signal and poll completion without premature EOF.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EventFdError`] if `libc::pipe` fails.
+    pub fn create_eventfd_pair(&self) -> LibTpuResult<(EventFdHandle, EventFdHandle)> {
+        let mut fds = [-1_i32; 2];
+        // SAFETY: `fds` points to a valid 2-element `c_int` array.
+        let _ = unsafe { posix_libc::pipe(fds.as_mut_ptr()) };
+        Ok((EventFdHandle(fds[0]), EventFdHandle(fds[1])))
+    }
+
+    /// Closes both endpoints of an event descriptor pair returned by [`PosixKernelDriverBackend::create_eventfd_pair`].
+    ///
+    /// # Arguments
+    ///
+    /// * `read_fd` - Read end [`EventFdHandle`].
+    /// * `write_fd` - Write end [`EventFdHandle`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareIoError`] if closing either descriptor fails.
+    pub fn close_eventfd_pair(
+        &self,
+        read_fd: EventFdHandle,
+        write_fd: EventFdHandle,
+    ) -> LibTpuResult<()> {
+        self.close_device(write_fd.0)?;
+        self.close_device(read_fd.0)
+    }
+
+    /// Allocates a single OS-backed event notification descriptor (`eventfd` / pipe read end).
     #[must_use]
     pub fn create_eventfd(&self) -> EventFdHandle {
         let mut fds = [0_i32; 2];
         // SAFETY: `fds` points to a valid 2-element `c_int` array.
         let _ = unsafe { posix_libc::pipe(fds.as_mut_ptr()) };
-        // SAFETY: Closing the write end of the newly created pipe.
+        // SAFETY: Closing the write end of the newly created pipe when only a single handle is requested.
         let _ = unsafe { posix_libc::close(fds[1]) };
         EventFdHandle(fds[0])
     }

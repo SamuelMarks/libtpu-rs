@@ -266,6 +266,8 @@ pub struct LibtpuSdk_Client {
     pub host_names: Vec<CString>,
     /// Pre-allocated coordinate entries returned by `LibtpuSdk_GetChipCoordinates`.
     pub coords_entries: Vec<LibtpuSdk_ChipLocationToCoordinates>,
+    /// Metric names corresponding to each entry in `metrics` for in-place deduplication.
+    pub metric_names: Vec<String>,
     /// Owned [`LibtpuSdk_Metric`] instances allocated during `LibtpuSdk_GetMetric` calls.
     pub metrics: Vec<Box<LibtpuSdk_Metric>>,
 }

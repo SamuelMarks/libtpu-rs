@@ -3,7 +3,7 @@
 use super::args::*;
 use super::{alloc_extension_bytes, dispatch_typed_extension_args, extension_state};
 use crate::pjrt_helpers::box_serialized_artifact;
-use crate::pjrt_types::PJRT_Error;
+use crate::pjrt_types::{PJRT_Error, PJRT_Megascale_ClientContext, PJRT_MultiSlice_Config};
 use libtpu_core::config::global_init_config;
 use std::ptr;
 
@@ -17,6 +17,12 @@ use std::ptr;
 ///
 /// `args` must be a valid [`PJRT_MultiSlice_Config_Destroy_Args`].
 unsafe fn handle_multislice_config_destroy(args: &mut PJRT_MultiSlice_Config_Destroy_Args) {
+    if !args.config.is_null() {
+        // SAFETY: `args.config` was allocated as a `Box<PJRT_MultiSlice_Config>`.
+        unsafe {
+            drop(Box::from_raw(args.config.cast::<PJRT_MultiSlice_Config>()));
+        }
+    }
     args.config = ptr::null_mut();
 }
 
@@ -210,7 +216,11 @@ unsafe fn handle_multislice_config_serialize(args: &mut PJRT_MultiSlice_Config_S
 unsafe fn handle_megascale_create_client_context(args: &mut PJRT_Megascale_Query_Args) {
     let mut st = extension_state().lock();
     st.megascale_contexts = st.megascale_contexts.saturating_add(1);
-    args.out_value = st.megascale_contexts;
+    let ctx = Box::into_raw(Box::new(PJRT_Megascale_ClientContext {
+        context_id: u64::try_from(st.megascale_contexts).unwrap_or(1),
+        transport_type: st.megascale_transport_type,
+    }));
+    args.out_value = ctx as usize;
 }
 
 /// Creates a Megascale client context (`PJRT_Megascale_CreateClientContext`).
@@ -245,6 +255,14 @@ pub unsafe extern "C" fn PJRT_Megascale_CreateClientContext(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
 unsafe fn handle_megascale_delete_client_context(args: &mut PJRT_Megascale_Handle_Args) {
+    if !args.handle.is_null() {
+        // SAFETY: `args.handle` was allocated by `PJRT_Megascale_CreateClientContext`.
+        unsafe {
+            drop(Box::from_raw(
+                args.handle.cast::<PJRT_Megascale_ClientContext>(),
+            ));
+        }
+    }
     let mut st = extension_state().lock();
     st.megascale_contexts = st.megascale_contexts.saturating_sub(1);
     args.handle = ptr::null_mut();
@@ -282,9 +300,16 @@ pub unsafe extern "C" fn PJRT_Megascale_DeleteClientContext(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_megascale_create_config(args: &mut PJRT_Megascale_Query_Args) {
+    let cfg = global_init_config();
     let mut st = extension_state().lock();
     st.megascale_configs = st.megascale_configs.saturating_add(1);
-    args.out_value = st.megascale_configs;
+    drop(st);
+    let ms_cfg = Box::into_raw(Box::new(PJRT_MultiSlice_Config {
+        num_slices: cfg.megascale_num_slices.max(1),
+        slice_id: cfg.megascale_slice_id,
+        num_devices_per_slice: cfg.chips_per_host(),
+    }));
+    args.out_value = ms_cfg as usize;
 }
 
 /// Creates a default Megascale config (`PJRT_Megascale_CreateDefaultConfig`).
@@ -363,6 +388,12 @@ pub unsafe extern "C" fn PJRT_Megascale_CreateMultiSliceConfig(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
 unsafe fn handle_megascale_delete_config(args: &mut PJRT_Megascale_Handle_Args) {
+    if !args.handle.is_null() {
+        // SAFETY: `args.handle` was allocated by `handle_megascale_create_config`.
+        unsafe {
+            drop(Box::from_raw(args.handle.cast::<PJRT_MultiSlice_Config>()));
+        }
+    }
     let mut st = extension_state().lock();
     st.megascale_configs = st.megascale_configs.saturating_sub(1);
     args.handle = ptr::null_mut();
@@ -647,16 +678,21 @@ pub unsafe extern "C" fn PJRT_Megascale_Barrier(
     }
 }
 
-/// Strongly-typed no-op handler for [`PJRT_Megascale_Handle_Args`].
+/// Strongly-typed state-recording handler for [`PJRT_Megascale_Handle_Args`] lifecycle/control slots
+/// (`LogError`, `FinalizeSlice`, `WaitForBarrier`, `AbortCollectives`, `Reserved`).
 ///
 /// # Arguments
 ///
-/// * `_args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
+/// * `args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
 ///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
-pub(super) unsafe fn handle_megascale_noop(_args: &mut PJRT_Megascale_Handle_Args) {}
+pub(super) unsafe fn handle_megascale_noop(args: &mut PJRT_Megascale_Handle_Args) {
+    let mut st = extension_state().lock();
+    st.megascale_barriers = st.megascale_barriers.saturating_add(1);
+    args.handle = ptr::null_mut();
+}
 
 /// Logs a Megascale collective error (`PJRT_Megascale_LogError`).
 ///
@@ -688,13 +724,16 @@ pub unsafe extern "C" fn PJRT_Megascale_LogError(
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_megascale_dcn_topology(args: &mut PJRT_Megascale_Query_Args) {
     let cfg = global_init_config();
+    let transport =
+        i32::try_from(extension_state().lock().megascale_transport_type.max(1)).unwrap_or(1);
     let dcn_bytes = libtpu_core::proto::MegascaleDcnTopologyProto {
         num_slices: i32::try_from(cfg.megascale_num_slices.max(1)).unwrap_or(1),
         num_hosts_per_slice: i32::try_from(cfg.total_hosts()).unwrap_or(1),
-        transport_type: 1,
+        transport_type: transport,
     }
     .encode();
-    args.out_value = dcn_bytes.len();
+    let (_ptr, len) = alloc_extension_bytes(dcn_bytes);
+    args.out_value = len;
 }
 
 /// Queries the Megascale DCN topology (`PJRT_Megascale_GetDcnTopology`).
@@ -1018,7 +1057,8 @@ pub unsafe extern "C" fn PJRT_Megascale_GetTransportType(
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_megascale_set_transport_type(args: &mut PJRT_Megascale_Query_Args) {
     let mut st = extension_state().lock();
-    st.megascale_transport_type = 1;
+    let requested = if args.handle == 0 { 1 } else { args.handle };
+    st.megascale_transport_type = requested;
     args.out_value = st.megascale_transport_type;
 }
 

@@ -1,7 +1,10 @@
 //! PJRT XLA Transform, Callback, PhaseCompile, and Triton compilation entrypoints.
 
 use super::args::*;
-use super::{alloc_extension_bytes, dispatch_typed_extension_args, extension_state};
+use super::{
+    alloc_extension_bytes, alloc_phase_compile_buffer, dispatch_typed_extension_args,
+    extension_state, free_phase_compile_buffer,
+};
 use crate::pjrt_types::{PJRT_Error, PJRT_PhaseCompile_Compiler};
 use libtpu_core::compiler::{COMPILATION_PHASE_NAMES, CompiledProgram};
 use std::ptr;
@@ -14,6 +17,22 @@ static STATIC_PHASE_NAME_SIZES: [usize; 5] = [
     COMPILATION_PHASE_NAMES[3].len(),
     COMPILATION_PHASE_NAMES[4].len(),
 ];
+
+/// Static null-terminated C-string pointers for [`COMPILATION_PHASE_NAMES`].
+#[repr(transparent)]
+struct StaticPhaseNamePtrs([*const std::os::raw::c_char; 5]);
+
+// SAFETY: Contains only immutable static `'static` C-string pointers.
+unsafe impl Sync for StaticPhaseNamePtrs {}
+
+/// Static array of phase name C-string pointers.
+static STATIC_PHASE_NAME_PTRS: StaticPhaseNamePtrs = StaticPhaseNamePtrs([
+    c"hlo_verification".as_ptr(),
+    c"spmd_partitioning".as_ptr(),
+    c"tpu_layout_assignment_and_tiling".as_ptr(),
+    c"llo_vliw_bundle_scheduling".as_ptr(),
+    c"binary_serialization".as_ptr(),
+]);
 
 /// Strongly-typed handler for [`PJRT_XlaTransform_Register`].
 ///
@@ -373,11 +392,23 @@ unsafe fn handle_phase_compile_run_phase(args: &mut PJRT_PhaseCompile_RunPhase_A
     } else {
         b"module @phase { stablehlo.add }"
     };
-    args.output_status =
-        CompiledProgram::run_compilation_phase(COMPILATION_PHASE_NAMES[0], input, b"")
-            .map_or(COMPILATION_PHASE_NAMES.len(), |v| {
-                v.len().max(COMPILATION_PHASE_NAMES.len())
-            });
+    let phase_name = if !args.phase_name.is_null() {
+        // SAFETY: `phase_name` is a non-null C-string pointer.
+        unsafe { std::ffi::CStr::from_ptr(args.phase_name) }
+            .to_str()
+            .unwrap_or(COMPILATION_PHASE_NAMES[0])
+    } else {
+        COMPILATION_PHASE_NAMES[0]
+    };
+    args.output_status = CompiledProgram::run_compilation_phase(phase_name, input, b"").map_or(
+        COMPILATION_PHASE_NAMES.len(),
+        |v| {
+            let len = v.len().max(COMPILATION_PHASE_NAMES.len());
+            let (ptr, _) = alloc_phase_compile_buffer(v);
+            free_phase_compile_buffer(ptr.cast_mut().cast());
+            len
+        },
+    );
 }
 
 /// Executes a named TPU compilation phase (`PJRT_PhaseCompile_RunPhase`).
@@ -412,7 +443,7 @@ pub unsafe extern "C" fn PJRT_PhaseCompile_RunPhase(
 ///
 /// `args` must be a valid [`PJRT_PhaseCompile_GetPhaseNames_Args`].
 unsafe fn handle_phase_compile_get_phase_names(args: &mut PJRT_PhaseCompile_GetPhaseNames_Args) {
-    args.phase_names = ptr::null();
+    args.phase_names = STATIC_PHASE_NAME_PTRS.0.as_ptr();
     args.phase_names_sizes = STATIC_PHASE_NAME_SIZES.as_ptr();
     args.num_phase_names = COMPILATION_PHASE_NAMES.len();
 }
@@ -449,6 +480,7 @@ pub unsafe extern "C" fn PJRT_PhaseCompile_GetPhaseNames(
 ///
 /// `args` must be a valid [`PJRT_PhaseCompile_Destroy_Args`].
 unsafe fn handle_phase_compile_c_buffers_destroy(args: &mut PJRT_PhaseCompile_Destroy_Args) {
+    free_phase_compile_buffer(args.handle);
     args.handle = ptr::null_mut();
 }
 

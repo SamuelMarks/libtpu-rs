@@ -45,6 +45,10 @@ class LibtpuSdkMetric:
         """Returns the human-readable description of this telemetry metric."""
         ...
 
+    def description(self) -> str:
+        """Returns the human-readable description of this telemetry metric (`description()`)."""
+        ...
+
     def data(self) -> list[str]:
         """Returns the list of per-chip string values for this telemetry metric."""
         ...
@@ -74,6 +78,18 @@ class SdkClient:
 
     def close(self) -> None:
         """Destroys the underlying `LibtpuSdk_Client` handle."""
+        ...
+
+    def __enter__(self) -> SdkClient:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `SdkClient` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+        """
         ...
 
 def list_supported_metrics() -> list[str]:

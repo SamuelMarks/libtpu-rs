@@ -526,7 +526,6 @@ impl ElementType {
 
 #[cfg(test)]
 #[allow(
-    for_loops_over_fallibles,
     clippy::cognitive_complexity,
     clippy::too_many_lines,
     clippy::float_cmp
@@ -540,7 +539,7 @@ mod tests {
         for raw in 0..=28 {
             let et = ElementType::from_raw(raw);
             assert!(et.is_ok());
-            for t in et {
+            if let Ok(t) = et {
                 assert_eq!(t.as_raw(), raw);
                 let _ = t.bit_size();
                 let _ = t.byte_size();
@@ -603,6 +602,44 @@ mod tests {
             let packed = et.pack_from_f64_slice(&[0.0, 2.0, 3.0, 4.0]);
             let unpacked = et.unpack_to_f64_vec(&packed);
             assert_eq!(unpacked.len(), 4);
+            assert_eq!(unpacked.first().copied(), Some(0.0));
+            if matches!(
+                et,
+                ElementType::S8
+                    | ElementType::U8
+                    | ElementType::S16
+                    | ElementType::U16
+                    | ElementType::S32
+                    | ElementType::U32
+                    | ElementType::S64
+                    | ElementType::U64
+                    | ElementType::F16
+                    | ElementType::Bf16
+                    | ElementType::F32
+                    | ElementType::F64
+                    | ElementType::C64
+                    | ElementType::C128
+                    | ElementType::S4
+                    | ElementType::U4
+            ) {
+                assert_eq!(unpacked, vec![0.0, 2.0, 3.0, 4.0]);
+            }
+        }
+
+        for signed_et in [
+            ElementType::S4,
+            ElementType::S8,
+            ElementType::S16,
+            ElementType::S32,
+            ElementType::S64,
+            ElementType::F16,
+            ElementType::Bf16,
+            ElementType::F32,
+            ElementType::F64,
+        ] {
+            let neg_packed = signed_et.pack_from_f64_slice(&[-2.0, -1.0, 0.0, 1.0]);
+            let neg_unpacked = signed_et.unpack_to_f64_vec(&neg_packed);
+            assert_eq!(neg_unpacked, vec![-2.0, -1.0, 0.0, 1.0]);
         }
 
         let f16_nan = F16Scalar::from_f32(f32::NAN);

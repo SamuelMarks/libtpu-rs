@@ -111,11 +111,23 @@ pub fn decode_descriptor_pool(bytes: &[u8]) -> LibTpuResult<DescriptorPool> {
     Ok(DescriptorPool::decode(bytes)?)
 }
 
+/// Returns a fallible reference to the global [`DescriptorPool`] compiled from `docs/reverse_engineering/protos/*.proto`.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::ProstReflectDescriptorFailed`] if the embedded descriptor set is malformed.
+pub fn try_global_descriptor_pool() -> LibTpuResult<&'static DescriptorPool> {
+    let _ = decode_descriptor_pool(EMBEDDED_FILE_DESCRIPTOR_SET_BYTES)?;
+    Ok(global_descriptor_pool())
+}
+
 /// Returns a reference to the global [`DescriptorPool`] compiled from `docs/reverse_engineering/protos/*.proto`.
 #[must_use]
 pub fn global_descriptor_pool() -> &'static DescriptorPool {
     GLOBAL_DESCRIPTOR_POOL.get_or_init(|| {
-        DescriptorPool::decode(EMBEDDED_FILE_DESCRIPTOR_SET_BYTES).unwrap_or_default()
+        let mut pool = DescriptorPool::new();
+        let _ = pool.decode_file_descriptor_set(EMBEDDED_FILE_DESCRIPTOR_SET_BYTES);
+        pool
     })
 }
 
@@ -201,7 +213,7 @@ pub fn transcode_proto_bytes_to_json(
     bytes: &[u8],
 ) -> LibTpuResult<String> {
     let dyn_msg = decode_dynamic_proto_message(full_message_name, bytes)?;
-    Ok(serde_json::to_string(&dyn_msg).unwrap_or_default())
+    Ok(serde_json::to_string(&dyn_msg)?)
 }
 
 /// Decodes a `prost::Message` type `M` from `bytes`, mapping any wire error into

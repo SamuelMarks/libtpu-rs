@@ -211,7 +211,6 @@ impl SimulatedTpuHal {
     /// * `lhs_sh` - LHS operand [`Shape`].
     /// * `rhs_sh` - RHS operand [`Shape`].
     /// * `attrs` - [`crate::compiler::InstructionAttrs`] with contraction and batching axes.
-    #[allow(for_loops_over_fallibles)]
     pub(super) fn eval_dot_general_nd(
         elem_type: ElementType,
         v0: &[f64],
@@ -270,36 +269,42 @@ impl SimulatedTpuHal {
                 let mut r_coords = vec![0_usize; rhs_sh.rank()];
                 for (bi, (&lb, &rb)) in l_batch.iter().zip(r_batch.iter()).enumerate() {
                     let b_val = dst_coords.get(bi).copied().unwrap_or(0);
-                    for slot in l_coords.get_mut(lb) {
-                        *slot = b_val;
-                    }
-                    for slot in r_coords.get_mut(rb) {
-                        *slot = b_val;
-                    }
+                    l_coords
+                        .get_mut(lb)
+                        .into_iter()
+                        .for_each(|slot| *slot = b_val);
+                    r_coords
+                        .get_mut(rb)
+                        .into_iter()
+                        .for_each(|slot| *slot = b_val);
                 }
                 for (fi, &lf) in l_free.iter().enumerate() {
                     let f_val = dst_coords.get(l_batch.len() + fi).copied().unwrap_or(0);
-                    for slot in l_coords.get_mut(lf) {
-                        *slot = f_val;
-                    }
+                    l_coords
+                        .get_mut(lf)
+                        .into_iter()
+                        .for_each(|slot| *slot = f_val);
                 }
                 for (fi, &rf) in r_free.iter().enumerate() {
                     let f_val = dst_coords
                         .get(l_batch.len() + l_free.len() + fi)
                         .copied()
                         .unwrap_or(0);
-                    for slot in r_coords.get_mut(rf) {
-                        *slot = f_val;
-                    }
+                    r_coords
+                        .get_mut(rf)
+                        .into_iter()
+                        .for_each(|slot| *slot = f_val);
                 }
                 for (ci, (&lc, &rc)) in l_cont.iter().zip(r_cont.iter()).enumerate() {
                     let c_val = c_coords.get(ci).copied().unwrap_or(0);
-                    for slot in l_coords.get_mut(lc) {
-                        *slot = c_val;
-                    }
-                    for slot in r_coords.get_mut(rc) {
-                        *slot = c_val;
-                    }
+                    l_coords
+                        .get_mut(lc)
+                        .into_iter()
+                        .for_each(|slot| *slot = c_val);
+                    r_coords
+                        .get_mut(rc)
+                        .into_iter()
+                        .for_each(|slot| *slot = c_val);
                 }
                 let l_lin = lhs_sh.coords_to_linear(&l_coords).unwrap_or(0);
                 let r_lin = rhs_sh.coords_to_linear(&r_coords).unwrap_or(0);
@@ -310,6 +315,64 @@ impl SimulatedTpuHal {
             out_vals.push(acc);
         }
         elem_type.pack_from_f64_slice(&out_vals)
+    }
+
+    /// Evaluates complex matrix multiplication on interleaved `[re, im]` `f64` slices.
+    ///
+    /// # Arguments
+    ///
+    /// * `elem_type` - Complex [`ElementType`] (`C64` or `C128`).
+    /// * `v0` - Unpacked LHS interleaved complex scalars.
+    /// * `v1` - Unpacked RHS interleaved complex scalars.
+    fn eval_complex_dot_general(elem_type: ElementType, v0: &[f64], v1: &[f64]) -> Vec<u8> {
+        let c0: Vec<num_complex::Complex64> = v0
+            .chunks_exact(2)
+            .map(|p| {
+                num_complex::Complex64::new(
+                    p.first().copied().unwrap_or(0.0),
+                    p.get(1).copied().unwrap_or(0.0),
+                )
+            })
+            .collect();
+        let c1: Vec<num_complex::Complex64> = v1
+            .chunks_exact(2)
+            .map(|p| {
+                num_complex::Complex64::new(
+                    p.first().copied().unwrap_or(0.0),
+                    p.get(1).copied().unwrap_or(0.0),
+                )
+            })
+            .collect();
+        let elem_len = c0.len().min(c1.len());
+        let mut dim = 1_usize;
+        while dim.saturating_mul(dim) < elem_len {
+            dim += 1;
+        }
+        let (rows, inner, cols) = if dim.saturating_mul(dim) == elem_len {
+            (dim, dim, dim)
+        } else {
+            (elem_len, 1, 1)
+        };
+        let mut out_complex = Vec::with_capacity(rows * cols * 2);
+        for r in 0..rows {
+            for c in 0..cols {
+                let mut acc = num_complex::Complex64::new(0.0, 0.0);
+                for idx in 0..inner {
+                    let lv = c0
+                        .get(r * inner + idx)
+                        .copied()
+                        .unwrap_or(num_complex::Complex64::new(0.0, 0.0));
+                    let rv = c1
+                        .get(idx * cols + c)
+                        .copied()
+                        .unwrap_or(num_complex::Complex64::new(0.0, 0.0));
+                    acc += lv * rv;
+                }
+                out_complex.push(acc.re);
+                out_complex.push(acc.im);
+            }
+        }
+        elem_type.pack_from_f64_slice(&out_complex)
     }
 
     /// Evaluates a general N-dimensional matrix contraction (`dot_general`) supporting arbitrary
@@ -333,6 +396,10 @@ impl SimulatedTpuHal {
             && !attrs.dot_lhs_contracting_dims.is_empty()
         {
             return Self::eval_dot_general_nd(elem_type, v0, v1, lhs_sh, rhs_sh, attrs);
+        }
+
+        if matches!(elem_type, ElementType::C64 | ElementType::C128) {
+            return Self::eval_complex_dot_general(elem_type, v0, v1);
         }
 
         let mut batch = 1_usize;
@@ -462,7 +529,6 @@ impl SimulatedTpuHal {
     /// * `elem_type` - Output [`ElementType`].
     /// * `vals` - Unpacked operand tensor elements.
     /// * `attrs` - [`crate::compiler::InstructionAttrs`] with `reduce_dims` and input/output shapes.
-    #[allow(for_loops_over_fallibles)]
     pub(super) fn eval_reduce_with_attrs(
         opcode: TpuOpCode,
         elem_type: ElementType,
@@ -503,13 +569,13 @@ impl SimulatedTpuHal {
                     .map(|&a| src_coords.get(a).copied().unwrap_or(0))
                     .collect();
                 let dst_idx = out_sh.coords_to_linear(&dst_coords).unwrap_or(0);
-                for acc in out_vals.get_mut(dst_idx) {
+                out_vals.get_mut(dst_idx).into_iter().for_each(|acc| {
                     *acc = match opcode {
                         TpuOpCode::ReduceMax => acc.max(v),
                         TpuOpCode::ReduceMin => acc.min(v),
                         _ => *acc + v,
                     };
-                }
+                });
             }
             return elem_type.pack_from_f64_slice(&out_vals);
         }
@@ -523,6 +589,45 @@ impl SimulatedTpuHal {
             .as_ref()
             .map_or(vals.len(), |s| s.element_count().max(1));
         elem_type.pack_from_f64_slice(&vec![scalar; out_len])
+    }
+
+    /// Evaluates complex multiplication or division on interleaved `[re, im]` `f64` slices.
+    ///
+    /// # Arguments
+    ///
+    /// * `opcode` - Binary [`TpuOpCode`] (`MulF32` or `DivF32`).
+    /// * `elem_type` - Complex [`ElementType`] (`C64` or `C128`).
+    /// * `v0` - Unpacked LHS interleaved complex scalars.
+    /// * `v1` - Unpacked RHS interleaved complex scalars.
+    fn eval_complex_binary_op(
+        opcode: TpuOpCode,
+        elem_type: ElementType,
+        v0: &[f64],
+        v1: &[f64],
+    ) -> Vec<u8> {
+        let mut out_complex = Vec::with_capacity(v0.len().min(v1.len()));
+        for (c0, c1) in v0.chunks_exact(2).zip(v1.chunks_exact(2)) {
+            let a = num_complex::Complex64::new(
+                c0.first().copied().unwrap_or(0.0),
+                c0.get(1).copied().unwrap_or(0.0),
+            );
+            let b = num_complex::Complex64::new(
+                c1.first().copied().unwrap_or(0.0),
+                c1.get(1).copied().unwrap_or(0.0),
+            );
+            let res = if opcode == TpuOpCode::DivF32 {
+                let denom = b.norm_sqr().max(1e-24);
+                num_complex::Complex64::new(
+                    a.im.mul_add(b.im, a.re * b.re) / denom,
+                    a.re.mul_add(-b.im, a.im * b.re) / denom,
+                )
+            } else {
+                a * b
+            };
+            out_complex.push(res.re);
+            out_complex.push(res.im);
+        }
+        elem_type.pack_from_f64_slice(&out_complex)
     }
 
     /// Evaluates a binary operation across `b0` and `b1`.
@@ -545,6 +650,11 @@ impl SimulatedTpuHal {
         }
         let v0 = elem_type.unpack_to_f64_vec(b0);
         let v1 = elem_type.unpack_to_f64_vec(b1);
+        if matches!(elem_type, ElementType::C64 | ElementType::C128)
+            && matches!(opcode, TpuOpCode::MulF32 | TpuOpCode::DivF32)
+        {
+            return Self::eval_complex_binary_op(opcode, elem_type, &v0, &v1);
+        }
         if opcode == TpuOpCode::Concatenate {
             let mut joined = Vec::with_capacity(v0.len() + v1.len());
             joined.extend_from_slice(&v0);
@@ -904,7 +1014,6 @@ impl SimulatedTpuHal {
     /// # Errors
     ///
     /// Returns [`LibTpuError`] if any participant device or buffer address is invalid.
-    #[allow(for_loops_over_fallibles)]
     pub fn execute_collective(
         &self,
         opcode: TpuOpCode,
@@ -975,13 +1084,16 @@ impl SimulatedTpuHal {
                 _ => reduced.clone(),
             };
             let packed = elem_type.pack_from_f64_slice(&payload_f64);
-            for dev in guard.get_mut(&dev_id) {
-                for out_buf in dev.allocations.get_mut(&out_addr) {
-                    for (dst_b, &src_b) in out_buf.iter_mut().zip(packed.iter()) {
-                        *dst_b = src_b;
-                    }
-                }
-            }
+            guard.get_mut(&dev_id).into_iter().for_each(|dev| {
+                dev.allocations
+                    .get_mut(&out_addr)
+                    .into_iter()
+                    .for_each(|out_buf| {
+                        for (dst_b, &src_b) in out_buf.iter_mut().zip(packed.iter()) {
+                            *dst_b = src_b;
+                        }
+                    });
+            });
         }
         drop(guard);
         Ok(())

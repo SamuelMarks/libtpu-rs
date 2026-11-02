@@ -310,6 +310,7 @@ mod tests {
             inner: LibtpuSdkCoreClient::new(),
             host_names: Vec::new(),
             coords_entries: Vec::new(),
+            metric_names: Vec::new(),
             metrics: Vec::new(),
         };
         assert_ne!(format!("{ev:?}{ctx:?}{stm:?}{sdk_cli:?}"), "");
@@ -522,6 +523,89 @@ mod tests {
             assert!(PJRT_CheckMatchingStructSizes(ptr::addr_of_mut!(init_args).cast()).is_null());
             pjrt_serialized_noop_deleter(ptr::null_mut());
             assert!(pjrt_slot_dispatch_count() > 0);
+
+            // Behavioral end-to-end dispatch through GetPjrtApi() function pointer slots with valid handles
+            let mut cli_create = crate::pjrt_types::PJRT_Client_Create_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                create_options: ptr::null(),
+                num_options: 0,
+                kv_get_callback: ptr::null(),
+                kv_get_user_arg: ptr::null_mut(),
+                kv_put_callback: ptr::null(),
+                kv_put_user_arg: ptr::null_mut(),
+                kv_try_get_callback: ptr::null(),
+                kv_try_get_user_arg: ptr::null_mut(),
+                client: ptr::null_mut(),
+            };
+            assert!((api.pjrt_client_create)(ptr::addr_of_mut!(cli_create).cast()).is_null());
+            assert!(!cli_create.client.is_null());
+
+            let mut cli_devs = crate::pjrt_types::PJRT_Client_Devices_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_Devices_Args>(),
+                extension_start: ptr::null_mut(),
+                client: cli_create.client,
+                devices: ptr::null(),
+                num_devices: 0,
+            };
+            assert!((api.pjrt_client_devices)(ptr::addr_of_mut!(cli_devs).cast()).is_null());
+            assert_eq!(cli_devs.num_devices, 4);
+            let dev0 = *cli_devs.devices;
+
+            let mut dev_mem = crate::pjrt_types::PJRT_Device_DefaultMemory_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Device_DefaultMemory_Args>(),
+                extension_start: ptr::null_mut(),
+                device: dev0,
+                memory: ptr::null_mut(),
+            };
+            assert!((api.pjrt_device_default_memory)(ptr::addr_of_mut!(dev_mem).cast()).is_null());
+            assert!(!dev_mem.memory.is_null());
+
+            let host_vals = [10.0_f32, 20.0, 30.0, 40.0];
+            let dims = [4_i64];
+            let mut h2d = crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args>(),
+                extension_start: ptr::null_mut(),
+                client: cli_create.client,
+                data: host_vals.as_ptr().cast(),
+                element_type: 11,
+                pad0: 0,
+                dims: dims.as_ptr(),
+                num_dims: 1,
+                byte_strides: ptr::null(),
+                num_byte_strides: 0,
+                host_buffer_semantics: 0,
+                pad1: 0,
+                device: dev0,
+                memory: dev_mem.memory,
+                device_layout: ptr::null(),
+                done_with_host_buffer: ptr::null_mut(),
+                out_buffer: ptr::null_mut(),
+            };
+            assert!(
+                (api.pjrt_client_buffer_from_host_buffer)(ptr::addr_of_mut!(h2d).cast()).is_null()
+            );
+            assert!(!h2d.out_buffer.is_null());
+            let mut ev_del = crate::pjrt_types::PJRT_Event_Destroy_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Event_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                event: h2d.done_with_host_buffer,
+            };
+            assert!((api.pjrt_event_destroy)(ptr::addr_of_mut!(ev_del).cast()).is_null());
+
+            let mut buf_del = crate::pjrt_types::PJRT_Buffer_Destroy_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Buffer_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                buffer: h2d.out_buffer,
+            };
+            assert!((api.pjrt_buffer_destroy)(ptr::addr_of_mut!(buf_del).cast()).is_null());
+
+            let mut cli_del = crate::pjrt_types::PJRT_Client_Destroy_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                client: cli_create.client,
+            };
+            assert!((api.pjrt_client_destroy)(ptr::addr_of_mut!(cli_del).cast()).is_null());
         }
     }
 }

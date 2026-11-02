@@ -347,11 +347,7 @@ pub fn reconstruct_tpu_driver_vtable(
 }
 
 #[cfg(test)]
-#[allow(
-    for_loops_over_fallibles,
-    clippy::indexing_slicing,
-    clippy::too_many_lines
-)]
+#[allow(clippy::indexing_slicing, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -362,7 +358,7 @@ mod tests {
         let elf_bytes = build_synthetic_elf64();
         let relocs = resolve_relative_relocations(&elf_bytes);
         assert!(relocs.is_ok());
-        for r_list in relocs {
+        if let Ok(r_list) = relocs {
             assert_eq!(r_list.len(), 2);
             assert_eq!(r_list[0].offset, 0x3000);
             assert_eq!(r_list[0].r_type, R_X86_64_RELATIVE);

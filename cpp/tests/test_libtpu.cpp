@@ -120,14 +120,16 @@ int main() {
 
   libtpu::Buffer b0_moved(static_cast<libtpu::Buffer &&>(b0));
   b0 = static_cast<libtpu::Buffer &&>(b0_moved);
-  if (b0.rank() != 1 || b0.dimension(0) != 4 ||
+  if (b0.rank() != 1 || b0.dimension(0) != 4 || b0.dimension(99) != -1 ||
       b0.element_type() != libtpu::DataType::F32 || b0.tile_count() != 1) {
     return 80;
   }
   libtpu::Buffer b_copied;
+  libtpu::Buffer b1_copied;
   libtpu::Status copy_ok = b0.copy_to_device(client.raw(), 1, &b_copied);
+  libtpu::Status copy1_ok = b1.copy_to_device(client.raw(), 1, &b1_copied);
   libtpu::Status copy_err = b0.copy_to_device(client.raw(), 99, &b_copied);
-  if (!copy_ok.is_ok() || copy_err.is_ok()) {
+  if (!copy_ok.is_ok() || !copy1_ok.is_ok() || copy_err.is_ok()) {
     return 81;
   }
 
@@ -155,14 +157,18 @@ int main() {
       static_cast<libtpu::LoadedExecutable &&>(exec));
   exec = static_cast<libtpu::LoadedExecutable &&>(exec_moved);
   char fp_buf[40] = {};
-  if (exec.fingerprint(fp_buf, sizeof(fp_buf)) != 32 || exec.flops() <= 0.0F ||
-      exec.num_outputs() != 1) {
+  char short_fp_buf[4] = {};
+  if (exec.fingerprint(fp_buf, sizeof(fp_buf)) != 32 ||
+      exec.fingerprint(short_fp_buf, sizeof(short_fp_buf)) != 32 ||
+      exec.flops() < 4.0F || exec.num_outputs() != 1) {
     return 100;
   }
   size_t ser_len = 0;
   uint8_t ser_buf[4096] = {};
+  uint8_t short_ser_buf[4] = {};
   if (!exec.serialize(ser_buf, sizeof(ser_buf), &ser_len).is_ok() ||
-      ser_len == 0) {
+      ser_len == 0 ||
+      exec.serialize(short_ser_buf, sizeof(short_ser_buf), &ser_len).is_ok()) {
     return 101;
   }
   size_t opt_len = 0;
@@ -187,10 +193,11 @@ int main() {
     return 11;
   }
 
-  const PJRT_Buffer *raw_inputs[2] = {b0.raw(), b1.raw()};
+  const PJRT_Buffer *raw_inputs[2] = {b_copied.raw(), b1_copied.raw()};
   PJRT_Buffer *raw_outputs[1] = {nullptr};
-  libtpu::Status multi_st = exec.execute(0, raw_inputs, 2, raw_outputs, 1);
-  if (!multi_st.is_ok() || raw_outputs[0] == nullptr) {
+  libtpu::Status multi_st = exec.execute(1, raw_inputs, 2, raw_outputs, 1);
+  if (!multi_st.is_ok() || raw_outputs[0] == nullptr ||
+      exec.execute(99, raw_inputs, 2, raw_outputs, 1).is_ok()) {
     return 110;
   }
   libtpu_rs_buffer_destroy(raw_outputs[0]);
@@ -339,7 +346,7 @@ int main() {
       0,
       -1,
       0};
-  (void)PJRT_MemoryDescriptions_Destroy(&kind_args);
+  (void)PJRT_MemoryDescription_Kind(&kind_args);
   if (api_view.struct_size() != 1144 || api_view.minor_version() != 116 ||
       api_view.extension_count() != 17 ||
       api_view.memory_description_count() != 4 || kind_args.kind_id != 1 ||
@@ -370,6 +377,7 @@ int main() {
   }
   if (ms_ctx.barrier() == 0 || ms_ctx.num_slices() == 0 ||
       emb_engine.raw_state() == nullptr ||
+      emb_engine.state_handle() == nullptr ||
       static_cast<int32_t>(libtpu::TpuVersion::V5e) != topo.version()) {
     return 28;
   }

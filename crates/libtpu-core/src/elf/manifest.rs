@@ -209,7 +209,6 @@ pub fn compute_artifact_digests(bytes: &[u8]) -> ArtifactDigestReport {
 }
 
 #[cfg(test)]
-#[allow(for_loops_over_fallibles)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -225,17 +224,17 @@ mod tests {
 
         let manifest_json =
             include_str!("../../../../docs/reverse_engineering/golden_binary_manifest.json");
-        for manifest in parse_golden_binary_manifest(manifest_json) {
+        if let Ok(manifest) = parse_golden_binary_manifest(manifest_json) {
             assert_eq!(manifest.package, "libtpu");
             assert_eq!(manifest.libtpu_so.exported_functions_count, 78);
             assert_eq!(manifest.libtpu_so.pjrt_vtable_slots.len(), 138);
             assert_eq!(manifest.clone(), manifest);
             assert_ne!(format!("{manifest:?}"), "");
-            for fn_sym in manifest.libtpu_so.exported_functions.first() {
+            if let Some(fn_sym) = manifest.libtpu_so.exported_functions.first() {
                 assert_eq!(fn_sym.clone(), *fn_sym);
                 assert_ne!(format!("{fn_sym:?}"), "");
             }
-            for slot in manifest.libtpu_so.pjrt_vtable_slots.first() {
+            if let Some(slot) = manifest.libtpu_so.pjrt_vtable_slots.first() {
                 assert_eq!(slot.clone(), *slot);
                 assert_ne!(format!("{slot:?}"), "");
             }
@@ -261,13 +260,13 @@ mod tests {
 
         let layouts_json =
             include_str!("../../../../docs/reverse_engineering/golden_struct_layouts.json");
-        for layouts in parse_golden_struct_layouts(layouts_json) {
+        if let Ok(layouts) = parse_golden_struct_layouts(layouts_json) {
             assert_eq!(layouts.pjrt_api_size, 1144);
             assert_eq!(layouts.extensions.len(), 17);
             assert_eq!(layouts.pjrt_slots.len(), 138);
             assert_eq!(layouts.clone(), layouts);
             assert_ne!(format!("{layouts:?}"), "");
-            for ext in layouts.extensions.first() {
+            if let Some(ext) = layouts.extensions.first() {
                 assert_eq!(ext.clone(), *ext);
                 assert_ne!(format!("{ext:?}"), "");
             }
@@ -276,16 +275,14 @@ mod tests {
         let bad_layouts1 =
             layouts_json.replace(r#""pjrt_api_size": 1144"#, r#""pjrt_api_size": 8"#);
         assert!(parse_golden_struct_layouts(&bad_layouts1).is_err());
-        let mut short_ext = parse_golden_struct_layouts(layouts_json).ok();
-        for l in &mut short_ext {
+        if let Ok(mut l) = parse_golden_struct_layouts(layouts_json) {
             l.extensions.clear();
-            let s = serde_json::to_string(l).unwrap_or_default();
+            let s = serde_json::to_string(&l).unwrap_or_default();
             assert!(parse_golden_struct_layouts(&s).is_err());
         }
-        let mut short_slots = parse_golden_struct_layouts(layouts_json).ok();
-        for l in &mut short_slots {
+        if let Ok(mut l) = parse_golden_struct_layouts(layouts_json) {
             l.pjrt_slots.clear();
-            let s = serde_json::to_string(l).unwrap_or_default();
+            let s = serde_json::to_string(&l).unwrap_or_default();
             assert!(parse_golden_struct_layouts(&s).is_err());
         }
     }

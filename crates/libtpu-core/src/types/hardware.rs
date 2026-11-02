@@ -419,11 +419,7 @@ impl TpuGeneration {
 }
 
 #[cfg(test)]
-#[allow(
-    for_loops_over_fallibles,
-    clippy::cognitive_complexity,
-    clippy::too_many_lines
-)]
+#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
@@ -606,7 +602,7 @@ mod tests {
         {
             let parsed = TpuGeneration::from_name(name);
             assert!(parsed.is_ok());
-            for g in parsed {
+            if let Ok(g) = parsed {
                 assert_eq!(g, expected);
                 assert_eq!(g.pcie_vendor_id(), PciVendorId(0x1ae0));
                 assert_eq!(g.pcie_device_id(), pci);

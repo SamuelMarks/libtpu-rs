@@ -104,6 +104,24 @@ unsafe fn handle_tpu_topology_one(args: &mut PJRT_TpuTopology_ScalarQuery_Args) 
     args.out_value = 1;
 }
 
+/// Strongly-typed handler for [`PJRT_TpuTopology_SubsliceDeviceIdFromFullDeviceId`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
+unsafe fn handle_tpu_topology_subslice_device_id(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
+    let cfg = global_init_config();
+    let per_host = usize::try_from(
+        cfg.chips_per_host().max(1) * cfg.generation.logical_devices_per_chip().max(1),
+    )
+    .unwrap_or(4);
+    args.out_value = (args.topology as usize) % per_host;
+}
+
 /// Maps full device ID to subslice device ID (`PJRT_TpuTopology_SubsliceDeviceIdFromFullDeviceId`).
 ///
 /// # Arguments
@@ -121,7 +139,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_SubsliceDeviceIdFromFullDeviceId(
     unsafe {
         dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
             raw_args,
-            handle_tpu_topology_zero,
+            handle_tpu_topology_subslice_device_id,
         )
     }
 }
@@ -183,6 +201,25 @@ pub unsafe extern "C" fn PJRT_TpuTopology_IsEnhancedBarrierEnabled(
     }
 }
 
+/// Strongly-typed handler for [`PJRT_TpuTopology_HasLimitedIciConnectivity`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ScalarQuery_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
+unsafe fn handle_tpu_topology_has_limited_ici(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
+    let tpu_gen = global_init_config().generation;
+    args.out_value = usize::from(
+        matches!(
+            tpu_gen,
+            libtpu_core::types::TpuGeneration::V5e | libtpu_core::types::TpuGeneration::V6e
+        ) && extension_state().lock().is_subslice_topology,
+    );
+}
+
 /// Checks whether topology has limited ICI connectivity (`PJRT_TpuTopology_HasLimitedIciConnectivity`).
 ///
 /// # Arguments
@@ -200,7 +237,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_HasLimitedIciConnectivity(
     unsafe {
         dispatch_typed_extension_args::<PJRT_TpuTopology_ScalarQuery_Args>(
             raw_args,
-            handle_tpu_topology_zero,
+            handle_tpu_topology_has_limited_ici,
         )
     }
 }

@@ -144,6 +144,18 @@ class TpuBuffer:
         """Releases the underlying `PJRT_Buffer` handle."""
         ...
 
+    def __enter__(self) -> TpuBuffer:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `TpuBuffer` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+        """
+        ...
+
 class TpuExecutable:
     """RAII wrapper around a compiled `PJRT_LoadedExecutable` handle."""
 
@@ -191,6 +203,18 @@ class TpuExecutable:
         """Releases the underlying `PJRT_LoadedExecutable` handle."""
         ...
 
+    def __enter__(self) -> TpuExecutable:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `TpuExecutable` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+        """
+        ...
+
 class TpuProfiler:
     """RAII wrapper around `TpuProfiler_*` C API entrypoints."""
 
@@ -212,6 +236,18 @@ class TpuProfiler:
 
     def close(self) -> None:
         """Destroys the underlying `TpuProfiler` handle."""
+        ...
+
+    def __enter__(self) -> TpuProfiler:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `TpuProfiler` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+        """
         ...
 
 class TpuClient:
@@ -300,6 +336,18 @@ class TpuClient:
 
     def close(self) -> None:
         """Destroys the underlying `PJRT_Client` handle."""
+        ...
+
+    def __enter__(self) -> TpuClient:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `TpuClient` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+        """
         ...
 
 Client = TpuClient

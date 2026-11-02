@@ -307,10 +307,17 @@ public:
                                       Buffer *out_buffer) const noexcept;
 
   /**
-   * @brief Returns the underlying raw `PJRT_Buffer*` pointer.
-   * @return Raw `PJRT_Buffer*` handle.
+   * @brief Returns the underlying raw `const PJRT_Buffer*` pointer.
+   * @return Raw `const PJRT_Buffer*` handle.
    */
   [[nodiscard]] const PJRT_Buffer *raw() const noexcept;
+
+  /**
+   * @brief Returns the mutable raw `PJRT_Buffer*` pointer for C PJRT APIs that
+   * take non-const `PJRT_Buffer*`.
+   * @return Mutable raw `PJRT_Buffer*` handle.
+   */
+  [[nodiscard]] PJRT_Buffer *raw_mut() noexcept;
 
 private:
   /** @brief Owned C buffer handle. */
@@ -1118,6 +1125,12 @@ public:
    */
   [[nodiscard]] const void *raw_state() const noexcept;
 
+  /**
+   * @brief Returns the strongly-typed `TpuEmbeddingEngineState*` handle.
+   * @return Non-null `TpuEmbeddingEngineState*` handle.
+   */
+  [[nodiscard]] const TpuEmbeddingEngineState *state_handle() const noexcept;
+
 private:
   /** @brief Owned `TpuEmbeddingEngineState*` handle. */
   TpuEmbeddingEngineState *state_;
@@ -1161,12 +1174,12 @@ public:
    * @param count Number of elements to reduce.
    * @return `Status` indicating completion status.
    */
-  [[nodiscard]] Status all_reduce(const Buffer &send_buf, Buffer *recv_buf,
+  [[nodiscard]] Status all_reduce(Buffer &send_buf, Buffer *recv_buf,
                                   size_t count) noexcept;
 
 private:
-  /** @brief Owned opaque communicator handle. */
-  void *handle_;
+  /** @brief Owned strongly-typed `PJRT_Collectives_Communicator*` handle. */
+  PJRT_Collectives_Communicator *handle_;
 };
 
 } // namespace libtpu

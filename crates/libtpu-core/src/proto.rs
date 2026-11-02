@@ -87,6 +87,7 @@ mod tests {
         );
 
         assert!(decode_descriptor_pool(EMBEDDED_FILE_DESCRIPTOR_SET_BYTES).is_ok());
+        assert!(try_global_descriptor_pool().is_ok());
         assert!(decode_descriptor_pool(&[0xFF, 0xFF, 0xFF]).is_err());
 
         let target = TargetArgumentsProto {

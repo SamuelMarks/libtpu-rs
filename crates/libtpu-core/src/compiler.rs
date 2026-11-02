@@ -20,15 +20,18 @@ pub mod passes;
 pub mod serialization;
 pub mod vliw;
 
-pub use self::lexer::{HloLexer, HloParser, HloToken, MosaicTargetMetadata};
+pub use self::lexer::{
+    HloAstModule, HloLexer, HloParser, HloToken, MosaicTargetMetadata, ParsedHloModule,
+    SpannedToken, TokenSpan,
+};
 pub use self::mlir_bytecode::{
     MLIR_BYTECODE_MAGIC, MlirBytecodeHeader, MlirBytecodeSection, decode_mlir_prefix_varint,
     encode_mlir_prefix_varint,
 };
 pub use self::opcode::{InstructionAttrs, TpuInstructionBundle, TpuOpCode};
 pub use self::passes::{
-    CompiledMemoryStats, CostAnalysis, HloDagAnalysisReport, RegisterLivenessInterval,
-    analyze_hlo_computation_dag,
+    CompiledMemoryStats, CostAnalysis, CseExpressionKey, HloDagAnalysisReport,
+    RegisterLivenessInterval, analyze_hlo_computation_dag,
 };
 pub use self::serialization::{
     EXECUTABLE_FORMAT_VERSION, EXECUTABLE_MAGIC, ExecutableBinaryHeader,
@@ -41,6 +44,49 @@ pub use self::vliw::{
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::proto::{CompileOptionsProto, HloModuleProto, HloModuleProtoWithConfig};
 use crate::types::{MemoryKind, Shape};
+
+/// Strongly-typed program input format supported by [`CompiledProgram::compile`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProgramFormat {
+    /// `StableHLO` / Mosaic MLIR text or `ML\xefR` bytecode (`"mlir"`).
+    Mlir,
+    /// XLA `HloModuleProto` or textual HLO (`"hlo"`).
+    Hlo,
+    /// XLA `HloModuleProtoWithConfig` (`"hlo_with_config"`).
+    HloWithConfig,
+}
+
+impl ProgramFormat {
+    /// Parses a format string (`"mlir"`, `"hlo"`, or `"hlo_with_config"`) into a [`ProgramFormat`].
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Format string to parse.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::CompilationFailed`] if `raw` is not a recognized format.
+    pub fn from_str_checked(raw: &str) -> LibTpuResult<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "mlir" => Ok(Self::Mlir),
+            "hlo" => Ok(Self::Hlo),
+            "hlo_with_config" => Ok(Self::HloWithConfig),
+            _ => Err(LibTpuError::CompilationFailed {
+                reason: format!("Unsupported program format '{raw}'"),
+            }),
+        }
+    }
+
+    /// Returns the canonical lowercase string representation of this [`ProgramFormat`].
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Mlir => "mlir",
+            Self::Hlo => "hlo",
+            Self::HloWithConfig => "hlo_with_config",
+        }
+    }
+}
 
 /// Canonical ordered compilation phases supported by `PJRT_PhaseCompile_Extension`.
 pub const COMPILATION_PHASE_NAMES: [&str; 5] = [
@@ -56,10 +102,14 @@ pub const COMPILATION_PHASE_NAMES: [&str; 5] = [
 pub struct CompiledProgram {
     /// Module name extracted from the HLO or `StableHLO` program.
     pub name: String,
-    /// Program format (`"mlir"`, `"hlo"`, or `"hlo_with_config"`).
+    /// Strongly-typed program format (`Mlir`, `Hlo`, or `HloWithConfig`).
+    pub program_format: ProgramFormat,
+    /// Canonical lowercase program format string (`"mlir"`, `"hlo"`, or `"hlo_with_config"`).
     pub format: String,
     /// Original program source or bytecode payload.
     pub source_bytes: Vec<u8>,
+    /// Extracted JAX Mosaic / Pallas target metadata.
+    pub mosaic_metadata: MosaicTargetMetadata,
     /// Number of data-parallel replicas.
     pub num_replicas: usize,
     /// Number of SPMD model-parallel partitions.
@@ -100,26 +150,18 @@ impl CompiledProgram {
     /// # Errors
     ///
     /// Returns [`LibTpuError::CompilationFailed`] if `code` is empty, `format` is unsupported,
-    /// `compile_options` is malformed, or an explicit syntax error marker is present.
-    #[allow(clippy::too_many_lines)]
+    /// `compile_options` is malformed, or lexical/syntactic validation fails.
+    #[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
     pub fn compile(format: &str, code: &[u8], compile_options: &[u8]) -> LibTpuResult<Self> {
-        let fmt_lower = format.trim().to_ascii_lowercase();
-        if fmt_lower != "mlir" && fmt_lower != "hlo" && fmt_lower != "hlo_with_config" {
-            return Err(LibTpuError::CompilationFailed {
-                reason: format!("Unsupported program format '{format}'"),
-            });
-        }
+        let program_format = ProgramFormat::from_str_checked(format)?;
+        let fmt_lower = String::from(program_format.as_str());
         if code.is_empty() {
             return Err(LibTpuError::CompilationFailed {
                 reason: String::from("Program code payload cannot be empty"),
             });
         }
 
-        let parsed_options = if compile_options.is_empty() {
-            CompileOptionsProto::default()
-        } else {
-            CompileOptionsProto::decode(compile_options)?
-        };
+        let parsed_options = CompileOptionsProto::decode_or_empty(compile_options)?;
 
         let num_replicas = parsed_options
             .executable_build_options
@@ -135,7 +177,7 @@ impl CompiledProgram {
             .max(1);
 
         let stripped_code = code.strip_prefix(MLIR_BYTECODE_MAGIC).unwrap_or(code);
-        let text = if let Some(bc_hdr) = MlirBytecodeHeader::decode(code) {
+        let text = if let Ok(bc_hdr) = MlirBytecodeHeader::decode(code) {
             if bc_hdr.string_table.is_empty() {
                 String::from_utf8_lossy(stripped_code).into_owned()
             } else {
@@ -144,11 +186,15 @@ impl CompiledProgram {
         } else {
             String::from_utf8_lossy(stripped_code).into_owned()
         };
-        if text.contains("SYNTAX_ERROR") {
+        let has_syntax_err_tok = HloLexer::tokenize(&text)
+            .iter()
+            .any(|t| matches!(t, HloToken::Ident(id) if id == "SYNTAX_ERROR"));
+        if has_syntax_err_tok {
             return Err(LibTpuError::CompilationFailed {
-                reason: String::from("Explicit SYNTAX_ERROR marker encountered in program"),
+                reason: String::from("Explicit SYNTAX_ERROR token encountered in program"),
             });
         }
+        let mosaic_metadata = Self::parse_mosaic_metadata(&text);
 
         let decoded_hlo = HloModuleProto::decode(stripped_code)
             .ok()
@@ -164,8 +210,15 @@ impl CompiledProgram {
                 Self::lower_from_hlo_proto(&hlo_proto)?
             } else {
                 let extracted_name = Self::extract_module_name(&text);
-                let (op, p_shapes, o_shapes, b, o_slots) = Self::parse_textual_program(&text);
-                (extracted_name, op, p_shapes, o_shapes, b, o_slots)
+                let parsed = Self::parse_textual_program(&text);
+                (
+                    extracted_name,
+                    parsed.primary_op,
+                    parsed.parameter_shapes,
+                    parsed.output_shapes,
+                    parsed.bundles,
+                    parsed.output_slots,
+                )
             };
 
         let mut arg_bytes: i64 = 0;
@@ -186,26 +239,31 @@ impl CompiledProgram {
         let aligned_code_len = code.len().max(256).div_ceil(256) * 256;
         let generated_code_size = i64::try_from(aligned_code_len).unwrap_or(256);
 
-        let out_bytes_u16 = u16::try_from(out_bytes.max(256)).unwrap_or(256);
-        let arg_plus_out_u16 = u16::try_from((arg_bytes + out_bytes).max(256)).unwrap_or(512);
+        let out_bytes_f64 = (out_bytes.max(256)) as f64;
+        let arg_plus_out_f64 = (arg_bytes.saturating_add(out_bytes).max(512)) as f64;
+        #[allow(clippy::cast_possible_truncation)]
         let flops = if opcode == TpuOpCode::Identity {
-            0.0
+            0.0_f32
         } else if opcode == TpuOpCode::DotGeneralF32 {
-            f32::from(out_bytes_u16.saturating_mul(2))
+            (out_bytes_f64 * 2.0) as f32
         } else {
-            f32::from(out_bytes_u16 / 4)
+            (out_bytes_f64 / 4.0) as f32
         };
+        #[allow(clippy::cast_possible_truncation)]
         let transcendentals = if opcode.is_transcendental() {
-            f32::from(out_bytes_u16 / 4)
+            (out_bytes_f64 / 4.0) as f32
         } else {
-            0.0
+            0.0_f32
         };
-        let bytes_accessed = f32::from(arg_plus_out_u16);
+        #[allow(clippy::cast_possible_truncation)]
+        let bytes_accessed = arg_plus_out_f64 as f32;
 
         let mut compiled = Self {
             name,
+            program_format,
             format: fmt_lower,
             source_bytes: code.to_vec(),
+            mosaic_metadata,
             num_replicas,
             num_partitions,
             opcode,
@@ -238,7 +296,6 @@ impl CompiledProgram {
 
 #[cfg(test)]
 #[allow(
-    for_loops_over_fallibles,
     clippy::cognitive_complexity,
     clippy::too_many_lines,
     clippy::uninlined_format_args
@@ -257,13 +314,34 @@ mod tests {
         for b in 0..=78 {
             let op = TpuOpCode::from_byte(b);
             assert!(op.is_ok());
-            for o in op {
+            assert_eq!(TpuOpCode::from_raw(b), op);
+            if let Ok(o) = op {
                 let _ = o.arity();
                 let _ = o.is_binary();
                 let _ = o.is_transcendental();
+                let _ = o.has_side_effects();
             }
         }
+        assert_eq!(
+            ProgramFormat::from_str_checked("mlir").ok(),
+            Some(ProgramFormat::Mlir)
+        );
+        assert_eq!(
+            ProgramFormat::from_str_checked("hlo").ok(),
+            Some(ProgramFormat::Hlo)
+        );
+        assert_eq!(
+            ProgramFormat::from_str_checked("hlo_with_config").ok(),
+            Some(ProgramFormat::HloWithConfig)
+        );
+        assert!(ProgramFormat::from_str_checked("bad_fmt").is_err());
+        assert_eq!(ProgramFormat::Mlir.as_str(), "mlir");
+        assert_eq!(ProgramFormat::Hlo.as_str(), "hlo");
+        assert_eq!(ProgramFormat::HloWithConfig.as_str(), "hlo_with_config");
+        assert_eq!(ProgramFormat::Mlir.clone(), ProgramFormat::Mlir);
+        assert_ne!(format!("{:?}", ProgramFormat::Mlir), "");
         assert!(TpuOpCode::from_byte(99).is_err());
+        assert!(TpuOpCode::from_raw(99).is_err());
         for m in [
             "shift_left",
             "shift_right_arithmetic",
@@ -336,11 +414,11 @@ mod tests {
             "pred[4]",
             "i1[]",
         ] {
-            assert!(CompiledProgram::parse_hlo_shape_token(hlo_spec).is_some());
+            assert!(CompiledProgram::parse_hlo_shape_token(hlo_spec).is_ok());
         }
-        assert!(CompiledProgram::parse_hlo_shape_token("unknown[4]").is_none());
-        assert!(CompiledProgram::parse_hlo_shape_token("f32[bad]").is_none());
-        assert!(CompiledProgram::parse_hlo_shape_token("no_brackets").is_none());
+        assert!(CompiledProgram::parse_hlo_shape_token("unknown[4]").is_err());
+        assert!(CompiledProgram::parse_hlo_shape_token("f32[bad]").is_err());
+        assert!(CompiledProgram::parse_hlo_shape_token("no_brackets").is_err());
 
         assert_eq!(
             CompiledProgram::parse_usize_list_attr("permutation = [1, 0]", "permutation"),
@@ -349,6 +427,17 @@ mod tests {
         assert_eq!(
             CompiledProgram::parse_usize_list_attr("permutation = ]1, 0[", "permutation"),
             [] as [usize; 0]
+        );
+        assert!(
+            CompiledProgram::parse_usize_list_attr_checked("permutation = ]1, 0[", "permutation")
+                .is_err()
+        );
+        assert!(
+            CompiledProgram::parse_usize_list_attr_checked(
+                "permutation = [99999999999999999999999999999]",
+                "permutation"
+            )
+            .is_err()
         );
         assert_eq!(
             CompiledProgram::parse_single_usize_attr(
@@ -367,15 +456,24 @@ mod tests {
             vec![1, 0]
         );
         let lex_tokens = HloLexer::tokenize("module @m -> -1.5 %a0 _x");
+        let spanned_tokens = HloLexer::tokenize_spanned("module @m -> -1.5 %a0 _x");
+        assert_eq!(spanned_tokens.len(), lex_tokens.len());
+        if let Some(first_sp) = spanned_tokens.first() {
+            assert_eq!(first_sp.clone(), *first_sp);
+            assert_eq!(first_sp.span.clone(), first_sp.span);
+            assert_ne!(format!("{first_sp:?}{:?}", first_sp.span), "");
+        }
         assert_ne!(format!("{:?}{:?}{lex_tokens:?}", HloLexer, HloParser), "");
         assert_eq!(lex_tokens.clone(), lex_tokens);
 
         let dense_attrs = CompiledProgram::parse_instruction_attrs(
-            "stablehlo.constant dense<2.5> : tensor<4xf32>",
+            r#"stablehlo.constant dense<2.5> comparison_direction = #stablehlo<comparison_direction LT> call_target_name = "my_cc" : tensor<4xf32>"#,
             &[],
             ElementType::F32,
         );
         assert_eq!(dense_attrs.constant_bytes.len(), 16);
+        assert_eq!(dense_attrs.comparison_direction, "LT");
+        assert_eq!(dense_attrs.custom_call_target, "my_cc");
         let dense_list_attrs = CompiledProgram::parse_instruction_attrs(
             "stablehlo.constant dense<[1.0, 2.0]>",
             &[],
@@ -424,14 +522,14 @@ mod tests {
             "tensor<4xu2>",
             "tensor<4xui2>",
         ] {
-            assert!(CompiledProgram::parse_tensor_type(spec).is_some());
+            assert!(CompiledProgram::parse_tensor_type(spec).is_ok());
         }
-        assert!(CompiledProgram::parse_tensor_type("tensor<f32>").is_some());
-        assert!(CompiledProgram::parse_tensor_type("tensor<-1xf32>").is_none());
-        assert!(CompiledProgram::parse_tensor_type("tensor<badxf32>").is_none());
-        assert!(CompiledProgram::parse_tensor_type("tensor<4xunknown>").is_none());
-        assert!(CompiledProgram::parse_tensor_type("tensor<unclosed").is_none());
-        assert!(CompiledProgram::parse_tensor_type("not_a_tensor").is_none());
+        assert!(CompiledProgram::parse_tensor_type("tensor<f32>").is_ok());
+        assert!(CompiledProgram::parse_tensor_type("tensor<-1xf32>").is_err());
+        assert!(CompiledProgram::parse_tensor_type("tensor<badxf32>").is_err());
+        assert!(CompiledProgram::parse_tensor_type("tensor<4xunknown>").is_err());
+        assert!(CompiledProgram::parse_tensor_type("tensor<unclosed").is_err());
+        assert!(CompiledProgram::parse_tensor_type("not_a_tensor").is_err());
 
         for phase in COMPILATION_PHASE_NAMES {
             let res = CompiledProgram::run_compilation_phase(
@@ -440,7 +538,7 @@ mod tests {
                 b"",
             );
             assert!(res.is_ok());
-            for serialized_phase in res {
+            if let Ok(serialized_phase) = res {
                 assert!(
                     CompiledProgram::run_compilation_phase(phase, &serialized_phase, b"").is_ok()
                 );
@@ -451,7 +549,7 @@ mod tests {
                 b"",
             );
             assert!(proto_res.is_ok());
-            for p_proto in proto_res {
+            if let Ok(p_proto) = proto_res {
                 assert_eq!(p_proto.producer_phase, phase);
                 let enc_partial = p_proto.encode();
                 assert!(CompiledProgram::run_compilation_phase(phase, &enc_partial, b"").is_ok());
@@ -477,7 +575,7 @@ mod tests {
         assert!(CompiledProgram::run_compilation_phase("hlo_verification", b"", b"").is_err());
         assert!(CompiledProgram::run_compilation_phase_proto("bad_phase", b"return", b"").is_err());
 
-        let mosaic_text = r#"module @mosaic_kernel attributes {tpu.compilation_target = "tpu_v5p", tpu.core_type = "tensor_core", mhlo.layout_mode = "{1,0}", mhlo.sharding = "{replicated}"} {
+        let mosaic_text = r#"module @mosaic_kernel attributes {tpu.compilation_target = "tpu_v5p", tpu.core_type = "tensor_core", mhlo.layout_mode = "{1,0}", mhlo.sharding = "{replicated}", dimension_semantics = ["parallel", "arbitrary"], scratch_vmem_bytes = 4096} {
           func.func @main(%arg0: tensor<2x2xf32>, %arg1: tensor<2x2xf32>) -> tensor<2x2xf32> {
             %0 = tpu.matmul %arg0, %arg1 : tensor<2x2xf32>
             return %0 : tensor<2x2xf32>
@@ -489,6 +587,11 @@ mod tests {
         assert_eq!(mosaic_meta.core_type, "tensor_core");
         assert_eq!(mosaic_meta.layout_mode, "{1,0}");
         assert_eq!(mosaic_meta.sharding, "{replicated}");
+        assert_eq!(
+            mosaic_meta.dimension_semantics,
+            vec![String::from("parallel"), String::from("arbitrary")]
+        );
+        assert_eq!(mosaic_meta.scratch_vmem_bytes, 4096);
         assert_eq!(mosaic_meta.clone(), mosaic_meta);
         assert_ne!(format!("{mosaic_meta:?}"), "");
         let unquoted_meta = CompiledProgram::parse_mosaic_metadata(
@@ -546,7 +649,7 @@ mod tests {
         }";
         let dag_prog = CompiledProgram::compile("mlir", ssa_dag, b"");
         assert!(dag_prog.is_ok());
-        for mut dp in dag_prog {
+        if let Ok(mut dp) = dag_prog {
             assert_eq!(dp.parameter_shapes.len(), 2);
             assert_eq!(dp.output_shapes.len(), 2);
             assert_eq!(dp.instruction_bundles.len(), 2);
@@ -628,7 +731,7 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
         for src in sources {
             let prog_res = CompiledProgram::compile("mlir", src, &opts_bytes);
             assert!(prog_res.is_ok());
-            for prog in prog_res {
+            if let Ok(prog) = prog_res {
                 assert_eq!(prog.num_replicas, 2);
                 assert_eq!(prog.num_partitions, 4);
                 assert!(prog.generated_code_size().0 >= 256);
@@ -729,7 +832,7 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
         let encoded = hlo.encode();
         let prog = CompiledProgram::compile("hlo", &encoded, b"");
         assert!(prog.is_ok());
-        for p in prog {
+        if let Ok(p) = prog {
             assert_eq!(p.name, "binary_hlo_add");
             assert_eq!(p.opcode, TpuOpCode::AddF32);
             assert_eq!(p.parameter_shapes.len(), 2);
@@ -741,7 +844,7 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
         };
         let with_cfg_prog = CompiledProgram::compile("hlo_with_config", &with_cfg.encode(), b"");
         assert!(with_cfg_prog.is_ok());
-        for p in with_cfg_prog {
+        if let Ok(p) = with_cfg_prog {
             assert_eq!(p.name, "binary_hlo_add");
             assert_eq!(p.opcode, TpuOpCode::AddF32);
         }
@@ -749,8 +852,8 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
         let mut mlir_bc = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
         mlir_bc.extend_from_slice(b"module @bc_mod { stablehlo.add }");
         let bc_hdr = MlirBytecodeHeader::decode(&mlir_bc);
-        assert!(bc_hdr.is_some());
-        for hdr in bc_hdr {
+        assert!(bc_hdr.is_ok());
+        if let Ok(hdr) = bc_hdr {
             assert_ne!(format!("{hdr:?}"), "");
             assert_eq!(hdr.clone(), hdr);
             assert_ne!(hdr.to_synthesized_mlir_text(), "");
@@ -760,15 +863,15 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
         for v in [0_u64, 1, 42, 127, 128, 1024, 16383, 16384, 0x1234_5678_9ABC] {
             let enc_v = encode_mlir_prefix_varint(v);
             let mut cur: &[u8] = &enc_v;
-            assert_eq!(decode_mlir_prefix_varint(&mut cur), Some(v));
+            assert_eq!(decode_mlir_prefix_varint(&mut cur), Ok(v));
             assert_eq!(cur.len(), 0);
         }
         let mut empty_cur: &[u8] = &[];
-        assert!(decode_mlir_prefix_varint(&mut empty_cur).is_none());
+        assert!(decode_mlir_prefix_varint(&mut empty_cur).is_err());
         let mut trunc_zero: &[u8] = &[0, 1, 2];
-        assert!(decode_mlir_prefix_varint(&mut trunc_zero).is_none());
+        assert!(decode_mlir_prefix_varint(&mut trunc_zero).is_err());
         let mut trunc_two: &[u8] = &[0x02];
-        assert!(decode_mlir_prefix_varint(&mut trunc_two).is_none());
+        assert!(decode_mlir_prefix_varint(&mut trunc_two).is_err());
 
         // Build a structured binary MLIR bytecode container with Sections 0, 1, 2, 3, 4 (aligned), 5, and 6
         let mut structured_bc = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
@@ -812,15 +915,15 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
         structured_bc.push(0xFF);
 
         let parsed_struct_bc = MlirBytecodeHeader::decode(&structured_bc);
-        assert!(parsed_struct_bc.is_some());
-        for s_hdr in parsed_struct_bc {
+        assert!(parsed_struct_bc.is_ok());
+        if let Ok(s_hdr) = parsed_struct_bc {
             assert_eq!(s_hdr.sections.len(), 7);
             assert_eq!(s_hdr.dialects.len(), 2);
             assert_eq!(s_hdr.attr_type_entries, vec![String::from("tensor<4xf32>")]);
             assert_eq!(s_hdr.attr_type_offsets, vec![14]);
             assert_eq!(s_hdr.ir_op_records, vec![7]);
             assert_eq!(s_hdr.resources.len(), 1);
-            for sec0 in s_hdr.sections.first() {
+            if let Some(sec0) = s_hdr.sections.first() {
                 assert_eq!(sec0.clone(), *sec0);
                 assert_ne!(format!("{sec0:?}"), "");
             }
@@ -830,11 +933,11 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
                     .contains("stablehlo.multiply")
             );
             let reencoded = s_hdr.encode();
-            assert!(MlirBytecodeHeader::decode(&reencoded).is_some());
+            assert!(MlirBytecodeHeader::decode(&reencoded).is_ok());
         }
         let compiled_struct_bc = CompiledProgram::compile("mlir", &structured_bc, b"");
         assert!(compiled_struct_bc.is_ok());
-        for p in compiled_struct_bc {
+        if let Ok(p) = compiled_struct_bc {
             assert_eq!(p.name, "bin_mlir");
             assert_eq!(p.opcode, TpuOpCode::MulF32);
         }
@@ -842,21 +945,21 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
         // Test truncated section length varint and truncated section payload in MlirBytecodeHeader::decode
         let mut trunc_sec_len = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
         trunc_sec_len.extend_from_slice(b"\x03MLIR\x00\x00\x02");
-        assert!(MlirBytecodeHeader::decode(&trunc_sec_len).is_some());
+        assert!(MlirBytecodeHeader::decode(&trunc_sec_len).is_ok());
         let mut trunc_sec_data = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
         trunc_sec_data.extend_from_slice(b"\x03MLIR\x00\x00");
         trunc_sec_data.extend_from_slice(&encode_mlir_prefix_varint(50));
         trunc_sec_data.push(1);
-        assert!(MlirBytecodeHeader::decode(&trunc_sec_data).is_some());
+        assert!(MlirBytecodeHeader::decode(&trunc_sec_data).is_ok());
 
         let mut mlir_bc_nul = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
         mlir_bc_nul.extend_from_slice(b"\x03MLIR20.0.0\x00");
-        assert!(MlirBytecodeHeader::decode(&mlir_bc_nul).is_some());
-        assert!(MlirBytecodeHeader::decode(MLIR_BYTECODE_MAGIC).is_some());
-        assert!(MlirBytecodeHeader::decode(b"not_mlir").is_none());
+        assert!(MlirBytecodeHeader::decode(&mlir_bc_nul).is_ok());
+        assert!(MlirBytecodeHeader::decode(MLIR_BYTECODE_MAGIC).is_ok());
+        assert!(MlirBytecodeHeader::decode(b"not_mlir").is_err());
         let bc_prog = CompiledProgram::compile("mlir", &mlir_bc, b"");
         assert!(bc_prog.is_ok());
-        for p in bc_prog {
+        if let Ok(p) = bc_prog {
             assert_eq!(p.name, "bc_mod");
             assert_eq!(p.opcode, TpuOpCode::AddF32);
         }
@@ -1025,7 +1128,9 @@ ENTRY %main (x: f32[4]) -> f32[4] {
   %x = f32[4] parameter(0)
   ROOT %r = f32[4] negate(%x)
 }";
-        for prog in CompiledProgram::compile("hlo", hlo_entry_test, b"") {
+        let hlo_entry_res = CompiledProgram::compile("hlo", hlo_entry_test, b"");
+        assert!(hlo_entry_res.is_ok());
+        if let Ok(prog) = hlo_entry_res {
             let ba = prog.build_buffer_assignment_proto();
             assert_eq!(ba.buffer_allocations.len(), 3);
             assert!(
@@ -1085,7 +1190,9 @@ ENTRY %main (x: f32[4]) -> f32[4] {
                 },
             ],
         };
-        for dag_rep in analyze_hlo_computation_dag(&valid_comp) {
+        let dag_res = analyze_hlo_computation_dag(&valid_comp);
+        assert!(dag_res.is_ok());
+        if let Ok(dag_rep) = dag_res {
             assert_eq!(dag_rep.topological_order, vec![1, 2]);
             assert_eq!(dag_rep.buffer_offsets.len(), 2);
             assert_eq!(dag_rep.total_hbm_bytes, 12288);
@@ -1120,7 +1227,7 @@ ENTRY %main (x: f32[4]) -> f32[4] {
             ],
         };
         assert!(analyze_hlo_computation_dag(&cyclic_comp).is_err());
-        assert!(CompiledProgram::parse_hlo_shape_token("[2,2]").is_none());
+        assert!(CompiledProgram::parse_hlo_shape_token("[2,2]").is_err());
 
         // Test constant folding (NegF32, AddF32, MulF32 on Constant bundles), CSE, and liveness intervals
         let cst_fold_mlir = b"module @cst_fold {
@@ -1148,14 +1255,23 @@ ENTRY %main (x: f32[4]) -> f32[4] {
           }
 
         }";
-        for prog in CompiledProgram::compile("mlir", cst_fold_mlir, b"") {
+        let cst_fold_res = CompiledProgram::compile("mlir", cst_fold_mlir, b"");
+        assert!(cst_fold_res.is_ok());
+        if let Ok(prog) = cst_fold_res {
             let intervals = prog.compute_liveness_intervals();
             assert_ne!(intervals, [] as [RegisterLivenessInterval; 0]);
-            for iv in intervals.first() {
-                assert_eq!(*iv, *iv);
+            if let Some(iv) = intervals.first() {
+                assert_eq!(iv.slot_index, 0);
                 assert_ne!(format!("{iv:?}"), "");
             }
         }
+        let cse_key = CseExpressionKey {
+            opcode: TpuOpCode::Slice,
+            operand_slots: vec![0],
+            attrs: InstructionAttrs::default(),
+        };
+        assert_eq!(cse_key.clone(), cse_key);
+        assert_ne!(format!("{cse_key:?}"), "");
 
         // Test TensorCoreVliwBundle::decode and to_instruction_bundle roundtrip across arities 0, 1, 2, 3 and invalid opcodes
         for (op, ops) in [
@@ -1196,6 +1312,266 @@ ENTRY %main (x: f32[4]) -> f32[4] {
         let bad_bytes_250: [u8; 64] = bytemuck::cast(bad_vliw);
         assert!(TensorCoreVliwBundle::decode(&bad_bytes_250).is_err());
         assert!(bad_vliw.to_instruction_bundle().is_err());
+
+        // Test TensorCoreVliwBundle::from_ir_bundle bounds validation
+        let valid_ir = TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::AddF32,
+            operand_slots: vec![0, 1],
+            output_slot: 2,
+            sync_flag_id: 1,
+            attrs: InstructionAttrs::default(),
+        };
+        assert!(TensorCoreVliwBundle::from_ir_bundle(&valid_ir).is_ok());
+        let overflow_out_ir = TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::AddF32,
+            operand_slots: vec![0, 1],
+            output_slot: 300,
+            sync_flag_id: 1,
+            attrs: InstructionAttrs::default(),
+        };
+        assert!(TensorCoreVliwBundle::from_ir_bundle(&overflow_out_ir).is_err());
+        let overflow_op_ir = TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::AddF32,
+            operand_slots: vec![0, 256],
+            output_slot: 2,
+            sync_flag_id: 1,
+            attrs: InstructionAttrs::default(),
+        };
+        assert!(TensorCoreVliwBundle::from_ir_bundle(&overflow_op_ir).is_err());
+
+        // Test HloParser::parse_module and MlirBytecodeHeader::decode_strict
+        assert!(HloParser::parse_module("").is_err());
+        assert!(HloParser::parse_module("module @m { \"unclosed }").is_err());
+        assert!(HloParser::parse_module("module @m { } }").is_err());
+        assert!(HloParser::parse_module("module @m { ( }").is_err());
+        assert!(HloParser::parse_module("SYNTAX_ERROR").is_err());
+        assert!(HloParser::parse_module("INVALID_HLO").is_err());
+        let parsed_mod_res =
+            HloParser::parse_module("module @m { %0 = stablehlo.add(%arg0, %arg1) : [4] }");
+        assert!(parsed_mod_res.is_ok());
+        if let Ok(parsed_mod) = parsed_mod_res {
+            assert_eq!(parsed_mod.primary_op, TpuOpCode::AddF32);
+            assert_eq!(parsed_mod.clone(), parsed_mod);
+            assert_ne!(format!("{parsed_mod:?}"), "");
+        }
+        assert!(CompiledProgram::parse_hlo_shape_token("c64[2,2]").is_ok());
+        assert!(CompiledProgram::parse_hlo_shape_token("c128[2,2]").is_ok());
+        let hlo_tuple_src = "HloModule tuple_out\nENTRY main {\n  %p0 = f32[4] parameter(0)\n  %p1 = f32[4] parameter(1)\n  %sum = f32[4] add(%p0, %p1)\n  %prod = f32[4] multiply(%p0, %p1)\n  ROOT %res = (f32[4], f32[4]) tuple(%sum, %prod)\n}";
+        let tuple_res = CompiledProgram::compile("hlo", hlo_tuple_src.as_bytes(), b"");
+        assert!(tuple_res.is_ok());
+        if let Ok(tuple_mod) = tuple_res {
+            assert_eq!(tuple_mod.output_slots.len(), 2);
+            assert_eq!(tuple_mod.output_shapes.len(), 2);
+        }
+        let attr_bundle = TpuInstructionBundle {
+            pc_offset: 5,
+            opcode: TpuOpCode::ExpF32,
+            operand_slots: vec![0],
+            output_slot: 1,
+            sync_flag_id: 2,
+            attrs: InstructionAttrs {
+                iota_dim: 2,
+                concat_dim: 3,
+                reduce_dims: vec![1],
+                ..InstructionAttrs::default()
+            },
+        };
+        let encoded_attr_vliw = attr_bundle.encode_architectural_bundle();
+        let decoded_attr_res = encoded_attr_vliw.to_instruction_bundle();
+        assert!(decoded_attr_res.is_ok());
+        if let Ok(decoded_attr_bundle) = decoded_attr_res {
+            assert_eq!(decoded_attr_bundle.attrs.iota_dim, 2);
+            assert_eq!(decoded_attr_bundle.attrs.concat_dim, 3);
+            assert_eq!(decoded_attr_bundle.attrs.reduce_dims, vec![1]);
+        }
+        let pack_res = CompiledProgram::compile("mlir", b"module @pack { stablehlo.add }", b"");
+        assert!(pack_res.is_ok());
+        if let Ok(mut pack_prog) = pack_res {
+            pack_prog.instruction_bundles = vec![
+                TpuInstructionBundle {
+                    pc_offset: 0,
+                    opcode: TpuOpCode::AddF32,
+                    operand_slots: vec![0, 1],
+                    output_slot: 2,
+                    sync_flag_id: 1,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 1,
+                    opcode: TpuOpCode::DotGeneralF32,
+                    operand_slots: vec![0, 1],
+                    output_slot: 3,
+                    sync_flag_id: 2,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 2,
+                    opcode: TpuOpCode::AddF32,
+                    operand_slots: vec![0, 1],
+                    output_slot: 4,
+                    sync_flag_id: 3,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 3,
+                    opcode: TpuOpCode::ExpF32,
+                    operand_slots: vec![0],
+                    output_slot: 5,
+                    sync_flag_id: 4,
+                    attrs: InstructionAttrs::default(),
+                },
+            ];
+            pack_prog.pass_hlo_operator_fusion();
+            assert_eq!(
+                pack_prog
+                    .instruction_bundles
+                    .get(1)
+                    .and_then(|b| b.attrs.fused_epilogue_op),
+                Some(TpuOpCode::AddF32)
+            );
+            let packed_vliw = pack_prog.pack_independent_vliw_bundles();
+            assert_eq!(packed_vliw.len(), 2);
+            for tpu_gen in [
+                crate::types::TpuGeneration::V7x,
+                crate::types::TpuGeneration::V6e,
+                crate::types::TpuGeneration::V5p,
+                crate::types::TpuGeneration::V5e,
+            ] {
+                crate::config::set_global_init_config(crate::config::TpuInitConfig {
+                    generation: tpu_gen,
+                    ..crate::config::TpuInitConfig::default()
+                });
+                pack_prog.pass_llo_vliw_bundle_scheduling();
+            }
+        }
+        assert!(MlirBytecodeHeader::decode_strict(MLIR_BYTECODE_MAGIC).is_ok());
+        assert!(MlirBytecodeHeader::decode_strict(b"not_mlir").is_err());
+
+        // Test pass_algebraic_simplifier across uniform vs non-uniform constant tensors
+        let alg_res = CompiledProgram::compile("mlir", b"module @alg { stablehlo.add }", b"");
+        assert!(alg_res.is_ok());
+        if let Ok(mut prog) = alg_res {
+            let zero_bytes = ElementType::F32.pack_from_f64_slice(&[0.0, 0.0]);
+            let one_bytes = ElementType::F32.pack_from_f64_slice(&[1.0, 1.0]);
+            let mixed_bytes = ElementType::F32.pack_from_f64_slice(&[0.0, 5.0]);
+            prog.instruction_bundles = vec![
+                TpuInstructionBundle {
+                    pc_offset: 0,
+                    opcode: TpuOpCode::Constant,
+                    operand_slots: Vec::new(),
+                    output_slot: 1,
+                    sync_flag_id: 1,
+                    attrs: InstructionAttrs {
+                        constant_bytes: zero_bytes,
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 1,
+                    opcode: TpuOpCode::Constant,
+                    operand_slots: Vec::new(),
+                    output_slot: 2,
+                    sync_flag_id: 2,
+                    attrs: InstructionAttrs {
+                        constant_bytes: one_bytes,
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 2,
+                    opcode: TpuOpCode::Constant,
+                    operand_slots: Vec::new(),
+                    output_slot: 3,
+                    sync_flag_id: 3,
+                    attrs: InstructionAttrs {
+                        constant_bytes: mixed_bytes,
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 3,
+                    opcode: TpuOpCode::AddF32,
+                    operand_slots: vec![0, 1],
+                    output_slot: 4,
+                    sync_flag_id: 4,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 4,
+                    opcode: TpuOpCode::AddF32,
+                    operand_slots: vec![1, 4],
+                    output_slot: 5,
+                    sync_flag_id: 5,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 5,
+                    opcode: TpuOpCode::MulF32,
+                    operand_slots: vec![5, 2],
+                    output_slot: 6,
+                    sync_flag_id: 6,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 6,
+                    opcode: TpuOpCode::MulF32,
+                    operand_slots: vec![2, 6],
+                    output_slot: 7,
+                    sync_flag_id: 7,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 7,
+                    opcode: TpuOpCode::MulF32,
+                    operand_slots: vec![7, 1],
+                    output_slot: 8,
+                    sync_flag_id: 8,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 8,
+                    opcode: TpuOpCode::MulF32,
+                    operand_slots: vec![1, 7],
+                    output_slot: 9,
+                    sync_flag_id: 9,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 9,
+                    opcode: TpuOpCode::AddF32,
+                    operand_slots: vec![0, 3],
+                    output_slot: 10,
+                    sync_flag_id: 10,
+                    attrs: InstructionAttrs::default(),
+                },
+            ];
+            prog.pass_algebraic_simplifier();
+            assert!(prog.to_isa_program_proto().is_ok());
+            assert!(prog.to_serialized_executable_proto().is_ok());
+            let mut bad_prog = prog.clone();
+            bad_prog.compile_options_bytes = vec![0xFF, 0xFF, 0xFF];
+            assert!(bad_prog.to_serialized_executable_proto().is_err());
+            let opcodes: Vec<TpuOpCode> =
+                prog.instruction_bundles.iter().map(|b| b.opcode).collect();
+            assert_eq!(
+                opcodes,
+                vec![
+                    TpuOpCode::Constant,
+                    TpuOpCode::Constant,
+                    TpuOpCode::Constant,
+                    TpuOpCode::Identity,
+                    TpuOpCode::Identity,
+                    TpuOpCode::Identity,
+                    TpuOpCode::Identity,
+                    TpuOpCode::Identity,
+                    TpuOpCode::Identity,
+                    TpuOpCode::AddF32,
+                ]
+            );
+        }
     }
 
     proptest::proptest! {
@@ -1206,16 +1582,16 @@ ENTRY %main (x: f32[4]) -> f32[4] {
         ) {
             let mlir_spec = format!("tensor<{d0}x{d1}xf32>");
             let parsed_mlir = CompiledProgram::parse_tensor_type(&mlir_spec);
-            proptest::prop_assert!(parsed_mlir.is_some());
-            if let Some(sh) = parsed_mlir {
+            proptest::prop_assert!(parsed_mlir.is_ok());
+            if let Ok(sh) = parsed_mlir {
                 proptest::prop_assert_eq!(sh.dims, vec![d0, d1]);
                 proptest::prop_assert_eq!(sh.element_type, ElementType::F32);
             }
 
             let hlo_spec = format!("bf16[{d0},{d1}]{{1,0}}");
             let parsed_hlo = CompiledProgram::parse_hlo_shape_token(&hlo_spec);
-            proptest::prop_assert!(parsed_hlo.is_some());
-            if let Some(sh) = parsed_hlo {
+            proptest::prop_assert!(parsed_hlo.is_ok());
+            if let Ok(sh) = parsed_hlo {
                 proptest::prop_assert_eq!(sh.dims, vec![d0, d1]);
                 proptest::prop_assert_eq!(sh.element_type, ElementType::Bf16);
             }

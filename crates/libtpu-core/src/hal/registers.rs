@@ -291,11 +291,11 @@ pub const BAR0_CSR_TENSORCORE_RUN_CONTROL: u64 = 0x0000_1000;
 /// `PCIe` BAR0 MMIO register offset for `TensorCore` 0 `SyncFlag` Completion Counter CSR.
 pub const BAR0_CSR_TENSORCORE_SYNC_FLAG: u64 = 0x0000_1008;
 
-/// `PCIe` BAR0 MMIO register offset for `TensorCore` 0 Program Counter CSR.
-pub const BAR0_CSR_TENSORCORE_PC: u64 = 0x0000_1008;
-
 /// `PCIe` BAR0 MMIO register offset for `TensorCore` 0 Execution Status CSR.
 pub const BAR0_CSR_TENSORCORE_STATUS: u64 = 0x0000_1010;
+
+/// `PCIe` BAR0 MMIO register offset for `TensorCore` 0 Program Counter CSR.
+pub const BAR0_CSR_TENSORCORE_PC: u64 = 0x0000_1018;
 
 /// `PCIe` BAR0 MMIO register offset for `SyncFlag` table base (`0x2000`).
 pub const BAR0_CSR_SYNC_FLAG_BASE: u64 = 0x0000_2000;

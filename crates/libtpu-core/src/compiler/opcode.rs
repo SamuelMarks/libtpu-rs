@@ -184,6 +184,21 @@ impl TpuOpCode {
         })
     }
 
+    /// Converts a raw opcode byte into a [`TpuOpCode`] returning [`LibTpuError::InvalidOpcode`].
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw numeric opcode discriminant.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidOpcode`] if `raw` does not match a known [`TpuOpCode`].
+    pub fn from_raw(raw: u8) -> LibTpuResult<Self> {
+        Self::try_from(raw).map_err(|_| LibTpuError::InvalidOpcode {
+            raw_opcode: u16::from(raw),
+        })
+    }
+
     /// Returns the number of input operands consumed by this opcode.
     #[must_use]
     pub const fn arity(self) -> usize {
@@ -192,13 +207,29 @@ impl TpuOpCode {
             Self::Select | Self::Scatter | Self::DynamicUpdateSlice | Self::Clamp
         ) {
             3
-        } else if matches!(self, Self::Constant) {
+        } else if matches!(self, Self::Constant | Self::Iota) {
             0
         } else if self.is_binary() {
             2
         } else {
             1
         }
+    }
+
+    /// Returns `true` if this opcode has observable side effects or non-deterministic state
+    /// and therefore must not be deduplicated by CSE or eliminated by DCE.
+    #[must_use]
+    pub const fn has_side_effects(self) -> bool {
+        matches!(
+            self,
+            Self::AllReduceSumF32
+                | Self::CustomCall
+                | Self::AllGather
+                | Self::ReduceScatter
+                | Self::RngBitGenerator
+                | Self::CollectivePermute
+                | Self::AllToAll
+        )
     }
 
     /// Returns `true` if this opcode is a binary operation requiring at least 2 input buffers.
@@ -293,6 +324,16 @@ pub struct InstructionAttrs {
     pub iota_dim: usize,
     /// Raw packed bytes for `constant` literals.
     pub constant_bytes: Vec<u8>,
+    /// Sliding window dimensions per spatial axis for `convolution` and `reduce_window`.
+    pub window_dims: Vec<usize>,
+    /// Sliding window strides per spatial axis for `convolution` and `reduce_window`.
+    pub window_strides: Vec<usize>,
+    /// Comparison direction string (`"EQ"`, `"LT"`, `"GT"`, etc.) for comparison ops.
+    pub comparison_direction: String,
+    /// Target symbol name for `custom_call` instructions.
+    pub custom_call_target: String,
+    /// Optional fused epilogue opcode packed into the same VLIW instruction bundle.
+    pub fused_epilogue_op: Option<TpuOpCode>,
     /// Optional explicit input operand shapes for shape-aware execution.
     pub input_shapes: Vec<Shape>,
     /// Optional explicit output shape produced by this instruction bundle.

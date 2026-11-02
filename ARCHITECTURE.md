@@ -678,8 +678,9 @@ Both `SimulatedTpuHal` and `LinuxDeviceHal` maintain a cycle-accurate PCIe BAR0 
 | Constant | BAR0 Offset | Description |
 | :--- | :--- | :--- |
 | `BAR0_CSR_TENSORCORE_RUN_CONTROL` | `0x0000_1000` | `TensorCore` 0 Run Control CSR (`TensorCoreControlFlags`: `0` = halted, `1` = running) |
-| `BAR0_CSR_TENSORCORE_SYNC_FLAG` / `PC` | `0x0000_1008` | `TensorCore` 0 Program Counter / `SyncFlag` Completion Counter |
+| `BAR0_CSR_TENSORCORE_SYNC_FLAG` | `0x0000_1008` | `TensorCore` 0 `SyncFlag` Completion Counter |
 | `BAR0_CSR_TENSORCORE_STATUS` | `0x0000_1010` | `TensorCore` 0 Execution Status CSR (`TensorCoreStatusFlags`: `2` = completed) |
+| `BAR0_CSR_TENSORCORE_PC` | `0x0000_1018` | `TensorCore` 0 Program Counter CSR |
 | `BAR0_CSR_SYNC_FLAG_BASE` | `0x0000_2000` | Hardware `SyncFlag` table base (`4096` × 32-bit sync counters) |
 | `BAR0_CSR_SPARSECORE_RUN_CONTROL` | `0x0000_4000` | `SparseCore` 0 Run Control CSR |
 | `BAR0_CSR_HBM_DMA_RING_HEAD` | `0x0000_8000` | HBM DMA descriptor ring consumer head pointer |

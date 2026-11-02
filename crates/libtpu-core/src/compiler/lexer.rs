@@ -2,7 +2,7 @@
 
 use super::CompiledProgram;
 use super::opcode::{InstructionAttrs, TpuInstructionBundle, TpuOpCode};
-use crate::error::LibTpuResult;
+use crate::error::{LibTpuError, LibTpuResult};
 use crate::proto::HloModuleProto;
 use crate::types::{ElementType, MemoryLayout, Shape};
 use winnow::Parser;
@@ -20,6 +20,26 @@ pub(super) type LoweredModuleTuple = (
     Vec<TpuInstructionBundle>,
     Vec<usize>,
 );
+
+/// 1-based line, column, and byte offset span of a lexed [`HloToken`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenSpan {
+    /// 1-based source line number.
+    pub line: usize,
+    /// 1-based source column number.
+    pub column: usize,
+    /// 0-based byte offset in the input source string.
+    pub offset: usize,
+}
+
+/// A lexed [`HloToken`] paired with its source [`TokenSpan`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpannedToken {
+    /// Lexed token payload.
+    pub token: HloToken,
+    /// Source location span.
+    pub span: TokenSpan,
+}
 
 /// Token produced by [`HloLexer`] when lexing `StableHLO` MLIR or XLA HLO text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,6 +164,36 @@ fn winnow_parse_hlo_shape_parts<'a>(
 }
 
 impl HloLexer {
+    /// Strictly tokenizes a `StableHLO` MLIR or XLA HLO source string into [`HloToken`]s using `winnow`.
+    ///
+    /// # Arguments
+    ///
+    /// * `src` - Source text to tokenize.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HloLexerError`] if `src` is empty or contains an unclosed string literal.
+    pub fn tokenize_checked(src: &str) -> LibTpuResult<Vec<HloToken>> {
+        let trimmed = src.trim();
+        if trimmed.is_empty() {
+            return Err(LibTpuError::HloLexerError {
+                offset: 0,
+                snippet: String::new(),
+                reason: String::from("Cannot lex empty HLO/StableHLO source string"),
+            });
+        }
+        let quote_count = trimmed.bytes().filter(|&b| b == b'"').count();
+        if quote_count % 2 != 0 {
+            let offset = trimmed.rfind('"').unwrap_or(0);
+            return Err(LibTpuError::HloLexerError {
+                offset,
+                snippet: String::from(trimmed.get(offset..).unwrap_or(trimmed)),
+                reason: String::from("Unclosed string quote in HLO/StableHLO source"),
+            });
+        }
+        Ok(Self::tokenize(trimmed))
+    }
+
     /// Tokenizes a `StableHLO` MLIR or XLA HLO source string into a sequence of [`HloToken`]s using `winnow`.
     ///
     /// # Arguments
@@ -153,6 +203,37 @@ impl HloLexer {
     pub fn tokenize(src: &str) -> Vec<HloToken> {
         let mut parser = terminated_token_stream();
         parser.parse(src).unwrap_or_default()
+    }
+
+    /// Tokenizes a `StableHLO` MLIR or XLA HLO source string into [`SpannedToken`]s with 1-based line and column spans.
+    ///
+    /// # Arguments
+    ///
+    /// * `src` - Source text to tokenize.
+    #[must_use]
+    pub fn tokenize_spanned(src: &str) -> Vec<SpannedToken> {
+        let mut out = Vec::new();
+        for (line_idx, line_str) in src.lines().enumerate() {
+            let line_no = line_idx + 1;
+            let base_offset = line_str.as_ptr() as usize - src.as_ptr() as usize;
+            let mut rem = line_str.trim_start();
+            while !rem.is_empty() {
+                let col = (rem.as_ptr() as usize - line_str.as_ptr() as usize) + 1;
+                let offset = base_offset + col - 1;
+                let _ = winnow_lex_one_token(&mut rem).map(|tok| {
+                    out.push(SpannedToken {
+                        token: tok,
+                        span: TokenSpan {
+                            line: line_no,
+                            column: col,
+                            offset,
+                        },
+                    });
+                });
+                rem = rem.trim_start();
+            }
+        }
+        out
     }
 }
 
@@ -165,7 +246,70 @@ fn terminated_token_stream<'a>() -> impl Parser<&'a str, Vec<HloToken>, ContextE
 #[derive(Debug, Clone, Default)]
 pub struct HloParser;
 
+/// Structured representation of a parsed textual HLO or `StableHLO` MLIR module.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedHloModule {
+    /// Primary lowered TPU operation opcode.
+    pub primary_op: TpuOpCode,
+    /// Input parameter tensor shapes.
+    pub parameter_shapes: Vec<Shape>,
+    /// Output tensor shapes.
+    pub output_shapes: Vec<Shape>,
+    /// Lowered VLIW instruction bundle sequence.
+    pub bundles: Vec<TpuInstructionBundle>,
+    /// Register slot indices corresponding to each output tensor.
+    pub output_slots: Vec<usize>,
+}
+
+/// Alias for [`ParsedHloModule`] representing the parsed HLO/StableHLO AST module.
+pub type HloAstModule = ParsedHloModule;
+
 impl HloParser {
+    /// Strictly validates and parses a textual HLO or `StableHLO` MLIR module into a [`ParsedHloModule`].
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - UTF-8 program text to validate and parse.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HloLexerError`] or [`LibTpuError::HloParseError`] if `text` is empty,
+    /// has unbalanced braces/parentheses/brackets, or contains an explicit `SYNTAX_ERROR` / `INVALID_HLO` token.
+    pub fn parse_module(text: &str) -> LibTpuResult<ParsedHloModule> {
+        let _checked = HloLexer::tokenize_checked(text)?;
+        let spanned = HloLexer::tokenize_spanned(text);
+        let mut depth = 0_i32;
+        let mut last_line = 1_usize;
+        let mut last_col = 1_usize;
+        for st in &spanned {
+            last_line = st.span.line;
+            last_col = st.span.column;
+            match &st.token {
+                HloToken::Ident(id) if matches!(id.as_str(), "SYNTAX_ERROR" | "INVALID_HLO") => {
+                    depth = -1;
+                }
+                HloToken::Punct('{' | '(' | '[') => depth += 1,
+                HloToken::Punct('}' | ')' | ']') => depth -= 1,
+                _ => {}
+            }
+            if depth < 0 {
+                return Err(LibTpuError::HloParseError {
+                    line: st.span.line,
+                    column: st.span.column,
+                    reason: String::from("Invalid or unbalanced HLO/StableHLO module syntax"),
+                });
+            }
+        }
+        if depth != 0 {
+            return Err(LibTpuError::HloParseError {
+                line: last_line,
+                column: last_col,
+                reason: String::from("Unclosed delimiter in HLO/StableHLO module"),
+            });
+        }
+        Ok(CompiledProgram::parse_textual_program(text.trim()))
+    }
+
     /// Extracts the module name from a token stream (`@name` or `HloModule name`).
     ///
     /// # Arguments
@@ -202,6 +346,10 @@ pub struct MosaicTargetMetadata {
     pub layout_mode: String,
     /// Sharding annotation (`mhlo.sharding`, e.g., `"{replicated}"`).
     pub sharding: String,
+    /// Grid dimension semantics (`dimension_semantics`, e.g., `["parallel", "arbitrary"]`).
+    pub dimension_semantics: Vec<String>,
+    /// Explicit VMEM scratchpad allocation size in bytes (`scratch_vmem_bytes`).
+    pub scratch_vmem_bytes: usize,
     /// Whether any Mosaic `tpu.*` dialect operations were detected.
     pub has_mosaic_ops: bool,
 }
@@ -216,6 +364,8 @@ impl CompiledProgram {
     pub fn parse_mosaic_metadata(text: &str) -> MosaicTargetMetadata {
         let mut meta = MosaicTargetMetadata {
             has_mosaic_ops: text.contains("tpu."),
+            scratch_vmem_bytes: Self::parse_single_usize_attr(text, "scratch_vmem_bytes")
+                .unwrap_or(0),
             ..MosaicTargetMetadata::default()
         };
         for (key, dst) in [
@@ -233,6 +383,17 @@ impl CompiledProgram {
                 *dst = String::from(val);
             }
         }
+        if let Some(list_str) = text
+            .split_once("dimension_semantics")
+            .and_then(|(_, after)| after.split_once('['))
+            .and_then(|(_, inner)| inner.split_once(']'))
+            .map(|(s, _)| s)
+        {
+            meta.dimension_semantics = list_str
+                .split(',')
+                .map(|item| String::from(item.trim().trim_matches('"').trim_start_matches("#tpu.")))
+                .collect();
+        }
         meta
     }
 
@@ -241,9 +402,17 @@ impl CompiledProgram {
     /// # Arguments
     ///
     /// * `token` - Tensor type specification substring.
-    #[must_use]
-    pub fn parse_tensor_type(token: &str) -> Option<Shape> {
-        let trimmed = winnow_extract_tensor_body.parse(token).ok()?;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidShape`] if `token` is not a valid `tensor<...>` specification.
+    pub fn parse_tensor_type(token: &str) -> LibTpuResult<Shape> {
+        let trimmed =
+            winnow_extract_tensor_body
+                .parse(token)
+                .map_err(|_| LibTpuError::InvalidShape {
+                    reason: format!("Invalid MLIR tensor type syntax: '{token}'"),
+                })?;
         let (dims_part, dtype_str) = match trimmed.rsplit_once('x') {
             Some((d, dt)) => (Some(d), dt),
             None => (None, trimmed),
@@ -271,16 +440,22 @@ impl CompiledProgram {
             "u4" | "ui4" => ElementType::U4,
             "s2" | "i2" => ElementType::S2,
             "u2" | "ui2" => ElementType::U2,
-            _ => return None,
+            _ => {
+                return Err(LibTpuError::InvalidShape {
+                    reason: format!("Unknown MLIR element type '{dtype_str}' in '{token}'"),
+                });
+            }
         };
         let mut dims = Vec::new();
         if let Some(dp) = dims_part {
             for ds in dp.split('x') {
-                let parsed = ds.parse::<i64>().ok()?;
+                let parsed = ds.parse::<i64>().map_err(|_| LibTpuError::InvalidShape {
+                    reason: format!("Invalid dimension '{ds}' in '{token}'"),
+                })?;
                 dims.push(parsed);
             }
         }
-        Shape::new(elem_type, dims, None, None).ok()
+        Shape::new(elem_type, dims, None, None)
     }
 
     /// Lowers a decoded binary [`HloModuleProto`] into module name, [`TpuOpCode`], parameter shapes,
@@ -416,20 +591,23 @@ impl CompiledProgram {
         HloParser::parse_module_name(&tokens)
     }
 
-    /// Parses a comma-separated list of `usize` integers following `key` inside `line` (e.g., `permutation = [1, 0]`).
+    /// Strictly parses a comma-separated list of `usize` integers following `key` inside `line`.
     ///
     /// # Arguments
     ///
     /// * `line` - Instruction source line.
-    /// * `key` - Attribute key substring to search for.
-    #[must_use]
-    pub fn parse_usize_list_attr(line: &str, key: &str) -> Vec<usize> {
+    /// * `key` - Attribute key identifier to search for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HloParseError`] if `key` is present with malformed numeric tokens.
+    pub fn parse_usize_list_attr_checked(line: &str, key: &str) -> LibTpuResult<Vec<usize>> {
         let tokens = HloLexer::tokenize(line);
         let Some(key_pos) = tokens
             .iter()
             .position(|t| matches!(t, HloToken::Ident(id) if id.contains(key)))
         else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let tail = tokens.get(key_pos + 1..).unwrap_or(&[]);
         let op = tail
@@ -440,22 +618,40 @@ impl CompiledProgram {
             .iter()
             .position(|t| matches!(t, HloToken::Punct(']' | '}' | '>')))
             .unwrap_or(0);
-        if let Some(inner) = tail.get(op + 1..cl) {
-            let start = inner
-                .iter()
-                .rposition(|t| matches!(t, HloToken::Punct(':')))
-                .map_or(0, |p| p + 1);
-            return inner
-                .get(start..)
-                .unwrap_or(inner)
-                .iter()
-                .filter_map(|t| match t {
-                    HloToken::Number(n) => n.parse::<usize>().ok(),
-                    _ => None,
-                })
-                .collect();
+        let Some(inner) = tail.get(op + 1..cl) else {
+            return Err(LibTpuError::HloParseError {
+                line: 1,
+                column: 1,
+                reason: format!("Malformed delimiter list for attribute '{key}'"),
+            });
+        };
+        let start = inner
+            .iter()
+            .rposition(|t| matches!(t, HloToken::Punct(':')))
+            .map_or(0, |p| p + 1);
+        let mut out = Vec::new();
+        for tok in inner.get(start..).unwrap_or(inner) {
+            if let HloToken::Number(n) = tok {
+                let parsed = n.parse::<usize>().map_err(|_| LibTpuError::HloParseError {
+                    line: 1,
+                    column: 1,
+                    reason: format!("Invalid usize literal '{n}' in attribute '{key}'"),
+                })?;
+                out.push(parsed);
+            }
         }
-        Vec::new()
+        Ok(out)
+    }
+
+    /// Parses a comma-separated list of `usize` integers following `key` inside `line` (e.g., `permutation = [1, 0]`).
+    ///
+    /// # Arguments
+    ///
+    /// * `line` - Instruction source line.
+    /// * `key` - Attribute key substring to search for.
+    #[must_use]
+    pub fn parse_usize_list_attr(line: &str, key: &str) -> Vec<usize> {
+        Self::parse_usize_list_attr_checked(line, key).unwrap_or_default()
     }
 
     /// Parses a single `usize` integer attribute following `key` inside `line` (e.g., `dimension = 1`).
@@ -484,9 +680,17 @@ impl CompiledProgram {
     /// # Arguments
     ///
     /// * `token` - HLO shape token.
-    #[must_use]
-    pub fn parse_hlo_shape_token(token: &str) -> Option<Shape> {
-        let (dtype_str, dims) = winnow_parse_hlo_shape_parts.parse(token).ok()?;
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidShape`] if `token` is not a valid `<dtype>[<dims>]` specification.
+    pub fn parse_hlo_shape_token(token: &str) -> LibTpuResult<Shape> {
+        let (dtype_str, dims) =
+            winnow_parse_hlo_shape_parts
+                .parse(token)
+                .map_err(|_| LibTpuError::InvalidShape {
+                    reason: format!("Invalid HLO shape token syntax: '{token}'"),
+                })?;
         let elem_type = match dtype_str {
             "f32" => ElementType::F32,
             "f64" => ElementType::F64,
@@ -501,9 +705,15 @@ impl CompiledProgram {
             "u16" => ElementType::U16,
             "u8" => ElementType::U8,
             "pred" | "i1" => ElementType::Pred,
-            _ => return None,
+            "c64" => ElementType::C64,
+            "c128" => ElementType::C128,
+            _ => {
+                return Err(LibTpuError::InvalidShape {
+                    reason: format!("Unknown HLO element type '{dtype_str}' in '{token}'"),
+                });
+            }
         };
-        Shape::new(elem_type, dims, None, None).ok()
+        Shape::new(elem_type, dims, None, None)
     }
 
     /// Parses instruction attributes (`dot_general` dims, `permutation`, `broadcast_dimensions`,
@@ -541,20 +751,42 @@ impl CompiledProgram {
         attrs.pad_edge_high = Self::parse_usize_list_attr(line, "edge_padding_high");
         attrs.pad_interior = Self::parse_usize_list_attr(line, "interior_padding");
         attrs.reduce_dims = Self::parse_usize_list_attr(line, "dimensions");
+        attrs.window_dims = Self::parse_usize_list_attr(line, "window_dimensions");
+        attrs.window_strides = Self::parse_usize_list_attr(line, "window_strides");
         if let Some(cd) = Self::parse_single_usize_attr(line, "dimension") {
             attrs.concat_dim = cd;
         }
         if let Some(id) = Self::parse_single_usize_attr(line, "iota_dimension") {
             attrs.iota_dim = id;
         }
+        for dir_pat in [
+            "comparison_direction = #stablehlo<comparison_direction ",
+            "direction=",
+        ] {
+            if let Some((_, after_dir)) = line.split_once(dir_pat) {
+                let token_dir = after_dir
+                    .split(|c: char| !c.is_ascii_alphabetic())
+                    .find(|s| !s.is_empty())
+                    .unwrap_or("");
+                attrs.comparison_direction = String::from(token_dir);
+            }
+        }
+        if let Some(target) = line
+            .split_once("call_target_name")
+            .and_then(|(_, after_cc)| after_cc.split_once('"'))
+            .and_then(|(_, quoted)| quoted.split_once('"'))
+            .map(|(t, _)| t)
+        {
+            attrs.custom_call_target = String::from(target);
+        }
 
         // Extract output shape from `-> tensor<...>` or `: tensor<...>` or HLO `<type>[<dims>]`
         if let Some((_, seg)) = line.rsplit_once("tensor<") {
-            attrs.output_shape = Self::parse_tensor_type(&format!("tensor<{seg}"));
+            attrs.output_shape = Self::parse_tensor_type(&format!("tensor<{seg}")).ok();
         }
         if attrs.output_shape.is_none() {
             for tok in line.split_whitespace() {
-                if let Some(sh) = Self::parse_hlo_shape_token(tok) {
+                if let Ok(sh) = Self::parse_hlo_shape_token(tok) {
                     attrs.output_shape = Some(sh);
                     break;
                 }
@@ -1111,8 +1343,22 @@ impl CompiledProgram {
             ("or", TpuOpCode::Or, ElementType::S32, 2, &[4]),
             ("add", TpuOpCode::AddF32, ElementType::F32, 2, &[4]),
         ];
+        let tokens = HloLexer::tokenize(&lower);
+        let ident_tokens: Vec<&str> = tokens
+            .iter()
+            .filter_map(|t| match t {
+                HloToken::Ident(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .collect();
         for &(pat, op, et, arity, dims) in table {
-            if lower.contains(pat) {
+            let clean_pat = pat.trim().trim_end_matches('(');
+            let matched = ident_tokens.iter().any(|&id| {
+                (id == clean_pat)
+                    | (id.strip_prefix("stablehlo.") == Some(clean_pat))
+                    | ((clean_pat.len() >= 4) & id.contains(clean_pat))
+            });
+            if matched {
                 return (op, et, arity, dims.to_vec());
             }
         }
@@ -1125,20 +1371,8 @@ impl CompiledProgram {
     /// # Arguments
     ///
     /// * `text` - UTF-8 lossy program text or HLO instruction opcode.
-    #[allow(
-        for_loops_over_fallibles,
-        clippy::cognitive_complexity,
-        clippy::too_many_lines
-    )]
-    pub(super) fn parse_textual_program(
-        text: &str,
-    ) -> (
-        TpuOpCode,
-        Vec<Shape>,
-        Vec<Shape>,
-        Vec<TpuInstructionBundle>,
-        Vec<usize>,
-    ) {
+    #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
+    pub(super) fn parse_textual_program(text: &str) -> ParsedHloModule {
         let (mut primary_op, mut elem_type, default_inputs, mut dims) =
             Self::parse_opcode_mnemonic(text);
 
@@ -1149,38 +1383,38 @@ impl CompiledProgram {
         let mut next_slot = 0_usize;
 
         // Extract `func.func @main(...) -> ...` signature shapes and SSA parameter names when present
-        for (_, after_func) in text.split_once("func.func") {
-            for (_, after_open) in after_func.split_once('(') {
-                for (params_str, after_params) in after_open.split_once(')') {
-                    for param_decl in params_str.split(',') {
-                        for (var_part, type_part) in param_decl.split_once(':') {
-                            for sh in Self::parse_tensor_type(type_part.trim()) {
-                                elem_type = sh.element_type;
-                                dims.clone_from(&sh.dims);
-                                ssa_slots.insert(String::from(var_part.trim()), next_slot);
-                                next_slot += 1;
-                                slot_shapes.push(sh.clone());
-                                explicit_param_shapes.push(sh);
-                            }
-                        }
-                    }
-                    for (_, after_arrow) in after_params.split_once("->") {
-                        let ret_header = after_arrow.split('{').next().unwrap_or(after_arrow);
-                        for segment in ret_header.split("tensor<").skip(1) {
-                            let candidate = format!("tensor<{segment}");
-                            for sh in Self::parse_tensor_type(&candidate) {
-                                explicit_output_shapes.push(sh);
-                            }
-                        }
-                    }
+        let _ = text
+            .split_once("func.func")
+            .and_then(|(_, after_func)| after_func.split_once('('))
+            .and_then(|(_, after_open)| after_open.split_once(')'))
+            .map(|(params_str, after_params)| {
+                for param_decl in params_str.split(',') {
+                    let _ = param_decl.split_once(':').map(|(var_part, type_part)| {
+                        let _ = Self::parse_tensor_type(type_part.trim()).map(|sh| {
+                            elem_type = sh.element_type;
+                            dims.clone_from(&sh.dims);
+                            ssa_slots.insert(String::from(var_part.trim()), next_slot);
+                            next_slot += 1;
+                            slot_shapes.push(sh.clone());
+                            explicit_param_shapes.push(sh);
+                        });
+                    });
                 }
-            }
-        }
+                let _ = after_params.split_once("->").map(|(_, after_arrow)| {
+                    let ret_header = after_arrow.split('{').next().unwrap_or(after_arrow);
+                    for segment in ret_header.split("tensor<").skip(1) {
+                        let candidate = format!("tensor<{segment}");
+                        let _ = Self::parse_tensor_type(&candidate).map(|sh| {
+                            explicit_output_shapes.push(sh);
+                        });
+                    }
+                });
+            });
 
         if explicit_param_shapes.is_empty() {
             for segment in text.split("tensor<").skip(1) {
                 let candidate = format!("tensor<{segment}");
-                if let Some(sh) = Self::parse_tensor_type(&candidate) {
+                if let Ok(sh) = Self::parse_tensor_type(&candidate) {
                     elem_type = sh.element_type;
                     dims = sh.dims;
                     break;
@@ -1208,7 +1442,7 @@ impl CompiledProgram {
             let lhs_var = String::from(lhs.split_whitespace().last().unwrap_or("").trim());
             if rhs.contains("parameter(") {
                 for tok in rhs.split_whitespace() {
-                    if let Some(sh) = Self::parse_hlo_shape_token(tok) {
+                    if let Ok(sh) = Self::parse_hlo_shape_token(tok) {
                         elem_type = sh.element_type;
                         dims.clone_from(&sh.dims);
                         ssa_slots.insert(lhs_var.clone(), next_slot);
@@ -1217,6 +1451,20 @@ impl CompiledProgram {
                         explicit_param_shapes.push(sh);
                     }
                 }
+                continue;
+            }
+            if let Some((_, after_tuple)) = rhs.split_once("tuple(") {
+                let tuple_args = after_tuple.split(')').next().unwrap_or(after_tuple);
+                output_slots.extend(
+                    tuple_args
+                        .split(|c: char| c.is_whitespace() || c == ',')
+                        .filter_map(|tok| ssa_slots.get(tok.trim()).copied()),
+                );
+                explicit_output_shapes.extend(
+                    output_slots
+                        .iter()
+                        .filter_map(|&slot| slot_shapes.get(slot).cloned()),
+                );
                 continue;
             }
             let (line_op, _, line_arity, _) = Self::parse_opcode_mnemonic(rhs);
@@ -1310,12 +1558,12 @@ impl CompiledProgram {
                 .map_or(explicit_param_shapes.len(), |b| b.output_slot);
             output_slots.push(last_slot);
         }
-        (
+        ParsedHloModule {
             primary_op,
-            explicit_param_shapes,
-            explicit_output_shapes,
+            parameter_shapes: explicit_param_shapes,
+            output_shapes: explicit_output_shapes,
             bundles,
             output_slots,
-        )
+        }
     }
 }
