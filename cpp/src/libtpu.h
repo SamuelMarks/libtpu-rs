@@ -2370,6 +2370,29 @@ size_t libtpu_rs_executable_fingerprint(const PJRT_LoadedExecutable *executable,
 float libtpu_rs_executable_flops(const PJRT_LoadedExecutable *executable);
 
 /**
+ * @brief Compiles and executes an N-dimensional program over two typed host
+ * buffers.
+ * @param client Pointer to `PJRT_Client`.
+ * @param device_id Target logical TPU device ID.
+ * @param format Null-terminated format string (`"mlir"` or `"hlo"`).
+ * @param code Pointer to program source or bytecode bytes.
+ * @param code_len Byte length of `code`.
+ * @param element_type Raw `PJRT_Buffer_Type` integer (`11` = `F32`, etc.).
+ * @param dims Pointer to N-dimensional extent array.
+ * @param num_dims Rank (`number of dimensions`).
+ * @param in0_data First input host byte buffer.
+ * @param in1_data Second input host byte buffer.
+ * @param byte_len Byte length of `in0_data`, `in1_data`, and `out_data`.
+ * @param out_data Destination host byte buffer of length `byte_len`.
+ * @return `LibTpuCStatus` indicating success or failure.
+ */
+LibTpuCStatus libtpu_rs_compile_and_execute_nd(
+    PJRT_Client *client, uint32_t device_id, const char *format,
+    const uint8_t *code, size_t code_len, int32_t element_type,
+    const int64_t *dims, size_t num_dims, const uint8_t *in0_data,
+    const uint8_t *in1_data, size_t byte_len, uint8_t *out_data);
+
+/**
  * @brief Argument structure for `PJRT_HostMemoryAllocator_Allocate` (`64`
  * bytes, `host_memory_allocator_extension.h`).
  */
@@ -2681,6 +2704,185 @@ typedef struct PJRT_Communicator_AllReduce_Args {
 } PJRT_Communicator_AllReduce_Args;
 
 /**
+ * @brief Argument structure for `PJRT_Communicator_AllGather` (`56` bytes).
+ */
+typedef struct PJRT_Communicator_AllGather_Args {
+  /** @brief Size of this struct (`56`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Communicator handle. */
+  void *communicator;
+  /** @brief Send buffer pointer. */
+  void *send_buffer;
+  /** @brief Receive buffer pointer. */
+  void *recv_buffer;
+  /** @brief Element count. */
+  size_t count;
+  /** @brief Output completion event. */
+  void *event;
+} PJRT_Communicator_AllGather_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Communicator_CollectivePermute` and
+ * `AllToAll` (`64` bytes).
+ */
+typedef struct PJRT_Communicator_CollectivePermute_Args {
+  /** @brief Size of this struct (`64`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Communicator handle. */
+  void *communicator;
+  /** @brief Send buffer pointer. */
+  void *send_buffer;
+  /** @brief Receive buffer pointer. */
+  void *recv_buffer;
+  /** @brief Target ranks pointer. */
+  const int32_t *target_ranks;
+  /** @brief Number of target ranks or elements. */
+  size_t count;
+  /** @brief Output completion event. */
+  void *event;
+} PJRT_Communicator_CollectivePermute_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Communicator_ToString` (`40` bytes).
+ */
+typedef struct PJRT_Communicator_ToString_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Communicator handle. */
+  const void *communicator;
+  /** @brief Output string pointer word. */
+  size_t str_out;
+  /** @brief Output string byte length. */
+  size_t str_size;
+} PJRT_Communicator_ToString_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Client_CreateBuffersForAsyncHostToDevice`
+ * (`72` bytes).
+ */
+typedef struct PJRT_Client_CreateBuffersForAsyncHostToDevice_Args {
+  /** @brief Size of this struct (`72`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Client handle. */
+  PJRT_Client *client;
+  /** @brief Shape specs array pointer. */
+  const void *shape_specs;
+  /** @brief Number of shape specs. */
+  size_t num_shape_specs;
+  /** @brief Optional device layouts array pointer. */
+  const void *device_layouts;
+  /** @brief Number of device layouts. */
+  size_t num_device_layouts;
+  /** @brief Target `PJRT_Memory*` (or `PJRT_Device*`). */
+  PJRT_Memory *memory;
+  /** @brief Output `PJRT_AsyncHostToDeviceTransferManager*`. */
+  PJRT_AsyncHostToDeviceTransferManager *transfer_manager;
+} PJRT_Client_CreateBuffersForAsyncHostToDevice_Args;
+
+/**
+ * @brief Argument structure for `PJRT_AsyncHostToDeviceTransferManager_Destroy`
+ * (`24` bytes).
+ */
+typedef struct PJRT_AsyncHostToDeviceTransferManager_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Transfer manager handle to destroy. */
+  PJRT_AsyncHostToDeviceTransferManager *transfer_manager;
+} PJRT_AsyncHostToDeviceTransferManager_Destroy_Args;
+
+/**
+ * @brief Argument structure for
+ * `PJRT_AsyncHostToDeviceTransferManager_TransferData` (`72` bytes).
+ */
+typedef struct PJRT_AsyncHostToDeviceTransferManager_TransferData_Args {
+  /** @brief Size of this struct (`72`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Transfer manager handle. */
+  PJRT_AsyncHostToDeviceTransferManager *transfer_manager;
+  /** @brief Target buffer index. */
+  int32_t buffer_index;
+  /** @brief Explicit padding. */
+  int32_t pad;
+  /** @brief Source host data pointer. */
+  const void *data;
+  /** @brief Byte offset into target buffer. */
+  int64_t offset;
+  /** @brief Number of bytes to transfer. */
+  int64_t transfer_size;
+  /** @brief Whether this chunk completes the transfer for `buffer_index`. */
+  bool is_last_transfer;
+  /** @brief Explicit 7-byte padding. */
+  uint8_t pad1[7];
+  /** @brief Output completion `PJRT_Event*`. */
+  PJRT_Event *done_with_h2d_transfer;
+} PJRT_AsyncHostToDeviceTransferManager_TransferData_Args;
+
+/**
+ * @brief Argument structure for
+ * `PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer` (`40` bytes).
+ */
+typedef struct PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Transfer manager handle. */
+  PJRT_AsyncHostToDeviceTransferManager *transfer_manager;
+  /** @brief Buffer index. */
+  int32_t buffer_index;
+  /** @brief Explicit padding. */
+  int32_t pad;
+  /** @brief Output `PJRT_Buffer*`. */
+  PJRT_Buffer *buffer_out;
+} PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer_Args;
+
+/**
+ * @brief Argument structure for `PJRT_AsyncHostToDeviceTransferManager_Device`
+ * (`32` bytes).
+ */
+typedef struct PJRT_AsyncHostToDeviceTransferManager_Device_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Transfer manager handle. */
+  const PJRT_AsyncHostToDeviceTransferManager *transfer_manager;
+  /** @brief Output `PJRT_Device*`. */
+  PJRT_Device *device_out;
+} PJRT_AsyncHostToDeviceTransferManager_Device_Args;
+
+/**
+ * @brief Argument structure for
+ * `PJRT_AsyncHostToDeviceTransferManager_BufferSize` (`40` bytes).
+ */
+typedef struct PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Transfer manager handle. */
+  const PJRT_AsyncHostToDeviceTransferManager *transfer_manager;
+  /** @brief Buffer index. */
+  int32_t buffer_index;
+  /** @brief Explicit padding. */
+  int32_t pad;
+  /** @brief Output `buffer_size`. */
+  size_t buffer_size;
+} PJRT_AsyncHostToDeviceTransferManager_BufferSize_Args;
+
+/**
  * @brief Creates a collective communicator
  * (`PJRT_Collectives_CreateCommunicator`).
  * @param raw_args Pointer to `PJRT_Collectives_CreateCommunicator_Args`.
@@ -2702,6 +2904,245 @@ PJRT_Error *PJRT_Communicator_Destroy(void *raw_args);
  * @return `nullptr` on success or `PJRT_Error*` on failure.
  */
 PJRT_Error *PJRT_Communicator_AllReduce(void *raw_args);
+
+/**
+ * @brief Executes an ICI/DCN `ReduceScatter` collective
+ * (`PJRT_Communicator_ReduceScatter`).
+ * @param raw_args Pointer to `PJRT_Communicator_AllReduce_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Communicator_ReduceScatter(void *raw_args);
+
+/**
+ * @brief Executes an ICI/DCN `AllGather` collective
+ * (`PJRT_Communicator_AllGather`).
+ * @param raw_args Pointer to `PJRT_Communicator_AllGather_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Communicator_AllGather(void *raw_args);
+
+/**
+ * @brief Executes an ICI/DCN `AllToAll` collective
+ * (`PJRT_Communicator_AllToAll`).
+ * @param raw_args Pointer to `PJRT_Communicator_CollectivePermute_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Communicator_AllToAll(void *raw_args);
+
+/**
+ * @brief Executes an ICI/DCN `CollectivePermute` collective
+ * (`PJRT_Communicator_CollectivePermute`).
+ * @param raw_args Pointer to `PJRT_Communicator_CollectivePermute_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Communicator_CollectivePermute(void *raw_args);
+
+/**
+ * @brief Queries the communicator description string
+ * (`PJRT_Communicator_ToString`).
+ * @param raw_args Pointer to `PJRT_Communicator_ToString_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Communicator_ToString(void *raw_args);
+
+/**
+ * @brief Parameter structure for `TpuEmbeddingEngine_WriteParameters` and
+ * `TpuEmbeddingEngine_ReadParameters` (`72` bytes).
+ */
+typedef struct TpuEmbeddingEngine_WriteParameters_Params {
+  /** @brief Size of this struct (`72`). */
+  size_t struct_size;
+  /** @brief Reserved private pointer (`NULL`). */
+  void *priv_data;
+  /** @brief Embedding table name pointer (or `NULL` for `"default_table"`). */
+  const char *table_name;
+  /** @brief Embedding table name byte length. */
+  size_t table_name_len;
+  /** @brief Embedding table input float parameters pointer. */
+  const void *parameters;
+  /** @brief Embedding table output float parameters pointer. */
+  float *parameters_out;
+  /** @brief Number of `float` parameters to write or read. */
+  size_t num_parameters;
+  /** @brief Output pointer receiving number of `float` parameters written/read.
+   */
+  size_t *num_parameters_written_or_read;
+  /** @brief Optional status pointer. */
+  TpuStatus *status;
+} TpuEmbeddingEngine_WriteParameters_Params;
+
+/**
+ * @brief Serialized protobuf buffer descriptor (`TpuSerializedProto`, `16`
+ * bytes).
+ */
+typedef struct TpuSerializedProto {
+  /** @brief Heap-allocated protobuf bytes pointer. */
+  char *bytes;
+  /** @brief Number of bytes. */
+  size_t size;
+} TpuSerializedProto;
+
+/**
+ * @brief Parameter structure for `TpuEmbeddingEngine_*Computation` entrypoints
+ * (`96` bytes).
+ */
+typedef struct TpuEmbeddingEngine_Computation_Params {
+  /** @brief Size of this struct (`96`). */
+  size_t struct_size;
+  /** @brief Reserved private pointer (`NULL`). */
+  void *priv_data;
+  /** @brief `TpuEmbeddingConfigurationProto` bytes pointer. */
+  const char *tpu_embedding_config_bytes;
+  /** @brief `TpuEmbeddingConfigurationProto` byte length. */
+  size_t tpu_embedding_config_size;
+  /** @brief Deduplication tuple mask bytes pointer. */
+  const char *deduplication_tuple_mask_bytes;
+  /** @brief Deduplication tuple mask byte length. */
+  size_t deduplication_tuple_mask_size;
+  /** @brief HBM buffers config bytes pointer. */
+  const char *hbm_buffers_config_bytes;
+  /** @brief HBM buffers config byte length. */
+  size_t hbm_buffers_config_size;
+  /** @brief TPU topology bytes pointer. */
+  const char *tpu_topology_bytes;
+  /** @brief TPU topology byte length. */
+  size_t tpu_topology_size;
+  /** @brief Output serialized XLA computation proto pointer. */
+  TpuSerializedProto *xla_computation_out;
+  /** @brief Optional status pointer. */
+  TpuStatus *status;
+} TpuEmbeddingEngine_Computation_Params;
+
+/**
+ * @brief Argument structure for `PJRT_Layouts_Topology_GetDefaultLayout` (`56`
+ * bytes).
+ */
+typedef struct PJRT_Layouts_DefaultLayout_Args {
+  /** @brief Size of this struct (`56`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input topology or client handle. */
+  void *topology;
+  /** @brief Element type (`PJRT_Buffer_Type`). */
+  int32_t elem_type;
+  /** @brief Explicit 4-byte alignment padding. */
+  int32_t pad;
+  /** @brief Dimension array pointer. */
+  const int64_t *dims;
+  /** @brief Number of dimensions. */
+  size_t num_dims;
+  /** @brief Output layout handle (`PJRT_Layouts_MemoryLayout*`). */
+  void *layout_out;
+} PJRT_Layouts_DefaultLayout_Args;
+
+/**
+ * @brief Argument structure for `PJRT_CrossHostTransfers_SendBuffers` (`56`
+ * bytes).
+ */
+typedef struct PJRT_CrossHostTransfers_Args {
+  /** @brief Size of this struct (`56`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Client handle. */
+  void *client;
+  /** @brief Buffers array word. */
+  size_t buffers;
+  /** @brief Number of buffers. */
+  size_t num_buffers;
+  /** @brief Remote device tag. */
+  size_t remote_device;
+  /** @brief Output event handle word (`PJRT_Event*`). */
+  size_t out_event;
+} PJRT_CrossHostTransfers_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Layouts_MemoryLayout_Destroy` (`24`
+ * bytes).
+ */
+typedef struct PJRT_Layouts_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Layout handle to destroy. */
+  void *layout;
+} PJRT_Layouts_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_RawBuffer_CreateRawAliasOfBuffer` (`32`
+ * bytes).
+ */
+typedef struct PJRT_RawBuffer_Create_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Source `PJRT_Buffer*` handle. */
+  void *buffer;
+  /** @brief Output `PJRT_RawBuffer*` handle. */
+  void *raw_buffer_out;
+} PJRT_RawBuffer_Create_Args;
+
+/**
+ * @brief Argument structure for `PJRT_RawBuffer_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_RawBuffer_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Raw buffer handle to destroy. */
+  void *raw_buffer;
+} PJRT_RawBuffer_Destroy_Args;
+
+/**
+ * @brief Queries default TPU memory layout
+ * (`PJRT_Layouts_Topology_GetDefaultLayout`).
+ * @param raw_args Pointer to `PJRT_Layouts_DefaultLayout_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Layouts_Topology_GetDefaultLayout(void *raw_args);
+
+/**
+ * @brief Destroys a `PJRT_Layouts_MemoryLayout`
+ * (`PJRT_Layouts_MemoryLayout_Destroy`).
+ * @param raw_args Pointer to `PJRT_Layouts_Destroy_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Layouts_MemoryLayout_Destroy(void *raw_args);
+
+/**
+ * @brief Creates a `PJRT_RawBuffer` alias of a `PJRT_Buffer`
+ * (`PJRT_RawBuffer_CreateRawAliasOfBuffer`).
+ * @param raw_args Pointer to `PJRT_RawBuffer_Create_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_RawBuffer_CreateRawAliasOfBuffer(void *raw_args);
+
+/**
+ * @brief Destroys a `PJRT_RawBuffer` (`PJRT_RawBuffer_Destroy`).
+ * @param raw_args Pointer to `PJRT_RawBuffer_Destroy_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_RawBuffer_Destroy(void *raw_args);
+
+/**
+ * @brief Queries the host/device pointer of a `PJRT_RawBuffer`
+ * (`PJRT_RawBuffer_GetHostPointer`).
+ * @param raw_args Pointer to `PJRT_RawBuffer_Create_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_RawBuffer_GetHostPointer(void *raw_args);
+
+/**
+ * @brief Initiates a cross-host DCN transfer
+ * (`PJRT_CrossHostTransfers_SendBuffers`).
+ * @param raw_args Pointer to `PJRT_Megascale_Query_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_CrossHostTransfers_SendBuffers(void *raw_args);
 
 /** @cond INTERNAL */
 #if defined(__cplusplus)

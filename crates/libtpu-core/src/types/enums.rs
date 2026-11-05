@@ -85,9 +85,10 @@ pub type TilingSpec = TilingKind;
 
 /// Collective reduction operation kind (`CollectiveReductionOp`).
 #[repr(i32)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Display)]
 pub enum CollectiveReductionOp {
     /// Elementwise sum reduction (`0`).
+    #[default]
     #[display("SUM")]
     Sum = 0,
     /// Elementwise product reduction (`1`).

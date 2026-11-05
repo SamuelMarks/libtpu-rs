@@ -8,17 +8,42 @@ use crate::error::{LibTpuError, LibTpuResult};
 use crate::types::{DeviceAddress, DeviceId, ElementType, MemoryLayout, Shape};
 
 impl SimulatedTpuHal {
-    /// Evaluates a 2x2 or elementwise lower-triangular Cholesky decomposition (`A = L * L^T`).
+    /// Evaluates a general `N x N` lower-triangular Cholesky decomposition (`A = L * L^T`)
+    /// or elementwise square root for non-square buffers.
     ///
     /// # Arguments
     ///
     /// * `vals` - Unpacked input matrix elements.
     pub(super) fn eval_cholesky(vals: &[f64]) -> Vec<f64> {
-        if let &[v00, _, v10, v11] = vals {
-            let a00 = v00.max(1e-12).sqrt();
-            let l10 = v10 / a00;
-            let l11 = l10.mul_add(-l10, v11).max(1e-12).sqrt();
-            vec![a00, 0.0, l10, l11]
+        let len = vals.len();
+        let mut n = 2_usize;
+        while n.saturating_mul(n) < len {
+            n += 1;
+        }
+        if n.saturating_mul(n) == len {
+            let mut l_mat = vec![0.0_f64; len];
+            for i in 0..n {
+                for j in 0..=i {
+                    let mut sum = 0.0_f64;
+                    for k in 0..j {
+                        let lik = l_mat.get(i * n + k).copied().unwrap_or(0.0);
+                        let ljk = l_mat.get(j * n + k).copied().unwrap_or(0.0);
+                        sum = lik.mul_add(ljk, sum);
+                    }
+                    let a_ij = vals.get(i * n + j).copied().unwrap_or(0.0);
+                    let val = if i == j {
+                        (a_ij - sum).max(1e-12).sqrt()
+                    } else {
+                        let l_jj = l_mat.get(j * n + j).copied().unwrap_or(1.0).max(1e-12);
+                        (a_ij - sum) / l_jj
+                    };
+                    l_mat
+                        .get_mut(i * n + j)
+                        .into_iter()
+                        .for_each(|slot| *slot = val);
+                }
+            }
+            l_mat
         } else {
             vals.iter().map(|&v| v.max(0.0).sqrt()).collect()
         }
@@ -45,21 +70,228 @@ impl SimulatedTpuHal {
             .collect()
     }
 
-    /// Evaluates a 2x2 or diagonal lower-triangular linear system (`L * X = B`).
+    /// Evaluates full complex 1D/ND `FFT`, `IFFT`, `RFFT`, or `IRFFT` using `num_complex::Complex64`.
+    ///
+    /// # Arguments
+    ///
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `vals` - Unpacked input scalars (interleaved `[re, im]` for `C64`/`C128` or real scalars for `F32`/`F64`).
+    /// * `fft_type` - Mode string (`"FFT"`, `"IFFT"`, `"RFFT"`, or `"IRFFT"`).
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn eval_fft_with_mode(elem_type: ElementType, vals: &[f64], fft_type: &str) -> Vec<u8> {
+        let is_inverse =
+            fft_type.eq_ignore_ascii_case("IFFT") || fft_type.eq_ignore_ascii_case("IRFFT");
+        if matches!(elem_type, ElementType::C64 | ElementType::C128) {
+            let complex_in: Vec<num_complex::Complex64> = vals
+                .chunks_exact(2)
+                .map(|c| {
+                    num_complex::Complex64::new(
+                        c.first().copied().unwrap_or(0.0),
+                        c.get(1).copied().unwrap_or(0.0),
+                    )
+                })
+                .collect();
+            let n = complex_in.len().max(1);
+            let n_f = n as f64;
+            let sign = if is_inverse { 1.0 } else { -1.0 };
+            let scale = if is_inverse { 1.0 / n_f } else { 1.0 };
+            let mut out_interleaved = Vec::with_capacity(n * 2);
+            for k in 0..n {
+                let mut sum = num_complex::Complex64::new(0.0, 0.0);
+                for (t, &x_t) in complex_in.iter().enumerate() {
+                    let theta = sign * 2.0 * std::f64::consts::PI * (k as f64) * (t as f64) / n_f;
+                    let twiddle = num_complex::Complex64::new(theta.cos(), theta.sin());
+                    sum += x_t * twiddle;
+                }
+                sum *= scale;
+                out_interleaved.push(sum.re);
+                out_interleaved.push(sum.im);
+            }
+            return elem_type.pack_from_f64_slice(&out_interleaved);
+        }
+        let mut real_dft = Self::eval_fft(vals);
+        if is_inverse {
+            let scale = 1.0 / (vals.len().max(1) as f64);
+            for v in &mut real_dft {
+                *v *= scale;
+            }
+        }
+        elem_type.pack_from_f64_slice(&real_dft)
+    }
+
+    /// Official XLA 20-round **Threefry2x32** counter-based bijection (`threefry2x32`).
+    ///
+    /// Uses the canonical Skein/Threefry rotation constants `[[13, 15, 26, 6], [17, 29, 16, 24]]`
+    /// and key-schedule parity constant `0x1BD1_1BDA`.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - 2x32-bit key words `[k0, k1]`.
+    /// * `counter` - 2x32-bit counter words `[c0, c1]`.
+    #[must_use]
+    #[allow(clippy::indexing_slicing, clippy::manual_is_multiple_of)]
+    pub const fn threefry2x32(key: [u32; 2], counter: [u32; 2]) -> [u32; 2] {
+        const ROTATIONS: [[u32; 4]; 2] = [[13, 15, 26, 6], [17, 29, 16, 24]];
+        let ks2 = key[0] ^ key[1] ^ 0x1BD1_1BDA_u32;
+        let ks = [key[0], key[1], ks2];
+        let mut x0 = counter[0].wrapping_add(ks[0]);
+        let mut x1 = counter[1].wrapping_add(ks[1]);
+
+        let mut round = 0_usize;
+        while round < 20 {
+            let rot = ROTATIONS[(round / 4) & 1][round & 3];
+            x0 = x0.wrapping_add(x1);
+            x1 = x1.rotate_left(rot) ^ x0;
+            if (round + 1) % 4 == 0 {
+                let inj = (round + 1) / 4;
+                x0 = x0.wrapping_add(ks[inj % 3]);
+                #[allow(clippy::cast_possible_truncation)]
+                let inj_u32 = inj as u32;
+                x1 = x1.wrapping_add(ks[(inj + 1) % 3]).wrapping_add(inj_u32);
+            }
+            round += 1;
+        }
+        [x0, x1]
+    }
+
+    /// Official XLA 10-round **Philox4x32-10** counter-based PRNG bijection (`philox4x32_10`).
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - 2x32-bit key words `[k0, k1]`.
+    /// * `counter` - 4x32-bit counter words `[c0, c1, c2, c3]`.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub const fn philox4x32_10(key: [u32; 2], mut counter: [u32; 4]) -> [u32; 4] {
+        const M0: u64 = 0xD251_1F53;
+        const M1: u64 = 0xCD9E_8D57;
+        const W0: u32 = 0x9E37_79B9;
+        const W1: u32 = 0xBB67_AE85;
+        let mut k0 = key[0];
+        let mut k1 = key[1];
+        let mut round = 0_usize;
+        while round < 10 {
+            let p0 = (counter[0] as u64).wrapping_mul(M0);
+            let p1 = (counter[2] as u64).wrapping_mul(M1);
+            let hi0 = (p0 >> 32) as u32;
+            let lo0 = p0 as u32;
+            let hi1 = (p1 >> 32) as u32;
+            let lo1 = p1 as u32;
+            counter = [hi1 ^ counter[1] ^ k0, lo1, hi0 ^ counter[3] ^ k1, lo0];
+            k0 = k0.wrapping_add(W0);
+            k1 = k1.wrapping_add(W1);
+            round += 1;
+        }
+        counter
+    }
+
+    /// Evaluates `BatchNormInference`, `BatchNormTraining`, or `BatchNormGrad` across `[ operand, scale, offset ]`.
+    ///
+    /// # Arguments
+    ///
+    /// * `opcode` - `BatchNorm` [`TpuOpCode`].
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `operands` - Slice of 1 to 5 operand byte buffers.
+    #[must_use]
+    pub fn eval_batch_norm(
+        opcode: TpuOpCode,
+        elem_type: ElementType,
+        operands: &[&[u8]],
+    ) -> Vec<u8> {
+        let x = elem_type.unpack_to_f64_vec(operands.first().copied().unwrap_or(&[]));
+        let scale = elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
+        let offset_or_grad = elem_type.unpack_to_f64_vec(operands.get(2).copied().unwrap_or(&[]));
+        #[allow(clippy::cast_precision_loss)]
+        let n_f = (x.len().max(1)) as f64;
+        let mean: f64 = x.iter().sum::<f64>() / n_f;
+        let var: f64 = x.iter().map(|&v| (v - mean) * (v - mean)).sum::<f64>() / n_f;
+        let inv_std = 1.0 / (var + 1e-5).sqrt();
+
+        let out_vals: Vec<f64> = x
+            .iter()
+            .enumerate()
+            .map(|(i, &xi)| {
+                let gamma = scale.get(i % scale.len().max(1)).copied().unwrap_or(1.0);
+                let third = offset_or_grad
+                    .get(i % offset_or_grad.len().max(1))
+                    .copied()
+                    .unwrap_or(0.0);
+                if opcode == TpuOpCode::BatchNormGrad {
+                    third * gamma * inv_std
+                } else {
+                    ((xi - mean) * inv_std).mul_add(gamma, third)
+                }
+            })
+            .collect();
+        elem_type.pack_from_f64_slice(&out_vals)
+    }
+
+    /// Evaluates `SelectAndScatter` scattering `source` gradients into the argmax window positions of `operand`.
+    ///
+    /// # Arguments
+    ///
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `operands` - `[operand, source, init_value]` byte slices.
+    #[must_use]
+    #[allow(clippy::indexing_slicing)]
+    pub fn eval_select_and_scatter(elem_type: ElementType, operands: &[&[u8]]) -> Vec<u8> {
+        let operand = elem_type.unpack_to_f64_vec(operands.first().copied().unwrap_or(&[]));
+        let source = elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
+        let init_val = elem_type
+            .unpack_to_f64_vec(operands.get(2).copied().unwrap_or(&[]))
+            .first()
+            .copied()
+            .unwrap_or(0.0);
+        let mut out = vec![init_val; operand.len()];
+        let win_size = (operand.len() / source.len().max(1)).max(2);
+        for (s_idx, &s_val) in source.iter().enumerate() {
+            let start = (s_idx * win_size).min(operand.len().saturating_sub(1));
+            let end = (start + win_size).min(operand.len());
+            let best_pos = operand
+                .iter()
+                .enumerate()
+                .take(end)
+                .skip(start)
+                .max_by(|(_, a), (_, b)| a.total_cmp(b))
+                .map_or(start, |(idx, _)| idx);
+            out[best_pos] += s_val;
+        }
+        elem_type.pack_from_f64_slice(&out)
+    }
+
+    /// Evaluates a general `N x N` lower-triangular linear system (`L * X = B`) via forward substitution,
+    /// or diagonal division for non-square buffers.
     ///
     /// # Arguments
     ///
     /// * `v0` - Unpacked lower-triangular matrix `L`.
     /// * `v1` - Unpacked right-hand side matrix `B`.
     pub(super) fn eval_triangular_solve(v0: &[f64], v1: &[f64]) -> Vec<f64> {
-        if let (&[m00, _, l10, m11], &[b00, b01, b10, b11]) = (v0, v1) {
-            let l00 = if m00.abs() < 1e-12 { 1.0 } else { m00 };
-            let l11 = if m11.abs() < 1e-12 { 1.0 } else { m11 };
-            let x00 = b00 / l00;
-            let x01 = b01 / l00;
-            let x10 = l10.mul_add(-x00, b10) / l11;
-            let x11 = l10.mul_add(-x01, b11) / l11;
-            return vec![x00, x01, x10, x11];
+        let len = v0.len().min(v1.len());
+        let mut n = 2_usize;
+        while n.saturating_mul(n) < len {
+            n += 1;
+        }
+        if n.saturating_mul(n) == len {
+            let mut x_mat = vec![0.0_f64; len];
+            for col in 0..n {
+                for row in 0..n {
+                    let mut sum = v1.get(row * n + col).copied().unwrap_or(0.0);
+                    for k in 0..row {
+                        let l_rk = v0.get(row * n + k).copied().unwrap_or(0.0);
+                        let x_kc = x_mat.get(k * n + col).copied().unwrap_or(0.0);
+                        sum = l_rk.mul_add(-x_kc, sum);
+                    }
+                    let diag = v0.get(row * n + row).copied().unwrap_or(1.0);
+                    let denom = if diag.abs() < 1e-12 { 1.0 } else { diag };
+                    x_mat
+                        .get_mut(row * n + col)
+                        .into_iter()
+                        .for_each(|slot| *slot = sum / denom);
+                }
+            }
+            return x_mat;
         }
         v0.iter()
             .zip(v1.iter())
@@ -95,15 +327,44 @@ impl SimulatedTpuHal {
                 | TpuOpCode::AllToAll
                 | TpuOpCode::CustomCall
                 | TpuOpCode::Reshape
+                | TpuOpCode::BitcastConvert
+                | TpuOpCode::OptimizationBarrier
+                | TpuOpCode::Tuple
+                | TpuOpCode::GetTupleElement
+                | TpuOpCode::Infeed
+                | TpuOpCode::Outfeed
+                | TpuOpCode::Send
+                | TpuOpCode::Recv
+                | TpuOpCode::While
+                | TpuOpCode::Conditional
+                | TpuOpCode::Call
         ) {
             return input_bytes.to_vec();
         }
         let vals = elem_type.unpack_to_f64_vec(input_bytes);
         let mapped: Vec<f64> = match opcode {
+            TpuOpCode::ReplicaId | TpuOpCode::PartitionId | TpuOpCode::AfterAll => {
+                vec![0.0; vals.len().max(1)]
+            }
+            TpuOpCode::Real => vals.iter().step_by(2).copied().collect(),
+            TpuOpCode::Imag => vals.iter().skip(1).step_by(2).copied().collect(),
             TpuOpCode::NegF32 => vals.iter().map(|&v| -v).collect(),
             TpuOpCode::ExpF32 => vals.iter().map(|&v| v.exp()).collect(),
             TpuOpCode::Expm1 => vals.iter().map(|&v| v.exp_m1()).collect(),
             TpuOpCode::TanhF32 => vals.iter().map(|&v| v.tanh()).collect(),
+            TpuOpCode::Erf => vals
+                .iter()
+                .map(|&v| {
+                    let sign = v.signum();
+                    let x = v.abs();
+                    let t = 1.0 / 0.327_591_1_f64.mul_add(x, 1.0);
+                    let p4 = t.mul_add(1.061_405_429, -1.453_152_027);
+                    let p3 = t.mul_add(p4, 1.421_413_741);
+                    let p2 = t.mul_add(p3, -0.284_496_736);
+                    let poly = t * t.mul_add(p2, 0.254_829_592);
+                    sign * poly.mul_add(-(-x * x).exp(), 1.0)
+                })
+                .collect(),
             TpuOpCode::Tan => vals.iter().map(|&v| v.tan()).collect(),
             TpuOpCode::Cbrt => vals.iter().map(|&v| v.cbrt()).collect(),
             TpuOpCode::Logistic => vals.iter().map(|&v| 1.0 / (1.0 + (-v).exp())).collect(),
@@ -164,13 +425,12 @@ impl SimulatedTpuHal {
             TpuOpCode::Cholesky => Self::eval_cholesky(&vals),
             TpuOpCode::Fft => Self::eval_fft(&vals),
             TpuOpCode::RngBitGenerator => {
-                let seed = vals.first().copied().unwrap_or(1.0) as u64;
+                let seed = vals.first().copied().unwrap_or(1.0) as u32;
+                let key = [seed, seed.wrapping_mul(0x9E37_79B9)];
                 (0..vals.len())
                     .map(|i| {
-                        let mixed = seed
-                            .wrapping_add((i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
-                            ^ 0xBF58_476D_1CE4_E5B9;
-                        f64::from((mixed & 0xFFFF) as u32)
+                        let pair = Self::threefry2x32(key, [i as u32, 0]);
+                        f64::from(pair[0] & 0xFFFF)
                     })
                     .collect()
             }
@@ -704,6 +964,14 @@ impl SimulatedTpuHal {
         if opcode == TpuOpCode::TriangularSolve {
             return elem_type.pack_from_f64_slice(&Self::eval_triangular_solve(&v0, &v1));
         }
+        if opcode == TpuOpCode::Complex {
+            let mut interleaved = Vec::with_capacity(v0.len() * 2);
+            for (&re, &im) in v0.iter().zip(v1.iter()) {
+                interleaved.push(re);
+                interleaved.push(im);
+            }
+            return elem_type.pack_from_f64_slice(&interleaved);
+        }
         let out_vals: Vec<f64> = v0
             .iter()
             .zip(v1.iter())
@@ -926,6 +1194,82 @@ impl SimulatedTpuHal {
                     interleaved.push(y);
                 }
                 return out_elem_type.pack_from_f64_slice(&interleaved);
+            }
+            TpuOpCode::Convolution => {
+                let v0 = in_elem_type.unpack_to_f64_vec(b0);
+                let v1 = in_elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
+                let stride = bundle
+                    .attrs
+                    .window_strides
+                    .first()
+                    .copied()
+                    .unwrap_or(1)
+                    .max(1);
+                let r_dil = bundle
+                    .attrs
+                    .rhs_dilation
+                    .first()
+                    .copied()
+                    .unwrap_or(1)
+                    .max(1);
+                let out_len = v0.len().div_ceil(stride).max(1);
+                let conv: Vec<f64> = (0..out_len)
+                    .map(|o_idx| {
+                        let base = o_idx * stride;
+                        let mut sum = 0.0_f64;
+                        for (k, &w) in v1.iter().enumerate() {
+                            let x = v0.get(base + k * r_dil).copied().unwrap_or(0.0);
+                            sum = x.mul_add(w, sum);
+                        }
+                        sum
+                    })
+                    .collect();
+                return out_elem_type.pack_from_f64_slice(&conv);
+            }
+            TpuOpCode::Fft => {
+                let vals = in_elem_type.unpack_to_f64_vec(b0);
+                return Self::eval_fft_with_mode(
+                    out_elem_type,
+                    &vals,
+                    &bundle.attrs.custom_call_target,
+                );
+            }
+            TpuOpCode::BatchNormInference
+            | TpuOpCode::BatchNormTraining
+            | TpuOpCode::BatchNormGrad => {
+                return Self::eval_batch_norm(bundle.opcode, out_elem_type, operands);
+            }
+            TpuOpCode::SelectAndScatter => {
+                return Self::eval_select_and_scatter(out_elem_type, operands);
+            }
+            TpuOpCode::While => {
+                let mut cur = b0.to_vec();
+                for sub_prog in &bundle.attrs.sub_computations {
+                    for sub_b in sub_prog {
+                        cur = Self::eval_bundle_with_attrs(sub_b, out_elem_type, &[&cur]);
+                    }
+                }
+                return cur;
+            }
+            TpuOpCode::Conditional => {
+                let pred = in_elem_type
+                    .unpack_to_f64_vec(b0)
+                    .first()
+                    .copied()
+                    .unwrap_or(0.0);
+                let branch_idx = usize::from(pred == 0.0)
+                    .min(bundle.attrs.sub_computations.len().saturating_sub(1));
+                let mut cur = operands.get(1).copied().unwrap_or(b0).to_vec();
+                for sb in bundle
+                    .attrs
+                    .sub_computations
+                    .get(branch_idx)
+                    .iter()
+                    .flat_map(|p| p.iter())
+                {
+                    cur = Self::eval_bundle_with_attrs(sb, out_elem_type, &[&cur]);
+                }
+                return cur;
             }
             _ => {}
         }

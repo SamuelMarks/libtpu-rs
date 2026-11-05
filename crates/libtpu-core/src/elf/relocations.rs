@@ -92,6 +92,181 @@ pub struct ReconstructedFlatApiVtable {
     pub slot_vaddrs: Vec<u64>,
 }
 
+/// Classification of an Itanium C++ ABI RTTI descriptor (`__cxxabiv1::*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItaniumRttiKind {
+    /// Root class with no base classes (`__cxxabiv1::__class_type_info`).
+    ClassTypeInfo,
+    /// Single public non-virtual inheritance (`__cxxabiv1::__si_class_type_info`).
+    SingleInheritance,
+    /// Virtual or multiple inheritance (`__cxxabiv1::__vmi_class_type_info`).
+    VirtualMultipleInheritance,
+}
+
+/// Complete Itanium C++ ABI RTTI and vtable inheritance node (`ItaniumRttiClassDescriptor`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ItaniumRttiClassDescriptor {
+    /// Virtual address of the `_ZTI*` typeinfo structure in `.data.rel.ro`.
+    pub typeinfo_vaddr: u64,
+    /// Virtual address of the associated `_ZTV*` vtable, if discovered.
+    pub vtable_vaddr: u64,
+    /// Inheritance kind (`ClassTypeInfo`, `SingleInheritance`, or `VirtualMultipleInheritance`).
+    pub kind: ItaniumRttiKind,
+    /// Demangled C++ class name (`"asic_sw::driver::VfioDriver"`, etc.).
+    pub class_name: String,
+    /// Top-level C++ namespace (`"asic_sw"`, `"xla"`, `"pjrt"`, `"megascale"`).
+    pub namespace: String,
+    /// Ordered list of base class `_ZTI*` virtual addresses (`1` for SI, `N` for VMI).
+    pub base_typeinfo_vaddrs: Vec<u64>,
+    /// Ordered list of demangled base class names resolved from `base_typeinfo_vaddrs`.
+    pub base_class_names: Vec<String>,
+    /// Virtual method function pointer addresses extracted from the associated `_ZTV*`.
+    pub virtual_method_vaddrs: Vec<u64>,
+}
+
+/// Reconstructor for Itanium C++ ABI RTTI inheritance graphs (`CppRttiHierarchyExtractor`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CppRttiHierarchyExtractor;
+
+impl CppRttiHierarchyExtractor {
+    /// Resolves a demangled C++ class name from a `_ZTS*` string virtual address in `rodata_blobs`.
+    ///
+    /// # Arguments
+    ///
+    /// * `rodata_blobs` - Mapping from `.rodata` virtual address to NUL-terminated `_ZTS*` string bytes.
+    /// * `zts_vaddr` - Virtual address of the `_ZTS*` string in `.rodata`.
+    fn resolve_zts_name(rodata_blobs: &BTreeMap<u64, Vec<u8>>, zts_vaddr: u64) -> String {
+        let raw_zts = rodata_blobs
+            .get(&zts_vaddr)
+            .map(|bytes| {
+                let nul_pos = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+                String::from_utf8_lossy(bytes.get(..nul_pos).unwrap_or_default()).into_owned()
+            })
+            .unwrap_or_default();
+        if raw_zts.is_empty() {
+            return String::new();
+        }
+        let mangled = if raw_zts.starts_with("_ZTS") {
+            raw_zts
+        } else {
+            format!("_ZTS{raw_zts}")
+        };
+        let demangled = demangle_and_classify_cpp_symbol(&mangled).demangled;
+        String::from(
+            demangled
+                .strip_prefix("typeinfo name for ")
+                .unwrap_or(demangled.as_str()),
+        )
+    }
+
+    /// Scans a relocated 64-bit word map (`word_map`) and `.rodata` string map (`rodata_blobs`)
+    /// to reconstruct the full C++ RTTI class hierarchy (`__class_type_info`,
+    /// `__si_class_type_info`, and `__vmi_class_type_info`) and associate `_ZTV*` vtables.
+    ///
+    /// # Arguments
+    ///
+    /// * `word_map` - Mapping from 8-byte-aligned `.data.rel.ro` virtual address to relocated 64-bit word.
+    /// * `rodata_blobs` - Mapping from `.rodata` virtual address to NUL-terminated `_ZTS*` string bytes.
+    /// * `class_ti_vtable` - Virtual address of `_ZTVN10__cxxabiv117__class_type_infoE + 16`.
+    /// * `si_ti_vtable` - Virtual address of `_ZTVN10__cxxabiv120__si_class_type_infoE + 16`.
+    /// * `vmi_ti_vtable` - Virtual address of `_ZTVN10__cxxabiv121__vmi_class_type_infoE + 16`.
+    #[must_use]
+    pub fn extract_hierarchy(
+        word_map: &BTreeMap<u64, u64>,
+        rodata_blobs: &BTreeMap<u64, Vec<u8>>,
+        class_ti_vtable: u64,
+        si_ti_vtable: u64,
+        vmi_ti_vtable: u64,
+    ) -> Vec<ItaniumRttiClassDescriptor> {
+        let mut ti_names: BTreeMap<u64, String> = BTreeMap::new();
+        let mut raw_nodes: Vec<(u64, ItaniumRttiKind, String, Vec<u64>)> = Vec::new();
+
+        for (&vaddr, &word0) in word_map {
+            let kind_opt = if word0 == class_ti_vtable {
+                Some(ItaniumRttiKind::ClassTypeInfo)
+            } else if word0 == si_ti_vtable {
+                Some(ItaniumRttiKind::SingleInheritance)
+            } else if word0 == vmi_ti_vtable {
+                Some(ItaniumRttiKind::VirtualMultipleInheritance)
+            } else {
+                None
+            };
+            let Some(kind) = kind_opt else {
+                continue;
+            };
+            let zts_ptr = word_map.get(&vaddr.wrapping_add(8)).copied().unwrap_or(0);
+            let class_name = Self::resolve_zts_name(rodata_blobs, zts_ptr);
+            if class_name.is_empty() {
+                continue;
+            }
+            let mut bases = Vec::new();
+            match kind {
+                ItaniumRttiKind::ClassTypeInfo => {}
+                ItaniumRttiKind::SingleInheritance => {
+                    let base_ti = word_map.get(&vaddr.wrapping_add(16)).copied().unwrap_or(0);
+                    bases.push(base_ti);
+                }
+                ItaniumRttiKind::VirtualMultipleInheritance => {
+                    let flags_and_count =
+                        word_map.get(&vaddr.wrapping_add(16)).copied().unwrap_or(0);
+                    let base_count = ((flags_and_count >> 32) & 0xFFFF) as usize;
+                    for idx in 0..base_count.min(16) {
+                        let base_off = 24_u64.wrapping_add((idx as u64).wrapping_mul(16));
+                        let base_ti = word_map
+                            .get(&vaddr.wrapping_add(base_off))
+                            .copied()
+                            .unwrap_or(0);
+                        bases.push(base_ti);
+                    }
+                }
+            }
+            ti_names.insert(vaddr, class_name.clone());
+            raw_nodes.push((vaddr, kind, class_name, bases));
+        }
+
+        let mut ti_to_vtable: BTreeMap<u64, (u64, Vec<u64>)> = BTreeMap::new();
+        for (&vaddr, &word0) in word_map {
+            let ti_ptr = word_map.get(&vaddr.wrapping_add(8)).copied().unwrap_or(0);
+            if word0 == 0 && ti_names.contains_key(&ti_ptr) {
+                let mut methods = Vec::new();
+                for m_idx in 0..8_u64 {
+                    let m_vaddr = vaddr.wrapping_add(16).wrapping_add(m_idx.wrapping_mul(8));
+                    let fn_ptr = word_map.get(&m_vaddr).copied().unwrap_or(0);
+                    if fn_ptr != 0 {
+                        methods.push(fn_ptr);
+                    }
+                }
+                ti_to_vtable.insert(ti_ptr, (vaddr, methods));
+            }
+        }
+
+        raw_nodes
+            .into_iter()
+            .map(|(ti_vaddr, kind, class_name, base_typeinfo_vaddrs)| {
+                let namespace = String::from(class_name.split("::").next().unwrap_or_default());
+                let base_class_names = base_typeinfo_vaddrs
+                    .iter()
+                    .filter_map(|b| ti_names.get(b).cloned())
+                    .collect();
+                let (vtable_vaddr, virtual_method_vaddrs) = ti_to_vtable
+                    .get(&ti_vaddr)
+                    .cloned()
+                    .unwrap_or((0, Vec::new()));
+                ItaniumRttiClassDescriptor {
+                    typeinfo_vaddr: ti_vaddr,
+                    vtable_vaddr,
+                    kind,
+                    class_name,
+                    namespace,
+                    base_typeinfo_vaddrs,
+                    base_class_names,
+                    virtual_method_vaddrs,
+                }
+            })
+            .collect()
+    }
+}
+
 /// Parses `.rela.dyn` (`SHT_RELA`, 24-byte `Elf64_Rela` entries) from an ELF64 image and
 /// extracts all `R_X86_64_RELATIVE` (`8`) and `R_AARCH64_RELATIVE` (`1027`) relocations.
 ///
@@ -456,5 +631,85 @@ mod tests {
         assert_eq!(drv_vt.struct_size, 224);
         assert_eq!(drv_vt.slot_vaddrs.len(), 28);
         assert_eq!(drv_vt.slot_vaddrs[0], 0x0C7A_5E00);
+
+        // Test CppRttiHierarchyExtractor across ClassTypeInfo, SingleInheritance, and VirtualMultipleInheritance
+        let extractor = CppRttiHierarchyExtractor;
+        assert_eq!(extractor.clone(), CppRttiHierarchyExtractor);
+        assert_ne!(format!("{extractor:?}"), "");
+
+        let mut rtti_words = BTreeMap::new();
+        let mut rtti_rodata = BTreeMap::new();
+        let class_ti_vt = 0x0100_0000_u64;
+        let si_ti_vt = 0x0100_0100_u64;
+        let vmi_ti_vt = 0x0100_0200_u64;
+
+        // 1. Root class: asic_sw::driver::DeviceDriver (at 0x0200_0000)
+        let base_ti = 0x0200_0000_u64;
+        let base_zts = 0x0300_0000_u64;
+        rtti_words.insert(base_ti, class_ti_vt);
+        rtti_words.insert(base_ti + 8, base_zts);
+        rtti_rodata.insert(base_zts, b"_ZTSN7asic_sw6driver12DeviceDriverE\0".to_vec());
+
+        // 2. Single-inheritance class: asic_sw::driver::VfioDriver : public DeviceDriver (at 0x0200_0100)
+        let si_ti = 0x0200_0100_u64;
+        let si_zts = 0x0300_0100_u64;
+        rtti_words.insert(si_ti, si_ti_vt);
+        rtti_words.insert(si_ti + 8, si_zts);
+        rtti_words.insert(si_ti + 16, base_ti);
+        rtti_rodata.insert(si_zts, b"N7asic_sw6driver10VfioDriverE\0".to_vec());
+
+        // Associated _ZTV for VfioDriver at 0x0400_0000
+        rtti_words.insert(0x0400_0000, 0);
+        rtti_words.insert(0x0400_0008, si_ti);
+        rtti_words.insert(0x0400_0010, 0x0A00_1111);
+        rtti_words.insert(0x0400_0018, 0x0A00_2222);
+        rtti_words.insert(0x0400_0020, 0); // terminator
+        rtti_words.insert(0x0400_0100, 0); // word0 == 0 with non-typeinfo +8
+
+        // 3. VMI class: xla::tpu::TpuTransferManager (at 0x0200_0200) inheriting from base_ti + si_ti
+        let vmi_ti = 0x0200_0200_u64;
+        let vmi_zts = 0x0300_0200_u64;
+        rtti_words.insert(vmi_ti, vmi_ti_vt);
+        rtti_words.insert(vmi_ti + 8, vmi_zts);
+        rtti_words.insert(vmi_ti + 16, 2_u64 << 32); // base_count = 2
+        rtti_words.insert(vmi_ti + 24, base_ti);
+        rtti_words.insert(vmi_ti + 32, 0x02);
+        rtti_words.insert(vmi_ti + 40, si_ti);
+        rtti_words.insert(vmi_ti + 48, 0x02);
+        rtti_rodata.insert(vmi_zts, b"_ZTSN3xla3tpu18TpuTransferManagerE\0".to_vec());
+
+        // 4. Empty ZTS entry to exercise skip branch
+        rtti_words.insert(0x0200_0300, class_ti_vt);
+        rtti_words.insert(0x0200_0308, 0x0300_0300);
+
+        let hierarchy = CppRttiHierarchyExtractor::extract_hierarchy(
+            &rtti_words,
+            &rtti_rodata,
+            class_ti_vt,
+            si_ti_vt,
+            vmi_ti_vt,
+        );
+        assert_eq!(hierarchy.len(), 3);
+        assert_eq!(hierarchy[0].kind, ItaniumRttiKind::ClassTypeInfo);
+        assert_eq!(hierarchy[0].class_name, "asic_sw::driver::DeviceDriver");
+        assert_eq!(hierarchy[1].kind, ItaniumRttiKind::SingleInheritance);
+        assert_eq!(hierarchy[1].class_name, "asic_sw::driver::VfioDriver");
+        assert_eq!(hierarchy[1].vtable_vaddr, 0x0400_0000);
+        assert_eq!(
+            hierarchy[1].virtual_method_vaddrs,
+            vec![0x0A00_1111, 0x0A00_2222]
+        );
+        assert_eq!(
+            hierarchy[1].base_class_names,
+            vec!["asic_sw::driver::DeviceDriver"]
+        );
+        assert_eq!(
+            hierarchy[2].kind,
+            ItaniumRttiKind::VirtualMultipleInheritance
+        );
+        assert_eq!(hierarchy[2].base_class_names.len(), 2);
+        assert_eq!(hierarchy[0].clone(), hierarchy[0]);
+        assert_ne!(format!("{:?}", hierarchy[0]), "");
+        assert_ne!(format!("{:?}", hierarchy[0].kind), "");
     }
 }

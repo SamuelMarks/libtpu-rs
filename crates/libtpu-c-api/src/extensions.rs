@@ -1354,7 +1354,7 @@ mod tests {
                 PLUGIN_Profiler_CollectData(ptr::addr_of_mut!(prof_collect_null).cast()).is_null()
             );
             let mut xspace_sz: usize = 0;
-            let mut xspace_buf = vec![0_u8; 512];
+            let mut xspace_buf = vec![0_u8; 4096];
             let mut prof_collect_full = PLUGIN_Profiler_CollectData_Args {
                 struct_size: size_of::<PLUGIN_Profiler_CollectData_Args>(),
                 extension_start: ptr::null_mut(),

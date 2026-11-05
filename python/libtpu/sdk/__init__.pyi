@@ -1,5 +1,8 @@
 """Type stubs for `libtpu.sdk`."""
 
+from libtpu import (
+    get_sdk_c_api_capsule as get_sdk_c_api_capsule,
+)
 from libtpu.sdk import (
     debug as debug,
 )
@@ -42,6 +45,7 @@ __all__ = [
     "get_chip_coordinates",
     "get_core_state_summary",
     "get_metric",
+    "get_sdk_c_api_capsule",
     "list_supported_metrics",
     "sdk_slice",
     "tpumonitoring",

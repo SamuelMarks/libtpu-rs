@@ -17,12 +17,41 @@ pub const EMBEDDED_FILE_DESCRIPTOR_SET_BYTES: &[u8] =
 /// [`global_descriptor_pool`].
 pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "xla.TileProto",
+    "xla.SplitConfigProto",
     "xla.LayoutProto",
     "xla.ShapeProto",
     "xla.ProgramShapeProto",
+    "xla.OpMetadata",
+    "xla.ExecutionProfile",
+    "xla.ExecutionHandle",
+    "xla.GlobalDataHandle",
+    "xla.DeviceHandle",
+    "xla.ChannelHandle",
+    "xla.LiteralProto",
+    "xla.WindowDimension",
+    "xla.Window",
+    "xla.GatherDimensionNumbers",
+    "xla.ScatterDimensionNumbers",
+    "xla.ConvolutionDimensionNumbers",
+    "xla.DotDimensionNumbers",
+    "xla.PaddingConfig.PaddingConfigDimension",
+    "xla.PaddingConfig",
+    "xla.ReplicaGroup",
+    "xla.SourceTarget",
+    "xla.PrecisionConfig",
+    "xla.FrontendAttributes",
+    "xla.Statistic",
+    "xla.StatisticsViz",
+    "xla.ParameterReplication",
     "xla.OpSharding",
     "xla.DeviceAssignmentProto.ComputationDevice",
     "xla.DeviceAssignmentProto",
+    "xla.HloInstructionProto.SliceDimensions",
+    "xla.HloInputOutputAliasProto.AliasEntryProto",
+    "xla.HloInputOutputAliasProto",
+    "xla.HloBufferDonorProto.BufferDonorEntryProto",
+    "xla.HloBufferDonorProto",
+    "xla.CrossProgramPrefetch",
     "xla.HloInstructionProto",
     "xla.HloComputationProto",
     "xla.HloModuleProto",
@@ -46,6 +75,11 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "xla.GlobalTopologyProto",
     "tpu.TpuCompilationEnvironmentProto",
     "tpu.TpuTopologyArgsProto",
+    "tpu.RegisterTranslatorEntryProto",
+    "tpu.RegisterTranslatorDataProto",
+    "tpu.TpuChipConfigProto",
+    "tpu.TpuChipPartsProto",
+    "tpu.TpuRuntimeAbiProto",
     "tensorflow.tpu.TPUHardwareFeature",
     "tensorflow.tpu.TopologyProto",
     "tensorflow.tpu.TPUEmbeddingConfiguration.TableDescriptor",
@@ -75,6 +109,10 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "xla.TpuMemorySegmentSetProto",
     "xla.TpuCoreProgramProto",
     "xla.DeepseaExecutableProto",
+    "xla.HostOffloadingExecutableProto",
+    "xla.ffi.ExecutionStateProto",
+    "xla.ffi.FlatAttributeProto",
+    "xla.ffi.FlatAttributesMapProto",
     "tpu.HostCommandEnvelopeProto",
     "tpu.TpuSerializedExecutableProto",
     "xla.TpuExecutableProto",
@@ -214,6 +252,48 @@ pub fn transcode_proto_bytes_to_json(
 ) -> LibTpuResult<String> {
     let dyn_msg = decode_dynamic_proto_message(full_message_name, bytes)?;
     Ok(serde_json::to_string(&dyn_msg)?)
+}
+
+/// Decodes a dynamic protobuf message from canonical Protobuf text-format (`textproto`)
+/// using [`global_descriptor_pool`] and `prost_reflect`.
+///
+/// # Arguments
+///
+/// * `full_message_name` - Fully-qualified protobuf message name (`package.MessageName`).
+/// * `text` - Canonical Protobuf text-format (`textproto`) string.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::ProtobufDecodeError`] if the message descriptor is not found or textproto parsing fails.
+pub fn decode_dynamic_proto_text(
+    full_message_name: &'static str,
+    text: &str,
+) -> LibTpuResult<DynamicMessage> {
+    let msg_desc = lookup_message_descriptor(full_message_name)?;
+    DynamicMessage::parse_text_format(msg_desc, text).map_err(|err| {
+        LibTpuError::ProtobufDecodeError {
+            message_type: full_message_name,
+            reason: err.to_string(),
+        }
+    })
+}
+
+/// Transcodes a wire-encoded protobuf message into canonical Protobuf text-format (`textproto`) via `prost_reflect`.
+///
+/// # Arguments
+///
+/// * `full_message_name` - Fully-qualified protobuf message name (`package.MessageName`).
+/// * `bytes` - Wire-encoded protobuf message payload.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError`] if descriptor lookup or wire decoding fails.
+pub fn transcode_proto_bytes_to_text(
+    full_message_name: &'static str,
+    bytes: &[u8],
+) -> LibTpuResult<String> {
+    let dyn_msg = decode_dynamic_proto_message(full_message_name, bytes)?;
+    Ok(dyn_msg.to_text_format())
 }
 
 /// Decodes a `prost::Message` type `M` from `bytes`, mapping any wire error into
@@ -360,6 +440,29 @@ pub trait ProtoSchemaMessage: Message + Default + Clone + PartialEq {
     /// Returns [`LibTpuError::ProtobufDecodeError`] if JSON parsing or wire transcoding fails.
     fn from_proto_json(json: &str) -> LibTpuResult<Self> {
         let dyn_msg = decode_dynamic_proto_json(Self::PROTO_FULL_NAME, json)?;
+        Self::from_dynamic_message(&dyn_msg)
+    }
+
+    /// Serializes this message into canonical Protobuf text-format (`textproto`) via `prost-reflect`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if dynamic reflection fails.
+    fn to_proto_text(&self) -> LibTpuResult<String> {
+        transcode_proto_bytes_to_text(Self::PROTO_FULL_NAME, &self.encode_to_vec())
+    }
+
+    /// Deserializes an instance of this message from canonical Protobuf text-format (`textproto`) via `prost-reflect`.
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - Canonical Protobuf text-format (`textproto`) string.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::ProtobufDecodeError`] if textproto parsing or wire transcoding fails.
+    fn from_proto_text(text: &str) -> LibTpuResult<Self> {
+        let dyn_msg = decode_dynamic_proto_text(Self::PROTO_FULL_NAME, text)?;
         Self::from_dynamic_message(&dyn_msg)
     }
 

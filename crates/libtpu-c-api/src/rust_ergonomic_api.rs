@@ -698,6 +698,95 @@ pub unsafe extern "C" fn libtpu_rs_executable_flops(
     unsafe { (*executable).inner.executable.program.cost_analysis.flops }
 }
 
+/// Compiles and executes an N-dimensional program (`libtpu_rs_compile_and_execute_nd`) over two
+/// typed host input buffers (`in0_data`, `in1_data`) of shape `dims[0..num_dims]` and `element_type`.
+///
+/// # Arguments
+///
+/// * `client` - Pointer to [`PJRT_Client`].
+/// * `device_id` - Target logical TPU device ID.
+/// * `format` - Null-terminated format string (`"mlir"` or `"hlo"`).
+/// * `code` - Pointer to program source or bytecode bytes.
+/// * `code_len` - Byte length of `code`.
+/// * `element_type` - Raw `PJRT_Buffer_Type` integer (`11` = `F32`, etc.).
+/// * `dims` - Pointer to N-dimensional extent array.
+/// * `num_dims` - Rank (`number of dimensions`).
+/// * `in0_data` - First input host byte buffer.
+/// * `in1_data` - Second input host byte buffer.
+/// * `byte_len` - Byte length of `in0_data`, `in1_data`, and `out_data`.
+/// * `out_data` - Destination host byte buffer of length `byte_len`.
+///
+/// # Safety
+///
+/// All pointer arguments must be null or valid for their respective byte/element counts.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_compile_and_execute_nd(
+    client: *mut PJRT_Client,
+    device_id: u32,
+    format: *const c_char,
+    code: *const u8,
+    code_len: usize,
+    element_type: i32,
+    dims: *const i64,
+    num_dims: usize,
+    in0_data: *const u8,
+    in1_data: *const u8,
+    byte_len: usize,
+    out_data: *mut u8,
+) -> LibTpuCStatus {
+    let mut b0: *mut PJRT_Buffer = ptr::null_mut();
+    let mut b1: *mut PJRT_Buffer = ptr::null_mut();
+    let mut exec: *mut PJRT_LoadedExecutable = ptr::null_mut();
+    let mut out_buf: *mut PJRT_Buffer = ptr::null_mut();
+
+    // SAFETY: Delegated to validated `libtpu_rs_*` entrypoints.
+    unsafe {
+        let st0 = libtpu_rs_buffer_from_host(
+            client,
+            device_id,
+            element_type,
+            dims,
+            num_dims,
+            in0_data,
+            byte_len,
+            ptr::addr_of_mut!(b0),
+        );
+        if st0.code != 0 {
+            return st0;
+        }
+        let _ = libtpu_rs_buffer_from_host(
+            client,
+            device_id,
+            element_type,
+            dims,
+            num_dims,
+            in1_data,
+            byte_len,
+            ptr::addr_of_mut!(b1),
+        );
+        let st_c = libtpu_rs_compile(client, format, code, code_len, ptr::addr_of_mut!(exec));
+        if st_c.code != 0 {
+            libtpu_rs_buffer_destroy(b0);
+            libtpu_rs_buffer_destroy(b1);
+            return st_c;
+        }
+        let inputs = [b0.cast_const(), b1.cast_const()];
+        let _ = libtpu_rs_execute(
+            exec,
+            device_id,
+            inputs.as_ptr(),
+            2,
+            ptr::addr_of_mut!(out_buf),
+        );
+        let st_out = libtpu_rs_buffer_to_host(out_buf, out_data, byte_len);
+        libtpu_rs_buffer_destroy(out_buf);
+        libtpu_rs_executable_destroy(exec);
+        libtpu_rs_buffer_destroy(b1);
+        libtpu_rs_buffer_destroy(b0);
+        st_out
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::cognitive_complexity,
@@ -715,6 +804,18 @@ mod tests {
         PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace,
     };
     use crate::pjrt_error_api::{PJRT_Error_Destroy, PJRT_Event_Destroy, PJRT_Event_Error};
+
+    unsafe extern "C" fn test_driver_cb(
+        _st: *mut crate::tpu_driver_types::TpuStatus,
+        user_arg: *mut std::ffi::c_void,
+    ) {
+        if !user_arg.is_null() {
+            // SAFETY: `user_arg` points to `cb_counter`.
+            unsafe {
+                *user_arg.cast::<usize>() += 1;
+            }
+        }
+    }
 
     #[test]
     fn test_libtpu_rs_ergonomic_api_and_advanced_lifecycle() {
@@ -1446,6 +1547,161 @@ mod tests {
                 .is_null()
             );
             assert!(cost_q.out_value >= 1);
+
+            let mut topo_q = crate::extensions::PJRT_TpuTopology_ScalarQuery_Args {
+                struct_size: size_of::<crate::extensions::PJRT_TpuTopology_ScalarQuery_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*rs_client).topology_ptr.cast(),
+                out_value: 0,
+            };
+            assert!(
+                crate::extensions::PJRT_TpuTopology_ProcessCount(ptr::addr_of_mut!(topo_q).cast())
+                    .is_null()
+            );
+            assert!(
+                crate::extensions::PJRT_TpuTopology_ChipsPerProcess(
+                    ptr::addr_of_mut!(topo_q).cast()
+                )
+                .is_null()
+            );
+            assert!(
+                crate::extensions::PJRT_TpuTopology_CoreCountPerChip(
+                    ptr::addr_of_mut!(topo_q).cast()
+                )
+                .is_null()
+            );
+            assert!(
+                crate::extensions::PJRT_TpuTopology_ChipCount(ptr::addr_of_mut!(topo_q).cast())
+                    .is_null()
+            );
+            assert!(
+                crate::extensions::PJRT_TpuTopology_CoreCount(ptr::addr_of_mut!(topo_q).cast())
+                    .is_null()
+            );
+            assert!(
+                crate::extensions::PJRT_TpuTopology_CoreCountPerProcess(
+                    ptr::addr_of_mut!(topo_q).cast()
+                )
+                .is_null()
+            );
+            assert!(
+                crate::extensions::PJRT_TpuTopology_GetDefaultPlatformConfig(
+                    ptr::addr_of_mut!(topo_q).cast()
+                )
+                .is_null()
+            );
+            let mut bounds_q = crate::extensions::PJRT_TpuTopology_BoundsQuery_Args {
+                struct_size: size_of::<crate::extensions::PJRT_TpuTopology_BoundsQuery_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*rs_client).topology_ptr.cast(),
+                out_first: 0,
+                out_second: 0,
+            };
+            assert!(
+                crate::extensions::PJRT_TpuTopology_ChipBounds(ptr::addr_of_mut!(bounds_q).cast())
+                    .is_null()
+            );
+            assert!(
+                crate::extensions::PJRT_TpuTopology_ProcessBounds(
+                    ptr::addr_of_mut!(bounds_q).cast()
+                )
+                .is_null()
+            );
+
+            let mut cb_counter = 0_usize;
+            let drv_ev = Box::into_raw(Box::new(crate::tpu_driver_types::TpuEvent {
+                event_id: 1,
+                status: ptr::null_mut(),
+            }));
+            crate::legacy_tf_api::TpuDriver_AddCallback(
+                ptr::null_mut(),
+                drv_ev,
+                test_driver_cb as *const std::ffi::c_void,
+                ptr::addr_of_mut!(cb_counter).cast(),
+            );
+            crate::legacy_tf_api::TpuDriver_AddCallback(
+                ptr::null_mut(),
+                ptr::null_mut(),
+                test_driver_cb as *const std::ffi::c_void,
+                ptr::addr_of_mut!(cb_counter).cast(),
+            );
+            assert_eq!(cb_counter, 2);
+            crate::legacy_tf_api::TpuDriver_FreeEvent(drv_ev);
+
+            let nd_dims = [2_i64, 2_i64];
+            let mut nd_out = vec![0_u8; 16];
+            let nd_code = b"module @nd { stablehlo.add }";
+            let st_nd_ok = libtpu_rs_compile_and_execute_nd(
+                rs_client,
+                0,
+                c"mlir".as_ptr(),
+                nd_code.as_ptr(),
+                nd_code.len(),
+                11,
+                nd_dims.as_ptr(),
+                2,
+                in0.as_ptr(),
+                in1.as_ptr(),
+                16,
+                nd_out.as_mut_ptr(),
+            );
+            assert_eq!(st_nd_ok.code, 0);
+            libtpu_rs_status_free(libtpu_rs_compile_and_execute_nd(
+                ptr::null_mut(),
+                0,
+                c"mlir".as_ptr(),
+                nd_code.as_ptr(),
+                nd_code.len(),
+                11,
+                nd_dims.as_ptr(),
+                2,
+                in0.as_ptr(),
+                in1.as_ptr(),
+                16,
+                nd_out.as_mut_ptr(),
+            ));
+            libtpu_rs_status_free(libtpu_rs_compile_and_execute_nd(
+                rs_client,
+                0,
+                c"mlir".as_ptr(),
+                nd_code.as_ptr(),
+                nd_code.len(),
+                11,
+                nd_dims.as_ptr(),
+                2,
+                in0.as_ptr(),
+                ptr::null(),
+                16,
+                nd_out.as_mut_ptr(),
+            ));
+            libtpu_rs_status_free(libtpu_rs_compile_and_execute_nd(
+                rs_client,
+                0,
+                ptr::null(),
+                nd_code.as_ptr(),
+                nd_code.len(),
+                11,
+                nd_dims.as_ptr(),
+                2,
+                in0.as_ptr(),
+                in1.as_ptr(),
+                16,
+                nd_out.as_mut_ptr(),
+            ));
+            libtpu_rs_status_free(libtpu_rs_compile_and_execute_nd(
+                rs_client,
+                0,
+                c"mlir".as_ptr(),
+                nd_code.as_ptr(),
+                nd_code.len(),
+                11,
+                nd_dims.as_ptr(),
+                2,
+                in0.as_ptr(),
+                in1.as_ptr(),
+                16,
+                ptr::null_mut(),
+            ));
 
             libtpu_rs_buffer_destroy(out_buf);
             libtpu_rs_buffer_destroy(b0);

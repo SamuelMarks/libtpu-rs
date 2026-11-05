@@ -7,6 +7,9 @@ the official Google Cloud TPU `libtpu` wheel.
 from __future__ import annotations
 
 import libtpu.sdk.slice as sdk_slice
+from libtpu import (
+    get_sdk_c_api_capsule as get_sdk_c_api_capsule,
+)
 from libtpu.sdk import (
     debug as debug,
 )
@@ -46,6 +49,7 @@ __all__: list[str] = [
     "get_chip_coordinates",
     "get_core_state_summary",
     "get_metric",
+    "get_sdk_c_api_capsule",
     "list_supported_metrics",
     "sdk_slice",
     "tpumonitoring",

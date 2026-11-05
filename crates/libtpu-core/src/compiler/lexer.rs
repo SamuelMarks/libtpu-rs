@@ -22,14 +22,51 @@ pub(super) type LoweredModuleTuple = (
 );
 
 /// 1-based line, column, and byte offset span of a lexed [`HloToken`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct TokenSpan {
-    /// 1-based source line number.
+    /// 1-based starting source line number.
     pub line: usize,
-    /// 1-based source column number.
+    /// 1-based starting source column number.
     pub column: usize,
     /// 0-based byte offset in the input source string.
     pub offset: usize,
+    /// 1-based ending source line number.
+    pub end_line: usize,
+    /// 1-based ending source column number.
+    pub end_column: usize,
+    /// Byte length of the lexed token in the input source string.
+    pub length: usize,
+}
+
+impl TokenSpan {
+    /// Constructs a new [`TokenSpan`] from start coordinates, end coordinates, byte offset, and byte length.
+    ///
+    /// # Arguments
+    ///
+    /// * `line` - 1-based starting line number.
+    /// * `column` - 1-based starting column number.
+    /// * `offset` - 0-based byte offset in the source string.
+    /// * `end_line` - 1-based ending line number.
+    /// * `end_column` - 1-based ending column number.
+    /// * `length` - Byte length of the token.
+    #[must_use]
+    pub const fn new(
+        line: usize,
+        column: usize,
+        offset: usize,
+        end_line: usize,
+        end_column: usize,
+        length: usize,
+    ) -> Self {
+        Self {
+            line,
+            column,
+            offset,
+            end_line,
+            end_column,
+            length,
+        }
+    }
 }
 
 /// A lexed [`HloToken`] paired with its source [`TokenSpan`].
@@ -41,26 +78,281 @@ pub struct SpannedToken {
     pub span: TokenSpan,
 }
 
-/// Token produced by [`HloLexer`] when lexing `StableHLO` MLIR or XLA HLO text.
+/// Token produced by [`HloLexer`] when lexing `StableHLO` MLIR, `mhlo`, `chlo`, `sdy`, `tpu` Mosaic, or XLA HLO text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HloToken {
-    /// Identifier, keyword, or dotted mnemonic (e.g., `module`, `func.func`, `stablehlo.add`).
+    /// Identifier, keyword, or dotted mnemonic (e.g., `module`, `func.func`, `stablehlo.add`, `true`, `false`, `nan`, `inf`).
     Ident(String),
-    /// SSA value identifier starting with `%` (e.g., `%arg0`, `%0`).
+    /// SSA value identifier starting with `%`, including optional multi-result `#idx` or `:count` suffix (e.g., `%arg0`, `%0#1`, `%res:2`).
     SsaValue(String),
-    /// Module or function symbol starting with `@` (e.g., `@main`).
+    /// Module, function, or mesh symbol starting with `@` (e.g., `@main`, `@mesh`).
     Symbol(String),
-    /// Numeric literal token (e.g., `4`, `2.5`, `-1`).
+    /// MLIR attribute alias or dialect attribute prefix starting with `#` (e.g., `#stablehlo`, `#sdy`, `#tpu`, `#loc0`).
+    AttrAlias(String),
+    /// MLIR type alias or dialect type prefix starting with `!` (e.g., `!stablehlo.token`, `!tpu.semaphore`, `!quant.uniform`).
+    TypeAlias(String),
+    /// MLIR basic block caret identifier starting with `^` (e.g., `^bb0`, `^entry`).
+    CaretId(String),
+    /// Unquoted numeric literal token, supporting integers, floats, scientific notation (`1.0e-5`), hex (`0xFF`, `0x1.8p+1`), and negative values.
     Number(String),
-    /// Delimiter or punctuation character (`=`, `:`, `,`, `(`, `)`, `{`, `}`, `[`, `]`, `<`, `>`).
+    /// Decoded string literal enclosed in double quotes (`"..."`), with escape sequences resolved.
+    StringLiteral(String),
+    /// Decoded binary byte payload from an MLIR hex-encoded string literal (`"0x0000803F..."`).
+    HexBlob(Vec<u8>),
+    /// Single-character delimiter or punctuation character (`=`, `:`, `,`, `(`, `)`, `{`, `}`, `[`, `]`, `<`, `>`, `?`, `*`, `+`, `-`, `/`).
     Punct(char),
     /// Arrow token (`->`).
     Arrow,
+    /// Ellipsis token (`...`).
+    Ellipsis,
+    /// Nested symbol scope separator (`::`).
+    DoubleColon,
+    /// Less-than-or-equal comparison operator (`<=`).
+    Le,
+    /// Greater-than-or-equal comparison operator (`>=`).
+    Ge,
+    /// Equality comparison operator (`==`).
+    EqEq,
+    /// Inequality comparison operator (`!=`).
+    NotEq,
 }
 
-/// Lexer for `StableHLO` MLIR and XLA HLO textual modules powered by `winnow`.
+/// Lexer for `StableHLO` MLIR (`stablehlo`, `mhlo`, `chlo`, `sdy`, `tpu` Mosaic) and XLA HLO textual modules powered by `winnow`.
 #[derive(Debug, Clone, Default)]
 pub struct HloLexer;
+
+/// Skips leading whitespace, `//` single-line comments, and `/* ... */` block comments in `input`.
+///
+/// # Arguments
+///
+/// * `input` - Mutable input string slice reference.
+///
+/// # Errors
+///
+/// Infallible (`Ok(())`), conforming to `winnow` parser signature.
+#[allow(clippy::unnecessary_wraps)]
+fn skip_whitespace_and_comments(input: &mut &str) -> Result<(), ContextError> {
+    loop {
+        *input = input.trim_start();
+        if let Some(after_line_comment) = input.strip_prefix("//") {
+            if let Some(nl_pos) = after_line_comment.find('\n') {
+                *input = after_line_comment.get(nl_pos + 1..).unwrap_or("");
+            } else {
+                *input = "";
+                return Ok(());
+            }
+        } else if let Some(after_block_start) = input.strip_prefix("/*") {
+            if let Some(end_pos) = after_block_start.find("*/") {
+                *input = after_block_start.get(end_pos + 2..).unwrap_or("");
+            } else {
+                *input = "";
+                return Ok(());
+            }
+        } else {
+            return Ok(());
+        }
+    }
+}
+
+/// Parses a signed, unsigned, scientific, or hexadecimal numeric literal (stopping before `->`) from `input`.
+///
+/// # Arguments
+///
+/// * `input` - Mutable input string slice reference.
+///
+/// # Errors
+///
+/// Returns [`ContextError`] if `input` does not begin with a valid numeric literal.
+fn winnow_lex_number(input: &mut &str) -> Result<HloToken, ContextError> {
+    if let Some(rest) = input.strip_prefix("-inf")
+        && !rest
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+    {
+        *input = rest;
+        return Ok(HloToken::Number(String::from("-inf")));
+    }
+    if let Some(rest) = input.strip_prefix("+inf")
+        && !rest
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+    {
+        *input = rest;
+        return Ok(HloToken::Number(String::from("inf")));
+    }
+    let bytes = input.as_bytes();
+    let mut idx = 0_usize;
+    let mut has_leading_plus = false;
+    let b0 = bytes.first().copied().unwrap_or(0);
+    if b0 == b'-' || b0 == b'+' {
+        if !bytes.get(1).is_some_and(u8::is_ascii_digit) {
+            return Err(ContextError::new());
+        }
+        has_leading_plus = b0 == b'+';
+        idx = 1;
+    } else if !b0.is_ascii_digit() {
+        return Err(ContextError::new());
+    }
+
+    let is_hex = bytes.get(idx).copied() == Some(b'0')
+        && matches!(bytes.get(idx + 1).copied(), Some(b'x' | b'X'));
+    if is_hex {
+        idx += 2;
+    }
+    while idx < bytes.len() {
+        let b = bytes.get(idx).copied().unwrap_or(0);
+        let is_num_char = b.is_ascii_digit()
+            || b == b'.'
+            || (is_hex && (b.is_ascii_hexdigit() || matches!(b, b'p' | b'P')))
+            || (!is_hex && matches!(b, b'e' | b'E'))
+            || ((b == b'+' || b == b'-')
+                && matches!(
+                    bytes.get(idx.saturating_sub(1)).copied(),
+                    Some(b'e' | b'E' | b'p' | b'P')
+                )
+                && bytes.get(idx + 1).copied() != Some(b'>'));
+        if is_num_char {
+            idx += 1;
+        } else {
+            break;
+        }
+    }
+    let slice = input.get(..idx).unwrap_or("");
+    *input = input.get(idx..).unwrap_or("");
+    let cleaned = if has_leading_plus {
+        slice.strip_prefix('+').unwrap_or(slice)
+    } else {
+        slice
+    };
+    Ok(HloToken::Number(String::from(cleaned)))
+}
+
+/// Parses an identifier or hyphenated HLO opcode (stopping before `->`) from `input`.
+///
+/// # Arguments
+///
+/// * `input` - Mutable input string slice reference.
+///
+/// # Errors
+///
+/// Returns [`ContextError`] if `input` does not begin with an ASCII letter or `_`.
+fn winnow_lex_ident(input: &mut &str) -> Result<HloToken, ContextError> {
+    let bytes = input.as_bytes();
+    let first = bytes.first().copied().unwrap_or(0);
+    if !(first.is_ascii_alphabetic() || first == b'_') {
+        return Err(ContextError::new());
+    }
+    let mut len = 1_usize;
+    while len < bytes.len() {
+        let b = bytes.get(len).copied().unwrap_or(0);
+        if b == b'-' && bytes.get(len + 1).copied() == Some(b'>') {
+            break;
+        }
+        if b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-') {
+            len += 1;
+        } else {
+            break;
+        }
+    }
+    let ident_str = input.get(..len).unwrap_or("");
+    *input = input.get(len..).unwrap_or("");
+    Ok(HloToken::Ident(String::from(ident_str)))
+}
+
+/// Decodes a hex digit character (`0..=9`, `a..=f`, `A..=F`) into its `0..=15` numeric value.
+///
+/// # Arguments
+///
+/// * `ch` - ASCII hex digit character.
+#[must_use]
+const fn hex_char_to_nibble(ch: char) -> Option<u8> {
+    match ch {
+        '0'..='9' => Some((ch as u8) - b'0'),
+        'a'..='f' => Some((ch as u8) - b'a' + 10),
+        'A'..='F' => Some((ch as u8) - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Parses a quoted string literal `"..."` (or hex blob `"0x..."`) from `input`.
+///
+/// # Arguments
+///
+/// * `input` - Mutable input string slice reference starting with `"`.
+///
+/// # Errors
+///
+/// Returns [`ContextError`] if `input` does not start with a valid double-quoted literal.
+fn winnow_lex_string_or_hex(input: &mut &str) -> Result<HloToken, ContextError> {
+    let Some(after_open) = input.strip_prefix('"') else {
+        return Err(ContextError::new());
+    };
+    let mut chars = after_open.char_indices();
+    let mut decoded = String::new();
+    let mut end_byte_idx = None;
+    let mut had_escape = false;
+    while let Some((idx, ch)) = chars.next() {
+        if ch == '"' {
+            end_byte_idx = Some(idx);
+            break;
+        }
+        if ch == '\\' {
+            had_escape = true;
+            if let Some((_, esc)) = chars.next() {
+                match esc {
+                    '"' => decoded.push('"'),
+                    '\\' => decoded.push('\\'),
+                    'n' => decoded.push('\n'),
+                    't' => decoded.push('\t'),
+                    'r' => decoded.push('\r'),
+                    '0' => decoded.push('\0'),
+                    'x' => {
+                        let hi = chars.next().and_then(|(_, c)| hex_char_to_nibble(c));
+                        let lo = chars.next().and_then(|(_, c)| hex_char_to_nibble(c));
+                        if let (Some(h), Some(l)) = (hi, lo) {
+                            decoded.push(char::from((h << 4) | l));
+                        } else {
+                            return Err(ContextError::new());
+                        }
+                    }
+                    other => decoded.push(other),
+                }
+            } else {
+                return Err(ContextError::new());
+            }
+        } else {
+            decoded.push(ch);
+        }
+    }
+    let Some(close_idx) = end_byte_idx else {
+        return Err(ContextError::new());
+    };
+    *input = after_open.get(close_idx + 1..).unwrap_or("");
+    if !had_escape
+        && let Some(hex_body) = decoded
+            .strip_prefix("0x")
+            .or_else(|| decoded.strip_prefix("0X"))
+        && !hex_body.is_empty()
+        && hex_body.len() % 2 == 0
+        && hex_body.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        let mut bytes = Vec::with_capacity(hex_body.len() / 2);
+        let hex_bytes = hex_body.as_bytes();
+        let mut i = 0_usize;
+        while i + 1 < hex_bytes.len() {
+            let hi = hex_char_to_nibble(char::from(hex_bytes.get(i).copied().unwrap_or(b'0')))
+                .unwrap_or(0);
+            let lo = hex_char_to_nibble(char::from(hex_bytes.get(i + 1).copied().unwrap_or(b'0')))
+                .unwrap_or(0);
+            bytes.push((hi << 4) | lo);
+            i += 2;
+        }
+        return Ok(HloToken::HexBlob(bytes));
+    }
+    Ok(HloToken::StringLiteral(decoded))
+}
 
 /// Parses a single [`HloToken`] from the front of `input` using `winnow` combinators.
 ///
@@ -70,51 +362,69 @@ pub struct HloLexer;
 ///
 /// # Errors
 ///
-/// Returns [`ContextError`] if `input` is empty after skipping whitespace.
+/// Returns [`ContextError`] if `input` is empty after skipping whitespace and comments.
+#[allow(clippy::too_many_lines)]
 fn winnow_lex_one_token(input: &mut &str) -> Result<HloToken, ContextError> {
-    *input = input.trim_start();
+    let _ = skip_whitespace_and_comments(input);
+    if input.is_empty() {
+        return Err(ContextError::new());
+    }
     alt((
-        "->".value(HloToken::Arrow),
-        preceded(
-            '-',
-            take_while(0.., |c: char| c.is_ascii_digit() || c == '.'),
-        )
-        .map(|digits: &str| HloToken::Number(format!("-{digits}"))),
-        preceded(
-            '%',
-            take_while(
-                0..,
-                |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.'),
-            ),
-        )
-        .map(|name: &str| HloToken::SsaValue(format!("%{name}"))),
-        preceded(
-            '@',
-            take_while(
-                0..,
-                |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.'),
-            ),
-        )
-        .map(|name: &str| HloToken::Symbol(String::from(name))),
-        (
-            take_while(1.., |c: char| c.is_ascii_digit()),
-            take_while(
-                0..,
-                |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.'),
-            ),
-        )
-            .take()
-            .map(|num: &str| HloToken::Number(String::from(num))),
-        (
-            take_while(1.., |c: char| matches!(c, 'a'..='z' | 'A'..='Z' | '_')),
-            take_while(
-                0..,
-                |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.'),
-            ),
-        )
-            .take()
-            .map(|ident: &str| HloToken::Ident(String::from(ident))),
-        any.map(HloToken::Punct),
+        alt((
+            winnow_lex_string_or_hex,
+            "->".value(HloToken::Arrow),
+            "...".value(HloToken::Ellipsis),
+            "::".value(HloToken::DoubleColon),
+            "<=".value(HloToken::Le),
+            ">=".value(HloToken::Ge),
+            "==".value(HloToken::EqEq),
+            "!=".value(HloToken::NotEq),
+        )),
+        winnow_lex_number,
+        alt((
+            preceded(
+                '%',
+                take_while(
+                    0..,
+                    |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.' | '#' | '-'),
+                ),
+            )
+            .map(|name: &str| HloToken::SsaValue(format!("%{name}"))),
+            preceded(
+                '@',
+                take_while(
+                    0..,
+                    |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.' | '-'),
+                ),
+            )
+            .map(|name: &str| HloToken::Symbol(String::from(name))),
+            preceded(
+                '#',
+                take_while(
+                    1..,
+                    |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.' | '-'),
+                ),
+            )
+            .map(|name: &str| HloToken::AttrAlias(format!("#{name}"))),
+            preceded(
+                '!',
+                take_while(
+                    1..,
+                    |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.' | '-'),
+                ),
+            )
+            .map(|name: &str| HloToken::TypeAlias(format!("!{name}"))),
+            preceded(
+                '^',
+                take_while(
+                    1..,
+                    |c: char| matches!(c, '0'..='9' | 'a'..='z' | 'A'..='Z' | '_' | '.' | '-'),
+                ),
+            )
+            .map(|name: &str| HloToken::CaretId(format!("^{name}"))),
+            winnow_lex_ident,
+            any.map(HloToken::Punct),
+        )),
     ))
     .parse_next(input)
 }
@@ -163,6 +473,28 @@ fn winnow_parse_hlo_shape_parts<'a>(
     Ok((dtype.trim(), dims))
 }
 
+/// Computes 1-based `(line, column)` coordinates for a byte `offset` in `src`.
+///
+/// # Arguments
+///
+/// * `src` - Full source text.
+/// * `offset` - 0-based byte offset within `src`.
+#[must_use]
+fn byte_offset_to_line_col(src: &str, offset: usize) -> (usize, usize) {
+    let prefix = src.get(..offset).unwrap_or(src);
+    let mut line = 1_usize;
+    let mut col = 1_usize;
+    for ch in prefix.chars() {
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += ch.len_utf8();
+        }
+    }
+    (line, col)
+}
+
 impl HloLexer {
     /// Strictly tokenizes a `StableHLO` MLIR or XLA HLO source string into [`HloToken`]s using `winnow`.
     ///
@@ -172,7 +504,8 @@ impl HloLexer {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::HloLexerError`] if `src` is empty or contains an unclosed string literal.
+    /// Returns [`LibTpuError::HloLexerError`] if `src` is empty, contains an unclosed `/* ... */` block
+    /// comment, contains an unclosed string literal, or has a malformed `\xHH` escape sequence.
     pub fn tokenize_checked(src: &str) -> LibTpuResult<Vec<HloToken>> {
         let trimmed = src.trim();
         if trimmed.is_empty() {
@@ -182,16 +515,89 @@ impl HloLexer {
                 reason: String::from("Cannot lex empty HLO/StableHLO source string"),
             });
         }
-        let quote_count = trimmed.bytes().filter(|&b| b == b'"').count();
-        if quote_count % 2 != 0 {
-            let offset = trimmed.rfind('"').unwrap_or(0);
-            return Err(LibTpuError::HloLexerError {
-                offset,
-                snippet: String::from(trimmed.get(offset..).unwrap_or(trimmed)),
-                reason: String::from("Unclosed string quote in HLO/StableHLO source"),
-            });
+        // Scan for unclosed comments, unclosed quotes, and invalid \xHH escapes while respecting // and /* */
+        let bytes = src.as_bytes();
+        let mut idx = 0_usize;
+        while idx < bytes.len() {
+            let b = bytes.get(idx).copied().unwrap_or(0);
+            let next_b = bytes.get(idx + 1).copied().unwrap_or(0);
+            if b == b'/' && next_b == b'/' {
+                idx += 2;
+                while idx < bytes.len() && bytes.get(idx).copied() != Some(b'\n') {
+                    idx += 1;
+                }
+            } else if b == b'/' && next_b == b'*' {
+                let comment_start = idx;
+                idx += 2;
+                let mut closed = false;
+                while idx + 1 < bytes.len() {
+                    if bytes.get(idx).copied() == Some(b'*')
+                        && bytes.get(idx + 1).copied() == Some(b'/')
+                    {
+                        idx += 2;
+                        closed = true;
+                        break;
+                    }
+                    idx += 1;
+                }
+                if !closed {
+                    return Err(LibTpuError::HloLexerError {
+                        offset: comment_start,
+                        snippet: String::from(src.get(comment_start..).unwrap_or(src)),
+                        reason: String::from("Unclosed block comment '/*' in HLO/StableHLO source"),
+                    });
+                }
+            } else if b == b'"' {
+                let quote_start = idx;
+                idx += 1;
+                let mut closed = false;
+                while idx < bytes.len() {
+                    let ch = bytes.get(idx).copied().unwrap_or(0);
+                    if ch == b'"' {
+                        idx += 1;
+                        closed = true;
+                        break;
+                    }
+                    if ch == b'\\' {
+                        idx += 1;
+                        if idx >= bytes.len() {
+                            break;
+                        }
+                        if bytes.get(idx).copied() == Some(b'x') {
+                            let h1 = bytes
+                                .get(idx + 1)
+                                .copied()
+                                .and_then(|c| hex_char_to_nibble(char::from(c)));
+                            let h2 = bytes
+                                .get(idx + 2)
+                                .copied()
+                                .and_then(|c| hex_char_to_nibble(char::from(c)));
+                            if h1.is_none() || h2.is_none() {
+                                return Err(LibTpuError::HloLexerError {
+                                    offset: quote_start,
+                                    snippet: String::from(src.get(quote_start..).unwrap_or(src)),
+                                    reason: String::from(
+                                        "Malformed '\\xHH' hex escape in string literal",
+                                    ),
+                                });
+                            }
+                            idx += 2;
+                        }
+                    }
+                    idx += 1;
+                }
+                if !closed {
+                    return Err(LibTpuError::HloLexerError {
+                        offset: quote_start,
+                        snippet: String::from(src.get(quote_start..).unwrap_or(src)),
+                        reason: String::from("Unclosed string quote in HLO/StableHLO source"),
+                    });
+                }
+            } else {
+                idx += 1;
+            }
         }
-        Ok(Self::tokenize(trimmed))
+        Ok(Self::tokenize(src))
     }
 
     /// Tokenizes a `StableHLO` MLIR or XLA HLO source string into a sequence of [`HloToken`]s using `winnow`.
@@ -205,41 +611,44 @@ impl HloLexer {
         parser.parse(src).unwrap_or_default()
     }
 
-    /// Tokenizes a `StableHLO` MLIR or XLA HLO source string into [`SpannedToken`]s with 1-based line and column spans.
+    /// Tokenizes a `StableHLO` MLIR or XLA HLO source string into [`SpannedToken`]s with 1-based line,
+    /// column, end-line, end-column, byte offset, and byte length spans using safe slice arithmetic.
     ///
     /// # Arguments
     ///
     /// * `src` - Source text to tokenize.
     #[must_use]
     pub fn tokenize_spanned(src: &str) -> Vec<SpannedToken> {
+        let total_len = src.len();
+        let mut rem = src;
         let mut out = Vec::new();
-        for (line_idx, line_str) in src.lines().enumerate() {
-            let line_no = line_idx + 1;
-            let base_offset = line_str.as_ptr() as usize - src.as_ptr() as usize;
-            let mut rem = line_str.trim_start();
-            while !rem.is_empty() {
-                let col = (rem.as_ptr() as usize - line_str.as_ptr() as usize) + 1;
-                let offset = base_offset + col - 1;
-                let _ = winnow_lex_one_token(&mut rem).map(|tok| {
-                    out.push(SpannedToken {
-                        token: tok,
-                        span: TokenSpan {
-                            line: line_no,
-                            column: col,
-                            offset,
-                        },
-                    });
+        loop {
+            let _ = skip_whitespace_and_comments(&mut rem);
+            let start_offset = total_len.saturating_sub(rem.len());
+            let (line, column) = byte_offset_to_line_col(src, start_offset);
+            if let Ok(token) = winnow_lex_one_token(&mut rem) {
+                let end_offset = total_len.saturating_sub(rem.len());
+                let length = end_offset.saturating_sub(start_offset);
+                let (end_line, end_column) = byte_offset_to_line_col(src, end_offset);
+                out.push(SpannedToken {
+                    token,
+                    span: TokenSpan::new(line, column, start_offset, end_line, end_column, length),
                 });
-                rem = rem.trim_start();
+            } else {
+                break;
             }
         }
         out
     }
 }
 
-/// Builds a `winnow` parser that collects all [`HloToken`]s and consumes trailing whitespace.
+/// Builds a `winnow` parser that collects all [`HloToken`]s and consumes trailing whitespace and comments.
 fn terminated_token_stream<'a>() -> impl Parser<&'a str, Vec<HloToken>, ContextError> {
-    (repeat(0.., winnow_lex_one_token), multispace0).map(|(tokens, _)| tokens)
+    (
+        repeat(0.., winnow_lex_one_token),
+        skip_whitespace_and_comments,
+    )
+        .map(|(tokens, ())| tokens)
 }
 
 /// Recursive-descent parser for `StableHLO` MLIR and XLA HLO modules.
@@ -308,6 +717,35 @@ impl HloParser {
             });
         }
         Ok(CompiledProgram::parse_textual_program(text.trim()))
+    }
+
+    /// Parses a textual MLIR (`stablehlo`, `mhlo`, `chlo`, `sdy`, `tpu` Mosaic) or XLA HLO module
+    /// into a strongly-typed hierarchical [`super::ast::AstModule`].
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - UTF-8 program text to parse.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if lexing or recursive-descent parsing fails.
+    pub fn parse_ast_module(text: &str) -> LibTpuResult<super::ast::AstModule> {
+        super::hlo_parser::parse_unified_ast_module(text)
+    }
+
+    /// Parses and semantically verifies a textual MLIR or XLA HLO module into an [`super::ast::AstModule`].
+    ///
+    /// # Arguments
+    ///
+    /// * `text` - UTF-8 program text to parse and verify.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if lexing, recursive-descent parsing, SSA resolution, or shape/arity verification fails.
+    pub fn parse_verified_ast_module(text: &str) -> LibTpuResult<super::ast::AstModule> {
+        let ast = super::hlo_parser::parse_unified_ast_module(text)?;
+        super::hlo_parser::verify_ast_module_semantics(&ast)?;
+        Ok(ast)
     }
 
     /// Extracts the module name from a token stream (`@name` or `HloModule name`).
@@ -1035,7 +1473,7 @@ impl CompiledProgram {
             ("log_plus_one", TpuOpCode::Log1p, ElementType::F32, 1, &[4]),
             ("log1p", TpuOpCode::Log1p, ElementType::F32, 1, &[4]),
             ("logistic", TpuOpCode::Logistic, ElementType::F32, 1, &[4]),
-            ("erf", TpuOpCode::TanhF32, ElementType::F32, 1, &[4]),
+            ("erf", TpuOpCode::Erf, ElementType::F32, 1, &[4]),
             (
                 "round_nearest_even",
                 TpuOpCode::RoundNearestEven,
@@ -1373,6 +1811,24 @@ impl CompiledProgram {
     /// * `text` - UTF-8 lossy program text or HLO instruction opcode.
     #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     pub(super) fn parse_textual_program(text: &str) -> ParsedHloModule {
+        if ["sdy.", "chlo.", "scf.for", "to_apply="]
+            .iter()
+            .any(|kw| text.contains(kw))
+            && let Ok(lowered) =
+                super::hlo_parser::parse_unified_ast_module(text).and_then(|ast_mod| {
+                    if ast_mod.functions.is_empty() && ast_mod.hlo_computations.is_empty() {
+                        Err(LibTpuError::HloParseError {
+                            line: 1,
+                            column: 1,
+                            reason: String::from("Empty AST module"),
+                        })
+                    } else {
+                        super::hlo_parser::lower_ast_module_to_parsed_hlo(&ast_mod)
+                    }
+                })
+        {
+            return lowered;
+        }
         let (mut primary_op, mut elem_type, default_inputs, mut dims) =
             Self::parse_opcode_mnemonic(text);
 
@@ -1467,9 +1923,7 @@ impl CompiledProgram {
                 );
                 continue;
             }
-            let (line_op, _, line_arity, _) = Self::parse_opcode_mnemonic(rhs);
-            primary_op = line_op;
-
+            let (mut line_op, _, line_arity, _) = Self::parse_opcode_mnemonic(rhs);
             let mut op_slots = Vec::new();
             let rhs_before_colon = rhs.split(':').next().unwrap_or(rhs);
             for tok in rhs_before_colon
@@ -1497,6 +1951,20 @@ impl CompiledProgram {
                 dims: dims.clone(),
             };
             let bundle_out_shape = attrs.output_shape.clone().unwrap_or(default_bundle_shape);
+            if line_op == TpuOpCode::AddF32
+                && matches!(
+                    bundle_out_shape.element_type,
+                    ElementType::S32
+                        | ElementType::S64
+                        | ElementType::S16
+                        | ElementType::S8
+                        | ElementType::U32
+                        | ElementType::U64
+                )
+            {
+                line_op = TpuOpCode::AddS32;
+            }
+            primary_op = line_op;
             let out_slot = next_slot;
             ssa_slots.insert(lhs_var, out_slot);
             next_slot += 1;

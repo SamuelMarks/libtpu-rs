@@ -648,6 +648,29 @@ public:
                          LoadedExecutable *exec_out) noexcept;
 
   /**
+   * @brief Compiles and executes an N-dimensional program over two typed host
+   * buffers via `libtpu_rs_compile_and_execute_nd`.
+   * @param device_id Target logical TPU device ID.
+   * @param format Null-terminated format string (`"mlir"` or `"hlo"`).
+   * @param code Pointer to program source or bytecode bytes.
+   * @param code_len Byte length of `code`.
+   * @param dtype Element data type.
+   * @param dims Pointer to N-dimensional extent array.
+   * @param num_dims Rank (`number of dimensions`).
+   * @param in0_data First input host byte buffer.
+   * @param in1_data Second input host byte buffer.
+   * @param byte_len Byte length of `in0_data`, `in1_data`, and `out_data`.
+   * @param out_data Destination host byte buffer of length `byte_len`.
+   * @return `Status` indicating success or failure.
+   */
+  [[nodiscard]] Status
+  compile_and_execute_nd(uint32_t device_id, const char *format,
+                         const uint8_t *code, size_t code_len, DataType dtype,
+                         const int64_t *dims, size_t num_dims,
+                         const uint8_t *in0_data, const uint8_t *in1_data,
+                         size_t byte_len, uint8_t *out_data) noexcept;
+
+  /**
    * @brief Returns the underlying raw `PJRT_Client*` pointer.
    * @return Raw `PJRT_Client*` handle.
    */
@@ -915,6 +938,29 @@ public:
    */
   [[nodiscard]] size_t memory_description_count() const noexcept;
 
+  /**
+   * @brief Queries and immediately destroys the default TPU memory layout via
+   * `PJRT_Layouts_PJRT_Topology_GetDefaultLayout`.
+   * @return `true` if a non-null `PJRT_Layouts_MemoryLayout*` was allocated.
+   */
+  [[nodiscard]] bool default_layout_allocated() const noexcept;
+
+  /**
+   * @brief Creates a `PJRT_RawBuffer` alias of `buf`, queries its device
+   * pointer, and destroys the alias handle.
+   * @param buf Source on-device `Buffer`.
+   * @return Non-zero device pointer address.
+   */
+  [[nodiscard]] size_t create_raw_buffer_device_ptr(Buffer &buf) const noexcept;
+
+  /**
+   * @brief Initiates a simulated cross-host DCN transfer via
+   * `PJRT_Transfers_CrossHostSend`.
+   * @param transfer_tag Monotonic transfer tag.
+   * @return Completed transfer status value (`>= 1`).
+   */
+  [[nodiscard]] size_t cross_host_send(size_t transfer_tag) const noexcept;
+
 private:
   /** @brief Non-owning pointer to static `PJRT_Api` vtable. */
   const PJRT_Api *api_;
@@ -1020,6 +1066,21 @@ public:
   PhaseCompiler &operator=(const PhaseCompiler &other) = delete;
 
   /**
+   * @brief Move constructor transferring ownership of the phase compiler
+   * handle.
+   * @param other Rvalue phase compiler to move from.
+   */
+  PhaseCompiler(PhaseCompiler &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring ownership of the phase
+   * compiler handle.
+   * @param other Rvalue phase compiler to move from.
+   * @return Reference to this phase compiler.
+   */
+  PhaseCompiler &operator=(PhaseCompiler &&other) noexcept;
+
+  /**
    * @brief Queries the number of supported compilation phases (`5`).
    * @return Number of canonical compilation phases.
    */
@@ -1070,6 +1131,20 @@ public:
    * @return Reference to this Megascale context.
    */
   MegascaleContext &operator=(const MegascaleContext &other) = delete;
+
+  /**
+   * @brief Move constructor transferring ownership of the Megascale context.
+   * @param other Rvalue Megascale context to move from.
+   */
+  MegascaleContext(MegascaleContext &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring ownership of the Megascale
+   * context.
+   * @param other Rvalue Megascale context to move from.
+   * @return Reference to this Megascale context.
+   */
+  MegascaleContext &operator=(MegascaleContext &&other) noexcept;
 
   /**
    * @brief Executes a multi-slice Megascale barrier and returns the barrier
@@ -1131,6 +1206,50 @@ public:
    */
   [[nodiscard]] const TpuEmbeddingEngineState *state_handle() const noexcept;
 
+  /**
+   * @brief Runs `TpuEmbeddingEngine_ExecutePartitioner` on `config_bytes`.
+   * @param config_bytes Pointer to serialized `TpuEmbeddingConfigurationProto`
+   * bytes.
+   * @param config_size Byte length of `config_bytes`.
+   * @return Partitioned common configuration string.
+   */
+  [[nodiscard]] std::string partition_parameters(const char *config_bytes,
+                                                 size_t config_size) noexcept;
+
+  /**
+   * @brief Writes float parameters into `table_name` via
+   * `TpuEmbeddingEngine_WriteParameters`.
+   * @param table_name Null-terminated embedding table name.
+   * @param table_name_len Byte length of `table_name`.
+   * @param values Source `float` parameter array.
+   * @param count Number of `float` elements in `values`.
+   * @return Number of `float` parameters written.
+   */
+  [[nodiscard]] size_t write_parameters(const char *table_name,
+                                        size_t table_name_len,
+                                        const float *values,
+                                        size_t count) noexcept;
+
+  /**
+   * @brief Reads `count` float parameters from `table_name` into `out_values`
+   * via `TpuEmbeddingEngine_ReadParameters`.
+   * @param table_name Null-terminated embedding table name.
+   * @param table_name_len Byte length of `table_name`.
+   * @param out_values Destination `float` parameter array.
+   * @param count Number of `float` elements to read.
+   * @return Number of `float` parameters read from `table_name`.
+   */
+  [[nodiscard]] size_t read_parameters(const char *table_name,
+                                       size_t table_name_len, float *out_values,
+                                       size_t count) noexcept;
+
+  /**
+   * @brief Builds the XLA computation for receiving SparseCore embedding
+   * activations via `TpuEmbeddingEngine_RecvActivationsComputation`.
+   * @return Serialized XLA HLO computation byte size (`> 0`).
+   */
+  [[nodiscard]] size_t build_load_optimizer_hlo() noexcept;
+
 private:
   /** @brief Owned `TpuEmbeddingEngineState*` handle. */
   TpuEmbeddingEngineState *state_;
@@ -1167,6 +1286,20 @@ public:
   Communicator &operator=(const Communicator &other) = delete;
 
   /**
+   * @brief Move constructor transferring ownership of the communicator handle.
+   * @param other Rvalue communicator to move from.
+   */
+  Communicator(Communicator &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring ownership of the communicator
+   * handle.
+   * @param other Rvalue communicator to move from.
+   * @return Reference to this communicator.
+   */
+  Communicator &operator=(Communicator &&other) noexcept;
+
+  /**
    * @brief Executes an `AllReduce` operation copying/reducing from `send_buf`
    * into `recv_buf`.
    * @param send_buf Source on-device `Buffer`.
@@ -1177,9 +1310,206 @@ public:
   [[nodiscard]] Status all_reduce(Buffer &send_buf, Buffer *recv_buf,
                                   size_t count) noexcept;
 
+  /**
+   * @brief Executes a `ReduceScatter` operation from `send_buf` into
+   * `recv_buf`.
+   * @param send_buf Source on-device `Buffer`.
+   * @param recv_buf Destination on-device `Buffer`.
+   * @param count Number of elements to reduce-scatter.
+   * @return `Status` indicating completion status.
+   */
+  [[nodiscard]] Status reduce_scatter(Buffer &send_buf, Buffer *recv_buf,
+                                      size_t count) noexcept;
+
+  /**
+   * @brief Executes an `AllGather` operation from `send_buf` into `recv_buf`.
+   * @param send_buf Source on-device `Buffer`.
+   * @param recv_buf Destination on-device `Buffer`.
+   * @param count Number of elements to gather.
+   * @return `Status` indicating completion status.
+   */
+  [[nodiscard]] Status all_gather(Buffer &send_buf, Buffer *recv_buf,
+                                  size_t count) noexcept;
+
+  /**
+   * @brief Executes an `AllToAll` operation from `send_buf` into `recv_buf`.
+   * @param send_buf Source on-device `Buffer`.
+   * @param recv_buf Destination on-device `Buffer`.
+   * @param count Number of elements to exchange.
+   * @return `Status` indicating completion status.
+   */
+  [[nodiscard]] Status all_to_all(Buffer &send_buf, Buffer *recv_buf,
+                                  size_t count) noexcept;
+
+  /**
+   * @brief Executes a `CollectivePermute` operation from `send_buf` into
+   * `recv_buf`.
+   * @param send_buf Source on-device `Buffer`.
+   * @param recv_buf Destination on-device `Buffer`.
+   * @param count Number of elements to permute.
+   * @return `Status` indicating completion status.
+   */
+  [[nodiscard]] Status collective_permute(Buffer &send_buf, Buffer *recv_buf,
+                                          size_t count) noexcept;
+
+  /**
+   * @brief Queries the communicator description string via
+   * `PJRT_Communicator_ToString`.
+   * @return Communicator description `std::string`.
+   */
+  [[nodiscard]] std::string to_string() const noexcept;
+
 private:
   /** @brief Owned strongly-typed `PJRT_Collectives_Communicator*` handle. */
   PJRT_Collectives_Communicator *handle_;
+};
+
+/**
+ * @brief Strongly-typed C++20 move-only RAII wrapper over
+ * `PJRT_AsyncHostToDeviceTransferManager*`.
+ */
+class AsyncTransferManager {
+public:
+  /**
+   * @brief Creates an `AsyncTransferManager` for `client` via
+   * `PJRT_Client_CreateBuffersForAsyncHostToDevice`.
+   * @param client Owning `Client` reference.
+   */
+  explicit AsyncTransferManager(const Client &client) noexcept;
+
+  /**
+   * @brief Destroys the underlying `PJRT_AsyncHostToDeviceTransferManager*`
+   * handle.
+   */
+  ~AsyncTransferManager() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other transfer manager.
+   */
+  AsyncTransferManager(const AsyncTransferManager &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other transfer manager.
+   * @return Reference to this transfer manager.
+   */
+  AsyncTransferManager &operator=(const AsyncTransferManager &other) = delete;
+
+  /**
+   * @brief Move constructor transferring ownership of the transfer manager
+   * handle.
+   * @param other Rvalue transfer manager to move from.
+   */
+  AsyncTransferManager(AsyncTransferManager &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring ownership of the transfer
+   * manager handle.
+   * @param other Rvalue transfer manager to move from.
+   * @return Reference to this transfer manager.
+   */
+  AsyncTransferManager &operator=(AsyncTransferManager &&other) noexcept;
+
+  /**
+   * @brief Transfers `transfer_size` bytes from `data` into buffer
+   * `buffer_index`.
+   * @param buffer_index Target buffer index (`>= 0`).
+   * @param data Host byte buffer pointer.
+   * @param offset Byte offset into target buffer.
+   * @param transfer_size Number of bytes to transfer.
+   * @param is_last_transfer `true` if this chunk completes the buffer transfer.
+   * @return `Status` indicating completion status.
+   */
+  [[nodiscard]] Status transfer_data(int32_t buffer_index, const void *data,
+                                     int64_t offset, int64_t transfer_size,
+                                     bool is_last_transfer) noexcept;
+
+  /**
+   * @brief Retrieves the completed `Buffer` at `buffer_index`.
+   * @param buffer_index Target buffer index (`>= 0`).
+   * @param out_buffer Output `Buffer` receiving ownership of the device buffer.
+   * @return `Status` indicating completion status.
+   */
+  [[nodiscard]] Status retrieve_buffer(int32_t buffer_index,
+                                       Buffer *out_buffer) noexcept;
+
+  /**
+   * @brief Queries the byte size of buffer `buffer_index`.
+   * @param buffer_index Target buffer index (`>= 0`).
+   * @return Byte size of buffer `buffer_index`.
+   */
+  [[nodiscard]] size_t buffer_size(int32_t buffer_index) const noexcept;
+
+  /**
+   * @brief Queries the target `PJRT_Device*` associated with this transfer
+   * manager.
+   * @return Raw `PJRT_Device*` pointer (or `nullptr`).
+   */
+  [[nodiscard]] PJRT_Device *device() const noexcept;
+
+private:
+  /** @brief Owned `PJRT_AsyncHostToDeviceTransferManager*` handle. */
+  PJRT_AsyncHostToDeviceTransferManager *handle_;
+};
+
+/** @brief Type alias for `Communicator` (`CollectiveCommunicator`). */
+using CollectiveCommunicator = Communicator;
+
+/** @brief Type alias for `Communicator` (`CollectivesCommunicator`). */
+using CollectivesCommunicator = Communicator;
+
+/** @brief Type alias for `MegascaleContext` (`MegaScaleContext`). */
+using MegaScaleContext = MegascaleContext;
+
+/** @brief Type alias for `MegascaleContext` (`MultiSliceConfig`). */
+using MultiSliceConfig = MegascaleContext;
+
+/**
+ * @brief Zero-exception monadic value-or-status container (`Result<T>`) for
+ * C++20 callers.
+ * @tparam T Contained value type.
+ */
+template <typename T> class Result {
+public:
+  /**
+   * @brief Constructs a successful `Result<T>` holding `value`.
+   * @param value Contained success value.
+   */
+  explicit Result(T value) noexcept
+      : status_(LibTpuCStatus{0, nullptr}, ""),
+        value_(static_cast<T &&>(value)) {}
+
+  /**
+   * @brief Constructs a failed `Result<T>` holding `status` and a default `T`.
+   * @param status Non-OK `Status` instance.
+   */
+  explicit Result(Status &&status) noexcept
+      : status_(static_cast<Status &&>(status)), value_{} {}
+
+  /**
+   * @brief Returns `true` if the contained `Status` is `OK` (`code == 0`).
+   * @return `true` on success, `false` on error.
+   */
+  [[nodiscard]] bool is_ok() const noexcept { return status_.is_ok(); }
+
+  /**
+   * @brief Returns a const reference to the underlying `Status`.
+   * @return Const reference to `Status`.
+   */
+  [[nodiscard]] const Status &status() const noexcept { return status_; }
+
+  /**
+   * @brief Returns a const reference to the contained value `T`.
+   * @return Const reference to `value_`.
+   */
+  [[nodiscard]] const T &value() const noexcept { return value_; }
+
+private:
+  /** @brief Underlying operation status. */
+  Status status_;
+  /** @brief Contained value payload. */
+  T value_;
 };
 
 } // namespace libtpu

@@ -2,8 +2,32 @@
 
 use super::args::*;
 use super::{dispatch_typed_extension_args, extension_state};
-use crate::pjrt_types::PJRT_Error;
+use crate::pjrt_types::{PJRT_Error, PJRT_TopologyDescription};
 use libtpu_core::config::global_init_config;
+use libtpu_core::hal::TopologySpec;
+
+/// Resolves a raw `topology` pointer from a `PJRT_TpuTopology_*` argument structure into an
+/// optional [`TopologySpec`] reference when `ptr` is a valid heap pointer (`> 0x10000`).
+///
+/// # Arguments
+///
+/// * `ptr` - Raw `topology` pointer field from a topology extension args struct.
+///
+/// # Safety
+///
+/// If `ptr as usize > 0x10000`, `ptr` must point to a valid [`PJRT_TopologyDescription`].
+unsafe fn resolve_topology_spec<'a>(ptr: *const std::ffi::c_void) -> Option<&'a TopologySpec> {
+    if (ptr as usize) > 0x10000 {
+        // SAFETY: `ptr` is a non-null heap pointer to `PJRT_TopologyDescription`.
+        unsafe {
+            ptr.cast::<PJRT_TopologyDescription>()
+                .as_ref()
+                .map(|t| &t.inner.spec)
+        }
+    } else {
+        None
+    }
+}
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_Subslice`] and [`PJRT_TpuTopology_ReplaceHostBounds`].
 ///
@@ -274,7 +298,12 @@ pub unsafe extern "C" fn PJRT_TpuTopology_IsReachableOverLimitedIci(
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
 unsafe fn handle_tpu_topology_process_count(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    args.out_value = usize::try_from(global_init_config().total_hosts()).unwrap_or(1);
+    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    let hosts = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
+        || global_init_config().total_hosts(),
+        |spec| spec.host_bounds.x * spec.host_bounds.y * spec.host_bounds.z,
+    );
+    args.out_value = usize::try_from(hosts.max(1)).unwrap_or(1);
 }
 
 /// Queries process count in TPU topology (`PJRT_TpuTopology_ProcessCount`).
@@ -309,7 +338,12 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ProcessCount(
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
 unsafe fn handle_tpu_topology_chips_per_process(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    args.out_value = usize::try_from(global_init_config().chips_per_host()).unwrap_or(4);
+    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    let chips = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
+        || global_init_config().chips_per_host(),
+        |spec| spec.chips_per_host,
+    );
+    args.out_value = usize::try_from(chips.max(1)).unwrap_or(4);
 }
 
 /// Queries chips per process in TPU topology (`PJRT_TpuTopology_ChipsPerProcess`).
@@ -344,8 +378,12 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ChipsPerProcess(
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
 unsafe fn handle_tpu_topology_cores_per_chip(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    args.out_value =
-        usize::try_from(global_init_config().generation.logical_devices_per_chip()).unwrap_or(1);
+    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    let cores = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
+        || global_init_config().generation.logical_devices_per_chip(),
+        |spec| spec.generation.logical_devices_per_chip(),
+    );
+    args.out_value = usize::try_from(cores.max(1)).unwrap_or(1);
 }
 
 /// Queries cores per chip in TPU topology (`PJRT_TpuTopology_CoreCountPerChip`).
@@ -380,8 +418,15 @@ pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerChip(
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
 unsafe fn handle_tpu_topology_total_chips(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let cfg = global_init_config();
-    args.out_value = usize::try_from(cfg.chips_per_host() * cfg.total_hosts()).unwrap_or(4);
+    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    let total_chips = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
+        || {
+            let cfg = global_init_config();
+            cfg.chips_per_host() * cfg.total_hosts()
+        },
+        |spec| spec.chip_bounds.x * spec.chip_bounds.y * spec.chip_bounds.z,
+    );
+    args.out_value = usize::try_from(total_chips.max(1)).unwrap_or(4);
 }
 
 /// Strongly-typed handler for total core / logical device count queries.
@@ -394,11 +439,20 @@ unsafe fn handle_tpu_topology_total_chips(args: &mut PJRT_TpuTopology_ScalarQuer
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
 unsafe fn handle_tpu_topology_total_cores(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let cfg = global_init_config();
-    args.out_value = usize::try_from(
-        cfg.chips_per_host() * cfg.total_hosts() * cfg.generation.logical_devices_per_chip(),
-    )
-    .unwrap_or(4);
+    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    let total_cores = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
+        || {
+            let cfg = global_init_config();
+            usize::try_from(
+                cfg.chips_per_host()
+                    * cfg.total_hosts()
+                    * cfg.generation.logical_devices_per_chip(),
+            )
+            .unwrap_or(4)
+        },
+        |spec| spec.devices.len().max(1),
+    );
+    args.out_value = total_cores;
 }
 
 /// Strongly-typed handler for per-process core / logical device count queries.
@@ -411,10 +465,15 @@ unsafe fn handle_tpu_topology_total_cores(args: &mut PJRT_TpuTopology_ScalarQuer
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
 unsafe fn handle_tpu_topology_cores_per_process(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let cfg = global_init_config();
-    args.out_value =
-        usize::try_from(cfg.chips_per_host() * cfg.generation.logical_devices_per_chip())
-            .unwrap_or(4);
+    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    let cores_per_proc = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
+        || {
+            let cfg = global_init_config();
+            cfg.chips_per_host() * cfg.generation.logical_devices_per_chip()
+        },
+        |spec| spec.chips_per_host * spec.generation.logical_devices_per_chip(),
+    );
+    args.out_value = usize::try_from(cores_per_proc.max(1)).unwrap_or(4);
 }
 
 /// Queries total chip count in TPU topology (`PJRT_TpuTopology_ChipCount`).
@@ -750,7 +809,11 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice(
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_BoundsQuery_Args`].
 unsafe fn handle_tpu_topology_chip_bounds(args: &mut PJRT_TpuTopology_BoundsQuery_Args) {
-    let bounds = global_init_config().chips_per_host_bounds;
+    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    let bounds = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
+        || global_init_config().chips_per_host_bounds,
+        |spec| spec.chip_bounds,
+    );
     args.out_first = usize::try_from(bounds.x).unwrap_or(2);
     args.out_second = usize::try_from(bounds.y).unwrap_or(2);
 }
@@ -809,7 +872,9 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ChipBounds(
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_BoundsQuery_Args`].
 unsafe fn handle_tpu_topology_process_bounds(args: &mut PJRT_TpuTopology_BoundsQuery_Args) {
-    let bounds = global_init_config().host_bounds;
+    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    let bounds = unsafe { resolve_topology_spec(args.topology) }
+        .map_or_else(|| global_init_config().host_bounds, |spec| spec.host_bounds);
     args.out_first = usize::try_from(bounds.x).unwrap_or(1);
     args.out_second = usize::try_from(bounds.y).unwrap_or(1);
 }
@@ -914,7 +979,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_GetSliceConfigs(
 unsafe fn handle_tpu_topology_default_platform_config(
     args: &mut PJRT_TpuTopology_ScalarQuery_Args,
 ) {
-    args.out_value = usize::try_from(global_init_config().generation as i32).unwrap_or(5);
+    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    let tpu_gen = unsafe { resolve_topology_spec(args.topology) }
+        .map_or_else(|| global_init_config().generation, |spec| spec.generation);
+    args.out_value = usize::try_from(tpu_gen as i32).unwrap_or(5);
 }
 
 /// Queries default TPU platform configuration (`PJRT_TpuTopology_GetDefaultPlatformConfig`).

@@ -54,6 +54,19 @@ def test_library_path_and_init_args(monkeypatch: pytest.MonkeyPatch) -> None:
     assert libtpu.TpuGeneration.V6E.value == 7
     assert libtpu.DataType.F32.value == 11
 
+    coord = libtpu.DistributedCoordinatorClient()
+    coord.put_key_value("topo/0", b"local_topo")
+    assert coord.get_key_value("topo/0") == b"local_topo"
+    assert coord.try_get_key_value("topo/0") == b"local_topo"
+    assert coord.try_get_key_value("missing") is None
+    assert coord.get_key_value_dir("topo/") == {"topo/0": b"local_topo"}
+    with pytest.raises(libtpu.TpuError):
+        coord.get_key_value("missing")
+    assert coord.wait_at_barrier(1) == 1
+    assert coord.wait_at_barrier(1) == 2
+    assert coord.cancel_barrier(1) is True
+    assert coord.cancel_barrier(1) is False
+
 
 def test_client_buffer_executable_and_profiler() -> None:
     """Verifies `TpuClient`, `TpuBuffer`, `TpuExecutable`, `TpuProfiler`, and `TpuError`."""
@@ -141,7 +154,49 @@ def test_client_buffer_executable_and_profiler() -> None:
     assert s4_buf.dtype() == libtpu.DataType.S4
     assert s4_buf.byte_size() == 2
     assert s4_buf.to_bytes() == b"\x12\x34"
+    assert bytes(s4_buf.to_memoryview()) == b"\x12\x34"
+    assert s4_buf.__array_interface__["typestr"] == "|u1"
+    assert b0.__array_interface__["typestr"] == "<f4"
+    assert b0.__dlpack_device__() == (14, 0)
+    assert b0.__dlpack__(stream=None) is not None
     s4_buf.close()
+
+    with libtpu.PhaseCompiler() as pc:
+        assert len(pc.phase_names()) == 5
+        assert (
+            pc.run_phase("hlo_verification", b"module {}") == b"PHASE[hlo_verification]:module {}"
+        )
+        assert b"PHASE[binary_serialization]:" in pc.run_all_phases(b"module {}")
+        with pytest.raises(libtpu.TpuError):
+            pc.run_phase("invalid_phase", b"module {}")
+    pc.close()
+
+    with libtpu.MegascaleContext(num_slices=4, slice_id=1) as ms:
+        assert ms.num_slices() == 4
+        assert ms.slice_id() == 1
+        assert len(ms.serialize_config()) > 0
+        assert ms.barrier() == 1
+    ms.close()
+
+    with libtpu.Communicator([0, 1]) as comm:
+        assert comm.device_ids() == (0, 1)
+        assert "tpu_ici_communicator" in comm.to_string()
+        comm.all_reduce(b0, b1, reduction_op=0)
+        comm.reduce_scatter(b0, b1, reduction_op=0)
+        comm.all_gather(b0, b1)
+        comm.all_to_all(b0, b1)
+        comm.collective_permute(b0, b1)
+    comm.close()
+    default_comm = libtpu.Communicator()
+    assert default_comm.device_ids() == (0, 1, 2, 3)
+    default_comm.close()
+
+    with libtpu.EmbeddingEngine() as emb:
+        assert emb.write_parameters("table_0", [1.0, 2.0, 3.0, 4.0]) == 4
+        assert emb.read_parameters("table_0") == [1.0, 2.0, 3.0, 4.0]
+        with pytest.raises(libtpu.TpuError):
+            emb.read_parameters("missing_table")
+    emb.close()
 
     out_buf.close()
     b0.close()
@@ -504,6 +559,13 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     assert fn_exec_destroy(ctypes.byref(e_del)) is None
     c_del = (ctypes.c_uint64 * 3)(24, 0, raw_pjrt_client)
     assert fn_client_destroy(ctypes.byref(c_del)) is None
+
+    pjrt_capsule = libtpu.get_pjrt_c_api_capsule()
+    sdk_capsule = libtpu.sdk.get_sdk_c_api_capsule()
+    assert pjrt_capsule is not None
+    assert sdk_capsule is not None
+    assert "pjrt_c_api" in repr(pjrt_capsule)
+    assert "libtpu.sdk._C_API" in repr(sdk_capsule)
 
     # Verify all 138 PJRT_Api slots against golden_struct_layouts.json min_struct_size
     golden_path = (

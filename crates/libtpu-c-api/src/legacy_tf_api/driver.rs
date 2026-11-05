@@ -73,20 +73,41 @@ pub extern "C" fn TpuDriver_GetCompiledProgramShape(
 
 /// Registers an event completion callback on a [`TpuDriver`] (`TpuDriver_AddCallback`).
 ///
+/// When `callback_fn` is a valid C function pointer (`> 0x10000`), invokes
+/// `callback_fn(event_status, user_arg)` immediately upon event completion.
+///
 /// # Arguments
 ///
 /// * `driver` - Pointer to [`TpuDriver`].
 /// * `event` - Pointer to [`crate::tpu_driver_types::TpuEvent`].
-/// * `callback_fn` - Callback function pointer.
+/// * `callback_fn` - Callback function pointer `extern "C" fn(*mut TpuStatus, *mut c_void)`.
 /// * `user_arg` - User context pointer.
+///
+/// # Safety
+///
+/// `driver` and `event` must be null or valid pointers, and if `callback_fn as usize > 0x10000`,
+/// `callback_fn` must be a valid `extern "C" fn(*mut TpuStatus, *mut std::ffi::c_void)`.
 #[unsafe(no_mangle)]
-pub extern "C" fn TpuDriver_AddCallback(
+pub unsafe extern "C" fn TpuDriver_AddCallback(
     driver: *mut TpuDriver,
     event: *mut crate::tpu_driver_types::TpuEvent,
     callback_fn: *const std::ffi::c_void,
     user_arg: *mut std::ffi::c_void,
 ) {
-    let _ = (driver, event, callback_fn, user_arg);
+    let _ = driver;
+    if (callback_fn as usize) > 0x10000 {
+        let status_ptr = if event.is_null() {
+            ptr::null_mut()
+        } else {
+            // SAFETY: `event` is non-null.
+            unsafe { (*event).status }
+        };
+        // SAFETY: `callback_fn` is a valid function pointer.
+        let cb: unsafe extern "C" fn(*mut TpuStatus, *mut std::ffi::c_void) =
+            unsafe { std::mem::transmute(callback_fn) };
+        // SAFETY: Invoking caller-provided C callback with event status and user_arg.
+        unsafe { cb(status_ptr, user_arg) };
+    }
 }
 
 /// Returns the `TpuDriver` API version string (`TpuDriver_Version`).

@@ -91,6 +91,33 @@ pub struct SmOffset(pub u32);
 #[display("{_0:#x}")]
 pub struct BundlePc(pub u32);
 
+/// Zero-based index of a 64-byte VLIW bundle in Instruction Memory (`ImemBundleIndex`).
+pub type ImemBundleIndex = BundlePc;
+
+/// Scalar or vector element bit width (`BitWidth`, e.g., `2`, `4`, `8`, `16`, `32`, `64`, `128`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}b")]
+pub struct BitWidth(pub u16);
+
+/// Hardware matrix/vector sublane count (`SublaneCount`, typically `8` or `16`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct SublaneCount(pub u16);
+
+/// Hardware matrix/vector lane count (`LaneCount`, typically `128` or `256`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct LaneCount(pub u16);
+
 /// Physical or BAR-relative Control and Status Register byte offset (`CsrAddress`).
 #[repr(transparent)]
 #[derive(
@@ -108,6 +135,9 @@ pub struct MmioOffset(pub u64);
 
 /// Type alias for [`DeviceAddress`] representing an HBM byte offset (`HbmOffset`).
 pub type HbmOffset = DeviceAddress;
+
+/// Type alias for [`DeviceAddress`] representing an on-device HBM virtual address (`HbmAddress`).
+pub type HbmAddress = DeviceAddress;
 
 /// Type alias for [`IovaAddress`] representing an IOMMU IOVA address (`IovaAddr`).
 pub type IovaAddr = IovaAddress;
@@ -346,9 +376,21 @@ mod tests {
         assert_eq!(u32::from(sm_off), 0x40);
         assert_eq!(sm_off.to_string(), "0x40");
 
-        let b_pc = BundlePc::from(0x20_u32) + BundlePc(1) - BundlePc(1);
+        let b_pc: ImemBundleIndex = BundlePc::from(0x20_u32) + BundlePc(1) - BundlePc(1);
         assert_eq!(u32::from(b_pc), 0x20);
         assert_eq!(b_pc.to_string(), "0x20");
+
+        let bw = BitWidth::from(16_u16) + BitWidth(8) - BitWidth(8);
+        assert_eq!(u16::from(bw), 16);
+        assert_eq!(bw.to_string(), "16b");
+
+        let sublanes = SublaneCount::from(8_u16) + SublaneCount(2) - SublaneCount(2);
+        assert_eq!(u16::from(sublanes), 8);
+        assert_eq!(sublanes.to_string(), "8");
+
+        let lanes = LaneCount::from(128_u16) + LaneCount(16) - LaneCount(16);
+        assert_eq!(u16::from(lanes), 128);
+        assert_eq!(lanes.to_string(), "128");
 
         let csr_addr = CsrAddress::from(0x3000_u64) + CsrAddress(8) - CsrAddress(8);
         assert_eq!(u64::from(csr_addr), 0x3000);
@@ -441,5 +483,8 @@ mod tests {
         let iommu = IommuGroupId::from(12_u32);
         assert_eq!(u32::from(iommu), 12);
         assert_eq!(iommu.to_string(), "12");
+
+        let hbm_addr: HbmAddress = DeviceAddress::from(0x1000_u64);
+        assert_eq!(u64::from(hbm_addr), 0x1000);
     }
 }

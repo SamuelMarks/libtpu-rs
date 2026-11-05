@@ -613,6 +613,54 @@ pub fn extract_indirect_filewrapper_toc(
     entries
 }
 
+/// Decoded collection of embedded `filewrapper_toc` chip configurations, die parts, and runtime ABI descriptors (`EmbeddedChipResourceBundle`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EmbeddedChipResourceBundle {
+    /// Decoded `*_chip_configs_*.binarypb` descriptors.
+    pub chip_configs: Vec<crate::proto::TpuChipConfigProto>,
+    /// Decoded `*_chip_parts.binarypb` descriptors.
+    pub chip_parts: Vec<crate::proto::TpuChipPartsProto>,
+    /// Decoded `current_tpu_runtime_abi.binarypb` descriptor, if present.
+    pub runtime_abi: Option<crate::proto::TpuRuntimeAbiProto>,
+    /// Decoded `deepsea_compiler_hash.txt` string, if present.
+    pub compiler_hash: Option<String>,
+}
+
+/// Decodes embedded chip config, chip parts, and runtime ABI resources from `filewrapper_toc`.
+///
+/// Inspects `*_chip_configs*.binarypb`, `*_chip_parts*.binarypb`,
+/// `current_tpu_runtime_abi.binarypb`, and `deepsea_compiler_hash.txt` entries.
+///
+/// # Arguments
+///
+/// * `entries` - Slice of [`FileTocEntry`] records carved from `filewrapper_toc`.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError`] if any matching `.binarypb` payload is malformed.
+pub fn decode_embedded_chip_resources(
+    entries: &[FileTocEntry],
+) -> LibTpuResult<EmbeddedChipResourceBundle> {
+    use crate::proto::ProtoSchemaMessage as _;
+    let mut bundle = EmbeddedChipResourceBundle::default();
+    for entry in entries {
+        if entry.name.contains("chip_configs") {
+            bundle
+                .chip_configs
+                .push(crate::proto::TpuChipConfigProto::decode_proto(&entry.data)?);
+        } else if entry.name.contains("chip_parts") {
+            bundle
+                .chip_parts
+                .push(crate::proto::TpuChipPartsProto::decode_proto(&entry.data)?);
+        } else if entry.name.ends_with("tpu_runtime_abi.binarypb") {
+            bundle.runtime_abi = Some(crate::proto::TpuRuntimeAbiProto::decode_proto(&entry.data)?);
+        } else if entry.name.ends_with("deepsea_compiler_hash.txt") {
+            bundle.compiler_hash = Some(String::from_utf8_lossy(&entry.data).trim().to_owned());
+        }
+    }
+    Ok(bundle)
+}
+
 /// Decompresses an embedded Brotli-compressed (`*_pf_csrs.br`) hardware CSR table from `libtpu.so`.
 ///
 /// # Arguments
@@ -1064,5 +1112,102 @@ mod tests {
             .dependencies
             .push(String::from("missing_dep.proto"));
         assert!(verify_descriptor_topological_closure(&broken_carved).is_err());
+
+        // Test decode_embedded_chip_resources and all TpuGeneration chip configs/parts
+        for generation in [
+            crate::types::TpuGeneration::V2,
+            crate::types::TpuGeneration::V3,
+            crate::types::TpuGeneration::V4,
+            crate::types::TpuGeneration::V4Lite,
+            crate::types::TpuGeneration::V5e,
+            crate::types::TpuGeneration::V5p,
+            crate::types::TpuGeneration::V6e,
+            crate::types::TpuGeneration::V7x,
+        ] {
+            let cfg = crate::proto::TpuChipConfigProto::from_generation(generation);
+            let parts = crate::proto::TpuChipPartsProto::from_generation(generation);
+            let target = crate::proto::TargetArgumentsProto::from_generation(generation);
+            assert_eq!(target.tpu_version, generation as i32);
+            assert_eq!(target.chip_variant, cfg.chip_name);
+            assert_eq!(target.clock_rate_mhz, parts.clock_rate_mhz);
+            assert!(crate::proto::ProtoSchemaMessage::verify_schema_sync(&cfg).is_ok());
+            assert!(crate::proto::ProtoSchemaMessage::verify_schema_sync(&parts).is_ok());
+            assert_eq!(cfg.clone(), cfg);
+            assert_eq!(parts.clone(), parts);
+            assert_ne!(format!("{cfg:?}"), "");
+            assert_ne!(format!("{parts:?}"), "");
+        }
+
+        let abi_proto = crate::proto::TpuRuntimeAbiProto {
+            base_abi_version: 1,
+            hardware_abi_version: 0x10003,
+            compiler_hash: String::from("00ef0b06"),
+            supported_chip_variants: vec![String::from("vfc"), String::from("glc")],
+        };
+        assert!(crate::proto::ProtoSchemaMessage::verify_schema_sync(&abi_proto).is_ok());
+        assert_eq!(abi_proto.clone(), abi_proto);
+        assert_ne!(format!("{abi_proto:?}"), "");
+
+        let toc_bundle_entries = vec![
+            FileTocEntry {
+                name: String::from("viperfish_chip_configs_megacore.binarypb"),
+                data: crate::proto::ProtoSchemaMessage::encode_proto(
+                    &crate::proto::TpuChipConfigProto::from_generation(
+                        crate::types::TpuGeneration::V5p,
+                    ),
+                ),
+            },
+            FileTocEntry {
+                name: String::from("pufferfish_chip_parts.binarypb"),
+                data: crate::proto::ProtoSchemaMessage::encode_proto(
+                    &crate::proto::TpuChipPartsProto::from_generation(
+                        crate::types::TpuGeneration::V4,
+                    ),
+                ),
+            },
+            FileTocEntry {
+                name: String::from("current_tpu_runtime_abi.binarypb"),
+                data: crate::proto::ProtoSchemaMessage::encode_proto(&abi_proto),
+            },
+            FileTocEntry {
+                name: String::from("deepsea_compiler_hash.txt"),
+                data: b"00ef0b06\n".to_vec(),
+            },
+            FileTocEntry {
+                name: String::from("ignored_other_file.txt"),
+                data: b"noop".to_vec(),
+            },
+        ];
+        let decoded_bundle = decode_embedded_chip_resources(&toc_bundle_entries);
+        assert!(decoded_bundle.is_ok());
+        if let Ok(b) = decoded_bundle {
+            assert_eq!(b.chip_configs.len(), 1);
+            assert_eq!(b.chip_parts.len(), 1);
+            assert_eq!(b.runtime_abi, Some(abi_proto));
+            assert_eq!(b.compiler_hash.as_deref(), Some("00ef0b06"));
+            assert_eq!(b.clone(), b);
+            assert_ne!(format!("{b:?}"), "");
+        }
+        assert!(
+            decode_embedded_chip_resources(&[FileTocEntry {
+                name: String::from("bad_chip_configs.binarypb"),
+                data: vec![0xFF, 0xFF, 0xFF],
+            }])
+            .is_err()
+        );
+        assert!(
+            decode_embedded_chip_resources(&[FileTocEntry {
+                name: String::from("bad_chip_parts.binarypb"),
+                data: vec![0xFF, 0xFF, 0xFF],
+            }])
+            .is_err()
+        );
+        assert!(
+            decode_embedded_chip_resources(&[FileTocEntry {
+                name: String::from("current_tpu_runtime_abi.binarypb"),
+                data: vec![0xFF, 0xFF, 0xFF],
+            }])
+            .is_err()
+        );
     }
 }

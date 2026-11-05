@@ -34,26 +34,27 @@ pub use self::registers::{
     BAR0_CSR_ICI_ROUTER_LINK_STATE, BAR0_CSR_POWER_MILLIWATTS, BAR0_CSR_SPARSECORE_RUN_CONTROL,
     BAR0_CSR_SYNC_FLAG_BASE, BAR0_CSR_TENSORCORE_PC, BAR0_CSR_TENSORCORE_RUN_CONTROL,
     BAR0_CSR_TENSORCORE_STATUS, BAR0_CSR_TENSORCORE_SYNC_FLAG, BAR0_CSR_THERMAL_MILLICELSIUS,
-    ChipRegisterMap, DmaRingDescriptor, GASKET_IOCTL_CLEAR_EVENTFD,
-    GASKET_IOCTL_CLEAR_INTERRUPT_COUNTS, GASKET_IOCTL_MAP_BUFFER, GASKET_IOCTL_MAP_DMABUF,
-    GASKET_IOCTL_NUMBER_PAGE_TABLES, GASKET_IOCTL_PAGE_TABLE_SIZE,
-    GASKET_IOCTL_PARTITION_PAGE_TABLE, GASKET_IOCTL_RESET, GASKET_IOCTL_SET_EVENTFD,
-    GASKET_IOCTL_SIMPLE_PAGE_TABLE_SIZE, GASKET_IOCTL_UNMAP_BUFFER, GasketInterruptEventFd,
-    GasketPageTableDmaBuf, GasketPageTableIoctl, HbmDmaRingDescriptor, IciLinkStateFlags,
-    TensorCoreControlFlags, TensorCoreStatusFlags, VFIO_CHECK_EXTENSION, VFIO_DEVICE_GET_INFO,
-    VFIO_DEVICE_GET_IRQ_INFO, VFIO_DEVICE_GET_REGION_INFO, VFIO_DEVICE_RESET, VFIO_DEVICE_SET_IRQS,
-    VFIO_DEVICE_SET_IRQS_IOCTL, VFIO_GET_API_VERSION, VFIO_GROUP_GET_DEVICE_FD,
-    VFIO_GROUP_GET_STATUS, VFIO_GROUP_SET_CONTAINER, VFIO_IOMMU_MAP_DMA, VFIO_IOMMU_MAP_DMA_IOCTL,
-    VFIO_IOMMU_UNMAP_DMA, VFIO_IOMMU_UNMAP_DMA_IOCTL, VFIO_SET_IOMMU, VfioDmaMapFlags,
-    VfioDmaMapIoctl, VfioDmaUnmapIoctl, VfioIrqSetFlags, VfioIrqSetIoctl,
+    ChipRegisterMap, CsrAccessPermission, CsrBitfieldSpec, CsrRegisterDescriptor,
+    DmaRingDescriptor, GASKET_IOCTL_CLEAR_EVENTFD, GASKET_IOCTL_CLEAR_INTERRUPT_COUNTS,
+    GASKET_IOCTL_MAP_BUFFER, GASKET_IOCTL_MAP_DMABUF, GASKET_IOCTL_NUMBER_PAGE_TABLES,
+    GASKET_IOCTL_PAGE_TABLE_SIZE, GASKET_IOCTL_PARTITION_PAGE_TABLE, GASKET_IOCTL_RESET,
+    GASKET_IOCTL_SET_EVENTFD, GASKET_IOCTL_SIMPLE_PAGE_TABLE_SIZE, GASKET_IOCTL_UNMAP_BUFFER,
+    GasketInterruptEventFd, GasketPageTableDmaBuf, GasketPageTableIoctl, HbmDmaRingDescriptor,
+    IciLinkStateFlags, TensorCoreControlFlags, TensorCoreStatusFlags, VFIO_CHECK_EXTENSION,
+    VFIO_DEVICE_GET_INFO, VFIO_DEVICE_GET_IRQ_INFO, VFIO_DEVICE_GET_REGION_INFO, VFIO_DEVICE_RESET,
+    VFIO_DEVICE_SET_IRQS, VFIO_DEVICE_SET_IRQS_IOCTL, VFIO_GET_API_VERSION,
+    VFIO_GROUP_GET_DEVICE_FD, VFIO_GROUP_GET_STATUS, VFIO_GROUP_SET_CONTAINER, VFIO_IOMMU_MAP_DMA,
+    VFIO_IOMMU_MAP_DMA_IOCTL, VFIO_IOMMU_UNMAP_DMA, VFIO_IOMMU_UNMAP_DMA_IOCTL, VFIO_SET_IOMMU,
+    VfioDmaMapFlags, VfioDmaMapIoctl, VfioDmaUnmapIoctl, VfioIrqSetFlags, VfioIrqSetIoctl,
 };
 pub use self::simulated::SimulatedTpuHal;
 pub use self::syscall::{
-    EmulatedKernelDriverBackend, IoctlPayload, KernelDriverOps, MockKernelSyscalls,
-    POSIX_FIOCLEX_IOCTL, PosixKernelDriverBackend, RealLinuxSyscalls, SimulatedKernelDriverBackend,
-    SyscallProvider, VirtualTpuKernelDevice,
+    DiscoveredPciDevice, EmulatedKernelDriverBackend, IoctlPayload, KernelDriverOps,
+    MockKernelSyscalls, POSIX_FIOCLEX_IOCTL, PosixKernelDriverBackend, RealLinuxSyscalls,
+    SimulatedKernelDriverBackend, SyscallProvider, VirtualTpuKernelDevice,
+    discover_sysfs_tpu_pci_devices,
 };
-pub use self::vm::{DeepSeaVm, TpuCoreVmState};
+pub use self::vm::{DeepSeaVm, SparseCoreOptimizer, SparseCoreVmState, TpuCoreVmState};
 
 use crate::compiler::CompiledProgram;
 use crate::error::LibTpuResult;
@@ -645,6 +646,7 @@ mod tests {
             b"module @neg { neg_f32 }",
             b"module @exp { exp_f32 }",
             b"module @tanh { tanh_f32 }",
+            b"module @erf { erf }",
             b"module @abs { abs }",
             b"module @log { log }",
             b"module @sqrt { sqrt }",
@@ -865,6 +867,198 @@ ENTRY main {
                 &[&cat_in0, &cat_in1],
             ));
         assert_eq!(cat_nd_out, vec![1.0, 2.0, 3.0, 4.0]);
+
+        // Test Phase 4 numerical algorithms: Complex FFT/IFFT, Threefry2x32, Philox4x32-10, BatchNorm, SelectAndScatter, Complex/Real/Imag, While/Conditional/Call
+        let tf_out = SimulatedTpuHal::threefry2x32([1, 2], [3, 4]);
+        assert_eq!(tf_out, SimulatedTpuHal::threefry2x32([1, 2], [3, 4]));
+        assert_ne!(tf_out, [0, 0]);
+        let ph_out = SimulatedTpuHal::philox4x32_10([1, 2], [3, 4, 5, 6]);
+        assert_eq!(ph_out, SimulatedTpuHal::philox4x32_10([1, 2], [3, 4, 5, 6]));
+        assert_ne!(ph_out, [0, 0, 0, 0]);
+
+        let c64_forward = SimulatedTpuHal::eval_fft_with_mode(
+            ElementType::C64,
+            &[1.0, 0.0, 2.0, 0.0, 3.0, 0.0, 4.0, 0.0],
+            "FFT",
+        );
+        let c64_fft_vals = ElementType::C64.unpack_to_f64_vec(&c64_forward);
+        let c64_inverse =
+            SimulatedTpuHal::eval_fft_with_mode(ElementType::C64, &c64_fft_vals, "IFFT");
+        let c64_roundtrip = ElementType::C64.unpack_to_f64_vec(&c64_inverse);
+        assert!((c64_roundtrip.first().copied().unwrap_or(0.0) - 1.0).abs() < 1e-4);
+        let f32_inverse =
+            SimulatedTpuHal::eval_fft_with_mode(ElementType::F32, &[1.0, 2.0, 3.0, 4.0], "IRFFT");
+        assert_eq!(f32_inverse.len(), 16);
+        let f32_real_fft =
+            SimulatedTpuHal::eval_fft_with_mode(ElementType::F32, &[1.0, 2.0, 3.0, 4.0], "RFFT");
+        assert_eq!(f32_real_fft.len(), 16);
+
+        let fft_bundle = crate::compiler::TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::Fft,
+            operand_slots: vec![0],
+            output_slot: 1,
+            sync_flag_id: 1,
+            attrs: crate::compiler::InstructionAttrs {
+                custom_call_target: String::from("FFT"),
+                ..crate::compiler::InstructionAttrs::default()
+            },
+        };
+        assert_eq!(
+            SimulatedTpuHal::eval_bundle_with_attrs(&fft_bundle, ElementType::F32, &[&cat_in0])
+                .len(),
+            8
+        );
+
+        for bn_op in [
+            TpuOpCode::BatchNormInference,
+            TpuOpCode::BatchNormTraining,
+            TpuOpCode::BatchNormGrad,
+            TpuOpCode::SelectAndScatter,
+        ] {
+            let bn_bundle = crate::compiler::TpuInstructionBundle {
+                pc_offset: 0,
+                opcode: bn_op,
+                operand_slots: vec![0, 1, 2],
+                output_slot: 3,
+                sync_flag_id: 1,
+                attrs: crate::compiler::InstructionAttrs::default(),
+            };
+            assert_eq!(
+                SimulatedTpuHal::eval_bundle_with_attrs(
+                    &bn_bundle,
+                    ElementType::F32,
+                    &[&cat_in0, &cat_in1, &cat_in0]
+                )
+                .len(),
+                8
+            );
+        }
+
+        let cplx_bytes = SimulatedTpuHal::eval_bundle(
+            TpuOpCode::Complex,
+            ElementType::C64,
+            &[&cat_in0, &cat_in1],
+        );
+        assert_eq!(cplx_bytes.len(), 16);
+        assert_eq!(
+            SimulatedTpuHal::eval_unary_op(TpuOpCode::Real, ElementType::F32, &cplx_bytes).len(),
+            8
+        );
+        assert_eq!(
+            SimulatedTpuHal::eval_unary_op(TpuOpCode::Imag, ElementType::F32, &cplx_bytes).len(),
+            8
+        );
+        for new_u_op in [
+            TpuOpCode::ReplicaId,
+            TpuOpCode::PartitionId,
+            TpuOpCode::AfterAll,
+            TpuOpCode::BitcastConvert,
+            TpuOpCode::OptimizationBarrier,
+            TpuOpCode::Tuple,
+            TpuOpCode::GetTupleElement,
+            TpuOpCode::Infeed,
+            TpuOpCode::Outfeed,
+            TpuOpCode::Send,
+            TpuOpCode::Recv,
+            TpuOpCode::While,
+            TpuOpCode::Conditional,
+            TpuOpCode::Call,
+        ] {
+            assert_ne!(
+                SimulatedTpuHal::eval_unary_op(new_u_op, ElementType::F32, &cat_in0).len(),
+                0
+            );
+        }
+
+        let while_bundle = crate::compiler::TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::While,
+            operand_slots: vec![0],
+            output_slot: 1,
+            sync_flag_id: 1,
+            attrs: crate::compiler::InstructionAttrs {
+                sub_computations: vec![vec![crate::compiler::TpuInstructionBundle {
+                    pc_offset: 0,
+                    opcode: TpuOpCode::NegF32,
+                    operand_slots: vec![0],
+                    output_slot: 0,
+                    sync_flag_id: 1,
+                    attrs: crate::compiler::InstructionAttrs::default(),
+                }]],
+                ..crate::compiler::InstructionAttrs::default()
+            },
+        };
+        let while_out = ElementType::F32.unpack_to_f64_vec(
+            &SimulatedTpuHal::eval_bundle_with_attrs(&while_bundle, ElementType::F32, &[&cat_in0]),
+        );
+        assert_eq!(while_out, vec![-1.0, -3.0]);
+
+        let conv_bundle = crate::compiler::TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::Convolution,
+            operand_slots: vec![0, 1],
+            output_slot: 2,
+            sync_flag_id: 1,
+            attrs: crate::compiler::InstructionAttrs {
+                window_strides: vec![1],
+                rhs_dilation: vec![1],
+                ..crate::compiler::InstructionAttrs::default()
+            },
+        };
+        assert_eq!(
+            SimulatedTpuHal::eval_bundle_with_attrs(
+                &conv_bundle,
+                ElementType::F32,
+                &[&cat_in0, &cat_in1]
+            )
+            .len(),
+            8
+        );
+
+        let branch_bundle = crate::compiler::TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::Conditional,
+            operand_slots: vec![0, 1],
+            output_slot: 2,
+            sync_flag_id: 1,
+            attrs: crate::compiler::InstructionAttrs {
+                sub_computations: vec![
+                    vec![crate::compiler::TpuInstructionBundle {
+                        pc_offset: 0,
+                        opcode: TpuOpCode::NegF32,
+                        operand_slots: vec![0],
+                        output_slot: 0,
+                        sync_flag_id: 1,
+                        attrs: crate::compiler::InstructionAttrs::default(),
+                    }],
+                    vec![crate::compiler::TpuInstructionBundle {
+                        pc_offset: 0,
+                        opcode: TpuOpCode::Identity,
+                        operand_slots: vec![0],
+                        output_slot: 0,
+                        sync_flag_id: 1,
+                        attrs: crate::compiler::InstructionAttrs::default(),
+                    }],
+                ],
+                ..crate::compiler::InstructionAttrs::default()
+            },
+        };
+        let cond_true =
+            ElementType::F32.unpack_to_f64_vec(&SimulatedTpuHal::eval_bundle_with_attrs(
+                &branch_bundle,
+                ElementType::F32,
+                &[&cat_in0, &cat_in1],
+            ));
+        assert_eq!(cond_true, vec![-2.0, -4.0]);
+        let zero_pred = ElementType::F32.pack_from_f64_slice(&[0.0, 0.0]);
+        let cond_false =
+            ElementType::F32.unpack_to_f64_vec(&SimulatedTpuHal::eval_bundle_with_attrs(
+                &branch_bundle,
+                ElementType::F32,
+                &[&zero_pred, &cat_in1],
+            ));
+        assert_eq!(cond_false, vec![2.0, 4.0]);
 
         for b_op in [
             TpuOpCode::ShiftLeft,
@@ -1189,6 +1383,11 @@ ENTRY main {
                 assert!(hal.register_interrupt_eventfd(-1).is_err());
                 assert!(hal.register_interrupt_eventfd(7).is_ok());
                 assert!(hal.unregister_interrupt_eventfd().is_ok());
+                if mode == KernelDriverMode::Vfio {
+                    assert!(hal.initialize_vfio_container_and_group(0).is_ok());
+                } else {
+                    assert!(hal.initialize_gasket_device(7).is_ok());
+                }
 
                 let addr = hal
                     .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(256))
@@ -1375,6 +1574,14 @@ ENTRY main {
             EmulatedKernelDriverBackend::default(),
             &cfg,
         ) {
+            assert!(emu_hal.detach_bar0_mmap().is_ok());
+            assert!(emu_hal.attach_bar0_mmap(ByteSize(0x0010_0000)).is_ok());
+            emu_hal.write_bar0_csr(BAR0_CSR_SYNC_FLAG_BASE, 7);
+            assert_eq!(emu_hal.read_bar0_csr(BAR0_CSR_SYNC_FLAG_BASE), 7);
+            assert_eq!(emu_hal.read_bar0_csr(0x00FF_FFF8), 0);
+            assert!(emu_hal.poll_interrupt_completion_counter(0) >= 1);
+            let _ = emu_hal.read_telemetry_csrs();
+            assert!(emu_hal.detach_bar0_mmap().is_ok());
             assert!(emu_hal.close().is_ok());
         }
         let bad_fd_hal = LinuxDeviceHal {
@@ -1382,6 +1589,7 @@ ENTRY main {
             syscalls: SimulatedKernelDriverBackend::default(),
             device_fd: -1,
             mmio: SimulatedKernelDriverBackend::default(),
+            bar0_aperture: parking_lot::Mutex::new(None),
             iommu_allocators: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
             inner: SimulatedTpuHal::new(&cfg),
         };
@@ -1557,6 +1765,10 @@ ENTRY main {
             Some(TpuGeneration::V6e)
         );
         assert_eq!(
+            PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x0073)),
+            Some(TpuGeneration::V7x)
+        );
+        assert_eq!(
             PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x0076)),
             Some(TpuGeneration::V7x)
         );
@@ -1585,6 +1797,7 @@ ENTRY main {
             std::env::temp_dir().join(format!("libtpu_sysfs_test_{}", std::process::id()));
         let sysfs_dir = tmp_dir.join("sysfs");
         let dev_dir = tmp_dir.join("dev");
+        let accel_root = tmp_dir.join("accel");
         let _ = std::fs::remove_dir_all(&tmp_dir);
         let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:04.0"));
         let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:05.0/vfio"));
@@ -1594,17 +1807,16 @@ ENTRY main {
         let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:09.0"));
         let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:0a.0"));
         let _ = std::fs::create_dir_all(dev_dir.join("vfio"));
-        // 04.0: Valid Gasket TPU v6e
-        let _ = std::fs::write(
-            sysfs_dir.join("0000:00:04.0/vendor"),
-            "0x1ae0
-",
-        );
-        let _ = std::fs::write(
-            sysfs_dir.join("0000:00:04.0/device"),
-            "0x006f
-",
-        );
+        let _ = std::fs::create_dir_all(accel_root.join("accel0"));
+        // 04.0: Valid Gasket TPU v6e with iommu_group, numa_node, and accel0 telemetry
+        let _ = std::fs::write(sysfs_dir.join("0000:00:04.0/vendor"), "0x1ae0\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:04.0/device"), "0x006f\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:04.0/iommu_group"), "7\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:04.0/numa_node"), "1\n");
+        let _ = std::fs::write(accel_root.join("accel0/bar_size"), "2097152\n");
+        let _ = std::fs::write(accel_root.join("accel0/driver_version"), "2.4.0\n");
+        let _ = std::fs::write(accel_root.join("accel0/chip_model"), "trillium_v6e\n");
+        let _ = std::fs::write(accel_root.join("accel0/is_device_owned"), "1\n");
         // 05.0: Valid VFIO TPU v5p
         let _ = std::fs::write(
             sysfs_dir.join("0000:00:05.0/vendor"),
@@ -1667,10 +1879,32 @@ ENTRY main {
 ",
         );
 
-        let scanned = PciDeviceEnumerator::scan_sysfs(&sysfs_dir, &dev_dir);
+        let scanned = PciDeviceEnumerator::scan_sysfs_with_accel(&sysfs_dir, &dev_dir, &accel_root);
         assert_eq!(scanned.len(), 2);
         let root_scanned = PciSysfsScanner::discover_from_sysfs_root(&sysfs_dir);
         assert_eq!(root_scanned.len(), 2);
+        let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:0b.0"));
+        let _ = std::fs::write(sysfs_dir.join("0000:00:0b.0/vendor"), "0x1ae0\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:0b.0/device"), "0x0027\n");
+        let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:0c.0"));
+        let _ = std::fs::write(sysfs_dir.join("0000:00:0c.0/vendor"), "0x1ae0\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:0c.0/device"), "0x0056\n");
+        let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:0d.0"));
+        let _ = std::fs::write(sysfs_dir.join("0000:00:0d.0/vendor"), "0x1ae0\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:0d.0/device"), "0x0062\n");
+        let _ = std::fs::create_dir_all(sysfs_dir.join("0000:00:0e.0"));
+        let _ = std::fs::write(sysfs_dir.join("0000:00:0e.0/vendor"), "0x1ae0\n");
+        let _ = std::fs::write(sysfs_dir.join("0000:00:0e.0/device"), "0x0075\n");
+        if let Ok(sysfs_devs) = discover_sysfs_tpu_pci_devices(&sysfs_dir) {
+            assert_ne!(sysfs_devs, [] as [DiscoveredPciDevice; 0]);
+            if let Some(first_dev) = sysfs_devs.first() {
+                assert_eq!(first_dev.clone(), *first_dev);
+                assert_ne!(format!("{first_dev:?}"), "");
+            }
+        }
+        assert!(
+            discover_sysfs_tpu_pci_devices(std::path::Path::new("/nonexistent_sysfs_dir")).is_err()
+        );
         assert_ne!(format!("{PciDeviceEnumerator:?}{scanned:?}"), "");
         let _ = std::fs::remove_dir_all(&tmp_dir);
 
@@ -1690,9 +1924,95 @@ ENTRY main {
             assert!(rmap.hardware_abi_version >= 65_537);
             assert_eq!(rmap.clone(), rmap);
             assert_ne!(format!("{rmap:?}"), "");
+            let descs = rmap.csr_descriptors();
+            assert!(descs.len() >= 6);
+            assert!(ChipRegisterMap::lookup_csr_by_name(tpu_gen, "RUN_STATUS").is_some());
+            assert!(
+                ChipRegisterMap::lookup_csr_by_name(tpu_gen, "tc_0.tcs_core_state.PC").is_some()
+            );
+            assert!(ChipRegisterMap::lookup_csr_by_name(tpu_gen, "NONEXISTENT_CSR").is_none());
+            assert!(
+                ChipRegisterMap::lookup_csr_by_offset(tpu_gen, rmap.tc0_run_status_csr).is_some()
+            );
+            assert!(ChipRegisterMap::lookup_csr_by_offset(tpu_gen, 0xDEAD_BEEF).is_none());
+            if let Some(d0) = descs.first() {
+                assert_eq!(d0.access, CsrAccessPermission::WriteOnly);
+                assert_eq!(d0.clone(), *d0);
+                assert_eq!(d0.apply_write_value(0, 99), 99);
+                let bf0 = d0.bitfields.first().copied();
+                assert_eq!(bf0.clone(), bf0);
+                if let Some(bf) = bf0 {
+                    assert_eq!(bf.unpack(bf.pack(0, 42)), 42);
+                }
+                assert_eq!(
+                    d0.unpack_bitfield(d0.pack_bitfield(0, "VALUE", 55).unwrap_or(0), "VALUE"),
+                    Some(55)
+                );
+                assert!(d0.unpack_bitfield(0, "MISSING_BF").is_none());
+                assert!(d0.pack_bitfield(0, "MISSING_BF", 1).is_none());
+                assert_ne!(
+                    format!("{d0:?}{bf0:?}{:?}", CsrAccessPermission::WriteOnly),
+                    ""
+                );
+            }
+            if let Some(run_desc) = rmap.lookup_by_name("RUN_STATUS") {
+                assert_eq!(run_desc.apply_write_value(7, 99), 7);
+                let packed_state = run_desc.pack_bitfield(0, "STATE", 3).unwrap_or(0);
+                assert_eq!(run_desc.unpack_bitfield(packed_state, "STATE"), Some(3));
+            }
+            if let Some(w1c_desc) = rmap.lookup_by_name("VMEM_FAULT_ADDR") {
+                assert_eq!(w1c_desc.apply_write_value(0b1111, 0b0101), 0b1010);
+            }
+        }
+        let emu_mmio = EmulatedKernelDriverBackend::default();
+        emu_mmio.reset_csrs_for_generation(TpuGeneration::V5e);
+        let v5e_map = ChipRegisterMap::for_generation(TpuGeneration::V5e);
+        assert_eq!(
+            emu_mmio.write_csr_checked(TpuGeneration::V5e, v5e_map.tc0_run_status_csr, 99),
+            1
+        );
+        assert_eq!(
+            emu_mmio.write_csr_checked(TpuGeneration::V5e, v5e_map.tc0_pc_csr, 128),
+            128
+        );
+        assert_eq!(
+            emu_mmio.write_csr_checked(TpuGeneration::V5e, 0xDEAD_BEEF, 77),
+            77
+        );
+
+        if let Ok((r_fd, w_fd)) = PosixKernelDriverBackend.create_eventfd_pair() {
+            assert!(PosixKernelDriverBackend.signal_eventfd(w_fd, 7).is_ok());
+            assert_eq!(
+                PosixKernelDriverBackend.wait_for_interrupt_eventfd(r_fd, 50),
+                Ok(7)
+            );
+            assert!(
+                PosixKernelDriverBackend
+                    .wait_for_interrupt_eventfd(r_fd, 0)
+                    .is_err()
+            );
+            let _ = PosixKernelDriverBackend.close_eventfd_pair(r_fd, w_fd);
+        }
+        assert!(
+            PosixKernelDriverBackend
+                .signal_eventfd(EventFdHandle(-1), 1)
+                .is_err()
+        );
+        if let Ok((r_short, w_short)) = PosixKernelDriverBackend.create_eventfd_pair() {
+            let _ = PosixKernelDriverBackend.close_device(w_short.0);
+            assert!(
+                PosixKernelDriverBackend
+                    .wait_for_interrupt_eventfd(r_short, 10)
+                    .is_err()
+            );
+            let _ = PosixKernelDriverBackend.close_device(r_short.0);
         }
 
         let mut vm = TpuCoreVmState::default();
+        let tile_f32 = ElementType::F32.pack_from_f64_slice(&[2.0, 4.0, 6.0, 8.0]);
+        vm.vreg_tiles.insert(0, tile_f32.clone());
+        vm.vreg_tiles.insert(1, tile_f32.clone());
+        vm.vmem_allocations.insert(32, tile_f32);
         assert!(
             PosixKernelDriverBackend
                 .mmap_bar_aperture(FileDescriptor(-1), ByteSize(0))
@@ -1701,20 +2021,41 @@ ENTRY main {
         assert_eq!(vm.cycles_executed, 0);
         assert!(vm.wait_sync_flag(0, 1, 1).is_err());
         if let Ok(prog) = CompiledProgram::compile("mlir", b"dot_general", b"") {
-            vm.execute_vliw_stream(&prog.encode_vliw_program());
+            let mut m_bundles = prog.encode_vliw_program();
+            if let Some(b0) = m_bundles.first_mut() {
+                b0.matrix_slot.lhs_vreg = 0;
+                b0.matrix_slot.rhs_vreg = 1;
+                b0.matrix_slot.acc_vreg = 2;
+                b0.dma_slot.dma_opcode = 1;
+                b0.dma_slot.src_space = 1;
+            }
+            vm.execute_vliw_stream(&m_bundles);
+            vm.mxu_weights = vec![1.0, 1.0, 1.0, 1.0];
+            vm.execute_vliw_stream(&m_bundles);
             if let Some(ds_exec) = prog.to_tpu_executable_proto().ds_executable {
                 vm.execute_deepsea_proto(&ds_exec);
             }
         }
         if let Ok(prog_exp) = CompiledProgram::compile("mlir", b"exp_f32", b"") {
             let mut bundles = prog_exp.encode_vliw_program();
-            for (idx, sc_op) in [2_u8, 3, 4, 5].into_iter().enumerate() {
+            vm.preg[0] = true;
+            for (idx, sc_op) in [2_u8, 3, 4, 5, 6].into_iter().enumerate() {
                 if let Some(b0) = bundles.first().copied() {
                     let mut b_mod = b0;
                     b_mod.scalar_slot.opcode = sc_op;
+                    b_mod.scalar_slot.src0_sreg = 0;
                     b_mod.scalar_slot.dst_sreg = u8::try_from(idx + 1).unwrap_or(1);
+                    b_mod.scalar_slot.imm32 = 1;
                     bundles.push(b_mod);
                 }
+            }
+            if let Some(b0) = bundles.first().copied() {
+                let mut b_br_false = b0;
+                b_br_false.scalar_slot.opcode = 6;
+                b_br_false.scalar_slot.src0_sreg = 10;
+                b_br_false.scalar_slot.dst_sreg = 10;
+                b_br_false.scalar_slot.imm32 = 0;
+                bundles.push(b_br_false);
             }
             for v_op in [
                 TpuOpCode::AddF32 as u16,
@@ -1725,6 +2066,7 @@ ENTRY main {
                 TpuOpCode::MinF32 as u16,
                 TpuOpCode::NegF32 as u16,
                 TpuOpCode::Abs as u16,
+                TpuOpCode::Identity as u16,
                 999_u16,
             ] {
                 if let Some(b0) = bundles.first().copied() {
@@ -1779,11 +2121,33 @@ ENTRY main {
         };
         vm.dispatch_host_command(&hcmd);
         assert_eq!(vm.sreg[0], 77);
+        let hcmd2 = crate::proto::HostCommandEnvelopeProto {
+            opcode: 2,
+            continuation_id: 78,
+            device_id: 0,
+            core_index: 0,
+            handler_id: 1,
+            payload: vec![1, 2, 3, 4],
+        };
+        vm.dispatch_host_command(&hcmd2);
+        assert_eq!(vm.sreg[0], 78);
 
         if let Ok(mut prog) =
             CompiledProgram::compile("mlir", b"module @vm_exec { stablehlo.add }", b"")
         {
             let in_bytes = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
+            let imem_bin = prog.encode_architectural_imem();
+            assert!(
+                vm.execute_imem_binary(&imem_bin, vec![in_bytes.clone(), in_bytes.clone()], 1)
+                    .is_ok()
+            );
+            assert!(vm.execute_imem_binary(&[], vec![], 1).is_err());
+            assert!(vm.execute_imem_binary(&[0_u8; 17], vec![], 1).is_err());
+            let mut bad_imem = imem_bin;
+            if let Some(b) = bad_imem.get_mut(16) {
+                *b = 250;
+            }
+            assert!(vm.execute_imem_binary(&bad_imem, vec![], 1).is_err());
             let exec_res = vm.execute(&prog, vec![in_bytes.clone(), in_bytes.clone()]);
             assert!(exec_res.is_ok());
             prog.output_slots = vec![99];
@@ -1791,5 +2155,77 @@ ENTRY main {
             prog.output_slots.clear();
             assert!(vm.execute(&prog, vec![in_bytes]).is_err());
         }
+
+        // Test SparseCoreVmState gather and SGD / Adagrad / Adam / Ftrl / RmsProp / Momentum / Lion scatter updates
+        let mut sc_vm = SparseCoreVmState::new(0, 4, 2, 1.0);
+        let gathered = sc_vm.sparse_gather(&[1, 3]);
+        assert_eq!(gathered, vec![1.0, 1.0, 1.0, 1.0]);
+        for opt in [
+            SparseCoreOptimizer::Sgd { learning_rate: 0.1 },
+            SparseCoreOptimizer::Adagrad {
+                learning_rate: 0.1,
+                epsilon: 1e-6,
+            },
+            SparseCoreOptimizer::Adam {
+                learning_rate: 0.01,
+                beta1: 0.9,
+                beta2: 0.999,
+                epsilon: 1e-8,
+            },
+            SparseCoreOptimizer::Ftrl {
+                learning_rate: 0.1,
+                learning_rate_power: -0.5,
+                l1_regularization: 10.0,
+                l2_regularization: 0.01,
+            },
+            SparseCoreOptimizer::Ftrl {
+                learning_rate: 0.1,
+                learning_rate_power: -0.5,
+                l1_regularization: 0.0,
+                l2_regularization: 0.01,
+            },
+            SparseCoreOptimizer::RmsProp {
+                learning_rate: 0.01,
+                decay: 0.9,
+                momentum: 0.9,
+                epsilon: 1e-6,
+            },
+            SparseCoreOptimizer::Momentum {
+                learning_rate: 0.05,
+                momentum: 0.9,
+            },
+            SparseCoreOptimizer::Lion {
+                learning_rate: 0.01,
+                beta1: 0.9,
+                beta2: 0.99,
+                weight_decay: 0.01,
+            },
+        ] {
+            sc_vm.sparse_scatter_update(&[1], &[0.5, -0.5], opt);
+        }
+        assert!(sc_vm.steps_executed >= 8);
+        assert_eq!(sc_vm.clone(), sc_vm);
+        assert_ne!(
+            format!(
+                "{sc_vm:?}{:?}",
+                SparseCoreOptimizer::Sgd { learning_rate: 0.1 }.clone()
+            ),
+            ""
+        );
+
+        // Test 3x3 Cholesky and TriangularSolve
+        let chol_3x3 =
+            SimulatedTpuHal::eval_cholesky(&[4.0, 2.0, 0.0, 2.0, 5.0, 0.0, 0.0, 0.0, 9.0]);
+        assert_eq!(chol_3x3.len(), 9);
+        assert!((chol_3x3.first().copied().unwrap_or(0.0) - 2.0).abs() < 1e-6);
+        assert!((chol_3x3.get(8).copied().unwrap_or(0.0) - 3.0).abs() < 1e-6);
+        let tri_3x3 = SimulatedTpuHal::eval_triangular_solve(
+            &[2.0, 0.0, 0.0, 1.0, 2.0, 0.0, 0.0, 0.0, 3.0],
+            &[2.0, 0.0, 0.0, 3.0, 0.0, 0.0, 9.0, 0.0, 0.0],
+        );
+        assert_eq!(tri_3x3.len(), 9);
+        assert!((tri_3x3.first().copied().unwrap_or(0.0) - 1.0).abs() < 1e-6);
+        assert!((tri_3x3.get(3).copied().unwrap_or(0.0) - 1.0).abs() < 1e-6);
+        assert!((tri_3x3.get(6).copied().unwrap_or(0.0) - 3.0).abs() < 1e-6);
     }
 }

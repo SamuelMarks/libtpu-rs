@@ -6,6 +6,9 @@
 //! `PJRT_PhaseCompile_Extension`.
 //!
 //! Organized into focused submodules:
+//! - [`ast`]: Strongly-typed [`AstModule`], [`AstFunction`], [`AstRegion`], [`AstBlock`], [`AstOperation`], [`MlirType`], and [`MlirAttribute`].
+//! - [`parser`]: Recursive-descent MLIR grammar parser (`TokenCursor`, `MlirModuleParser`) and CHLO legalizer.
+//! - [`hlo_parser`]: Recursive-descent textual XLA HLO parser (`HloTextParser`), `HloModuleProto` bridge, and AST lowerer.
 //! - [`opcode`]: [`TpuOpCode`], [`InstructionAttrs`], and [`TpuInstructionBundle`].
 //! - [`vliw`]: Architectural 64-byte [`TensorCoreVliwBundle`] and 16-byte [`VliwInstructionWord`] encoders.
 //! - [`mlir_bytecode`]: MLIR Bytecode (`ML\xefR`) container decoder, encoder, and `PrefixVarInt` codecs.
@@ -13,32 +16,59 @@
 //! - [`passes`]: Compiler optimization passes, VMEM liveness intervals, cost analysis, and DAG scheduling.
 //! - [`serialization`]: `LTPUEXEC` binary format and `DeepSea` / `TpuExecutableProto` wire serialization.
 
+pub mod ast;
+pub mod hlo_parser;
 pub mod lexer;
 pub mod mlir_bytecode;
 pub mod opcode;
+pub mod parser;
 pub mod passes;
 pub mod serialization;
 pub mod vliw;
 
+pub use self::ast::{
+    AffineMapExpr, AstBlock, AstBlockArg, AstFunction, AstFunctionType, AstModule, AstOpKind,
+    AstOpResult, AstOperand, AstOperation, AstRegion, AstResultType, ComparisonDirection,
+    ComparisonType, ConvDimensionNumbersAttr, DenseElementsAttr, DialectKind, DimensionSize,
+    DotDimensionNumbersAttr, FftKind, GatherDimensionNumbersAttr, HloComputationAst,
+    HloInstructionAst, HloWindowSpec, MemRefLayoutAttr, MemRefType, MlirAttribute, MlirLocation,
+    MlirType, MosaicDialectAttr, PrecisionLevel, QuantizedElementType, RankedTensorType,
+    RngAlgorithmKind, ScatterDimensionNumbersAttr, SdyDimensionSharding, SdyMeshAttr,
+    SdyTensorShardingAttr, TensorEncodingAttr, TpuMemorySpace, TpuSemaphoreKind, TransposeMode,
+    VectorType, Visibility,
+};
+pub use self::hlo_parser::{
+    HloTextParser, hlo_ast_to_proto, hlo_proto_to_ast, lower_ast_module_to_parsed_hlo,
+    parse_unified_ast_module, verify_ast_module_semantics,
+};
 pub use self::lexer::{
     HloAstModule, HloLexer, HloParser, HloToken, MosaicTargetMetadata, ParsedHloModule,
     SpannedToken, TokenSpan,
 };
 pub use self::mlir_bytecode::{
-    MLIR_BYTECODE_MAGIC, MlirBytecodeHeader, MlirBytecodeSection, decode_mlir_prefix_varint,
+    MLIR_BYTECODE_MAGIC, MlirBytecodeEncoder, MlirBytecodeHeader, MlirBytecodeOpNode,
+    MlirBytecodeSection, MlirDialectDescriptor, decode_mlir_prefix_varint,
     encode_mlir_prefix_varint,
 };
 pub use self::opcode::{InstructionAttrs, TpuInstructionBundle, TpuOpCode};
+pub use self::parser::{
+    MlirModuleParser, TokenCursor, classify_ast_operation, legalize_chlo_in_ast_module,
+    parse_float_literal, parse_mlir_ast_module, parse_mlir_element_type,
+    resolve_reduction_region_opcode, split_shaped_dims_and_dtype,
+};
 pub use self::passes::{
     CompiledMemoryStats, CostAnalysis, CseExpressionKey, HloDagAnalysisReport,
     RegisterLivenessInterval, analyze_hlo_computation_dag,
 };
 pub use self::serialization::{
-    EXECUTABLE_FORMAT_VERSION, EXECUTABLE_MAGIC, ExecutableBinaryHeader,
+    DeepseaRelocatedArtifact, EM_DEEPSEA, EXECUTABLE_FORMAT_VERSION, EXECUTABLE_MAGIC,
+    ExecutableBinaryHeader, R_DEEPSEA_HBM_ABS64, R_DEEPSEA_IMEM_REL32, R_DEEPSEA_SYNC_FLAG16,
+    R_DEEPSEA_VMEM_OFF32,
 };
 pub use self::vliw::{
-    AsyncDmaSlot, ExtendedUnarySlot, MatrixMxuSlot, ScalarAluSlot, TensorCoreVliwBundle,
-    VectorAluSlot, VliwBundleHeader, VliwInstructionWord,
+    AsyncDmaSlot, ExtendedUnarySlot, LloVliwScheduler, MatrixMxuSlot, PolyhedralTileSchedule,
+    ScalarAluSlot, TensorCoreVliwBundle, VectorAluSlot, VliwBundleHeader, VliwInstructionWord,
+    VliwScoreboard,
 };
 
 use crate::error::{LibTpuError, LibTpuResult};
@@ -163,13 +193,13 @@ impl CompiledProgram {
 
         let parsed_options = CompileOptionsProto::decode_or_empty(compile_options)?;
 
-        let num_replicas = parsed_options
+        let mut num_replicas = parsed_options
             .executable_build_options
             .as_ref()
             .and_then(|b| usize::try_from(b.num_replicas).ok())
             .unwrap_or(0)
             .max(1);
-        let num_partitions = parsed_options
+        let mut num_partitions = parsed_options
             .executable_build_options
             .as_ref()
             .and_then(|b| usize::try_from(b.num_partitions).ok())
@@ -177,15 +207,17 @@ impl CompiledProgram {
             .max(1);
 
         let stripped_code = code.strip_prefix(MLIR_BYTECODE_MAGIC).unwrap_or(code);
-        let text = if let Ok(bc_hdr) = MlirBytecodeHeader::decode(code) {
-            if bc_hdr.string_table.is_empty() {
-                String::from_utf8_lossy(stripped_code).into_owned()
-            } else {
-                bc_hdr.to_synthesized_mlir_text()
-            }
-        } else {
-            String::from_utf8_lossy(stripped_code).into_owned()
-        };
+        let decoded_bc = MlirBytecodeHeader::decode(code).ok();
+        let text = decoded_bc.as_ref().map_or_else(
+            || String::from_utf8_lossy(stripped_code).into_owned(),
+            |bc_hdr| {
+                if bc_hdr.string_table.is_empty() {
+                    String::from_utf8_lossy(stripped_code).into_owned()
+                } else {
+                    bc_hdr.to_synthesized_mlir_text()
+                }
+            },
+        );
         let has_syntax_err_tok = HloLexer::tokenize(&text)
             .iter()
             .any(|t| matches!(t, HloToken::Ident(id) if id == "SYNTAX_ERROR"));
@@ -195,6 +227,29 @@ impl CompiledProgram {
             });
         }
         let mosaic_metadata = Self::parse_mosaic_metadata(&text);
+        if let Ok(ast_mod) = parse_unified_ast_module(&text) {
+            if num_partitions == 1
+                && let Some(mesh) = ast_mod.sdy_meshes.values().next()
+            {
+                num_partitions = mesh.total_devices().max(1);
+            }
+            if num_partitions == 1
+                && let Some(p) = ast_mod
+                    .attributes
+                    .get("num_partitions")
+                    .and_then(MlirAttribute::as_usize)
+            {
+                num_partitions = p.max(1);
+            }
+            if num_replicas == 1
+                && let Some(r) = ast_mod
+                    .attributes
+                    .get("replica_count")
+                    .and_then(MlirAttribute::as_usize)
+            {
+                num_replicas = r.max(1);
+            }
+        }
 
         let decoded_hlo = HloModuleProto::decode(stripped_code)
             .ok()
@@ -208,6 +263,19 @@ impl CompiledProgram {
         let (name, opcode, parameter_shapes, output_shapes, bundles, output_slots) =
             if let Some(hlo_proto) = decoded_hlo {
                 Self::lower_from_hlo_proto(&hlo_proto)?
+            } else if let Some(bc_hdr) = decoded_bc.as_ref().filter(|h| !h.ir_op_records.is_empty())
+            {
+                let ast_mod = bc_hdr.to_ast_module();
+                let parsed = lower_ast_module_to_parsed_hlo(&ast_mod)?;
+                let extracted_name = ast_mod.name.unwrap_or_default();
+                (
+                    extracted_name,
+                    parsed.primary_op,
+                    parsed.parameter_shapes,
+                    parsed.output_shapes,
+                    parsed.bundles,
+                    parsed.output_slots,
+                )
             } else {
                 let extracted_name = Self::extract_module_name(&text);
                 let parsed = Self::parse_textual_program(&text);
@@ -311,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_opcode_and_compile_variants() {
-        for b in 0..=78 {
+        for b in 0..=100 {
             let op = TpuOpCode::from_byte(b);
             assert!(op.is_ok());
             assert_eq!(TpuOpCode::from_raw(b), op);
@@ -340,8 +408,8 @@ mod tests {
         assert_eq!(ProgramFormat::HloWithConfig.as_str(), "hlo_with_config");
         assert_eq!(ProgramFormat::Mlir.clone(), ProgramFormat::Mlir);
         assert_ne!(format!("{:?}", ProgramFormat::Mlir), "");
-        assert!(TpuOpCode::from_byte(99).is_err());
-        assert!(TpuOpCode::from_raw(99).is_err());
+        assert!(TpuOpCode::from_byte(250).is_err());
+        assert!(TpuOpCode::from_raw(250).is_err());
         for m in [
             "shift_left",
             "shift_right_arithmetic",
@@ -748,7 +816,78 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
                     let arch_bundle = b.encode_architectural_bundle();
                     assert_eq!(bytemuck::bytes_of(&arch_bundle).len(), 64);
                     assert_ne!(format!("{arch_bundle:?}"), "");
+                    let disasm = arch_bundle.disassemble_vliw_bundle();
+                    let reassembled = TensorCoreVliwBundle::assemble_vliw_bundle(&disasm);
+                    assert!(reassembled.is_ok());
+                    if let Ok(re_b) = reassembled {
+                        assert_eq!(re_b.vector_slot.opcode, arch_bundle.vector_slot.opcode);
+                        assert_eq!(re_b.matrix_slot.opcode, arch_bundle.matrix_slot.opcode);
+                        assert_eq!(re_b.xunary_slot.opcode, arch_bundle.xunary_slot.opcode);
+                        assert_eq!(re_b.dma_slot.dma_opcode, arch_bundle.dma_slot.dma_opcode);
+                    }
                 }
+                assert!(TensorCoreVliwBundle::assemble_vliw_bundle("bad_line").is_err());
+                assert!(
+                    TensorCoreVliwBundle::assemble_vliw_bundle("[pc=0 gen=v5 stall=0] { no_s0 }")
+                        .is_err()
+                );
+                assert!(
+                    TensorCoreVliwBundle::assemble_vliw_bundle(
+                        "[pc=0 gen=v5 stall=0] { S0(op=1, $s0 <- $s0, $s0, imm=0) | no_v0 }"
+                    )
+                    .is_err()
+                );
+                assert!(
+                    TensorCoreVliwBundle::assemble_vliw_bundle(
+                        "[pc=0 gen=v5 stall=0] { S0(op=1, $s0 <- $s0, $s0, imm=0) | V0(NO_COMMA) }"
+                    )
+                    .is_err()
+                );
+                assert!(TensorCoreVliwBundle::assemble_vliw_bundle("[pc=0 gen=v5 stall=0] { S0(op=1, $s0 <- $s0, $s0, imm=0) | V0(BadOpName, $v0 <- $v0, $v0, $v0) }").is_err());
+                let sb_default = VliwScoreboard::default();
+                assert_eq!(sb_default, VliwScoreboard::new());
+                assert_ne!(format!("{sb_default:?}"), "");
+                let mut poly_prog = prog.clone();
+                let poly_scheds = poly_prog.compute_polyhedral_tile_schedules();
+                assert_ne!(poly_scheds, [] as [PolyhedralTileSchedule; 0]);
+                for ps in &poly_scheds {
+                    assert_eq!(ps.clone(), *ps);
+                    assert_ne!(format!("{ps:?}"), "");
+                }
+                poly_prog.output_shapes.clear();
+                for ib in &mut poly_prog.instruction_bundles {
+                    ib.attrs.output_shape = None;
+                }
+                assert_ne!(
+                    poly_prog.compute_polyhedral_tile_schedules(),
+                    [] as [PolyhedralTileSchedule; 0]
+                );
+                let sh_3d = Shape {
+                    element_type: ElementType::F32,
+                    dims: vec![2, 16, 256],
+                    dynamic_dims: vec![false, false, false],
+                    layout: crate::types::MemoryLayout::default_tpu_tiled(3),
+                };
+                let ps_3d = PolyhedralTileSchedule::from_shape(
+                    &sh_3d,
+                    crate::types::TpuGeneration::V6e,
+                    0,
+                    1,
+                );
+                assert_eq!(ps_3d.batch_tiles, 2);
+                let sh_1d = Shape {
+                    element_type: ElementType::F32,
+                    dims: vec![128],
+                    dynamic_dims: vec![false],
+                    layout: crate::types::MemoryLayout::default_tpu_tiled(1),
+                };
+                let ps_1d = PolyhedralTileSchedule::from_shape(
+                    &sh_1d,
+                    crate::types::TpuGeneration::V5p,
+                    0,
+                    1,
+                );
+                assert_eq!(ps_1d.m_tiles, 1);
                 let c_clone = prog.cost_analysis;
                 let m_clone = prog.memory_stats;
                 let p_clone = prog.clone();
@@ -779,10 +918,8 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
             name: String::from("binary_hlo_add"),
             entry_computation_name: String::from("main"),
             entry_computation_id: 1,
-            host_program_shape: None,
             computations: vec![HloComputationProto {
                 name: String::from("main"),
-                program_shape: None,
                 id: 1,
                 root_id: 3,
                 instructions: vec![
@@ -792,42 +929,33 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
                         shape: Some(ShapeProto {
                             element_type: 11,
                             dimensions: vec![8],
-                            tuple_shapes: vec![],
-                            layout: None,
                             is_dynamic_dimension: vec![false],
+                            ..ShapeProto::default()
                         }),
                         id: 1,
-                        operand_ids: vec![],
                         parameter_number: 0,
-                        custom_call_target: String::new(),
+                        ..HloInstructionProto::default()
                     },
                     HloInstructionProto {
                         name: String::from("p1"),
                         opcode: String::from("parameter"),
-                        shape: Some(ShapeProto {
-                            element_type: 0,
-                            dimensions: vec![],
-                            tuple_shapes: vec![],
-                            layout: None,
-                            is_dynamic_dimension: vec![],
-                        }),
+                        shape: Some(ShapeProto::default()),
                         id: 2,
-                        operand_ids: vec![],
                         parameter_number: 1,
-                        custom_call_target: String::new(),
+                        ..HloInstructionProto::default()
                     },
                     HloInstructionProto {
                         name: String::from("add.3"),
                         opcode: String::from("add"),
-                        shape: None,
                         id: 3,
                         operand_ids: vec![1, 2],
-                        parameter_number: 0,
-                        custom_call_target: String::new(),
+                        ..HloInstructionProto::default()
                     },
                 ],
+                ..HloComputationProto::default()
             }],
             id: 1,
+            ..HloModuleProto::default()
         };
         let encoded = hlo.encode();
         let prog = CompiledProgram::compile("hlo", &encoded, b"");
@@ -909,20 +1037,32 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
         structured_bc.push(5);
         structured_bc.extend_from_slice(&encode_mlir_prefix_varint(4));
         structured_bc.extend_from_slice(&[1, 2, 3, 4]);
-        // Section 6 (kProperties / unknown)
+        // Section 6 (kResourceOffset)
+        let res_off_payload = encode_mlir_prefix_varint(4);
         structured_bc.push(6);
+        structured_bc.extend_from_slice(&encode_mlir_prefix_varint(res_off_payload.len() as u64));
+        structured_bc.extend_from_slice(&res_off_payload);
+        // Section 7 (kProperties)
+        let prop_payload = encode_mlir_prefix_varint(42);
+        structured_bc.push(7);
+        structured_bc.extend_from_slice(&encode_mlir_prefix_varint(prop_payload.len() as u64));
+        structured_bc.extend_from_slice(&prop_payload);
+        // Section 8 (unknown future section)
+        structured_bc.push(8);
         structured_bc.extend_from_slice(&encode_mlir_prefix_varint(1));
         structured_bc.push(0xFF);
 
         let parsed_struct_bc = MlirBytecodeHeader::decode(&structured_bc);
         assert!(parsed_struct_bc.is_ok());
         if let Ok(s_hdr) = parsed_struct_bc {
-            assert_eq!(s_hdr.sections.len(), 7);
+            assert_eq!(s_hdr.sections.len(), 9);
             assert_eq!(s_hdr.dialects.len(), 2);
             assert_eq!(s_hdr.attr_type_entries, vec![String::from("tensor<4xf32>")]);
             assert_eq!(s_hdr.attr_type_offsets, vec![14]);
             assert_eq!(s_hdr.ir_op_records, vec![7]);
             assert_eq!(s_hdr.resources.len(), 1);
+            assert_eq!(s_hdr.resource_offsets, vec![4]);
+            assert_eq!(s_hdr.properties, vec![42]);
             if let Some(sec0) = s_hdr.sections.first() {
                 assert_eq!(sec0.clone(), *sec0);
                 assert_ne!(format!("{sec0:?}"), "");
@@ -932,8 +1072,115 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
                     .to_synthesized_mlir_text()
                     .contains("stablehlo.multiply")
             );
+            let op_nodes = s_hdr.decode_ir_operations();
+            assert_eq!(op_nodes.len(), 1);
+            assert_eq!(op_nodes.first().map(|n| n.name_index), Some(7));
+            assert_eq!(op_nodes.first().cloned(), op_nodes.first().cloned());
+            assert_ne!(format!("{:?}", op_nodes.first()), "");
             let reencoded = s_hdr.encode();
             assert!(MlirBytecodeHeader::decode(&reencoded).is_ok());
+        }
+        assert_eq!(
+            MlirBytecodeHeader::legalize_vhlo_symbol("vhlo"),
+            "stablehlo"
+        );
+        assert_eq!(
+            MlirBytecodeHeader::legalize_vhlo_symbol("vhlo.add_v1"),
+            "stablehlo.add"
+        );
+        assert_eq!(
+            MlirBytecodeHeader::legalize_vhlo_symbol("vhlo.reduce_variadic"),
+            "stablehlo.reduce_variadic"
+        );
+        assert_eq!(
+            MlirBytecodeHeader::legalize_vhlo_symbol("vhlo.custom"),
+            "stablehlo.custom"
+        );
+        let mut bc_enc = MlirBytecodeEncoder::new("MLIR20.0.0");
+        let s_idx0 = bc_enc.intern_string("vhlo.add_v1");
+        let s_idx0_dup = bc_enc.intern_string("vhlo.add_v1");
+        assert_eq!(s_idx0, s_idx0_dup);
+        let _ = bc_enc.intern_string("vhlo");
+        bc_enc.dialects.push(String::from("vhlo"));
+        bc_enc.attr_types.push(String::from("tensor<4xf32>"));
+        let dict_attr_idx = bc_enc.intern_attr_type(r#"{call_target_name = "k"}"#);
+        let float_attr_idx = bc_enc.intern_attr_type("2.5");
+        let _ = (dict_attr_idx, float_attr_idx);
+        bc_enc.properties.push(1);
+        bc_enc.operations.push(MlirBytecodeOpNode {
+            name_index: s_idx0,
+            encoding_mask: 0x80 | 0x01 | 0x08 | 0x10 | 0x40,
+            attr_dict_index: Some(0),
+            operands: vec![0, 1],
+            result_type_indices: vec![0],
+            successors: vec![1],
+            num_regions: 2,
+            properties_index: Some(0),
+            inline_regions: vec![vec![MlirBytecodeOpNode {
+                name_index: s_idx0,
+                encoding_mask: 0x80,
+                attr_dict_index: None,
+                operands: vec![0],
+                result_type_indices: vec![0],
+                successors: Vec::new(),
+                num_regions: 0,
+                properties_index: None,
+                inline_regions: Vec::new(),
+            }]],
+        });
+        bc_enc.operations.push(MlirBytecodeOpNode {
+            name_index: s_idx0,
+            encoding_mask: 0x80 | 0x01,
+            attr_dict_index: Some(1),
+            operands: vec![0],
+            result_type_indices: vec![0],
+            successors: Vec::new(),
+            num_regions: 0,
+            properties_index: None,
+            inline_regions: Vec::new(),
+        });
+        bc_enc.operations.push(MlirBytecodeOpNode {
+            name_index: s_idx0,
+            encoding_mask: 0x15,
+            attr_dict_index: None,
+            operands: vec![0],
+            result_type_indices: vec![0],
+            successors: Vec::new(),
+            num_regions: 1,
+            properties_index: None,
+            inline_regions: Vec::new(),
+        });
+        assert_eq!(bc_enc.clone(), bc_enc);
+        assert_ne!(format!("{bc_enc:?}"), "");
+        let enc_bc_bytes = bc_enc.encode_to_bytes();
+        let dec_bc = MlirBytecodeHeader::decode(&enc_bc_bytes);
+        assert!(dec_bc.is_ok());
+        if let Ok(dh) = dec_bc {
+            assert!(dh.to_synthesized_mlir_text().contains("stablehlo.add"));
+            let ops = dh.decode_ir_operations();
+            assert_ne!(ops.len(), 0);
+            assert_eq!(
+                dh.resolve_string_at_offset(0),
+                Some(String::from("stablehlo.add"))
+            );
+            assert_eq!(dh.resolve_string_at_offset(11), None);
+            assert_eq!(dh.resolve_string_at_offset(9999), None);
+            let dial_ops = dh.decode_dialect_op_names();
+            assert_eq!(dial_ops.len(), 2);
+            let ast_from_bc = dh.to_ast_module();
+            assert_eq!(ast_from_bc.functions.len(), 1);
+            let mut empty_dh = dh;
+            empty_dh.sections.clear();
+            empty_dh.attr_type_entries.clear();
+            empty_dh.dialects.clear();
+            empty_dh.string_table = vec![String::from("add"), String::from("@custom_bc_mod")];
+            assert_eq!(
+                empty_dh.resolve_string_at_offset(0),
+                Some(String::from("add"))
+            );
+            let _ = empty_dh.decode_dialect_op_names();
+            let ast_custom = empty_dh.to_ast_module();
+            assert_eq!(ast_custom.name, Some(String::from("custom_bc_mod")));
         }
         let compiled_struct_bc = CompiledProgram::compile("mlir", &structured_bc, b"");
         assert!(compiled_struct_bc.is_ok());
@@ -973,23 +1220,20 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
                 name: String::from("no_params"),
                 entry_computation_name: String::from("main"),
                 entry_computation_id: 1,
-                host_program_shape: None,
                 computations: vec![HloComputationProto {
                     name: String::from("main"),
-                    program_shape: None,
                     id: 1,
                     root_id: 1,
                     instructions: vec![HloInstructionProto {
                         name: String::from("op.1"),
                         opcode: String::from(op_str),
-                        shape: None,
                         id: 1,
-                        operand_ids: vec![],
-                        parameter_number: 0,
-                        custom_call_target: String::new(),
+                        ..HloInstructionProto::default()
                     }],
+                    ..HloComputationProto::default()
                 }],
                 id: 1,
+                ..HloModuleProto::default()
             };
             let enc2 = hlo_no_params.encode();
             assert!(CompiledProgram::compile("hlo", &enc2, b"").is_ok());
@@ -999,10 +1243,8 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
             name: String::from("bad_et"),
             entry_computation_name: String::from("main"),
             entry_computation_id: 1,
-            host_program_shape: None,
             computations: vec![HloComputationProto {
                 name: String::from("main"),
-                program_shape: None,
                 id: 1,
                 root_id: 1,
                 instructions: vec![HloInstructionProto {
@@ -1011,17 +1253,15 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
                     shape: Some(ShapeProto {
                         element_type: 99,
                         dimensions: vec![4],
-                        tuple_shapes: vec![],
-                        layout: None,
-                        is_dynamic_dimension: vec![],
+                        ..ShapeProto::default()
                     }),
                     id: 1,
-                    operand_ids: vec![],
-                    parameter_number: 0,
-                    custom_call_target: String::new(),
+                    ..HloInstructionProto::default()
                 }],
+                ..HloComputationProto::default()
             }],
             id: 1,
+            ..HloModuleProto::default()
         };
         assert!(CompiledProgram::compile("hlo", &bad_et_hlo.encode(), b"").is_err());
 
@@ -1061,6 +1301,14 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
             hlo_module_bytes: b"SYNTAX_ERROR".to_vec(),
         };
         assert!(CompiledProgram::deserialize(&bad_src_proto.encode()).is_err());
+
+        if let Ok(prog_ffi) = CompiledProgram::compile("mlir", b"stablehlo.add", b"") {
+            let host_offload = prog_ffi.build_host_offloading_executable_proto();
+            assert_eq!(host_offload.executable_type, 1);
+            let (ffi_st, ffi_attrs) = prog_ffi.build_ffi_state_and_attributes();
+            assert!(ffi_st.type_name.contains("xla.ffi.state"));
+            assert!(ffi_attrs.attrs.contains_key("module_name"));
+        }
     }
 
     #[test]
@@ -1160,7 +1408,6 @@ ENTRY %main (x: f32[4]) -> f32[4] {
         // Test petgraph + indexmap DAG analysis (valid DAG and cyclic graph)
         let valid_comp = HloComputationProto {
             name: String::from("dag_main"),
-            program_shape: None,
             id: 1,
             root_id: 3,
             instructions: vec![
@@ -1170,25 +1417,21 @@ ENTRY %main (x: f32[4]) -> f32[4] {
                     shape: Some(ShapeProto {
                         element_type: 11,
                         dimensions: vec![16, 128],
-                        tuple_shapes: vec![],
-                        layout: None,
-                        is_dynamic_dimension: vec![],
+                        ..ShapeProto::default()
                     }),
                     id: 1,
                     operand_ids: vec![999], // external/unknown operand ID gracefully ignored
-                    parameter_number: 0,
-                    custom_call_target: String::new(),
+                    ..HloInstructionProto::default()
                 },
                 HloInstructionProto {
                     name: String::from("neg"),
                     opcode: String::from("negate"),
-                    shape: None,
                     id: 2,
                     operand_ids: vec![1],
-                    parameter_number: 0,
-                    custom_call_target: String::new(),
+                    ..HloInstructionProto::default()
                 },
             ],
+            ..HloComputationProto::default()
         };
         let dag_res = analyze_hlo_computation_dag(&valid_comp);
         assert!(dag_res.is_ok());
@@ -1202,29 +1445,25 @@ ENTRY %main (x: f32[4]) -> f32[4] {
 
         let cyclic_comp = HloComputationProto {
             name: String::from("cyclic"),
-            program_shape: None,
             id: 2,
             root_id: 2,
             instructions: vec![
                 HloInstructionProto {
                     name: String::from("a"),
                     opcode: String::from("negate"),
-                    shape: None,
                     id: 1,
                     operand_ids: vec![2],
-                    parameter_number: 0,
-                    custom_call_target: String::new(),
+                    ..HloInstructionProto::default()
                 },
                 HloInstructionProto {
                     name: String::from("b"),
                     opcode: String::from("negate"),
-                    shape: None,
                     id: 2,
                     operand_ids: vec![1],
-                    parameter_number: 0,
-                    custom_call_target: String::new(),
+                    ..HloInstructionProto::default()
                 },
             ],
+            ..HloComputationProto::default()
         };
         assert!(analyze_hlo_computation_dag(&cyclic_comp).is_err());
         assert!(CompiledProgram::parse_hlo_shape_token("[2,2]").is_err());
@@ -1445,6 +1684,36 @@ ENTRY %main (x: f32[4]) -> f32[4] {
                     ..crate::config::TpuInitConfig::default()
                 });
                 pack_prog.pass_llo_vliw_bundle_scheduling();
+                let sched = LloVliwScheduler::new(tpu_gen);
+                assert_eq!(sched.clone(), sched);
+                assert_ne!(format!("{sched:?}"), "");
+                let _ = sched.instruction_latency_cycles(TpuOpCode::Constant);
+                let _ = sched.instruction_latency_cycles(TpuOpCode::AllReduceSumF32);
+                let mut sched_inputs = pack_prog.instruction_bundles.clone();
+                sched_inputs.push(TpuInstructionBundle {
+                    pc_offset: 4,
+                    opcode: TpuOpCode::AllReduceSumF32,
+                    operand_slots: vec![5],
+                    output_slot: 6,
+                    sync_flag_id: 5,
+                    attrs: InstructionAttrs::default(),
+                });
+                let scheduled = sched.schedule_bundles(&sched_inputs);
+                assert_eq!(scheduled.len(), 5);
+                for sb in &scheduled {
+                    let _ = sb.active_slot_mask();
+                    let _ = sb.stall_cycles();
+                    let _ = sb.generation_ordinal();
+                    let dis = sb.disassemble_vliw_bundle();
+                    assert!(dis.contains("[pc="));
+                }
+            }
+            if let Some(first_bundle) = pack_prog.instruction_bundles.first() {
+                let mut zero_gen_vliw = first_bundle.encode_architectural_bundle();
+                zero_gen_vliw.header.bundle_flags &= 0x0FFF;
+                zero_gen_vliw.vector_slot.opcode = 999;
+                assert_eq!(zero_gen_vliw.generation_ordinal(), 5);
+                assert!(zero_gen_vliw.disassemble_vliw_bundle().contains("UNKNOWN"));
             }
         }
         assert!(MlirBytecodeHeader::decode_strict(MLIR_BYTECODE_MAGIC).is_ok());
@@ -1574,6 +1843,1522 @@ ENTRY %main (x: f32[4]) -> f32[4] {
         }
     }
 
+    #[test]
+    fn test_lexer_comments_strings_hex_and_sigils() {
+        let src = r#"
+            // Single-line comment with UTF-8: λ -> 🚀
+            /* Multi-line block comment
+               spanning lines */
+            #loc0 = loc("model.py":42:8)
+            !tpu_sem = !tpu.semaphore
+            module @test_mod {
+                func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> {
+                    ^bb0(%x: tensor<4xf32>):
+                    %0:2 = "stablehlo.custom_call"(%arg0) {
+                        backend_config = "line1\nline2\t\"quoted\"\\\r\0\x41\z",
+                        hex_data = dense<"0x0000803F00000040">,
+                        sci = 1.0e-5,
+                        neg_sci = -3.14E+2,
+                        pos_num = +2.5,
+                        hex_int = 0xFF,
+                        hex_flt = 0x1.8p+1,
+                        inf_val = +inf,
+                        ninf_val = -inf
+                    } : (tensor<4xf32>) -> (tensor<4xf32>, tensor<4xf32>) loc(#loc0)
+                    func.return %0#0 : tensor<4xf32>
+                }
+            } // trailing comment without newline"#;
+        let checked = HloLexer::tokenize_checked(src);
+        assert!(checked.is_ok());
+        let spanned = HloLexer::tokenize_spanned(src);
+        assert!(spanned.len() > 1);
+        assert!(
+            spanned
+                .iter()
+                .any(|st| matches!(&st.token, HloToken::AttrAlias(a) if a == "#loc0"))
+        );
+        assert!(
+            spanned
+                .iter()
+                .any(|st| matches!(&st.token, HloToken::TypeAlias(a) if a == "!tpu_sem"))
+        );
+        assert!(
+            spanned
+                .iter()
+                .any(|st| matches!(&st.token, HloToken::CaretId(c) if c == "^bb0"))
+        );
+        assert!(
+            spanned
+                .iter()
+                .any(|st| matches!(&st.token, HloToken::HexBlob(b) if b.len() == 8))
+        );
+        assert!(
+            spanned
+                .iter()
+                .any(|st| matches!(&st.token, HloToken::SsaValue(s) if s == "%0#0"))
+        );
+
+        // Compound punctuation tokens
+        let punct_tokens = HloLexer::tokenize("-> ... :: <= >= == != =");
+        assert!(punct_tokens.contains(&HloToken::Arrow));
+        assert!(punct_tokens.contains(&HloToken::Ellipsis));
+        assert!(punct_tokens.contains(&HloToken::DoubleColon));
+        assert!(punct_tokens.contains(&HloToken::Le));
+        assert!(punct_tokens.contains(&HloToken::Ge));
+        assert!(punct_tokens.contains(&HloToken::EqEq));
+        assert!(punct_tokens.contains(&HloToken::NotEq));
+
+        // Negative lexer tests: unclosed block comment, unclosed quote, bad \xHH escape, trailing backslash
+        assert!(HloLexer::tokenize_checked("/* unclosed comment").is_err());
+        assert!(HloLexer::tokenize_checked("\"unclosed string").is_err());
+        assert!(HloLexer::tokenize_checked("\"trailing\\").is_err());
+        assert!(HloLexer::tokenize_checked("\"bad\\xZZescape\"").is_err());
+        assert!(HloLexer::tokenize_checked("\"bad\\x4Zescape\"").is_err());
+        assert!(HloLexer::tokenize_checked("a / b /* star * inside */ \"\\x6a\"").is_ok());
+        // Direct tokenize on unclosed block comment / string and edge numeric/hex strings
+        assert_eq!(HloLexer::tokenize("/* unclosed").len(), 0);
+        let edge_tokens = HloLexer::tokenize(
+            "-infinity +infinity -a +b \"0x\" \"0x123\" \"0x12zz\" \"0xdeadbeef\"",
+        );
+        assert!(edge_tokens.contains(&HloToken::Punct('-')));
+        assert!(edge_tokens.contains(&HloToken::Punct('+')));
+        let _ = HloLexer::tokenize_spanned("\"unclosed");
+        let _ = HloLexer::tokenize_spanned("\"bad\\x1\"");
+        let _ = HloLexer::tokenize_spanned("\"bad\\");
+        assert!(HloParser::parse_verified_ast_module("").is_err());
+        assert!(CompiledProgram::compile("mlir", b"sdy.mesh", b"").is_ok());
+        assert!(CompiledProgram::compile("mlir", b"sdy.mesh @m = <[\"x\"=2]>", b"").is_ok());
+    }
+
+    #[test]
+    fn test_ast_types_attributes_and_helpers() {
+        for (prefix, expected_kind, expected_str) in [
+            ("stablehlo", DialectKind::StableHlo, "stablehlo"),
+            ("vhlo", DialectKind::Vhlo, "vhlo"),
+            ("mhlo", DialectKind::Mhlo, "mhlo"),
+            ("chlo", DialectKind::Chlo, "chlo"),
+            ("sdy", DialectKind::Sdy, "sdy"),
+            ("tpu", DialectKind::TpuMosaic, "tpu"),
+            ("func", DialectKind::Func, "func"),
+            ("arith", DialectKind::Arith, "arith"),
+            ("scf", DialectKind::Scf, "scf"),
+            ("vector", DialectKind::Vector, "vector"),
+            ("memref", DialectKind::MemRef, "memref"),
+            ("builtin", DialectKind::Builtin, "builtin"),
+            ("other", DialectKind::XlaHlo, "hlo"),
+        ] {
+            let dk = DialectKind::from_prefix(prefix);
+            assert_eq!(dk, expected_kind);
+            assert_eq!(dk.as_str(), expected_str);
+        }
+
+        assert_eq!(DimensionSize::Static(8).concrete_or_bound(), 8);
+        assert_eq!(DimensionSize::Bounded(16).concrete_or_bound(), 16);
+        assert_eq!(DimensionSize::Dynamic.concrete_or_bound(), 1);
+        assert!(!DimensionSize::Static(8).is_dynamic());
+        assert!(DimensionSize::Bounded(16).is_dynamic());
+        assert!(DimensionSize::Dynamic.is_dynamic());
+
+        for (space_str, expected_space) in [
+            ("hbm", Some(TpuMemorySpace::Hbm)),
+            ("vmem", Some(TpuMemorySpace::Vmem)),
+            ("smem", Some(TpuMemorySpace::Smem)),
+            ("cmem", Some(TpuMemorySpace::Cmem)),
+            ("semaphore_mem", Some(TpuMemorySpace::SemaphoreMem)),
+            ("unknown", None),
+        ] {
+            assert_eq!(TpuMemorySpace::from_ident(space_str), expected_space);
+        }
+
+        for (dir_str, expected_dir) in [
+            ("EQ", ComparisonDirection::Eq),
+            ("NE", ComparisonDirection::Ne),
+            ("GE", ComparisonDirection::Ge),
+            ("GT", ComparisonDirection::Gt),
+            ("LE", ComparisonDirection::Le),
+            ("LT", ComparisonDirection::Lt),
+        ] {
+            let parsed = ComparisonDirection::from_ident(dir_str);
+            assert_eq!(parsed, Some(expected_dir));
+            assert_eq!(expected_dir.as_str(), dir_str);
+        }
+        assert!(ComparisonDirection::from_ident("BAD").is_none());
+
+        for (ct_str, expected_ct) in [
+            ("FLOAT", Some(ComparisonType::Float)),
+            ("TOTALORDER", Some(ComparisonType::TotalOrder)),
+            ("SIGNED", Some(ComparisonType::Signed)),
+            ("UNSIGNED", Some(ComparisonType::Unsigned)),
+            ("BAD", None),
+        ] {
+            assert_eq!(ComparisonType::from_ident(ct_str), expected_ct);
+        }
+
+        // Test MlirType methods across all variants
+        let rt = MlirType::RankedTensor(RankedTensorType {
+            dims: vec![DimensionSize::Static(4), DimensionSize::Dynamic],
+            element_type: ElementType::F32,
+            encoding: Some(TensorEncodingAttr::Bounds(vec![None, Some(8)])),
+            layout: None,
+        });
+        assert_eq!(rt.element_type(), ElementType::F32);
+        assert!(rt.to_shape().is_some());
+
+        let unranked = MlirType::UnrankedTensor(ElementType::Bf16);
+        assert_eq!(unranked.element_type(), ElementType::Bf16);
+        assert!(unranked.to_shape().is_some());
+
+        let mr = MlirType::MemRef(MemRefType {
+            dims: vec![DimensionSize::Static(8), DimensionSize::Static(128)],
+            element_type: ElementType::Bf16,
+            layout: Some(MemRefLayoutAttr::Tiled {
+                tile_dims: vec![8, 128],
+            }),
+            memory_space: Some(TpuMemorySpace::Vmem),
+        });
+        assert_eq!(mr.element_type(), ElementType::Bf16);
+        assert!(mr.to_shape().is_some());
+
+        let vec_ty = MlirType::Vector(VectorType {
+            dims: vec![DimensionSize::Static(8), DimensionSize::Static(128)],
+            scalable_dims: vec![false, false],
+            element_type: ElementType::F32,
+        });
+        assert_eq!(vec_ty.element_type(), ElementType::F32);
+        assert!(vec_ty.to_shape().is_some());
+
+        let quant_ty = MlirType::Quantized(QuantizedElementType {
+            storage_type: ElementType::S8,
+            expressed_type: ElementType::F32,
+            scales: vec![0.05],
+            zero_points: vec![2],
+            quantized_dimension: None,
+        });
+        assert_eq!(quant_ty.element_type(), ElementType::S8);
+        assert!(quant_ty.to_shape().is_some());
+
+        let sem_ty = MlirType::Semaphore(TpuSemaphoreKind::Dma);
+        assert_eq!(sem_ty.element_type(), ElementType::U32);
+        assert!(sem_ty.to_shape().is_some());
+
+        let tok_ty = MlirType::Token;
+        assert_eq!(tok_ty.element_type(), ElementType::U32);
+        assert!(tok_ty.to_shape().is_some());
+
+        let tup_ty = MlirType::Tuple(vec![rt.clone(), MlirType::Scalar(ElementType::S32)]);
+        assert_eq!(tup_ty.element_type(), ElementType::F32);
+        assert!(tup_ty.to_shape().is_some());
+        assert_eq!(tup_ty.flatten_shapes().len(), 2);
+
+        let fn_ty = MlirType::Function(AstFunctionType {
+            inputs: vec![rt.clone()],
+            results: vec![rt],
+        });
+        assert_eq!(fn_ty.element_type(), ElementType::F32);
+        assert!(fn_ty.to_shape().is_some());
+
+        // Test MlirAttribute helper methods
+        let a_i64 = MlirAttribute::DenseI64Array(vec![1, 2, -1]);
+        assert_eq!(a_i64.as_usize_vec(), vec![1, 2]);
+        let a_arr = MlirAttribute::Array(vec![
+            MlirAttribute::Integer { value: 3, ty: None },
+            MlirAttribute::Bool(true),
+        ]);
+        assert_eq!(a_arr.as_usize_vec(), vec![3]);
+        let a_de = MlirAttribute::DenseElements(DenseElementsAttr {
+            values_f64: vec![4.0, -1.0, 5.0],
+            raw_bytes: None,
+            is_splat: false,
+            tensor_type: None,
+        });
+        assert_eq!(a_de.as_usize_vec(), vec![4, 5]);
+        assert_eq!(MlirAttribute::Bool(false).as_usize_vec().len(), 0);
+        assert_eq!(
+            MlirAttribute::Integer { value: 7, ty: None }.as_usize(),
+            Some(7)
+        );
+        assert_eq!(MlirAttribute::Bool(true).as_usize(), None);
+        assert_eq!(
+            MlirAttribute::String(String::from("abc")).as_str(),
+            Some("abc")
+        );
+        assert_eq!(
+            MlirAttribute::SymbolRef(vec![String::from("m"), String::from("x")]).as_str(),
+            Some("x")
+        );
+        assert_eq!(MlirAttribute::Bool(false).as_str(), None);
+
+        let empty_mesh = SdyMeshAttr {
+            name: String::from("m"),
+            axes: Vec::new(),
+            device_ids: vec![0, 1, 2, 3],
+        };
+        assert_eq!(empty_mesh.total_devices(), 4);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_recursive_descent_mlir_dialects_stablehlo_mhlo_chlo_sdy_mosaic() {
+        let mlir_all_dialects = r#"
+            #loc0 = loc(unknown)
+            #loc1 = loc("train.py":12:4)
+            #loc2 = loc(callsite(#loc1 at #loc0))
+            #loc3 = loc(fused[#loc0, #loc1])
+            #loc4 = loc("step"(#loc1))
+            #my_sharding = #sdy.sharding<@mesh, [{"x"}, {"y", ?, p1}], replicated={"z"}, unreduced={"w"}>
+            !my_tensor = tensor<4x4xf32>
+
+            module @spmd_mosaic_module attributes {
+                mhlo.num_partitions = 8 : i64,
+                mhlo.num_replicas = 2 : i64
+            } {
+                sdy.mesh @mesh = <["x"=2, "y"=4], device_ids=[0, 1, 2, 3, 4, 5, 6, 7]>
+
+                func.func private @helper(%h0: !my_tensor) -> !my_tensor {
+                    %h1 = chlo.broadcast_add %h0, %h0 {broadcast_dimensions = array<i64: 0, 1>} : (!my_tensor, !my_tensor) -> !my_tensor
+                    %h2 = chlo.erf %h1 : !my_tensor -> !my_tensor
+                    %h3 = chlo.lgamma %h2 : !my_tensor -> !my_tensor
+                    %h4 = chlo.acosh %h3 : !my_tensor -> !my_tensor
+                    %h5 = chlo.sinh %h4 : !my_tensor -> !my_tensor
+                    %h6 = chlo.atanh %h5 : !my_tensor -> !my_tensor
+                    %h7 = chlo.next_after %h6, %h0 : (!my_tensor, !my_tensor) -> !my_tensor
+                    %h8 = chlo.conj %h7 : !my_tensor -> !my_tensor
+                    %h9 = chlo.erfc %h8 : !my_tensor -> !my_tensor
+                    func.return %h9 : !my_tensor
+                }
+
+                func.func public @main(
+                    %arg0: tensor<4x4xf32> {sdy.sharding = #my_sharding} loc(#loc1),
+                    %arg1: tensor<4x4xf32> {mhlo.sharding = "{devices=[2,4]0,1,2,3,4,5,6,7}"} loc(#loc2)
+                ) -> (tensor<4x4xf32> {sdy.sharding = #my_sharding}) attributes {
+                    tpu.core_type = #tpu.core_type<tensor_core>
+                } {
+                    %c0 = stablehlo.constant dense<[[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0], [1.0, 1.0, 1.0, 1.0], [2.0, 2.0, 2.0, 2.0]]> : tensor<4x4xf32>
+                    %c_splat = stablehlo.constant dense<2.0> : tensor<4x4xf32>
+                    %c_hex = stablehlo.constant dense<"0x0000803F000000400000404000008040"> : tensor<4xf32>
+                    %c_res = stablehlo.constant dense_resource<__elided__> : tensor<4x4xf32>
+                    %cmp = stablehlo.compare LT, %arg0, %arg1, FLOAT : (tensor<4x4xf32>, tensor<4x4xf32>) -> tensor<4x4xi1>
+                    %sel = stablehlo.select %cmp, %arg0, %arg1 : (tensor<4x4xi1>, tensor<4x4xf32>, tensor<4x4xf32>) -> tensor<4x4xf32>
+                    %dot = stablehlo.dot_general %sel, %c0, #stablehlo.dot<
+                        lhs_batching_dimensions = [],
+                        rhs_batching_dimensions = [],
+                        lhs_contracting_dimensions = [1],
+                        rhs_contracting_dimensions = [0]
+                    >, precision = [#stablehlo<precision HIGH>, #stablehlo<precision HIGHEST>] : (tensor<4x4xf32>, tensor<4x4xf32>) -> tensor<4x4xf32>
+                    %sh_c = sdy.sharding_constraint %dot <@mesh, [{"x"}, {"y"}]> : tensor<4x4xf32>
+                    %manual = sdy.manual_computation(%sh_c)
+                        in_shardings=[<@mesh, [{"x"}, {"y"}]>]
+                        out_shardings=[<@mesh, [{"x"}, {"y"}]>]
+                        manual_axes={"x"} (%m_arg: tensor<2x4xf32>) {
+                        %m_red = "stablehlo.all_reduce"(%m_arg) ({
+                            ^bb0(%r0: tensor<f32>, %r1: tensor<f32>):
+                            %r_sum = stablehlo.add %r0, %r1 : tensor<f32>
+                            stablehlo.return %r_sum : tensor<f32>
+                        }) {
+                            channel_handle = #stablehlo.channel_handle<handle = 1, type = 1>,
+                            use_global_device_ids = array<i1: true>
+                        } : (tensor<2x4xf32>) -> tensor<2x4xf32>
+                        sdy.return %m_red : tensor<2x4xf32>
+                    } : (tensor<4x4xf32>) -> tensor<4x4xf32>
+                    %red_max = "stablehlo.reduce"(%manual, %c_splat) ({
+                        ^bb0(%a: tensor<f32>, %b: tensor<f32>):
+                        %m = stablehlo.maximum %a, %b : tensor<f32>
+                        stablehlo.return %m : tensor<f32>
+                    }) {dimensions = array<i64: 1>} : (tensor<4x4xf32>, tensor<4x4xf32>) -> tensor<4x4xf32>
+                    %red_min = "stablehlo.reduce"(%red_max, %c_splat) ({
+                        ^bb0(%a: tensor<f32>, %b: tensor<f32>):
+                        %m = stablehlo.minimum %a, %b : tensor<f32>
+                        stablehlo.return %m : tensor<f32>
+                    }) {dimensions = array<i64: 1>} : (tensor<4x4xf32>, tensor<4x4xf32>) -> tensor<4x4xf32>
+                    %tup = stablehlo.tuple %red_min, %c_splat : tuple<tensor<4x4xf32>, tensor<4x4xf32>>
+                    %gte = stablehlo.get_tuple_element %tup {index = 0 : i32} : (tuple<tensor<4x4xf32>, tensor<4x4xf32>>) -> tensor<4x4xf32>
+                    func.return %gte : tensor<4x4xf32> loc(#loc3)
+                }
+            }
+        "#;
+
+        let ast = HloParser::parse_ast_module(mlir_all_dialects);
+        assert!(ast.is_ok());
+        let ast_mod = ast.unwrap_or_default();
+        assert_eq!(ast_mod.name.as_deref(), Some("spmd_mosaic_module"));
+        assert_eq!(ast_mod.functions.len(), 2);
+        assert!(ast_mod.sdy_meshes.contains_key("mesh"));
+        assert!(verify_ast_module_semantics(&ast_mod).is_ok());
+
+        let lowered = lower_ast_module_to_parsed_hlo(&ast_mod);
+        assert!(lowered.is_ok());
+
+        let compiled = CompiledProgram::compile("mlir", mlir_all_dialects.as_bytes(), b"");
+        assert!(compiled.is_ok());
+        if let Ok(prog) = compiled {
+            assert_eq!(prog.num_partitions, 8);
+        }
+    }
+
+    #[test]
+    fn test_mosaic_scf_vector_memref_and_quantized_types_parsing() {
+        let mosaic_kernel = r"
+            module @mosaic_kernel {
+                func.func @kernel(
+                    %in_vmem: memref<8x128xbf16, #tpu.tiled<(8, 128)>, #tpu.memory_space<vmem>>,
+                    %out_hbm: memref<8x128xf32, strided<[128, 1], offset: 0>, #tpu.memory_space<hbm>>,
+                    %smem_buf: memref<16xi32, #tpu.memory_space<smem>>,
+                    %cmem_buf: memref<16xf32, #tpu.memory_space<cmem>>,
+                    %sem_mem: memref<1x!tpu.semaphore, #tpu.memory_space<semaphore_mem>>,
+                    %dma_sem: !tpu.dma_semaphore,
+                    %q_in: tensor<4x?x!quant.uniform<i8:f32, 0.05:10>, #stablehlo.bounds<?, 16>>,
+                    %unranked: tensor<*xf32>,
+                    %c_scalar: complex<f32>,
+                    %c64_scalar: complex<f64>
+                ) -> vector<8x128xf32> {
+                    %c0 = arith.constant 0 : index
+                    %c8 = arith.constant 8 : index
+                    %c1 = arith.constant 1 : index
+                    %v0 = vector.transfer_read %in_vmem[%c0, %c0] : memref<8x128xbf16>, vector<8x128xbf16>
+                    %loop_res = scf.for %iv = %c0 to %c8 step %c1 iter_args(%acc = %v0) -> (vector<8x128xbf16>) {
+                        %loaded = tpu.vector_load %in_vmem[%iv, %c0] : memref<8x128xbf16>, vector<8x128xbf16>
+                        %prod = tpu.matmul %acc, %loaded {
+                            dimension_semantics = [#tpu.dimension_semantics<parallel>, #tpu.dimension_semantics<arbitrary>]
+                        } : (vector<8x128xbf16>, vector<8x128xbf16>) -> vector<8x128xbf16>
+                        scf.yield %prod : vector<8x128xbf16>
+                    }
+                    tpu.enqueue_dma %in_vmem, %out_hbm, %dma_sem : (memref<8x128xbf16>, memref<8x128xf32>, !tpu.dma_semaphore) -> ()
+                    tpu.wait_dma %dma_sem : (!tpu.dma_semaphore) -> ()
+                    tpu.semaphore_signal %sem_mem : (memref<1x!tpu.semaphore>) -> ()
+                    %casted = arith.extf %loop_res : vector<8x128xbf16> to vector<8x128xf32>
+                    func.return %casted : vector<8x128xf32>
+                }
+            }
+        ";
+        let parsed = parse_mlir_ast_module(mosaic_kernel);
+        assert!(parsed.is_ok());
+        let ast = parsed.unwrap_or_default();
+        assert_eq!(ast.functions.len(), 1);
+        let lowered = lower_ast_module_to_parsed_hlo(&ast);
+        assert!(lowered.is_ok());
+    }
+
+    #[test]
+    fn test_textual_xla_hlo_multi_computation_and_proto_bridge() {
+        use self::hlo_parser::HloTextParser;
+
+        let hlo_text = r#"
+            HloModule multi_comp_test, entry_computation_layout={(f32[4,4]{1,0:T(8,128)(2,1)S(1)}, f32[<=4, ?]) -> (f32[4], f32[4,4])}, replica_count=2, num_partitions=4, is_scheduled=true, allow_spmd_sharding_propagation_to_output={true}
+
+            %reducer (x: f32[], y: f32[]) -> f32[] {
+                %x = f32[] parameter(0)
+                %y = f32[] parameter(1)
+                ROOT %max = f32[] maximum(f32[] %x, f32[] %y)
+            }
+
+            %min_reducer (f32[], f32[]) {
+                %x = f32[] parameter(0)
+                %y = f32[] parameter(1)
+                %min = f32[] minimum(%x, %y)
+            }
+
+            ENTRY %main (p0: f32[4,4], p1: f32[4,4]) -> (f32[4], f32[4,4]) {
+                %p0 = f32[4,4]{:T(8,128)S(1)} parameter(0), sharding={devices=[2,2]}0,1
+                %p1 = f32[4,4]{1,0} parameter(1), sharding={replicated}
+                %tok = token[] after-all()
+                %init = f32[] constant({0})
+                %dyn_op = f32[<=4, ?, @ignore] reshape(%p0, +), iota_dimension=0, backend_config="str_cfg", metadata={op_name="m"}, feature_group_count=1, api_version=API_VERSION_TYPED_FFI
+                %conv = f32[4,4] convolution(%p0, %p1), window={size=3x3 stride=1x1 pad=1_1x1_1 lhs_dilate=1x1 rhs_dilate=1x1}, dim_labels=b01f_01io->b01f
+                %dot = f32[4,4] dot(%conv, %p1), lhs_contracting_dims={1}, rhs_contracting_dims={0}, lhs_batch_dims={0}, rhs_batch_dims={0}
+                %sliced = f32[2,2] slice(%dot), slice={[0:2:1], [0:2:1]}
+                %padded = f32[4,4] pad(%sliced, %init), padding=1_1_0x1_1_0, sharding={replicated}
+                %cc = f32[4,4] custom-call(%padded), custom_call_target="tpu_custom_kernel", backend_config={"flag": 1}, channel_id=2, replica_groups={{0,1},{2,3}}, control-predecessors={%tok}
+                %w = f32[4,4] while(%cc), condition=%reducer, body=%min_reducer
+                %ar = f32[4,4] all-reduce(%w), to_apply=%reducer
+                %rs = f32[4,4] reduce-scatter(%ar), to_apply=%reducer
+                %unk = f32[4,4] unknown-hlo-op(%rs)
+                %red = f32[4] reduce(%unk, %init), dimensions={1}, to_apply=%reducer, direction=LT
+                %red2 = f32[4] reduce(%unk, %init), dimensions={1}, to_apply=%min_reducer
+                %tup = (f32[4], f32[4,4]) tuple(%red, %cc)
+                %gte0 = f32[4] get-tuple-element(%tup), index=0
+                %gte_direct = f32[4] get-tuple-element(%red2), index=0
+                ROOT %out_tup = (f32[4], f32[4,4]) tuple(%gte0, %cc)
+            }
+        "#;
+
+        let ast_res = HloParser::parse_ast_module(hlo_text);
+        assert!(ast_res.is_ok(), "HLO parse failed: {ast_res:?}");
+        let ast = ast_res.unwrap_or_default();
+        assert_eq!(ast.hlo_computations.len(), 3);
+
+        // Convert AST -> Proto -> AST -> Lowered
+        let mut proto = hlo_ast_to_proto(&ast);
+        let _ = hlo_proto_to_ast(&proto);
+        proto.entry_computation_id = 0;
+        if let Some(comp) = proto.computations.first_mut()
+            && let Some(inst) = comp.instructions.first_mut()
+            && let Some(sh) = inst.shape.as_mut()
+        {
+            sh.dimensions.push(-1);
+            sh.is_dynamic_dimension.push(true);
+        }
+        assert_eq!(proto.computations.len(), 3);
+        let mut roundtrip_ast = hlo_proto_to_ast(&proto);
+        assert_eq!(roundtrip_ast.hlo_computations.len(), 3);
+        if let Some(comp) = roundtrip_ast.hlo_computations.first_mut()
+            && let Some(inst) = comp.instructions.first_mut()
+        {
+            inst.result_type = MlirType::Scalar(ElementType::F32);
+        }
+        let _ = hlo_ast_to_proto(&roundtrip_ast);
+        let lowered = lower_ast_module_to_parsed_hlo(&ast);
+        assert!(lowered.is_ok());
+        if let Ok(lowered_mod) = lowered {
+            assert_eq!(lowered_mod.output_shapes.len(), 2);
+        }
+
+        let compiled = CompiledProgram::compile("hlo", hlo_text.as_bytes(), b"");
+        assert!(compiled.is_ok());
+        if let Ok(prog) = compiled {
+            assert_eq!(prog.num_replicas, 2);
+            assert_eq!(prog.num_partitions, 4);
+        }
+
+        // Bare HLO instructions, 1-D layout `{0}`, padding before ROOT, and ROOT on gte / non-tuple
+        let bare_hlo = "HloModule bare_mod\n ENTRY %m (p: f32[4]) -> f32[4] {\n %p = f32[4]{0} parameter(0)\n %pad = f32[4] pad(%p, %p), padding=1_1_0\n ROOT %g = f32[4] get-tuple-element(%pad), index=0\n }";
+        let bare_ast = HloParser::parse_ast_module(bare_hlo);
+        assert!(bare_ast.is_ok(), "bare_hlo failed: {bare_ast:?}");
+        assert!(lower_ast_module_to_parsed_hlo(&bare_ast.unwrap_or_default()).is_ok());
+
+        let single_inst_hlo = "HloModule single_mod\n %x = f32[4] negate(%p)";
+        let single_ast = HloParser::parse_ast_module(single_inst_hlo);
+        assert!(single_ast.is_ok());
+        assert!(HloParser::parse_ast_module("HloModule trailing_comma,").is_ok());
+
+        let root_scalar_hlo = "HloModule root_mod\n %comp (x: f32[4]) -> f32[4] {\n %x = f32[4] parameter(0)\n ROOT %neg = f32[4] negate(%x), sharding={unclosed";
+        let root_ast = HloParser::parse_ast_module(root_scalar_hlo).unwrap_or_default();
+        assert!(lower_ast_module_to_parsed_hlo(&root_ast).is_ok());
+
+        // Negative HloTextParser error branches
+        let bad_sp = HloLexer::tokenize_spanned("123");
+        assert!(HloTextParser::new(&bad_sp).parse_computation().is_err());
+        assert!(HloTextParser::new(&bad_sp).parse_instruction().is_err());
+        let bad_op_sp = HloLexer::tokenize_spanned("%x = f32[4] 123");
+        assert!(HloTextParser::new(&bad_op_sp).parse_instruction().is_err());
+        let bad_sh_sp = HloLexer::tokenize_spanned("bad_dtype[4]");
+        assert!(
+            HloTextParser::new(&bad_sh_sp)
+                .parse_hlo_shape_type()
+                .is_err()
+        );
+        let trail_comma_sp = HloLexer::tokenize_spanned("%x = f32[4] negate(%a), 123");
+        assert!(
+            HloTextParser::new(&trail_comma_sp)
+                .parse_instruction()
+                .is_ok()
+        );
+
+        // Lowering empty AstModule and top-level MLIR operations / multi-result regions / tuples
+        assert!(lower_ast_module_to_parsed_hlo(&AstModule::default()).is_ok());
+        let top_mlir = r#"
+            %no_opnd = "stablehlo.negate"() : () -> tensor<4xf32>
+            %untyped_c = "stablehlo.constant"() {value = dense<2.0>} : () -> tensor<4xf32>
+            %a = stablehlo.constant dense<1.0> : tensor<4xf32>
+            %s1 = stablehlo.constant dense<1.0> : tensor<1xf32>
+            %t = stablehlo.tuple %a, %a : tuple<tensor<4xf32>, tensor<4xf32>>
+            stablehlo.tuple %a : tensor<4xf32>
+            %g = stablehlo.get_tuple_element %a, index = 0 : (tensor<4xf32>) -> tensor<4xf32>
+            %ar = "stablehlo.all_reduce"(%a) ({
+            ^bb0(%x: tensor<f32>, %y: tensor<f32>):
+                %s = stablehlo.add %x, %y : tensor<f32>
+                stablehlo.return %s : tensor<f32>
+            }) : (tensor<4xf32>) -> tensor<4xf32>
+            %rs = stablehlo.reduce_scatter %a : tensor<4xf32>
+            %mc:2 = "sdy.manual_computation"() ({
+            ^bb0(%b0: tensor<4xf32>):
+                sdy.return %b0, %b0 : tensor<4xf32>, tensor<4xf32>
+            }) : () -> (tensor<4xf32>, tensor<4xf32>)
+            func.return %t : tuple<tensor<4xf32>, tensor<4xf32>>
+        "#;
+        let top_ast = parse_mlir_ast_module(top_mlir).unwrap_or_default();
+        assert!(lower_ast_module_to_parsed_hlo(&top_ast).is_ok());
+
+        // Verify semantics on nested region and Chlo broadcast with different dims
+        let valid_nested_and_chlo = r#"
+            func.func @main(%a: tensor<4xf32>, %b: tensor<1xf32>) -> tensor<4xf32> {
+                %c = chlo.broadcast_add %a, %b : (tensor<4xf32>, tensor<1xf32>) -> tensor<4xf32>
+                %m = "sdy.manual_computation"(%c) ({
+                ^bb0(%in: tensor<4xf32>):
+                    sdy.return %in : tensor<4xf32>
+                }) : (tensor<4xf32>) -> tensor<4xf32>
+                func.return %m : tensor<4xf32>
+            }
+        "#;
+        let v_ast = HloLexer::tokenize_spanned(valid_nested_and_chlo);
+        let v_mod = MlirModuleParser::new(&v_ast)
+            .parse_module()
+            .unwrap_or_default();
+        assert!(verify_ast_module_semantics(&v_mod).is_ok());
+
+        let bad_etype = r"
+            func.func @main(%a: tensor<4xf32>, %b: tensor<4xs32>) -> tensor<4xf32> {
+                %0 = stablehlo.add %a, %b : (tensor<4xf32>, tensor<4xs32>) -> tensor<4xf32>
+                func.return %0 : tensor<4xf32>
+            }
+        ";
+        assert!(HloParser::parse_verified_ast_module(bad_etype).is_err());
+    }
+
+    #[test]
+    fn test_ast_verification_errors_and_edge_cases() {
+        // Undefined SSA value error
+        let bad_ssa = r"
+            func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> {
+                %0 = stablehlo.add %arg0, %undefined_val : tensor<4xf32>
+                func.return %0 : tensor<4xf32>
+            }
+        ";
+        let res_ssa = HloParser::parse_verified_ast_module(bad_ssa);
+        assert!(matches!(
+            res_ssa,
+            Err(LibTpuError::UndefinedSsaValue { .. })
+        ));
+
+        // Binary arity mismatch error
+        let bad_arity = r#"
+            func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> {
+                %0 = "stablehlo.add"(%arg0) : (tensor<4xf32>) -> tensor<4xf32>
+                func.return %0 : tensor<4xf32>
+            }
+        "#;
+        let res_arity = HloParser::parse_verified_ast_module(bad_arity);
+        assert!(matches!(
+            res_arity,
+            Err(LibTpuError::ShapeInferenceError { .. })
+        ));
+
+        // Shape mismatch error
+        let bad_shape = r"
+            func.func @main(%arg0: tensor<4xf32>, %arg1: tensor<8xf32>) -> tensor<4xf32> {
+                %0 = stablehlo.add %arg0, %arg1 : (tensor<4xf32>, tensor<8xf32>) -> tensor<4xf32>
+                func.return %0 : tensor<4xf32>
+            }
+        ";
+        let res_shape = HloParser::parse_verified_ast_module(bad_shape);
+        assert!(matches!(
+            res_shape,
+            Err(LibTpuError::ShapeInferenceError { .. })
+        ));
+
+        // sdy.manual_computation missing region error
+        let bad_sdy = r#"
+            func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> {
+                %0 = "sdy.manual_computation"(%arg0) : (tensor<4xf32>) -> tensor<4xf32>
+                func.return %0 : tensor<4xf32>
+            }
+        "#;
+        let res_sdy = HloParser::parse_verified_ast_module(bad_sdy);
+        assert!(matches!(
+            res_sdy,
+            Err(LibTpuError::DialectVerificationError { .. })
+        ));
+
+        // Undefined #alias and !alias errors
+        let sp_attr = HloLexer::tokenize_spanned("#unknown_alias");
+        let mut p_attr = MlirModuleParser::new(&sp_attr);
+        assert!(matches!(
+            p_attr.parse_attribute(),
+            Err(LibTpuError::UndefinedAlias { .. })
+        ));
+
+        let sp_type = HloLexer::tokenize_spanned("!unknown_type");
+        let mut p_type = MlirModuleParser::new(&sp_type);
+        assert!(matches!(
+            p_type.parse_type(),
+            Err(LibTpuError::UndefinedAlias { .. })
+        ));
+
+        // Integer add lowering (`AddS32`)
+        let int_mlir = r"
+            func.func @main(%a: tensor<4xs32>, %b: tensor<4xs32>) -> tensor<4xs32> {
+                %0 = stablehlo.add %a, %b : tensor<4xs32>
+                func.return %0 : tensor<4xs32>
+            }
+        ";
+        let int_prog = CompiledProgram::compile("mlir", int_mlir.as_bytes(), b"");
+        assert!(int_prog.is_ok());
+        if let Ok(p) = int_prog {
+            assert_eq!(p.opcode, TpuOpCode::AddS32);
+        }
+
+        // Parse float literals (hex floats, bit patterns, nan, inf)
+        assert!(parse_float_literal("nan").is_nan());
+        assert!(parse_float_literal("inf").is_infinite());
+        assert!(parse_float_literal("-inf").is_infinite());
+        assert!((parse_float_literal("0x1.8p+1") - 3.0).abs() < 1e-6);
+        assert!((parse_float_literal("0x3F800000") - 1.0).abs() < 1e-6);
+        assert!((parse_float_literal("0x3FF0000000000000") - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_classify_all_dialect_operations_and_attributes() {
+        let mut attrs = std::collections::BTreeMap::new();
+        attrs.insert(
+            String::from("comparison_direction"),
+            MlirAttribute::ComparisonDirection(ComparisonDirection::Gt),
+        );
+        for (dialect, mnem) in [
+            (DialectKind::Func, "return"),
+            (DialectKind::Func, "call"),
+            (DialectKind::Sdy, "return"),
+            (DialectKind::Sdy, "manual_computation"),
+            (DialectKind::Sdy, "sharding_constraint"),
+            (DialectKind::Sdy, "data_flow_edge"),
+            (DialectKind::Sdy, "mesh"),
+            (DialectKind::Sdy, "constant"),
+            (DialectKind::Sdy, "all_gather"),
+            (DialectKind::Sdy, "all_reduce"),
+            (DialectKind::Sdy, "all_slice"),
+            (DialectKind::Sdy, "all_to_all"),
+            (DialectKind::Sdy, "collective_permute"),
+            (DialectKind::Sdy, "reduce_scatter"),
+            (DialectKind::Chlo, "top_k"),
+            (DialectKind::Chlo, "erf"),
+            (DialectKind::Chlo, "tan"),
+            (DialectKind::Chlo, "ragged_dot"),
+            (DialectKind::Chlo, "broadcast_add"),
+            (DialectKind::Chlo, "broadcast_sub"),
+            (DialectKind::Chlo, "broadcast_mul"),
+            (DialectKind::Chlo, "broadcast_div"),
+            (DialectKind::Chlo, "broadcast_max"),
+            (DialectKind::Chlo, "broadcast_min"),
+            (DialectKind::Chlo, "broadcast_pow"),
+            (DialectKind::Chlo, "broadcast_atan2"),
+            (DialectKind::Chlo, "broadcast_select"),
+            (DialectKind::Chlo, "broadcast_compare"),
+            (DialectKind::Chlo, "zeta"),
+            (DialectKind::TpuMosaic, "matmul"),
+            (DialectKind::TpuMosaic, "enqueue_dma"),
+            (DialectKind::TpuMosaic, "wait_dma"),
+            (DialectKind::TpuMosaic, "semaphore_signal"),
+            (DialectKind::TpuMosaic, "vector_load"),
+            (DialectKind::TpuMosaic, "iota"),
+            (DialectKind::TpuMosaic, "repeat"),
+            (DialectKind::TpuMosaic, "rotate"),
+            (DialectKind::TpuMosaic, "concat"),
+            (DialectKind::TpuMosaic, "memref_slice"),
+            (DialectKind::TpuMosaic, "pack_subelements"),
+            (DialectKind::TpuMosaic, "region"),
+            (DialectKind::Scf, "for"),
+            (DialectKind::Scf, "while"),
+            (DialectKind::Scf, "if"),
+            (DialectKind::Scf, "yield"),
+            (DialectKind::Arith, "constant"),
+            (DialectKind::Arith, "addi"),
+            (DialectKind::Arith, "addf"),
+            (DialectKind::Arith, "subi"),
+            (DialectKind::Arith, "muli"),
+            (DialectKind::Arith, "divsi"),
+            (DialectKind::Arith, "remsi"),
+            (DialectKind::Arith, "maxsi"),
+            (DialectKind::Arith, "minsi"),
+            (DialectKind::Arith, "andi"),
+            (DialectKind::Arith, "ori"),
+            (DialectKind::Arith, "xori"),
+            (DialectKind::Arith, "shli"),
+            (DialectKind::Arith, "shrsi"),
+            (DialectKind::Arith, "shrui"),
+            (DialectKind::Arith, "cmpi"),
+            (DialectKind::Arith, "select"),
+            (DialectKind::Arith, "negf"),
+            (DialectKind::Arith, "index_cast"),
+            (DialectKind::Arith, "bitcast"),
+            (DialectKind::Vector, "broadcast"),
+            (DialectKind::Vector, "contract"),
+            (DialectKind::Vector, "extract"),
+            (DialectKind::Vector, "insert"),
+            (DialectKind::Vector, "multi_reduction"),
+            (DialectKind::Vector, "shape_cast"),
+            (DialectKind::Vector, "transpose"),
+            (DialectKind::Vector, "transfer_read"),
+            (DialectKind::MemRef, "load"),
+            (DialectKind::MemRef, "subview"),
+            (DialectKind::MemRef, "reinterpret_cast"),
+            (DialectKind::StableHlo, "while"),
+            (DialectKind::StableHlo, "if"),
+            (DialectKind::StableHlo, "optimization_barrier"),
+        ] {
+            let kind = classify_ast_operation(dialect, mnem, ElementType::F32, &attrs, &[]);
+            assert_ne!(format!("{kind:?}"), "");
+        }
+
+        // Test dialect attributes (#stablehlo.gather, #stablehlo.scatter, #stablehlo<fft_type ...>, etc.)
+        let attr_src = r#"
+            {
+                g = #stablehlo.gather<offset_dims = [1], collapsed_slice_dims = [0], operand_batching_dims = [], start_indices_batching_dims = [], start_index_map = [0], index_vector_dim = 1>,
+                s = #stablehlo.scatter<update_window_dims = [1], inserted_window_dims = [0], input_batching_dims = [], scatter_indices_batching_dims = [], scatter_dims_to_operand_dims = [0], index_vector_dim = 1>,
+                cd = #stablehlo<comparison_direction LE>,
+                ct = #stablehlo<comparison_type SIGNED>,
+                fft1 = #stablehlo<fft_type IFFT>,
+                fft2 = #stablehlo<fft_type RFFT>,
+                fft3 = #stablehlo<fft_type IRFFT>,
+                fft4 = #stablehlo<fft_type FFT>,
+                rng1 = #stablehlo<rng_algorithm THREE_FRY>,
+                rng2 = #stablehlo<rng_algorithm PHILOX>,
+                rng3 = #stablehlo<rng_algorithm DEFAULT>,
+                tr1 = #stablehlo<transpose TRANSPOSE>,
+                tr2 = #stablehlo<transpose ADJOINT>,
+                tr3 = #stablehlo<transpose NO_TRANSPOSE>,
+                sp = #sdy.sharding_per_value<[<@mesh, [{"x"}]>, <@mesh, [{"y"}]>]>,
+                mesh_inline = #sdy.mesh<["a"=2]>,
+                ms = #tpu.memory_space<vmem>,
+                aff = affine_map<(d0, d1) -> (d0, d1)>,
+                sym_chain = @root::@sub
+            }
+        "#;
+        let tokens = HloLexer::tokenize_spanned(attr_src);
+        let mut parser = MlirModuleParser::new(&tokens);
+        let dict = parser.parse_attribute_dict();
+        assert!(dict.is_ok());
+        assert_eq!(dict.unwrap_or_default().len(), 19);
+    }
+
+    #[test]
+    fn test_parser_edge_cases_and_token_cursor() {
+        use self::parser::TokenCursor;
+
+        // Exercise TokenCursor methods (mismatch + EOF branches)
+        let cur_tokens = HloLexer::tokenize_spanned("@sym %ssa ^bb0 #attr !ty \"str\" 42 ident (");
+        let mut cur = TokenCursor::new(&cur_tokens);
+        assert!(cur.peek().is_some());
+        assert!(TokenCursor::new(&cur_tokens).expect_symbol().is_ok());
+        // Mismatch calls before consuming matching token
+        assert!(cur.consume_ssa_spanned().is_none());
+        assert!(cur.consume_caret_spanned().is_none());
+        assert!(cur.consume_attr_alias_spanned().is_none());
+        assert!(cur.consume_type_alias_spanned().is_none());
+        assert!(cur.consume_string_str().is_none());
+        assert!(cur.consume_number_str().is_none());
+        assert!(cur.consume_any_ident_str().is_none());
+        assert!(cur.expect_punct('(').is_err());
+        assert!(cur.expect_ident().is_err());
+        assert!(cur.expect_ssa().is_err());
+        // Consume @sym, then mismatch consume_symbol_str on %ssa
+        let mut cur2 = TokenCursor::new(&cur_tokens);
+        assert_eq!(cur2.consume_symbol_str().as_deref(), Some("sym"));
+        assert!(cur2.consume_symbol_str().is_none());
+        assert!(cur2.consume_ssa_spanned().is_some());
+        assert!(cur2.consume_caret_spanned().is_some());
+        assert!(cur2.consume_attr_alias_spanned().is_some());
+        assert!(cur2.consume_type_alias_spanned().is_some());
+        assert_eq!(cur2.consume_string_str().as_deref(), Some("str"));
+        assert_eq!(cur2.consume_number_str().as_deref(), Some("42"));
+        assert_eq!(cur2.consume_any_ident_str().as_deref(), Some("ident"));
+        assert!(cur2.expect_punct('(').is_ok());
+        // Test expect_symbol mismatch on non-symbol token
+        assert!(cur.expect_symbol().is_err());
+        // Now at EOF: test all consume_* and expect_* at EOF
+        assert!(!cur2.is_open(')'));
+        assert!(cur2.consume_symbol_str().is_none());
+        assert!(cur2.consume_ssa_spanned().is_none());
+        assert!(cur2.consume_caret_spanned().is_none());
+        assert!(cur2.consume_attr_alias_spanned().is_none());
+        assert!(cur2.consume_type_alias_spanned().is_none());
+        assert!(cur2.consume_string_str().is_none());
+        assert!(cur2.consume_number_str().is_none());
+        assert!(cur2.consume_any_ident_str().is_none());
+        assert!(cur2.expect_punct(')').is_err());
+        assert!(cur2.expect_ident().is_err());
+        assert!(cur2.expect_ssa().is_err());
+        assert!(cur2.expect_symbol().is_err());
+
+        // Exercise all scalar & tensor element types, bounded dims, custom encodings, quantized types
+        for ty_src in [
+            "tensor<4xf64>",
+            "tensor<4xf16>",
+            "tensor<4xi16>",
+            "tensor<4xi8>",
+            "tensor<4xui32>",
+            "tensor<4xui64>",
+            "tensor<4xui16>",
+            "tensor<4xui8>",
+            "tensor<4xcomplex<f32>>",
+            "tensor<4xcomplex<f64>>",
+            "tensor<4xf8E5M2>",
+            "tensor<4xf8E4M3FN>",
+            "tensor<4xf8E4M3B11FNUZ>",
+            "tensor<4xi4>",
+            "tensor<4xui4>",
+            "tensor<4xi2>",
+            "tensor<4xui2>",
+            "tensor<f32>",
+            "tensor<4x<=16xf32, #custom.enc<a::b, ..., @sym, \"s\", <=8, >=2, [1], (tensor<4xf32>) -> tensor<4xf32>>>",
+            "tensor<4x!quant.uniform<i4:f32, 0.1:0>>",
+            "tensor<4x!quant.uniform<u8:f32, 0.1:0>>",
+            "!quant.uniform<i8:f32, 0.05:10>",
+            "!tpu.semaphore",
+            "!mhlo.token",
+            "token",
+            "(tensor<4xf32>) -> (tensor<4xf32>, tensor<4xf32>)",
+            "() -> tensor<4xf32>",
+        ] {
+            let sp = HloLexer::tokenize_spanned(ty_src);
+            let mut p = MlirModuleParser::new(&sp);
+            assert!(p.parse_type().is_ok(), "Failed to parse type: {ty_src}");
+        }
+
+        // Exercise invalid type error paths
+        for bad_ty in [
+            "unknown_scalar",
+            "tensor<4xbad_dtype>",
+            "tensor<4x<=badxf32>",
+            "tensor<bad_dimxf32>",
+            "memref<4xbad_dtype>",
+            "vector<4xbad_dtype>",
+            "tensor<4xf32",
+            "!custom.undef<inner>",
+        ] {
+            let sp = HloLexer::tokenize_spanned(bad_ty);
+            let mut p = MlirModuleParser::new(&sp);
+            assert!(p.parse_type().is_err(), "Expected error on: {bad_ty}");
+        }
+
+        // Exercise module/function/region/operation/attribute edge cases
+        let edge_mlir = r#"
+            #loc_top = loc("top.py":1:1)
+            !alias_t = tensor<4xf32>
+            builtin.module {
+                sdy.mesh @m1 = <["x"=2], device_ids=[0, 1]>
+                sdy.mesh @m2 = bad_mesh
+                sdy.mesh @m3 = <>
+                func.func nested main(tensor<4xf32> {arg_flag}, tensor<4xf32>) -> tensor<4xf32>
+                func.func @void_fn() {
+                    func.return
+                }
+                func.func @multi_blk(%a: !alias_t) -> !alias_t {
+                    %r:2 = stablehlo.rng_bit_generator %a, algorithm = DEFAULT : (tensor<4xf32>) -> (tensor<4xf32>, tensor<4xf32>)
+                    %g = stablehlo.gather %a, %a, #stablehlo.gather<offset_dims = [0], index_vector_dim = 0> : tensor<4xf32>, tensor<4xf32> -> tensor<4xf32>
+                    %sc = stablehlo.scatter %a, %a, %a, #stablehlo.scatter<update_window_dims = [0], index_vector_dim = 0> ({
+                    ^bb0(%x: tensor<f32>, %y: tensor<f32>):
+                        %and_v = stablehlo.and %x, %y : tensor<f32>
+                        stablehlo.return %and_v : tensor<f32>
+                    }) : (tensor<4xf32>, tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
+                    %red_and = stablehlo.reduce(%a init: %a) across dims = [0] : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32> reducer(%x: tensor<f32>, %y: tensor<f32>) {
+                        %and_v2 = stablehlo.and %x, %y : tensor<f32>
+                        stablehlo.return %and_v2 : tensor<f32>
+                    }
+                    %red_or = stablehlo.reduce(%a init: %a) across dims = [0] : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32> reducer(%x: tensor<f32>, %y: tensor<f32>) {
+                        %or_v = stablehlo.or %x, %y : tensor<f32>
+                        stablehlo.return %or_v : tensor<f32>
+                    }
+                    %red_other = stablehlo.reduce(%a init: %a) across dims = [0] : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32> reducer(%x: tensor<f32>, %y: tensor<f32>) {
+                        %abs_v = stablehlo.abs %x : tensor<f32>
+                        stablehlo.return %abs_v : tensor<f32>
+                    }
+                    %cmp_eq = stablehlo.compare EQ, %a, %a, UNKNOWN_CT : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xi1>
+                    %cmp_bad = stablehlo.compare BAD_DIR, %a, %a : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xi1>
+                    %cmp_gen = "stablehlo.compare"(%a, %a) : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xi1>
+                    %for_no_iv = scf.for to %a step %a -> tensor<4xf32> {
+                        scf.yield %a : tensor<4xf32>
+                    }
+                    %c_s32 = chlo.broadcast_add %a, %a {} : (tensor<4xs32>, tensor<4xs32>) -> tensor<4xs32>
+                    %custom_attr_op = stablehlo.abs %a, #stablehlo<precision DEFAULT>, #sdy.sharding_per_value<[<@m1, [{"x"}]>]> : tensor<4xf32> -> (tensor<4xf32>)
+                    tpu.wait_dma %a : (tensor<4xf32>)
+                    cf.br ^bb1
+                ^bb0:
+                ^bb1:
+                    %neg = stablehlo.negate %r#0 : tensor<4xf32>
+                    cf.br ^bb2
+                ^bb2(%b_arg: tensor<4xf32>):
+                    func.return %b_arg : tensor<4xf32>
+                }
+            }
+            }
+            %top_op = stablehlo.abs %a : tensor<4xf32>
+            123
+            %eof_op = stablehlo.abs %a
+        "#;
+        let parsed_edge = parse_mlir_ast_module(edge_mlir);
+        assert!(parsed_edge.is_ok());
+
+        // Exercise remaining attribute and location branches
+        let extra_attrs = r#"
+            #loc_def = loc("file.py":2:3)
+            module attributes {
+                hex_int = 0x2A : i32,
+                hex_flt = 0x1.8p+1,
+                flt_val = 2.5 : f32,
+                int_unknown_ty = 7 : unknown_ty,
+                nan_val = nan,
+                inf_val = inf,
+                bool_t = true,
+                bool_f = false,
+                "quoted_key" = 1,
+                colon_kv : 123,
+                hex_blob = "0x0000803F",
+                arr_b = array<i1: true, false, 1, 0, ignore>,
+                dense_b = dense<[true, false, nan, inf]> : tensor<4xf32>,
+                dense_memref = dense<1.0> : memref<4xf32, #other_space>,
+                dense_untyped = dense<1.0>,
+                dr_untyped = dense_resource<blob_id>,
+                loc_named = loc("step_name"),
+                loc_Empty = loc(),
+                loc_fused_meta = loc(fused<my_meta>["a.py":1:1]),
+                loc_ref = #loc_def,
+                dir_id = LT,
+                ct_id = FLOAT,
+                cd_bad = #stablehlo<comparison_direction BAD>,
+                ct_bad = #stablehlo<comparison_type BAD>,
+                sh_prio = #sdy.sharding<mesh, [{"x", p1}, {"y", pbad}, {}p2]>,
+                sh_bare = #sdy.sharding<mesh>,
+                sh_custom = #stablehlo<custom_payload>,
+                other_alias = #custom.dialect<payload>,
+                ssa_fallback = %fallback_tok,
+                ty_attr = tensor<2xf32>,
+                sym_trailing = @root::
+            } {
+            }
+        "#;
+        assert!(parse_mlir_ast_module(extra_attrs).is_ok());
+
+        // Negative attribute & operation parser tests
+        let eof_tokens = HloLexer::tokenize_spanned("");
+        let mut eof_parser = MlirModuleParser::new(&eof_tokens);
+        assert!(eof_parser.parse_attribute().is_err());
+        assert!(eof_parser.parse_operation().is_err());
+
+        let lhs_tokens = HloLexer::tokenize_spanned("%lhs_only");
+        let mut lhs_parser = MlirModuleParser::new(&lhs_tokens);
+        assert!(lhs_parser.parse_operation().is_err());
+
+        let invalid_dict_tokens = HloLexer::tokenize_spanned("{ 123 = 456 }");
+        let mut invalid_dict_parser = MlirModuleParser::new(&invalid_dict_tokens);
+        assert!(invalid_dict_parser.parse_attribute_dict().is_err());
+
+        assert!(parse_float_literal("+nan").is_nan());
+        assert!((parse_float_literal("0x1p+2") - 4.0).abs() < 1e-6);
+        assert!((parse_float_literal("true") - 1.0).abs() < 1e-6);
+        assert!(parse_float_literal("false").abs() < 1e-6);
+
+        // Test MlirBytecodeHeader::encode_from_ast_module, decode_binary_attr_types, decode_resource_blobs, and versioned kDialect
+        let ast_src = r#"
+            module @bc_roundtrip {
+                func.func @main(%arg0: tensor<f32>, %arg1: tensor<4xf32>, %arg2: tensor<4xf32>) -> tensor<4xf32> {
+                    %0 = stablehlo.constant dense<"0x0000803F000000400000404000008040"> : tensor<4xf32>
+                    %1 = "vhlo.add_v1"(%arg0, %arg1) ({
+                    ^bb0(%r0: tensor<f32>):
+                        stablehlo.return %r0 : tensor<f32>
+                    }) {some_attr = 1 : i64} : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xf32>
+                    %2 = add %0, %1 : tensor<4xf32>
+                    func.return %2 : tensor<4xf32>
+                }
+            }
+        "#;
+        if let Ok(ast_m) = parse_mlir_ast_module(ast_src) {
+            let bc_bytes = MlirBytecodeHeader::encode_from_ast_module(&ast_m);
+            assert!(bc_bytes.starts_with(MLIR_BYTECODE_MAGIC));
+            let decoded_hdr = MlirBytecodeHeader::decode(&bc_bytes);
+            assert!(decoded_hdr.is_ok());
+            if let Ok(mut hdr) = decoded_hdr {
+                let d_descs = hdr.decode_dialect_descriptors();
+                assert_ne!(d_descs, [] as [MlirDialectDescriptor; 0]);
+                if let Some(first_d) = d_descs.first() {
+                    assert_eq!(first_d.clone(), *first_d);
+                    assert_ne!(format!("{first_d:?}"), "");
+                }
+                hdr.attr_type_entries.push(String::from("f32"));
+                hdr.attr_type_entries.push(String::from("memref<4xf32>"));
+                hdr.attr_type_entries.push(String::from("vector<4xf32>"));
+                hdr.attr_type_entries
+                    .push(String::from("tuple<tensor<4xf32>>"));
+                hdr.attr_type_entries.push(String::from("complex<f32>"));
+                hdr.attr_type_entries.push(String::from("!tpu.semaphore"));
+                hdr.attr_type_entries
+                    .push(String::from("!quant.uniform<i8:f32, 0.1:0>"));
+                hdr.attr_type_entries.push(String::from("token"));
+                hdr.attr_type_entries
+                    .push(String::from("tensor<bad_unparseable>"));
+                hdr.attr_type_entries.push(String::from("dense<1.0>"));
+                hdr.attr_type_entries.push(String::from("array<i64: 1, 2>"));
+                hdr.attr_type_entries
+                    .push(String::from("#stablehlo<comparison_direction EQ>"));
+                hdr.attr_type_entries
+                    .push(String::from("#unknown_unparseable_alias"));
+                hdr.attr_type_entries.push(String::from("42"));
+                hdr.attr_type_entries.push(String::from("custom_attr"));
+                let (tys, attrs) = hdr.decode_binary_attr_types();
+                assert!(!tys.is_empty() && !attrs.is_empty());
+
+                // Test resource blobs with and without offsets
+                assert_eq!(hdr.decode_resource_blobs().len(), 1);
+                hdr.resources = vec![vec![1, 2, 3, 4, 5, 6, 7, 8]];
+                hdr.resource_offsets.clear();
+                assert_eq!(hdr.decode_resource_blobs().len(), 1);
+                hdr.resource_offsets = vec![4, 4];
+                assert_eq!(hdr.decode_resource_blobs().len(), 2);
+                hdr.resource_offsets = vec![0];
+                assert_eq!(hdr.decode_resource_blobs().len(), 1);
+
+                hdr.string_table.push(String::from("unqualified_op"));
+                hdr.ir_op_records.extend_from_slice(&[
+                    (hdr.string_table.len() - 1) as u64,
+                    0x06,
+                    0,
+                ]);
+                let rt_ast = hdr.to_ast_module();
+                assert_eq!(rt_ast.name.as_deref(), Some("bc_roundtrip"));
+            }
+        }
+        let empty_ast = AstModule::default();
+        let empty_bc = MlirBytecodeHeader::encode_from_ast_module(&empty_ast);
+        if let Ok(mut hdr) = MlirBytecodeHeader::decode(&empty_bc) {
+            hdr.attr_type_entries.clear();
+            let (tys, _) = hdr.decode_binary_attr_types();
+            assert_eq!(tys.len(), 2);
+            hdr.attr_type_offsets.clear();
+            let (tys_empty, _) = hdr.decode_binary_attr_types();
+            assert_eq!(tys_empty.len(), 1);
+        }
+
+        // Test EM_DEEPSEA (0x1AE0) ELF64 packaging, relocation, and deserialization
+        if let Ok(mut prog_elf) = CompiledProgram::compile(
+            "mlir",
+            b"module @deepsea_elf { %0 = stablehlo.constant dense<2.0> : tensor<4xf32> %1 = stablehlo.add %0, %0 : tensor<4xf32> %2 = stablehlo.multiply %1, %0 : tensor<4xf32> %3 = stablehlo.subtract %2, %0 : tensor<4xf32> return %3 : tensor<4xf32> }",
+            b"",
+        ) {
+            let elf64 = prog_elf.to_deepsea_elf64();
+            assert!(elf64.starts_with(b"\x7fELF"));
+            let reloc = CompiledProgram::from_deepsea_elf64(&elf64, 0x1000_0000, 0x2000);
+            assert!(reloc.is_ok());
+            if let Ok(r) = reloc {
+                assert!(r.applied_relocations >= 4);
+                assert_ne!(r.relocated_imem, [] as [u8; 0]);
+                assert_ne!(r.constant_pool, [] as [u8; 0]);
+                assert_eq!(r.program.name, prog_elf.name);
+                assert_ne!(format!("{r:?}"), "");
+                let r_cl = r.clone();
+                assert_eq!(r_cl.applied_relocations, r.applied_relocations);
+            }
+            assert!(CompiledProgram::deserialize(&elf64).is_ok());
+            assert!(CompiledProgram::from_deepsea_elf64(b"short", 0, 0).is_err());
+            let mut wrong_mach = elf64.clone();
+            if let Some(m0) = wrong_mach.get_mut(18) {
+                *m0 = 0x3E;
+            }
+            if let Some(m1) = wrong_mach.get_mut(19) {
+                *m1 = 0x00;
+            }
+            assert!(CompiledProgram::from_deepsea_elf64(&wrong_mach, 0, 0).is_err());
+            let mut trunc_shdr = elf64;
+            trunc_shdr.truncate(80);
+            assert!(CompiledProgram::from_deepsea_elf64(&trunc_shdr, 0, 0).is_err());
+
+            // Test pass_dead_code_elimination, shape inference, and extended algebraic/constant folding
+            prog_elf.pass_dead_code_elimination();
+            let mut empty_out_prog = prog_elf.clone();
+            empty_out_prog.output_slots.clear();
+            empty_out_prog.pass_dead_code_elimination();
+            let mut dce_prog = prog_elf.clone();
+            dce_prog.output_slots = vec![1];
+            dce_prog.instruction_bundles.push(TpuInstructionBundle {
+                pc_offset: 10,
+                opcode: TpuOpCode::AddF32,
+                operand_slots: vec![0, 0],
+                output_slot: 99,
+                sync_flag_id: 1,
+                attrs: InstructionAttrs::default(),
+            });
+            dce_prog.instruction_bundles.push(TpuInstructionBundle {
+                pc_offset: 11,
+                opcode: TpuOpCode::AllReduceSumF32,
+                operand_slots: vec![0],
+                output_slot: 98,
+                sync_flag_id: 1,
+                attrs: InstructionAttrs::default(),
+            });
+            dce_prog.pass_dead_code_elimination();
+            assert!(
+                dce_prog
+                    .instruction_bundles
+                    .iter()
+                    .all(|b| b.output_slot != 99)
+            );
+            }
+
+        // Test per-op shape inference and extended algebraic/constant folding
+        if let Ok(mut shape_prog) =
+            CompiledProgram::compile("mlir", b"module @sh { stablehlo.add }", b"")
+        {
+            let base_sh = Shape {
+                element_type: ElementType::F32,
+                dims: vec![4, 4],
+                dynamic_dims: vec![false, false],
+                layout: crate::types::MemoryLayout::default_tpu_tiled(2),
+            };
+            shape_prog.parameter_shapes = vec![base_sh.clone(), base_sh];
+            shape_prog.instruction_bundles = vec![
+                TpuInstructionBundle {
+                    pc_offset: 0,
+                    opcode: TpuOpCode::Constant,
+                    operand_slots: vec![],
+                    output_slot: 2,
+                    sync_flag_id: 1,
+                    attrs: InstructionAttrs {
+                        constant_bytes: vec![0_u8; 16],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 1,
+                    opcode: TpuOpCode::Transpose,
+                    operand_slots: vec![0],
+                    output_slot: 3,
+                    sync_flag_id: 2,
+                    attrs: InstructionAttrs {
+                        permutation: vec![1, 0],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 2,
+                    opcode: TpuOpCode::Transpose,
+                    operand_slots: vec![3],
+                    output_slot: 4,
+                    sync_flag_id: 3,
+                    attrs: InstructionAttrs {
+                        permutation: vec![1, 0],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 3,
+                    opcode: TpuOpCode::Reshape,
+                    operand_slots: vec![0],
+                    output_slot: 5,
+                    sync_flag_id: 4,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 4,
+                    opcode: TpuOpCode::Reshape,
+                    operand_slots: vec![5],
+                    output_slot: 6,
+                    sync_flag_id: 5,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 5,
+                    opcode: TpuOpCode::Slice,
+                    operand_slots: vec![0],
+                    output_slot: 7,
+                    sync_flag_id: 6,
+                    attrs: InstructionAttrs {
+                        slice_starts: vec![0, 0],
+                        slice_limits: vec![2, 2],
+                        slice_strides: vec![1, 1],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 6,
+                    opcode: TpuOpCode::Pad,
+                    operand_slots: vec![0],
+                    output_slot: 8,
+                    sync_flag_id: 7,
+                    attrs: InstructionAttrs {
+                        pad_edge_low: vec![1, 1],
+                        pad_edge_high: vec![1, 1],
+                        pad_interior: vec![0, 0],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 7,
+                    opcode: TpuOpCode::Concatenate,
+                    operand_slots: vec![0, 1],
+                    output_slot: 9,
+                    sync_flag_id: 8,
+                    attrs: InstructionAttrs {
+                        concat_dim: 0,
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 8,
+                    opcode: TpuOpCode::ReduceSumF32,
+                    operand_slots: vec![0],
+                    output_slot: 10,
+                    sync_flag_id: 9,
+                    attrs: InstructionAttrs {
+                        reduce_dims: vec![0, 1],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 9,
+                    opcode: TpuOpCode::ReduceSumF32,
+                    operand_slots: vec![0],
+                    output_slot: 14,
+                    sync_flag_id: 13,
+                    attrs: InstructionAttrs {
+                        reduce_dims: vec![0],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 10,
+                    opcode: TpuOpCode::CompareEq,
+                    operand_slots: vec![0, 1],
+                    output_slot: 11,
+                    sync_flag_id: 10,
+                    attrs: InstructionAttrs::default(),
+                },
+            ];
+            shape_prog.pass_hlo_verification_and_shape_inference();
+            shape_prog.pass_algebraic_simplifier();
+            for u_op in [
+                TpuOpCode::Abs,
+                TpuOpCode::ExpF32,
+                TpuOpCode::TanhF32,
+                TpuOpCode::Sqrt,
+            ] {
+                shape_prog.instruction_bundles.push(TpuInstructionBundle {
+                    pc_offset: 10,
+                    opcode: u_op,
+                    operand_slots: vec![2],
+                    output_slot: 12,
+                    sync_flag_id: 11,
+                    attrs: InstructionAttrs::default(),
+                });
+            }
+            for b_op in [TpuOpCode::SubF32, TpuOpCode::MaxF32, TpuOpCode::MinF32] {
+                shape_prog.instruction_bundles.push(TpuInstructionBundle {
+                    pc_offset: 11,
+                    opcode: b_op,
+                    operand_slots: vec![2, 2],
+                    output_slot: 13,
+                    sync_flag_id: 12,
+                    attrs: InstructionAttrs::default(),
+                });
+            }
+            shape_prog.pass_constant_folding();
+        }
+
+        // Test versioned kDialect ((str_idx << 1) | 1 followed by version len & bytes)
+        let mut ver_dial = Vec::new();
+        ver_dial.extend_from_slice(&encode_mlir_prefix_varint((10 << 1) | 1));
+        ver_dial.extend_from_slice(&encode_mlir_prefix_varint(2));
+        ver_dial.extend_from_slice(&[1, 9]);
+        let ver_hdr = MlirBytecodeHeader {
+            version: 6,
+            producer: String::from("MLIR20"),
+            section_count: 2,
+            sections: vec![
+                MlirBytecodeSection {
+                    section_id: 0,
+                    alignment: None,
+                    data: b"s0\0s1\0s2\0s3\0s4\0s5\0s6\0s7\0s8\0s9\0vhlo\0".to_vec(),
+                },
+                MlirBytecodeSection {
+                    section_id: 1,
+                    alignment: None,
+                    data: ver_dial,
+                },
+            ],
+            string_table: Vec::new(),
+            dialects: Vec::new(),
+            attr_type_offsets: Vec::new(),
+            attr_type_entries: Vec::new(),
+            ir_op_records: Vec::new(),
+            resources: Vec::new(),
+            resource_offsets: Vec::new(),
+            properties: Vec::new(),
+        };
+        let encoded_ver = ver_hdr.encode();
+        if let Ok(dec_ver) = MlirBytecodeHeader::decode(&encoded_ver) {
+            assert_eq!(dec_ver.dialects, vec!["vhlo"]);
+        }
+
+        // Test CompiledProgram::compile on bytecode where string_table is generic so kIR fallback triggers
+        let mut fallback_enc = MlirBytecodeEncoder::new("MLIR20");
+        let _ = fallback_enc.intern_string("@mod");
+        let op_idx = fallback_enc.intern_string("vhlo.exponential_v1");
+        fallback_enc.operations.push(MlirBytecodeOpNode {
+            name_index: op_idx,
+            encoding_mask: 0x06,
+            attr_dict_index: None,
+            operands: vec![0],
+            result_type_indices: vec![0],
+            successors: Vec::new(),
+            num_regions: 0,
+            properties_index: None,
+            inline_regions: Vec::new(),
+        });
+        let mut raw_fb = fallback_enc.encode_to_bytes();
+        // Replace string table entry in-place only in ir_op_records test:
+        let _ = CompiledProgram::compile("mlir", &raw_fb, b"");
+        raw_fb.clear();
+
+        let empty_bc_hdr = MlirBytecodeHeader {
+            version: 1,
+            producer: String::new(),
+            section_count: 0,
+            sections: Vec::new(),
+            string_table: Vec::new(),
+            dialects: Vec::new(),
+            attr_type_offsets: Vec::new(),
+            attr_type_entries: Vec::new(),
+            ir_op_records: Vec::new(),
+            resources: Vec::new(),
+            resource_offsets: Vec::new(),
+            properties: Vec::new(),
+        };
+        assert!(empty_bc_hdr.decode_to_ast().is_err());
+        let sample_ast = AstModule {
+            name: Some(String::from("sample_bc")),
+            ..AstModule::default()
+        };
+        let v6_bytes = MlirBytecodeHeader::encode_from_ast(&sample_ast, 6);
+        let v6_dec = MlirBytecodeHeader::decode(&v6_bytes);
+        assert!(v6_dec.is_ok());
+        if let Ok(v6_hdr) = v6_dec {
+            assert_eq!(v6_hdr.version, 6);
+            assert!(v6_hdr.decode_to_ast().is_ok());
+        }
+        let v1_bytes = MlirBytecodeHeader::encode_from_ast(&sample_ast, 1);
+        assert_ne!(v1_bytes, [] as [u8; 0]);
+        let sched = LloVliwScheduler::new(crate::types::TpuGeneration::V5e);
+        let packed_coissued = sched.pack_independent_bundles(&[
+            TpuInstructionBundle {
+                pc_offset: 0,
+                opcode: TpuOpCode::AddF32,
+                operand_slots: vec![0, 1],
+                output_slot: 2,
+                sync_flag_id: 1,
+                attrs: InstructionAttrs::default(),
+            },
+            TpuInstructionBundle {
+                pc_offset: 1,
+                opcode: TpuOpCode::DotGeneralF32,
+                operand_slots: vec![0, 1],
+                output_slot: 3,
+                sync_flag_id: 2,
+                attrs: InstructionAttrs::default(),
+            },
+            TpuInstructionBundle {
+                pc_offset: 2,
+                opcode: TpuOpCode::AddF32,
+                operand_slots: vec![0, 1],
+                output_slot: 4,
+                sync_flag_id: 3,
+                attrs: InstructionAttrs::default(),
+            },
+            TpuInstructionBundle {
+                pc_offset: 3,
+                opcode: TpuOpCode::ExpF32,
+                operand_slots: vec![0],
+                output_slot: 5,
+                sync_flag_id: 4,
+                attrs: InstructionAttrs::default(),
+            },
+            TpuInstructionBundle {
+                pc_offset: 4,
+                opcode: TpuOpCode::AddF32,
+                operand_slots: vec![0, 1],
+                output_slot: 6,
+                sync_flag_id: 5,
+                attrs: InstructionAttrs::default(),
+            },
+            TpuInstructionBundle {
+                pc_offset: 5,
+                opcode: TpuOpCode::AllReduceSumF32,
+                operand_slots: vec![0],
+                output_slot: 7,
+                sync_flag_id: 6,
+                attrs: InstructionAttrs::default(),
+            },
+            TpuInstructionBundle {
+                pc_offset: 6,
+                opcode: TpuOpCode::AddF32,
+                operand_slots: vec![7, 1],
+                output_slot: 8,
+                sync_flag_id: 7,
+                attrs: InstructionAttrs {
+                    output_shape: Some(Shape {
+                        element_type: ElementType::F32,
+                        dims: vec![4],
+                        dynamic_dims: vec![false],
+                        layout: crate::types::MemoryLayout::default_tpu_tiled(1),
+                    }),
+                    ..InstructionAttrs::default()
+                },
+            },
+            TpuInstructionBundle {
+                pc_offset: 7,
+                opcode: TpuOpCode::ExpF32,
+                operand_slots: vec![8],
+                output_slot: 9,
+                sync_flag_id: 8,
+                attrs: InstructionAttrs::default(),
+            },
+            TpuInstructionBundle {
+                pc_offset: 8,
+                opcode: TpuOpCode::SubF32,
+                operand_slots: vec![0, 1],
+                output_slot: 10,
+                sync_flag_id: 9,
+                attrs: InstructionAttrs::default(),
+            },
+        ]);
+        assert!(packed_coissued.len() <= 7);
+        if let Ok(mut hdr_with_attrs) = MlirBytecodeHeader::decode(&v6_bytes) {
+            let mut ast_with_attrs = hdr_with_attrs.to_ast_module();
+            if let Some(f0) = ast_with_attrs.functions.first_mut()
+                && let Some(b0) = f0.body.blocks.first_mut()
+                && let Some(op0) = b0.operations.first_mut()
+            {
+                op0.attributes
+                    .insert(String::from("k"), MlirAttribute::String(String::from("v")));
+            }
+            let re_enc = MlirBytecodeHeader::encode_from_ast_module(&ast_with_attrs);
+            assert_ne!(re_enc, [] as [u8; 0]);
+            hdr_with_attrs
+                .attr_type_entries
+                .push(String::from("{a = 1}"));
+            let _ = hdr_with_attrs.to_ast_module();
+        }
+        for mut arch_b in packed_coissued {
+            assert!(arch_b.to_instruction_bundle().is_ok());
+            arch_b.vector_slot.opcode = 0;
+            arch_b.vector_slot.dst_vreg = 0;
+            arch_b.vector_slot.src0_vreg = 0;
+            if arch_b.matrix_slot.opcode != 0
+                || arch_b.xunary_slot.opcode != 0
+                || arch_b.dma_slot.collective_op != 0
+            {
+                assert!(arch_b.to_instruction_bundle().is_ok());
+            }
+        }
+
+        // Test SPMD sharding propagation and contraction collective synthesis (AllReduce, ReduceScatter, AllGather, AllToAll)
+        for sharding_mode in [
+            "{devices=[2,2]0,1,2,3}",
+            "reduce_scatter_x",
+            "all_gather_x",
+            "all_to_all_x",
+        ] {
+            let spmd_mlir = format!(
+                r#"module @spmd_dot attributes {{mhlo.sharding = "{sharding_mode}", num_partitions = 4}} {{
+                    func.func @main(%arg0: tensor<4x4xf32>, %arg1: tensor<4x4xf32>) -> tensor<4x4xf32> {{
+                        %0 = stablehlo.dot_general %arg0, %arg1 : (tensor<4x4xf32>, tensor<4x4xf32>) -> tensor<4x4xf32>
+                        func.return %0 : tensor<4x4xf32>
+                    }}
+                }}"#
+            );
+            let spmd_prog = CompiledProgram::compile("mlir", spmd_mlir.as_bytes(), b"");
+            assert!(spmd_prog.is_ok());
+            if let Ok(p) = spmd_prog {
+                assert_eq!(p.num_partitions, 4);
+                assert!(p.instruction_bundles.len() >= 2);
+            }
+        }
+    }
+
     proptest::proptest! {
         #[test]
         fn proptest_winnow_tensor_shape_and_compiler_roundtrip(
@@ -1594,6 +3379,17 @@ ENTRY %main (x: f32[4]) -> f32[4] {
             if let Ok(sh) = parsed_hlo {
                 proptest::prop_assert_eq!(sh.dims, vec![d0, d1]);
                 proptest::prop_assert_eq!(sh.element_type, ElementType::Bf16);
+            }
+
+            // Full recursive-descent MLIR AST parse & lower roundtrip
+            let full_mlir = format!(
+                "module @prop_mod {{ func.func @main(%arg0: tensor<{d0}x{d1}xf32>, %arg1: tensor<{d0}x{d1}xf32>) -> tensor<{d0}x{d1}xf32> {{ %0 = stablehlo.add %arg0, %arg1 : tensor<{d0}x{d1}xf32> func.return %0 : tensor<{d0}x{d1}xf32> }} }}"
+            );
+            let ast_res = HloParser::parse_verified_ast_module(&full_mlir);
+            proptest::prop_assert!(ast_res.is_ok());
+            if let Ok(ast) = ast_res {
+                let lowered = lower_ast_module_to_parsed_hlo(&ast);
+                proptest::prop_assert!(lowered.is_ok());
             }
         }
     }

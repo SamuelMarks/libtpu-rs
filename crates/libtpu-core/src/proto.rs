@@ -110,6 +110,16 @@ mod tests {
         let json = transcode_proto_bytes_to_json("xla.TargetArgumentsProto", &encoded).ok();
         assert!(json.as_deref().unwrap_or_default().contains("v5litepod"));
 
+        let text = transcode_proto_bytes_to_text("xla.TargetArgumentsProto", &encoded).ok();
+        assert!(text.as_deref().unwrap_or_default().contains("v5litepod"));
+        if let Some(txt) = &text {
+            assert_eq!(
+                TargetArgumentsProto::from_proto_text(txt).ok(),
+                Some(target.clone())
+            );
+        }
+        assert_eq!(target.to_proto_text().ok(), text);
+
         assert!(lookup_message_descriptor("nonexistent.MessageProto").is_err());
         assert!(decode_dynamic_proto_message("nonexistent.MessageProto", &encoded).is_err());
         assert!(
@@ -118,6 +128,58 @@ mod tests {
         );
         assert!(decode_dynamic_proto_json("nonexistent.MessageProto", "{}").is_err());
         assert!(decode_dynamic_proto_json("xla.TargetArgumentsProto", "{invalid_json").is_err());
+        assert!(decode_dynamic_proto_text("nonexistent.MessageProto", "").is_err());
+        assert!(decode_dynamic_proto_text("xla.TargetArgumentsProto", ":::bad_textproto").is_err());
+
+        let mut comp_env = TpuCompilationEnvironmentProto::default();
+        comp_env.set_field_from_str("--xla_tpu_enable_megacore_fusion", "true");
+        comp_env.set_field_from_str("2", "1");
+        comp_env.set_field_from_str("xla_tpu_scoped_vmem_limit_kib", "32768");
+        comp_env.set_field_from_str("custom_flags", "flag_a=10");
+        comp_env.set_field_from_str("--xla_tpu_spmd_rng_bit_generator_unsafe", "true");
+        assert_eq!(
+            comp_env.get_field_as_string("xla_tpu_enable_megacore_fusion"),
+            "true"
+        );
+        assert_eq!(
+            comp_env.get_field_as_string("xla_tpu_enable_async_collective_fusion"),
+            "true"
+        );
+        assert_eq!(
+            comp_env.get_field_as_string("xla_tpu_scoped_vmem_limit_kib"),
+            "32768"
+        );
+        assert!(comp_env.get_field_as_string("4").contains("flag_a=10"));
+        assert_eq!(comp_env.get_field_as_string("flag_a"), "10");
+        assert_eq!(
+            comp_env.get_field_as_string("xla_tpu_spmd_rng_bit_generator_unsafe"),
+            "true"
+        );
+        assert_eq!(comp_env.get_field_as_string("unknown_flag"), "default");
+        let jellyfish_fields = TpuCompilationEnvironmentProto::list_jellyfish_schema_field_names();
+        assert_ne!(jellyfish_fields, [] as [String; 0]);
+        if let Some(first_jf) = jellyfish_fields.first() {
+            assert_ne!(comp_env.get_field_as_string(first_jf), "default");
+        }
+        assert_ne!(comp_env.get_field_as_string("model_version"), "default");
+        let parsed_cli = TpuCompilationEnvironmentProto::from_cli_flags(
+            " --xla_tpu_enable_megacore_fusion=false, --xla_tpu_scoped_vmem_limit_kib=65536 --xla_tpu_flag_bool ",
+        );
+        assert!(!parsed_cli.xla_tpu_enable_megacore_fusion);
+        assert_eq!(parsed_cli.xla_tpu_scoped_vmem_limit_kib, 65_536);
+        assert_eq!(parsed_cli.get_field_as_string("xla_tpu_flag_bool"), "true");
+        let mut init_cfg = crate::config::TpuInitConfig::default();
+        parsed_cli.apply_to_init_config(&mut init_cfg);
+        assert_eq!(
+            init_cfg
+                .extra_flags
+                .get("xla_tpu_scoped_vmem_limit_kib")
+                .map(String::as_str),
+            Some("65536")
+        );
+        let mut comp_env2 = TpuCompilationEnvironmentProto::default();
+        comp_env2.set_field_from_str("flag_only", "val");
+        assert_eq!(comp_env2.get_field_as_string("flag_only"), "val");
     }
 
     #[test]
@@ -259,6 +321,7 @@ mod tests {
             operand_ids: vec![0, 2],
             parameter_number: 3,
             custom_call_target: String::from("tpu_custom_call"),
+            ..HloInstructionProto::default()
         };
         let mut inst_bytes = inst.encode();
         assert_eq!(
@@ -278,6 +341,7 @@ mod tests {
             program_shape: Some(prog_shape.clone()),
             id: 10,
             root_id: 1,
+            ..HloComputationProto::default()
         };
         let mut comp_bytes = comp.encode();
         assert_eq!(
@@ -298,6 +362,7 @@ mod tests {
             computations: vec![comp],
             host_program_shape: Some(prog_shape.clone()),
             id: 42,
+            ..HloModuleProto::default()
         };
         let mut mod_bytes = module.encode();
         assert_eq!(
@@ -314,6 +379,7 @@ mod tests {
             replica_count: 2,
             num_partitions: 4,
             use_spmd_partitioning: true,
+            ..HloModuleConfigProto::default()
         };
         let mut mod_cfg_bytes = mod_cfg.encode();
         assert_eq!(
@@ -1450,9 +1516,438 @@ mod tests {
         );
         assert!(ms_err.verify_schema_sync().is_ok());
 
+        let split_cfg = SplitConfigProto {
+            dimension: 0,
+            split_indices: vec![64, 128],
+        };
+        assert_eq!(
+            SplitConfigProto::decode(&split_cfg.encode()).ok(),
+            Some(split_cfg.clone())
+        );
+        assert!(split_cfg.verify_schema_sync().is_ok());
+
+        let op_meta = OpMetadata {
+            op_type: String::from("jit_matmul"),
+            op_name: String::from("main/dot_general"),
+            source_file: String::from("model.py"),
+            source_line: 42,
+            deduplicated_name: String::from("fusion.1"),
+            scheduling_name: String::from("fusion.1.sched"),
+        };
+        assert_eq!(
+            OpMetadata::decode(&op_meta.encode()).ok(),
+            Some(op_meta.clone())
+        );
+        assert!(op_meta.verify_schema_sync().is_ok());
+
+        let exec_prof = ExecutionProfile {
+            compilation_cache_hit: true,
+            compile_time_ms: 12,
+            compute_cycle_count: 1024,
+            compute_time_ns: 5000,
+            compute_and_transfer_time_ns: 8000,
+            executable_size_in_bytes: 4096,
+            profile_cache_hit: false,
+            warmup_run_executed: true,
+        };
+        assert_eq!(
+            ExecutionProfile::decode(&exec_prof.encode()).ok(),
+            Some(exec_prof.clone())
+        );
+        assert!(exec_prof.verify_schema_sync().is_ok());
+
+        let exec_h = ExecutionHandle { handle: 1 };
+        assert_eq!(
+            ExecutionHandle::decode(&exec_h.encode()).ok(),
+            Some(exec_h.clone())
+        );
+        assert!(exec_h.verify_schema_sync().is_ok());
+
+        let gdata_h = GlobalDataHandle { handle: 2 };
+        assert_eq!(
+            GlobalDataHandle::decode(&gdata_h.encode()).ok(),
+            Some(gdata_h.clone())
+        );
+        assert!(gdata_h.verify_schema_sync().is_ok());
+
+        let dev_h = DeviceHandle {
+            handle: 3,
+            device_count: 4,
+        };
+        assert_eq!(
+            DeviceHandle::decode(&dev_h.encode()).ok(),
+            Some(dev_h.clone())
+        );
+        assert!(dev_h.verify_schema_sync().is_ok());
+
+        let chan_h = ChannelHandle {
+            handle: 5,
+            channel_type: 1,
+        };
+        assert_eq!(
+            ChannelHandle::decode(&chan_h.encode()).ok(),
+            Some(chan_h.clone())
+        );
+        assert!(chan_h.verify_schema_sync().is_ok());
+
+        let lit_proto = LiteralProto {
+            shape: None,
+            preds: vec![true, false],
+            u8s: vec![1, 2],
+            s32s: vec![-1, 2],
+            s64s: vec![-10, 20],
+            u32s: vec![10, 20],
+            u64s: vec![100, 200],
+            f32s: vec![1.5, -2.5],
+            f64s: vec![3.5, -4.5],
+            tuple_literals: Vec::new(),
+            f16s: vec![0, 0],
+            c64s: vec![1.0, 0.0],
+            bf16s: vec![0, 0],
+            s8s: vec![1, 2],
+            u16s: vec![0, 1],
+            s16s: vec![0, 2],
+            c128s: vec![2.0, -1.0],
+            f8e5m2s: vec![0x3C],
+            f8e4m3fns: vec![0x38],
+            s4s: vec![0x12],
+            u4s: vec![0x34],
+            f8e4m3b11fnuzs: vec![0x56],
+        };
+        assert_eq!(
+            LiteralProto::decode(&lit_proto.encode()).ok(),
+            Some(lit_proto.clone())
+        );
+        assert!(lit_proto.verify_schema_sync().is_ok());
+
+        let param_rep = ParameterReplicationProto {
+            replicated_at_leaf_buffers: vec![true, false],
+        };
+        assert_eq!(
+            ParameterReplicationProto::decode(&param_rep.encode()).ok(),
+            Some(param_rep.clone())
+        );
+        assert!(param_rep.verify_schema_sync().is_ok());
+
+        let slice_dims = HloSliceDimensionsProto {
+            start: 0,
+            limit: 8,
+            stride: 1,
+        };
+        assert_eq!(
+            HloSliceDimensionsProto::decode(&slice_dims.encode()).ok(),
+            Some(slice_dims.clone())
+        );
+        assert!(slice_dims.verify_schema_sync().is_ok());
+
+        let alias_entry = HloAliasEntryProto {
+            output_shape_index: vec![0],
+            parameter_number: 0,
+            parameter_shape_index: vec![0],
+            kind: 2,
+        };
+        assert_eq!(
+            HloAliasEntryProto::decode(&alias_entry.encode()).ok(),
+            Some(alias_entry.clone())
+        );
+        assert!(alias_entry.verify_schema_sync().is_ok());
+
+        let io_alias = HloInputOutputAliasProto {
+            entries: vec![alias_entry],
+        };
+        assert_eq!(
+            HloInputOutputAliasProto::decode(&io_alias.encode()).ok(),
+            Some(io_alias.clone())
+        );
+        assert!(io_alias.verify_schema_sync().is_ok());
+
+        let donor_entry = HloBufferDonorEntryProto {
+            parameter_number: 1,
+            parameter_shape_index: vec![0],
+        };
+        assert_eq!(
+            HloBufferDonorEntryProto::decode(&donor_entry.encode()).ok(),
+            Some(donor_entry.clone())
+        );
+        assert!(donor_entry.verify_schema_sync().is_ok());
+
+        let buf_donor = HloBufferDonorProto {
+            entries: vec![donor_entry],
+        };
+        assert_eq!(
+            HloBufferDonorProto::decode(&buf_donor.encode()).ok(),
+            Some(buf_donor.clone())
+        );
+        assert!(buf_donor.verify_schema_sync().is_ok());
+
+        let cp_prefetch = CrossProgramPrefetchProto {
+            parameter: 0,
+            index: vec![0],
+            offset: 256,
+        };
+        assert_eq!(
+            CrossProgramPrefetchProto::decode(&cp_prefetch.encode()).ok(),
+            Some(cp_prefetch.clone())
+        );
+        assert!(cp_prefetch.verify_schema_sync().is_ok());
+
+        let reg_entry = RegisterTranslatorEntryProto {
+            full_path: String::from("vlc_tc_tcs_core_state.RUN_STATUS"),
+            byte_offset: 0xA842_2040,
+            width_bits: 64,
+            access_mode: String::from("RW"),
+            reset_value: 0,
+        };
+        assert_eq!(
+            RegisterTranslatorEntryProto::decode(&reg_entry.encode()).ok(),
+            Some(reg_entry.clone())
+        );
+        assert!(reg_entry.verify_schema_sync().is_ok());
+
+        let reg_data = RegisterTranslatorDataProto {
+            chip_codename: String::from("viperfish_lite"),
+            tpu_version: 5,
+            hardware_abi_version: 65_537,
+            registers: vec![reg_entry],
+        };
+        assert_eq!(
+            RegisterTranslatorDataProto::decode(&reg_data.encode()).ok(),
+            Some(reg_data.clone())
+        );
+        assert!(reg_data.verify_schema_sync().is_ok());
+
+        let chip_cfg = TpuChipConfigProto {
+            chip_name: String::from("viperfish_megacore"),
+            tpu_version: 5,
+            tensor_cores_per_chip: 2,
+            sparse_cores_per_chip: 4,
+            hbm_capacity_bytes: 102_005_473_280,
+            vmem_capacity_bytes: 67_108_864,
+            smem_capacity_bytes: 1_048_576,
+            megacore_enabled: true,
+        };
+        assert_eq!(
+            TpuChipConfigProto::decode(&chip_cfg.encode()).ok(),
+            Some(chip_cfg.clone())
+        );
+        assert!(chip_cfg.verify_schema_sync().is_ok());
+
+        let host_offload = HostOffloadingExecutableProto {
+            hlo_module: Some(HloModuleProto::default()),
+            executable_type: 1,
+        };
+        assert_eq!(
+            HostOffloadingExecutableProto::decode(&host_offload.encode()).ok(),
+            Some(host_offload.clone())
+        );
+        assert!(host_offload.verify_schema_sync().is_ok());
+
+        let ffi_state = FfiExecutionStateProto {
+            type_name: String::from("xla.ffi.state.test"),
+            state: vec![1, 2, 3, 4],
+        };
+        assert_eq!(
+            FfiExecutionStateProto::decode(&ffi_state.encode()).ok(),
+            Some(ffi_state.clone())
+        );
+        assert!(ffi_state.verify_schema_sync().is_ok());
+
+        let ffi_flat_attr = FfiFlatAttributeProto {
+            str: b"attr_val".to_vec(),
+        };
+        assert_eq!(
+            FfiFlatAttributeProto::decode(&ffi_flat_attr.encode()).ok(),
+            Some(ffi_flat_attr.clone())
+        );
+        assert!(ffi_flat_attr.verify_schema_sync().is_ok());
+
+        let mut ffi_map = BTreeMap::new();
+        ffi_map.insert(String::from("k"), ffi_flat_attr);
+        let ffi_attrs = FfiFlatAttributesMapProto { attrs: ffi_map };
+        assert_eq!(
+            FfiFlatAttributesMapProto::decode(&ffi_attrs.encode()).ok(),
+            Some(ffi_attrs.clone())
+        );
+        assert!(ffi_attrs.verify_schema_sync().is_ok());
+
+        let win_dim = WindowDimension {
+            size: 3,
+            stride: 1,
+            padding_low: 1,
+            padding_high: 1,
+            window_dilation: 1,
+            base_dilation: 1,
+            window_reversal: false,
+        };
+        assert_eq!(
+            WindowDimension::decode(&win_dim.encode()).ok(),
+            Some(win_dim.clone())
+        );
+        assert!(win_dim.verify_schema_sync().is_ok());
+
+        let win = Window {
+            dimensions: vec![win_dim],
+        };
+        assert_eq!(Window::decode(&win.encode()).ok(), Some(win.clone()));
+        assert!(win.verify_schema_sync().is_ok());
+
+        let gather_dn = GatherDimensionNumbers {
+            offset_dims: vec![1],
+            collapsed_slice_dims: vec![0],
+            start_index_map: vec![0],
+            index_vector_dim: 1,
+            operand_batching_dims: Vec::new(),
+            start_indices_batching_dims: Vec::new(),
+        };
+        assert_eq!(
+            GatherDimensionNumbers::decode(&gather_dn.encode()).ok(),
+            Some(gather_dn.clone())
+        );
+        assert!(gather_dn.verify_schema_sync().is_ok());
+
+        let scatter_dn = ScatterDimensionNumbers {
+            update_window_dims: vec![1],
+            inserted_window_dims: vec![0],
+            scatter_dims_to_operand_dims: vec![0],
+            index_vector_dim: 1,
+            input_batching_dims: Vec::new(),
+            scatter_indices_batching_dims: Vec::new(),
+        };
+        assert_eq!(
+            ScatterDimensionNumbers::decode(&scatter_dn.encode()).ok(),
+            Some(scatter_dn.clone())
+        );
+        assert!(scatter_dn.verify_schema_sync().is_ok());
+
+        let conv_dn = ConvolutionDimensionNumbers {
+            kernel_input_feature_dimension: 2,
+            kernel_output_feature_dimension: 3,
+            kernel_spatial_dimensions: vec![0, 1],
+            input_batch_dimension: 0,
+            input_feature_dimension: 3,
+            output_batch_dimension: 0,
+            output_feature_dimension: 3,
+            input_spatial_dimensions: vec![1, 2],
+            output_spatial_dimensions: vec![1, 2],
+        };
+        assert_eq!(
+            ConvolutionDimensionNumbers::decode(&conv_dn.encode()).ok(),
+            Some(conv_dn.clone())
+        );
+        assert!(conv_dn.verify_schema_sync().is_ok());
+
+        let dot_dn = DotDimensionNumbers {
+            lhs_contracting_dimensions: vec![1],
+            rhs_contracting_dimensions: vec![0],
+            lhs_batch_dimensions: vec![0],
+            rhs_batch_dimensions: vec![0],
+        };
+        assert_eq!(
+            DotDimensionNumbers::decode(&dot_dn.encode()).ok(),
+            Some(dot_dn.clone())
+        );
+        assert!(dot_dn.verify_schema_sync().is_ok());
+
+        let pad_dim = PaddingConfigDimension {
+            edge_padding_low: 1,
+            edge_padding_high: 1,
+            interior_padding: 0,
+        };
+        assert_eq!(
+            PaddingConfigDimension::decode(&pad_dim.encode()).ok(),
+            Some(pad_dim.clone())
+        );
+        assert!(pad_dim.verify_schema_sync().is_ok());
+
+        let pad_cfg = PaddingConfig {
+            dimensions: vec![pad_dim],
+        };
+        assert_eq!(
+            PaddingConfig::decode(&pad_cfg.encode()).ok(),
+            Some(pad_cfg.clone())
+        );
+        assert!(pad_cfg.verify_schema_sync().is_ok());
+
+        let rep_grp = ReplicaGroup {
+            replica_ids: vec![0, 1, 2, 3],
+        };
+        assert_eq!(
+            ReplicaGroup::decode(&rep_grp.encode()).ok(),
+            Some(rep_grp.clone())
+        );
+        assert!(rep_grp.verify_schema_sync().is_ok());
+
+        let src_tgt = SourceTarget {
+            source: 0,
+            target: 1,
+        };
+        assert_eq!(
+            SourceTarget::decode(&src_tgt.encode()).ok(),
+            Some(src_tgt.clone())
+        );
+        assert!(src_tgt.verify_schema_sync().is_ok());
+
+        let prec_cfg = PrecisionConfig {
+            operand_precision: vec![1, 2],
+            algorithm: 6,
+        };
+        assert_eq!(
+            PrecisionConfig::decode(&prec_cfg.encode()).ok(),
+            Some(prec_cfg.clone())
+        );
+        assert!(prec_cfg.verify_schema_sync().is_ok());
+
+        let mut fa_map = BTreeMap::new();
+        fa_map.insert(String::from("mhlo.sharding"), String::from("{replicated}"));
+        let front_attr = FrontendAttributes { map: fa_map };
+        assert_eq!(
+            FrontendAttributes::decode(&front_attr.encode()).ok(),
+            Some(front_attr.clone())
+        );
+        assert!(front_attr.verify_schema_sync().is_ok());
+
+        let stat = Statistic {
+            stat_name: String::from("roofline"),
+            stat_val: 92.5,
+        };
+        assert_eq!(Statistic::decode(&stat.encode()).ok(), Some(stat.clone()));
+        assert!(stat.verify_schema_sync().is_ok());
+
+        let stat_viz = StatisticsViz {
+            stat_index_to_visualize: 0,
+            statistics: vec![stat],
+        };
+        assert_eq!(
+            StatisticsViz::decode(&stat_viz.encode()).ok(),
+            Some(stat_viz.clone())
+        );
+        assert!(stat_viz.verify_schema_sync().is_ok());
+
         // Test invalid/corrupt wire bytes across all decode methods
         let corrupt = [0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         assert!(TileProto::decode(&corrupt).is_err());
+        assert!(SplitConfigProto::decode(&corrupt).is_err());
+        assert!(OpMetadata::decode(&corrupt).is_err());
+        assert!(ExecutionProfile::decode(&corrupt).is_err());
+        assert!(ExecutionHandle::decode(&corrupt).is_err());
+        assert!(GlobalDataHandle::decode(&corrupt).is_err());
+        assert!(DeviceHandle::decode(&corrupt).is_err());
+        assert!(ChannelHandle::decode(&corrupt).is_err());
+        assert!(LiteralProto::decode(&corrupt).is_err());
+        assert!(WindowDimension::decode(&corrupt).is_err());
+        assert!(Window::decode(&corrupt).is_err());
+        assert!(GatherDimensionNumbers::decode(&corrupt).is_err());
+        assert!(ScatterDimensionNumbers::decode(&corrupt).is_err());
+        assert!(ConvolutionDimensionNumbers::decode(&corrupt).is_err());
+        assert!(DotDimensionNumbers::decode(&corrupt).is_err());
+        assert!(PaddingConfigDimension::decode(&corrupt).is_err());
+        assert!(PaddingConfig::decode(&corrupt).is_err());
+        assert!(ReplicaGroup::decode(&corrupt).is_err());
+        assert!(SourceTarget::decode(&corrupt).is_err());
+        assert!(PrecisionConfig::decode(&corrupt).is_err());
+        assert!(FrontendAttributes::decode(&corrupt).is_err());
+        assert!(Statistic::decode(&corrupt).is_err());
+        assert!(StatisticsViz::decode(&corrupt).is_err());
         assert!(LayoutProto::decode(&corrupt).is_err());
         assert!(ShapeProto::decode(&corrupt).is_err());
         assert!(ProgramShapeProto::decode(&corrupt).is_err());
@@ -1529,6 +2024,20 @@ mod tests {
         assert!(BufferAllocationProto::decode(&corrupt).is_err());
         assert!(BufferAssignmentProto::decode(&corrupt).is_err());
         assert!(MegaScaleRuntimeErrorProto::decode(&corrupt).is_err());
+        assert!(ParameterReplicationProto::decode(&corrupt).is_err());
+        assert!(HloSliceDimensionsProto::decode(&corrupt).is_err());
+        assert!(HloAliasEntryProto::decode(&corrupt).is_err());
+        assert!(HloInputOutputAliasProto::decode(&corrupt).is_err());
+        assert!(HloBufferDonorEntryProto::decode(&corrupt).is_err());
+        assert!(HloBufferDonorProto::decode(&corrupt).is_err());
+        assert!(CrossProgramPrefetchProto::decode(&corrupt).is_err());
+        assert!(RegisterTranslatorEntryProto::decode(&corrupt).is_err());
+        assert!(RegisterTranslatorDataProto::decode(&corrupt).is_err());
+        assert!(TpuChipConfigProto::decode(&corrupt).is_err());
+        assert!(HostOffloadingExecutableProto::decode(&corrupt).is_err());
+        assert!(FfiExecutionStateProto::decode(&corrupt).is_err());
+        assert!(FfiFlatAttributeProto::decode(&corrupt).is_err());
+        assert!(FfiFlatAttributesMapProto::decode(&corrupt).is_err());
     }
 
     proptest! {

@@ -166,6 +166,50 @@ pub enum TpuOpCode {
     CollectivePermute = 77,
     /// Cross-replica ICI `AllToAll` (`stablehlo.all_to_all`) (`78`).
     AllToAll = 78,
+    /// Elementwise Gauss error function (`chlo.erf` / `mhlo.erf`) (`79`).
+    Erf = 79,
+    /// Structured bounded loop (`stablehlo.while` / `scf.for`) (`80`).
+    While = 80,
+    /// Structured conditional branch (`stablehlo.if` / `stablehlo.case`) (`81`).
+    Conditional = 81,
+    /// Sub-computation call (`func.call` / HLO `call`) (`82`).
+    Call = 82,
+    /// Multi-tensor tuple construction (`stablehlo.tuple`) (`83`).
+    Tuple = 83,
+    /// Tuple member extraction (`stablehlo.get_tuple_element`) (`84`).
+    GetTupleElement = 84,
+    /// Compiler optimization barrier (`stablehlo.optimization_barrier`) (`85`).
+    OptimizationBarrier = 85,
+    /// Token dependency join (`stablehlo.after_all`) (`86`).
+    AfterAll = 86,
+    /// Host-to-device streaming infeed (`stablehlo.infeed`) (`87`).
+    Infeed = 87,
+    /// Device-to-host streaming outfeed (`stablehlo.outfeed`) (`88`).
+    Outfeed = 88,
+    /// Cross-core / cross-host channel send (`stablehlo.send`) (`89`).
+    Send = 89,
+    /// Cross-core / cross-host channel receive (`stablehlo.recv`) (`90`).
+    Recv = 90,
+    /// Logical replica index query (`stablehlo.replica_id`) (`91`).
+    ReplicaId = 91,
+    /// Logical SPMD partition index query (`stablehlo.partition_id`) (`92`).
+    PartitionId = 92,
+    /// Batch normalization inference (`stablehlo.batch_norm_inference`) (`93`).
+    BatchNormInference = 93,
+    /// Batch normalization training forward pass (`stablehlo.batch_norm_training`) (`94`).
+    BatchNormTraining = 94,
+    /// Batch normalization backward gradient pass (`stablehlo.batch_norm_grad`) (`95`).
+    BatchNormGrad = 95,
+    /// Windowed argmax selection and gradient scatter (`stablehlo.select_and_scatter`) (`96`).
+    SelectAndScatter = 96,
+    /// Complex number construction from `(real, imag)` (`stablehlo.complex`) (`97`).
+    Complex = 97,
+    /// Real part extraction from complex tensor (`stablehlo.real`) (`98`).
+    Real = 98,
+    /// Imaginary part extraction from complex tensor (`stablehlo.imag`) (`99`).
+    Imag = 99,
+    /// Width-preserving bitcast conversion (`stablehlo.bitcast_convert`) (`100`).
+    BitcastConvert = 100,
 }
 
 impl TpuOpCode {
@@ -204,10 +248,20 @@ impl TpuOpCode {
     pub const fn arity(self) -> usize {
         if matches!(
             self,
-            Self::Select | Self::Scatter | Self::DynamicUpdateSlice | Self::Clamp
+            Self::Select
+                | Self::Scatter
+                | Self::DynamicUpdateSlice
+                | Self::Clamp
+                | Self::BatchNormInference
+                | Self::BatchNormTraining
+                | Self::BatchNormGrad
+                | Self::SelectAndScatter
         ) {
             3
-        } else if matches!(self, Self::Constant | Self::Iota) {
+        } else if matches!(
+            self,
+            Self::Constant | Self::Iota | Self::AfterAll | Self::ReplicaId | Self::PartitionId
+        ) {
             0
         } else if self.is_binary() {
             2
@@ -229,6 +283,11 @@ impl TpuOpCode {
                 | Self::RngBitGenerator
                 | Self::CollectivePermute
                 | Self::AllToAll
+                | Self::Infeed
+                | Self::Outfeed
+                | Self::Send
+                | Self::Recv
+                | Self::OptimizationBarrier
         )
     }
 
@@ -263,6 +322,7 @@ impl TpuOpCode {
                 | Self::Pow
                 | Self::Pad
                 | Self::TriangularSolve
+                | Self::Complex
         )
     }
 
@@ -285,6 +345,7 @@ impl TpuOpCode {
                 | Self::Cbrt
                 | Self::Atan2
                 | Self::Pow
+                | Self::Erf
         )
     }
 }
@@ -338,6 +399,28 @@ pub struct InstructionAttrs {
     pub input_shapes: Vec<Shape>,
     /// Optional explicit output shape produced by this instruction bundle.
     pub output_shape: Option<Shape>,
+    /// Lowered sub-computation instruction bundle lists (`condition`, `body`, `true_branch`, `false_branch`, `called_func`).
+    pub sub_computations: Vec<Vec<TpuInstructionBundle>>,
+    /// Tuple element index for `GetTupleElement` (`0`-based).
+    pub tuple_index: usize,
+    /// Reduction / collective combiner operation (`Sum`, `Product`, `Min`, `Max`).
+    pub reduce_op_kind: crate::types::CollectiveReductionOp,
+    /// Feature / channel dimension index for `BatchNorm*` and `Fft` operations.
+    pub feature_index: usize,
+    /// Optional GSPMD / Shardy (`sdy`) sharding annotation string (e.g., `"{devices=[2,2]0,1,2,3}"` or `"x"`).
+    pub sharding_spec: String,
+    /// Index vector axis in `start_indices` for `gather` (`index_vector_dim`).
+    pub gather_index_vector_dim: usize,
+    /// Update window axes in `updates` for `scatter` (`update_window_dims`).
+    pub scatter_update_window_dims: Vec<usize>,
+    /// LHS base dilation factors per spatial dimension in `convolution`.
+    pub lhs_dilation: Vec<usize>,
+    /// RHS window dilation factors per spatial dimension in `convolution`.
+    pub rhs_dilation: Vec<usize>,
+    /// Number of feature groups in `convolution` (`feature_group_count`, default `1`).
+    pub feature_group_count: usize,
+    /// Number of batch groups in `convolution` (`batch_group_count`, default `1`).
+    pub batch_group_count: usize,
 }
 
 /// Lowered VLIW hardware instruction bundle targeting a TPU `TensorCore`.

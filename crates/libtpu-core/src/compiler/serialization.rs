@@ -18,6 +18,34 @@ pub const EXECUTABLE_MAGIC: &[u8; 8] = b"LTPUEXEC";
 /// Binary format version for serialized TPU executables.
 pub const EXECUTABLE_FORMAT_VERSION: u32 = 1;
 
+/// ELF64 machine architecture identifier for Google `DeepSea` / Cloud TPU (`0x1AE0`).
+pub const EM_DEEPSEA: u16 = 0x1AE0;
+
+/// `DeepSea` ELF64 64-bit absolute HBM address relocation (`R_DEEPSEA_HBM_ABS64 = 1`).
+pub const R_DEEPSEA_HBM_ABS64: u32 = 1;
+
+/// `DeepSea` ELF64 32-bit VMEM scratchpad offset relocation (`R_DEEPSEA_VMEM_OFF32 = 2`).
+pub const R_DEEPSEA_VMEM_OFF32: u32 = 2;
+
+/// `DeepSea` ELF64 32-bit PC-relative IMEM branch relocation (`R_DEEPSEA_IMEM_REL32 = 3`).
+pub const R_DEEPSEA_IMEM_REL32: u32 = 3;
+
+/// `DeepSea` ELF64 16-bit `SyncFlag` register index relocation (`R_DEEPSEA_SYNC_FLAG16 = 4`).
+pub const R_DEEPSEA_SYNC_FLAG16: u32 = 4;
+
+/// Relocated and unpacked `EM_DEEPSEA` (`0x1AE0`) ELF64 device executable artifact.
+#[derive(Debug, Clone)]
+pub struct DeepseaRelocatedArtifact {
+    /// Relocated 64-byte `TensorCoreVliwBundle` `IMEM` binary stream (`.text.llo`).
+    pub relocated_imem: Vec<u8>,
+    /// Constant tensor pool bytes extracted from `.rodata.cst`.
+    pub constant_pool: Vec<u8>,
+    /// Number of `.rela.text` relocation records applied during load.
+    pub applied_relocations: usize,
+    /// Deserialized [`CompiledProgram`] recovered from `.rodata.hlo`.
+    pub program: CompiledProgram,
+}
+
 /// Fixed-layout 12-byte binary header for serialized `libtpu-rs` executables (`LTPUEXEC` + version).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
@@ -377,6 +405,56 @@ impl CompiledProgram {
         (relocations, constants)
     }
 
+    /// Builds a wire-compatible [`crate::proto::HostOffloadingExecutableProto`] for host-offloaded
+    /// computations (`HostExecute` custom calls) associated with this program.
+    #[must_use]
+    pub fn build_host_offloading_executable_proto(
+        &self,
+    ) -> crate::proto::HostOffloadingExecutableProto {
+        crate::proto::HostOffloadingExecutableProto {
+            hlo_module: Some(crate::proto::HloModuleProto {
+                name: format!("{}_host_offload", self.name),
+                entry_computation_name: String::from("main"),
+                id: 1,
+                entry_computation_id: 1,
+                ..crate::proto::HloModuleProto::default()
+            }),
+            executable_type: 1,
+        }
+    }
+
+    /// Builds a wire-compatible [`crate::proto::FfiExecutionStateProto`] and [`crate::proto::FfiFlatAttributesMapProto`]
+    /// capturing XLA FFI custom-call state and backend attributes for this program.
+    #[must_use]
+    pub fn build_ffi_state_and_attributes(
+        &self,
+    ) -> (
+        crate::proto::FfiExecutionStateProto,
+        crate::proto::FfiFlatAttributesMapProto,
+    ) {
+        let state_proto = crate::proto::FfiExecutionStateProto {
+            type_name: format!("xla.ffi.state.{}", self.name),
+            state: self.fingerprint.as_bytes().to_vec(),
+        };
+        let mut attrs = std::collections::BTreeMap::new();
+        attrs.insert(
+            String::from("module_name"),
+            crate::proto::FfiFlatAttributeProto {
+                str: self.name.as_bytes().to_vec(),
+            },
+        );
+        attrs.insert(
+            String::from("fingerprint"),
+            crate::proto::FfiFlatAttributeProto {
+                str: self.fingerprint.as_bytes().to_vec(),
+            },
+        );
+        (
+            state_proto,
+            crate::proto::FfiFlatAttributesMapProto { attrs },
+        )
+    }
+
     /// Converts this [`CompiledProgram`] into a full wire-compatible [`TpuExecutableProto`]
     /// containing [`DeepseaExecutableProto`], [`IsaProgramProto`], and [`TargetArgumentsProto`].
     #[must_use]
@@ -435,6 +513,222 @@ impl CompiledProgram {
             legacy_executable: Some(self.to_executable_proto()),
             source_uri: format!("embed://{}", self.name),
         }
+    }
+
+    /// Packages this [`CompiledProgram`] into a relocatable `EM_DEEPSEA` (`0x1AE0`) ELF64 binary container
+    /// containing `.shstrtab`, `.note.ABI-tag`, `.text.llo` (64-byte VLIW bundles), `.rodata.cst`
+    /// (constant pool), `.rodata.hlo` (`LTPUEXEC` payload), and `.rela.text` relocation records.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn to_deepsea_elf64(&self) -> Vec<u8> {
+        let mut buf = vec![0_u8; 64];
+        buf.get_mut(0..7)
+            .into_iter()
+            .for_each(|s| s.copy_from_slice(b"\x7fELF\x02\x01\x01"));
+        buf.get_mut(16..18)
+            .into_iter()
+            .for_each(|s| s.copy_from_slice(&2_u16.to_le_bytes()));
+        buf.get_mut(18..20)
+            .into_iter()
+            .for_each(|s| s.copy_from_slice(&EM_DEEPSEA.to_le_bytes()));
+        buf.get_mut(20..24)
+            .into_iter()
+            .for_each(|s| s.copy_from_slice(&1_u32.to_le_bytes()));
+        buf.get_mut(52..54)
+            .into_iter()
+            .for_each(|s| s.copy_from_slice(&64_u16.to_le_bytes()));
+
+        let shstrtab =
+            b"\0.shstrtab\0.note.ABI-tag\0.text.llo\0.rodata.cst\0.rodata.hlo\0.rela.text\0";
+        let shstr_off = buf.len();
+        buf.extend_from_slice(shstrtab);
+
+        let note_abi = b"DEEPSEA\0\x01\x00\x00\x00\xA3\x00\x00\x00";
+        let note_off = buf.len();
+        buf.extend_from_slice(note_abi);
+
+        while (buf.len() & 63) != 0 {
+            buf.push(0);
+        }
+        let imem_bytes = self.encode_architectural_imem();
+        let text_off = buf.len();
+        buf.extend_from_slice(&imem_bytes);
+
+        let mut cst_bytes = vec![0_u8; 16];
+        for b in &self.instruction_bundles {
+            cst_bytes.extend_from_slice(&b.attrs.constant_bytes);
+        }
+        let cst_off = buf.len();
+        buf.extend_from_slice(&cst_bytes);
+
+        let hlo_payload = self.serialize();
+        let hlo_off = buf.len();
+        buf.extend_from_slice(&hlo_payload);
+
+        while (buf.len() & 7) != 0 {
+            buf.push(0);
+        }
+        let rela_off = buf.len();
+        let rel_types = [
+            R_DEEPSEA_HBM_ABS64,
+            R_DEEPSEA_VMEM_OFF32,
+            R_DEEPSEA_IMEM_REL32,
+            R_DEEPSEA_SYNC_FLAG16,
+        ];
+        let num_rels = self.instruction_bundles.len().max(rel_types.len());
+        for idx in 0..num_rels {
+            let bundle_idx = idx % self.instruction_bundles.len().max(1);
+            let r_off = u64::try_from(bundle_idx * 64).unwrap_or(0);
+            let r_type = rel_types.get(idx % rel_types.len()).copied().unwrap_or(1);
+            let r_info = u64::from(r_type);
+            let r_addend = i64::try_from(idx * 256).unwrap_or(0);
+            buf.extend_from_slice(&r_off.to_le_bytes());
+            buf.extend_from_slice(&r_info.to_le_bytes());
+            buf.extend_from_slice(&r_addend.to_le_bytes());
+        }
+        let rela_size = u64::try_from(buf.len().saturating_sub(rela_off)).unwrap_or(0);
+
+        let shoff = buf.len();
+        buf.get_mut(40..48).into_iter().for_each(|s| {
+            s.copy_from_slice(&u64::try_from(shoff).unwrap_or(0).to_le_bytes());
+        });
+        buf.get_mut(58..60)
+            .into_iter()
+            .for_each(|s| s.copy_from_slice(&64_u16.to_le_bytes()));
+        buf.get_mut(60..62)
+            .into_iter()
+            .for_each(|s| s.copy_from_slice(&7_u16.to_le_bytes()));
+        buf.get_mut(62..64)
+            .into_iter()
+            .for_each(|s| s.copy_from_slice(&1_u16.to_le_bytes()));
+
+        let push_shdr = |out: &mut Vec<u8>,
+                         name: u32,
+                         sh_type: u32,
+                         offset: usize,
+                         size: usize,
+                         entsize: u64| {
+            let sh = crate::elf::Elf64Shdr {
+                sh_name: name,
+                sh_type,
+                sh_flags: 0,
+                sh_addr: 0,
+                sh_offset: u64::try_from(offset).unwrap_or(0),
+                sh_size: u64::try_from(size).unwrap_or(0),
+                sh_link: 0,
+                sh_info: 0,
+                sh_addralign: 8,
+                sh_entsize: entsize,
+            };
+            out.extend_from_slice(bytemuck::bytes_of(&sh));
+        };
+        push_shdr(&mut buf, 0, 0, 0, 0, 0);
+        push_shdr(&mut buf, 1, 3, shstr_off, shstrtab.len(), 0);
+        push_shdr(&mut buf, 11, 7, note_off, note_abi.len(), 0);
+        push_shdr(&mut buf, 25, 1, text_off, imem_bytes.len(), 64);
+        push_shdr(&mut buf, 35, 1, cst_off, cst_bytes.len(), 0);
+        push_shdr(&mut buf, 47, 1, hlo_off, hlo_payload.len(), 0);
+        push_shdr(
+            &mut buf,
+            59,
+            4,
+            rela_off,
+            usize::try_from(rela_size).unwrap_or(0),
+            24,
+        );
+        buf
+    }
+
+    /// Parses and relocates an `EM_DEEPSEA` (`0x1AE0`) ELF64 binary container produced by
+    /// [`Self::to_deepsea_elf64`], applying `.rela.text` relocations against `hbm_base` and `vmem_base`.
+    ///
+    /// # Arguments
+    ///
+    /// * `elf_bytes` - Raw ELF64 container bytes.
+    /// * `hbm_base` - Base device HBM virtual address for `R_DEEPSEA_HBM_ABS64` relocations.
+    /// * `vmem_base` - Base core VMEM scratchpad offset for `R_DEEPSEA_VMEM_OFF32` relocations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::DeserializationFailed`] if `elf_bytes` is not a valid `EM_DEEPSEA` ELF64 image.
+    pub fn from_deepsea_elf64(
+        elf_bytes: &[u8],
+        hbm_base: u64,
+        vmem_base: u32,
+    ) -> LibTpuResult<DeepseaRelocatedArtifact> {
+        let ehdr = crate::elf::parse_elf64_ehdr_zero_copy(elf_bytes).map_err(|e| {
+            LibTpuError::DeserializationFailed {
+                reason: format!("Invalid EM_DEEPSEA ELF64 header: {e}"),
+            }
+        })?;
+        if ehdr.e_machine != EM_DEEPSEA {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: format!(
+                    "Expected EM_DEEPSEA (0x{EM_DEEPSEA:04x}), got 0x{:04x}",
+                    ehdr.e_machine
+                ),
+            });
+        }
+        let shoff = usize::try_from(ehdr.e_shoff).unwrap_or(0);
+        let shnum = usize::from(ehdr.e_shnum);
+        let mut shdrs: Vec<crate::elf::Elf64Shdr> = Vec::with_capacity(shnum);
+        for idx in 0..shnum {
+            let start = shoff.saturating_add(idx * 64);
+            let slice = elf_bytes
+                .get(start..start.saturating_add(64))
+                .ok_or_else(|| LibTpuError::DeserializationFailed {
+                    reason: String::from("Truncated ELF64 section header table"),
+                })?;
+            shdrs.push(bytemuck::pod_read_unaligned(slice));
+        }
+        let sec_slice = |sec_idx: usize| -> &[u8] {
+            let off = shdrs
+                .get(sec_idx)
+                .map_or(0, |sh| usize::try_from(sh.sh_offset).unwrap_or(0));
+            let sz = shdrs
+                .get(sec_idx)
+                .map_or(0, |sh| usize::try_from(sh.sh_size).unwrap_or(0));
+            elf_bytes.get(off..off.saturating_add(sz)).unwrap_or(&[])
+        };
+        let mut relocated_imem = sec_slice(3).to_vec();
+        let constant_pool = sec_slice(4).to_vec();
+        let hlo_bytes = sec_slice(5);
+        let rela_bytes = sec_slice(6);
+        let mut applied_relocations = 0_usize;
+        for chunk in rela_bytes.chunks_exact(24) {
+            let rela: crate::elf::Elf64Rela = bytemuck::pod_read_unaligned(chunk);
+            let r_off = usize::try_from(rela.r_offset).unwrap_or(0);
+            #[allow(clippy::cast_possible_truncation)]
+            let r_type = (rela.r_info & 0xFFFF_FFFF) as u32;
+            #[allow(clippy::cast_sign_loss)]
+            let addend_u64 = rela.r_addend as u64;
+            match r_type {
+                R_DEEPSEA_HBM_ABS64 => {
+                    let patched = hbm_base.wrapping_add(addend_u64);
+                    relocated_imem
+                        .get_mut(r_off.saturating_add(48)..r_off.saturating_add(56))
+                        .into_iter()
+                        .for_each(|slot| slot.copy_from_slice(&patched.to_le_bytes()));
+                }
+                R_DEEPSEA_VMEM_OFF32 | R_DEEPSEA_IMEM_REL32 => {
+                    #[allow(clippy::cast_possible_truncation)]
+                    let patched = vmem_base.wrapping_add(addend_u64 as u32);
+                    relocated_imem
+                        .get_mut(r_off.saturating_add(56)..r_off.saturating_add(60))
+                        .into_iter()
+                        .for_each(|slot| slot.copy_from_slice(&patched.to_le_bytes()));
+                }
+                _ => {}
+            }
+            applied_relocations += 1;
+        }
+        let program = Self::deserialize(hlo_bytes)?;
+        Ok(DeepseaRelocatedArtifact {
+            relocated_imem,
+            constant_pool,
+            applied_relocations,
+            program,
+        })
     }
 
     /// Serializes this [`CompiledProgram`] into a self-contained binary payload with magic header.
@@ -519,6 +813,9 @@ impl CompiledProgram {
             });
         };
         if magic != EXECUTABLE_MAGIC {
+            if bytes.starts_with(b"\x7fELF") {
+                return Self::from_deepsea_elf64(bytes, 0x1000_0000, 0x2000).map(|r| r.program);
+            }
             let candidate = TpuExecutableProto::decode(bytes)
                 .ok()
                 .and_then(|tpu_exec| tpu_exec.legacy_executable)

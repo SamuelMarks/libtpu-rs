@@ -234,6 +234,50 @@ message TpuEmbeddingHostNetworkConfigProto {
   string endpoint_address = 2;
   bytes partition_payload = 3;
 }
+
+message RegisterTranslatorEntryProto {
+  string full_path = 1;
+  uint64 byte_offset = 2;
+  uint32 width_bits = 3;
+  string access_mode = 4;
+  uint64 reset_value = 5;
+}
+
+message RegisterTranslatorDataProto {
+  string chip_codename = 1;
+  int32 tpu_version = 2;
+  uint64 hardware_abi_version = 3;
+  repeated RegisterTranslatorEntryProto registers = 4;
+}
+
+message TpuChipConfigProto {
+  string chip_name = 1;
+  int32 tpu_version = 2;
+  uint32 tensor_cores_per_chip = 3;
+  uint32 sparse_cores_per_chip = 4;
+  uint64 hbm_capacity_bytes = 5;
+  uint64 vmem_capacity_bytes = 6;
+  uint64 smem_capacity_bytes = 7;
+  bool megacore_enabled = 8;
+}
+
+message TpuChipPartsProto {
+  string part_name = 1;
+  int32 tpu_version = 2;
+  uint32 mxu_dimension = 3;
+  uint32 mxu_count_per_core = 4;
+  uint32 ici_link_count = 5;
+  int64 clock_rate_mhz = 6;
+  int64 ici_bandwidth_bps = 7;
+  uint64 cmem_capacity_bytes = 8;
+}
+
+message TpuRuntimeAbiProto {
+  int64 base_abi_version = 1;
+  int64 hardware_abi_version = 2;
+  string compiler_hash = 3;
+  repeated string supported_chip_variants = 4;
+}
 "#,
     ),
     (
@@ -241,6 +285,7 @@ message TpuEmbeddingHostNetworkConfigProto {
         r#"syntax = "proto3";
 package xla;
 import "deepsea_executable.proto";
+import "hlo.proto";
 import "xla.proto";
 import "compile_options.proto";
 import "target_arguments.proto";
@@ -253,6 +298,11 @@ message TpuExecutableProto {
   TargetArgumentsProto target_arguments = 7;
   tpu.TpuSerializedExecutableProto legacy_executable = 8;
   string source_uri = 9;
+}
+
+message HostOffloadingExecutableProto {
+  HloModuleProto hlo_module = 1;
+  int32 executable_type = 2;
 }
 "#,
     ),

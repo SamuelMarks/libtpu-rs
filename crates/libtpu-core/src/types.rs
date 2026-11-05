@@ -19,12 +19,13 @@ pub mod ids;
 pub mod shape;
 
 pub use self::address::{
-    Alignment, AlignmentBytes, BarIndex, BarOffset, BdfAddress, BundlePc, ByteSize, CmemAddress,
-    CmemOffset, CsrAddress, DeviceAddress, DimensionIndex, DimensionSize, DmaBufFd, EventFdHandle,
-    FileDescriptor, GranuleSize, HbmOffset, HostVirtualAddress, ImemAddress, InterruptVector,
-    IoctlCommand, IommuGroupId, IovaAddr, IovaAddress, MmioOffset, PageTableIndex, PciBdfAddress,
-    PciBdfSlot, PciDeviceId, PciRevisionId, PciVendorId, SmOffset, SmemAddress, SmemOffset,
-    SpmemAddress, StructSize, VmOffset, VmemAddress, VmemOffset,
+    Alignment, AlignmentBytes, BarIndex, BarOffset, BdfAddress, BitWidth, BundlePc, ByteSize,
+    CmemAddress, CmemOffset, CsrAddress, DeviceAddress, DimensionIndex, DimensionSize, DmaBufFd,
+    EventFdHandle, FileDescriptor, GranuleSize, HbmAddress, HbmOffset, HostVirtualAddress,
+    ImemAddress, ImemBundleIndex, InterruptVector, IoctlCommand, IommuGroupId, IovaAddr,
+    IovaAddress, LaneCount, MmioOffset, PageTableIndex, PciBdfAddress, PciBdfSlot, PciDeviceId,
+    PciRevisionId, PciVendorId, SmOffset, SmemAddress, SmemOffset, SpmemAddress, StructSize,
+    SublaneCount, VmOffset, VmemAddress, VmemOffset,
 };
 pub use self::element::{Bf16Scalar, ElementType, F16Scalar};
 pub use self::enums::{
@@ -39,12 +40,13 @@ pub use self::hardware::{
     TpuVersionEnum,
 };
 pub use self::ids::{
-    AbiVersionNumber, BarrierId, BufferId, CallbackId, ChannelId, ChipId, CommunicatorId,
+    AbiVersionNumber, BarrierId, BlockId, BufferId, CallbackId, ChannelId, ChipId, CommunicatorId,
     CompilerId, ContextId, ContinuationId, CoreId, CoreIndex, DeviceId, EventId, ExecutableId,
     GlobalChipId, HostId, IncarnationId, LaunchId, LocalHardwareId, MatmulAccIndex, MemorySpaceId,
-    OrdinalSeed, OverlayId, PartitionId, PregIndex, ProcessIndex, ReplicaId, RequestId, RunId,
-    SemaphoreId, SliceId, SparseCoreId, SregIndex, StreamId, SyncFlagId, SyncFlagValue,
-    TraceMeContextId, TransferManagerId, TransformId, VmaskBits, VmregIndex, VregIndex, WindowId,
+    OrdinalSeed, OverlayId, PartitionId, PregId, PregIndex, ProcessIndex, RegionId, ReplicaId,
+    RequestId, RunId, SemaphoreId, SflagId, SliceId, SparseCoreId, SregId, SregIndex, SsaValueId,
+    StreamId, SyncFlagId, SyncFlagValue, TraceMeContextId, TransferManagerId, TransformId,
+    VmaskBits, VmaskIndex, VmregIndex, VregId, VregIndex, WindowId,
 };
 pub use self::shape::{
     Allocated, DimVec, DynamicDimVec, MemoryLayout, Shape, TensorShape, TypedDeviceBuffer,

@@ -4,6 +4,7 @@ use super::SimulatedTpuHal;
 use crate::compiler::CompiledProgram;
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::types::ElementType;
+use std::collections::BTreeMap;
 
 /// Architectural `TensorCore` VLIW execution state machine (`TpuCoreVmState`).
 #[derive(Debug, Clone)]
@@ -14,6 +15,12 @@ pub struct TpuCoreVmState {
     pub preg: [bool; 16],
     /// 64 vector register sublane words (`VREG[0..64]`).
     pub vreg_words: [u32; 64],
+    /// Full architectural vector register tile bank (`VREG[0..255]`) storing physical tile payloads.
+    pub vreg_tiles: BTreeMap<u8, Vec<u8>>,
+    /// Addressable on-chip `VMEM` scratchpad regions indexed by linear-scan `assigned_vmem_offset`.
+    pub vmem_allocations: BTreeMap<u64, Vec<u8>>,
+    /// Staged systolic `MXU` right-hand-side weight tile elements.
+    pub mxu_weights: Vec<f64>,
     /// 8 sublane predicate flags (`VMASK[0..8]`).
     pub vmask: [bool; 8],
     /// Systolic matrix unit (`MXU`) accumulator tile summary (`[f32; 16]`).
@@ -44,6 +51,9 @@ impl TpuCoreVmState {
             sreg: [0; 32],
             preg: [true; 16],
             vreg_words: [0; 64],
+            vreg_tiles: BTreeMap::new(),
+            vmem_allocations: BTreeMap::new(),
+            mxu_weights: Vec::new(),
             vmask: [true; 8],
             mxu_accum: [0.0; 16],
             sync_flags: [0; 256],
@@ -86,8 +96,9 @@ impl TpuCoreVmState {
     }
 
     /// Steps the `TensorCore` VLIW sequencer through a slice of 64-byte [`crate::compiler::TensorCoreVliwBundle`]s,
-    /// executing `S0` (Scalar ALU + SMEM), `V0` (Vector ALU + VMEM), `M0` (`MXU` systolic matrix accumulator),
-    /// `X0` (`EUP` transcendental unit), and `D0` (`DMA`/`SyncFlag` engine) slots in lockstep.
+    /// executing `S0` (Scalar ALU + SMEM + conditional branching `opcode == 6`), `V0` (Vector ALU + VMEM),
+    /// `M0` (`MXU` systolic matrix accumulator), `X0` (`EUP` transcendental unit), and `D0` (`DMA`/`SyncFlag` engine)
+    /// slots in lockstep.
     ///
     /// # Arguments
     ///
@@ -96,6 +107,10 @@ impl TpuCoreVmState {
     pub fn execute_vliw_stream(&mut self, bundles: &[crate::compiler::TensorCoreVliwBundle]) {
         for bundle in bundles {
             self.step_vliw_bundle(bundle);
+            let preg_idx = usize::from(bundle.scalar_slot.dst_sreg) & 15;
+            if bundle.scalar_slot.opcode == 6 && self.preg[preg_idx] {
+                self.pc = bundle.scalar_slot.imm32;
+            }
         }
     }
 
@@ -161,23 +176,26 @@ impl TpuCoreVmState {
         self.vreg_words[v_dst] = v_res;
         self.vmem_words[v_dst & 255] = v_res;
         self.vmask[v_dst & 7] = (bundle.vector_slot.lane_mask & 1) != 0;
+        self.step_v0_tile(&bundle.vector_slot, v_op_decoded);
 
         // X0: Extended Unary / Transcendental Pipeline (EUP)
         if bundle.xunary_slot.opcode != 0 {
             let x_dst = usize::from(bundle.xunary_slot.dst_vreg) & 63;
             let x_src_bits = self.vreg_words[usize::from(bundle.xunary_slot.src_vreg) & 63];
             let x_src = f32::from_bits(x_src_bits);
-            let x_res = match crate::compiler::TpuOpCode::try_from(bundle.xunary_slot.opcode) {
-                Ok(crate::compiler::TpuOpCode::ExpF32) => x_src.exp().to_bits(),
-                Ok(crate::compiler::TpuOpCode::TanhF32) => x_src.tanh().to_bits(),
-                Ok(crate::compiler::TpuOpCode::Log) => x_src.ln().to_bits(),
-                Ok(crate::compiler::TpuOpCode::Sqrt) => x_src.sqrt().to_bits(),
-                Ok(crate::compiler::TpuOpCode::Rsqrt) => (1.0 / x_src.sqrt()).to_bits(),
-                Ok(crate::compiler::TpuOpCode::Sine) => x_src.sin().to_bits(),
-                Ok(crate::compiler::TpuOpCode::Cosine) => x_src.cos().to_bits(),
+            let x_op_decoded = crate::compiler::TpuOpCode::try_from(bundle.xunary_slot.opcode).ok();
+            let x_res = match x_op_decoded {
+                Some(crate::compiler::TpuOpCode::ExpF32) => x_src.exp().to_bits(),
+                Some(crate::compiler::TpuOpCode::TanhF32) => x_src.tanh().to_bits(),
+                Some(crate::compiler::TpuOpCode::Log) => x_src.ln().to_bits(),
+                Some(crate::compiler::TpuOpCode::Sqrt) => x_src.sqrt().to_bits(),
+                Some(crate::compiler::TpuOpCode::Rsqrt) => (1.0 / x_src.sqrt()).to_bits(),
+                Some(crate::compiler::TpuOpCode::Sine) => x_src.sin().to_bits(),
+                Some(crate::compiler::TpuOpCode::Cosine) => x_src.cos().to_bits(),
                 _ => x_src_bits.wrapping_add(u32::from(bundle.xunary_slot.opcode)),
             };
             self.vreg_words[x_dst] = x_res;
+            self.step_x0_tile(bundle.xunary_slot, x_op_decoded);
         }
 
         // M0: Systolic Matrix Multiply Unit (MXU)
@@ -185,12 +203,149 @@ impl TpuCoreVmState {
             let m_idx = usize::from(bundle.matrix_slot.acc_vreg) & 15;
             let k_tiles = f32::from(bundle.matrix_slot.k_tiles.max(1));
             self.mxu_accum[m_idx] += k_tiles;
+            self.step_m0_tile(&bundle.matrix_slot);
         }
 
         // D0: Async DMA & SyncFlag completion barrier
+        if bundle.dma_slot.dma_opcode != 0 {
+            let vmem_off = u64::from(bundle.dma_slot.src_space) * 32;
+            if let Some(tile) = self.vmem_allocations.get(&vmem_off).cloned() {
+                #[allow(clippy::cast_possible_truncation)]
+                let dst_reg = (bundle.vector_slot.dst_vreg & 255) as u8;
+                self.vreg_tiles.insert(dst_reg, tile);
+            }
+        }
         let sf_idx = usize::try_from(bundle.dma_slot.sync_flag_id).unwrap_or(0) & 255;
         self.sync_flags[sf_idx] = self.sync_flags[sf_idx].wrapping_add(1);
         self.cycles_executed = self.cycles_executed.wrapping_add(1);
+    }
+
+    /// Applies the `V0` (`VectorAluSlot`) instruction across all elements of the physical tile
+    /// in `vreg_tiles[src0_vreg]` (and `vreg_tiles[src1_vreg]`) when populated.
+    ///
+    /// # Arguments
+    ///
+    /// * `vslot` - Architectural `VectorAluSlot` instruction fields.
+    /// * `op_opt` - Decoded [`crate::compiler::TpuOpCode`], if valid.
+    fn step_v0_tile(
+        &mut self,
+        vslot: &crate::compiler::VectorAluSlot,
+        op_opt: Option<crate::compiler::TpuOpCode>,
+    ) {
+        #[allow(clippy::cast_possible_truncation)]
+        let s0_key = (vslot.src0_vreg & 255) as u8;
+        #[allow(clippy::cast_possible_truncation)]
+        let s1_key = (vslot.src1_vreg & 255) as u8;
+        #[allow(clippy::cast_possible_truncation)]
+        let dst_key = (vslot.dst_vreg & 255) as u8;
+        let elem_type =
+            ElementType::from_raw(i32::from(vslot.element_type)).unwrap_or(ElementType::F32);
+        let op = op_opt.unwrap_or(crate::compiler::TpuOpCode::AddF32);
+        let empty: &[u8] = &[];
+        let t0_bytes = self.vreg_tiles.get(&s0_key).map_or(empty, Vec::as_slice);
+        let t1_bytes = self.vreg_tiles.get(&s1_key).map_or(t0_bytes, Vec::as_slice);
+        let v0 = elem_type.unpack_to_f64_vec(t0_bytes);
+        let v1 = elem_type.unpack_to_f64_vec(t1_bytes);
+        let out_vals: Vec<f64> = v0
+            .iter()
+            .zip(v1.iter())
+            .map(|(&a, &b)| match op {
+                crate::compiler::TpuOpCode::SubF32 => a - b,
+                crate::compiler::TpuOpCode::MulF32 => a * b,
+                crate::compiler::TpuOpCode::DivF32 => a / b,
+                crate::compiler::TpuOpCode::MaxF32 => a.max(b),
+                crate::compiler::TpuOpCode::MinF32 => a.min(b),
+                crate::compiler::TpuOpCode::NegF32 => -a,
+                crate::compiler::TpuOpCode::Abs => a.abs(),
+                crate::compiler::TpuOpCode::Identity => a,
+                _ => a + b,
+            })
+            .collect();
+        let packed = elem_type.pack_from_f64_slice(&out_vals);
+        self.vmem_allocations
+            .insert(u64::from(dst_key) * 256, packed.clone());
+        self.vreg_tiles.insert(dst_key, packed);
+    }
+
+    /// Applies the `X0` (`ExtendedUnarySlot`) transcendental instruction across all elements of
+    /// `vreg_tiles[src_vreg]` when populated.
+    ///
+    /// # Arguments
+    ///
+    /// * `xslot` - Architectural `ExtendedUnarySlot` instruction fields.
+    /// * `op_opt` - Decoded [`crate::compiler::TpuOpCode`], if valid.
+    fn step_x0_tile(
+        &mut self,
+        xslot: crate::compiler::ExtendedUnarySlot,
+        op_opt: Option<crate::compiler::TpuOpCode>,
+    ) {
+        #[allow(clippy::cast_possible_truncation)]
+        let src_key = (xslot.src_vreg & 255) as u8;
+        #[allow(clippy::cast_possible_truncation)]
+        let dst_key = (xslot.dst_vreg & 255) as u8;
+        let op = op_opt.unwrap_or(crate::compiler::TpuOpCode::ExpF32);
+        let empty: &[u8] = &[];
+        let t_bytes = self.vreg_tiles.get(&src_key).map_or(empty, Vec::as_slice);
+        let vals = ElementType::F32.unpack_to_f64_vec(t_bytes);
+        let out_vals: Vec<f64> = vals
+            .iter()
+            .map(|&x| match op {
+                crate::compiler::TpuOpCode::TanhF32 => x.tanh(),
+                crate::compiler::TpuOpCode::Log => x.ln(),
+                crate::compiler::TpuOpCode::Sqrt => x.sqrt(),
+                crate::compiler::TpuOpCode::Rsqrt => 1.0 / x.sqrt(),
+                crate::compiler::TpuOpCode::Sine => x.sin(),
+                crate::compiler::TpuOpCode::Cosine => x.cos(),
+                _ => x.exp(),
+            })
+            .collect();
+        let packed = ElementType::F32.pack_from_f64_slice(&out_vals);
+        self.vreg_tiles.insert(dst_key, packed);
+    }
+
+    /// Applies the `M0` (`MatrixMxuSlot`) systolic contraction across `vreg_tiles[lhs_vreg]` and
+    /// `mxu_weights` (or `vreg_tiles[rhs_vreg]`) into `vreg_tiles[acc_vreg]`.
+    ///
+    /// Performs true 2D square matrix multiplication (`[N, N] * [N, N]`) when the tile length is a
+    /// square matrix (`N * N >= 4`), or elementwise inner contraction otherwise.
+    ///
+    /// # Arguments
+    ///
+    /// * `mslot` - Architectural `MatrixMxuSlot` instruction fields.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn step_m0_tile(&mut self, mslot: &crate::compiler::MatrixMxuSlot) {
+        let lhs_key = (mslot.lhs_vreg & 255) as u8;
+        let rhs_key = (mslot.rhs_vreg & 255) as u8;
+        let acc_key = (mslot.acc_vreg & 255) as u8;
+        let empty: &[u8] = &[];
+        let lhs_bytes = self.vreg_tiles.get(&lhs_key).map_or(empty, Vec::as_slice);
+        let lhs_vals = ElementType::F32.unpack_to_f64_vec(lhs_bytes);
+        let rhs_vals = if self.mxu_weights.is_empty() {
+            let rhs_bytes = self
+                .vreg_tiles
+                .get(&rhs_key)
+                .map_or(lhs_bytes, Vec::as_slice);
+            ElementType::F32.unpack_to_f64_vec(rhs_bytes)
+        } else {
+            self.mxu_weights.clone()
+        };
+        let n = lhs_vals.len().isqrt().max(1);
+        let mut out_vals = vec![0.0_f64; n * n];
+        for r in 0..n {
+            for c in 0..n {
+                let mut acc = 0.0_f64;
+                for k in 0..n {
+                    let l = lhs_vals.get(r * n + k).copied().unwrap_or(0.0);
+                    let rv = rhs_vals.get(k * n + c).copied().unwrap_or(0.0);
+                    acc = l.mul_add(rv, acc);
+                }
+                out_vals.get_mut(r * n + c).into_iter().for_each(|slot| {
+                    *slot = acc;
+                });
+            }
+        }
+        let packed = ElementType::F32.pack_from_f64_slice(&out_vals);
+        self.vreg_tiles.insert(acc_key, packed);
     }
 
     /// Decodes a binary `IMEM` image of 64-byte [`crate::compiler::TensorCoreVliwBundle`] words and steps
@@ -202,6 +357,80 @@ impl TpuCoreVmState {
     pub fn execute_imem_bytes(&mut self, imem_bytes: &[u8]) {
         let bundles = CompiledProgram::decode_architectural_imem(imem_bytes);
         self.execute_vliw_stream(&bundles);
+    }
+
+    /// Loads a raw serialized 64-byte VLIW `IMEM` binary stream, reconstructs the architectural
+    /// [`crate::compiler::TpuInstructionBundle`] sequence from the decoded 512-bit instruction words,
+    /// and executes the program standalone over `input_buffers` to produce `output_count` output buffers.
+    ///
+    /// # Arguments
+    ///
+    /// * `imem_bytes` - Raw `IMEM` binary image (must be a non-empty multiple of 64 bytes).
+    /// * `input_buffers` - Input HBM tensor byte buffers transferred into VMEM slots `0..inputs.len()`.
+    /// * `output_count` - Number of output tensor buffers requested by the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::DeserializationFailed`] if `imem_bytes` is empty, not a multiple of 64 bytes,
+    /// or contains an invalid VLIW opcode.
+    pub fn execute_imem_binary(
+        &mut self,
+        imem_bytes: &[u8],
+        input_buffers: Vec<Vec<u8>>,
+        output_count: usize,
+    ) -> LibTpuResult<Vec<Vec<u8>>> {
+        if imem_bytes.is_empty() || (imem_bytes.len() & 63) != 0 {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: format!(
+                    "IMEM binary size ({}) must be a non-empty multiple of 64 bytes",
+                    imem_bytes.len()
+                ),
+            });
+        }
+        let vliw_bundles = CompiledProgram::decode_architectural_imem(imem_bytes);
+        let mut ir_bundles = Vec::with_capacity(vliw_bundles.len());
+        let mut output_slots = Vec::new();
+        for vb in &vliw_bundles {
+            let ib = vb.to_instruction_bundle()?;
+            output_slots.push(ib.output_slot);
+            ir_bundles.push(ib);
+        }
+        let last_out = output_slots.last().copied().unwrap_or(0);
+        let first_op = ir_bundles
+            .first()
+            .map_or(crate::compiler::TpuOpCode::Identity, |b| b.opcode);
+        let synthetic_prog = CompiledProgram {
+            name: String::from("imem_binary_program"),
+            format: String::from("imem"),
+            program_format: crate::compiler::ProgramFormat::Mlir,
+            opcode: first_op,
+            instruction_bundles: ir_bundles,
+            output_slots: vec![last_out; output_count.max(1)],
+            parameter_shapes: Vec::new(),
+            output_shapes: Vec::new(),
+            parameter_memory_kinds: Vec::new(),
+            output_memory_kinds: Vec::new(),
+            fingerprint: String::from("imem"),
+            num_replicas: 1,
+            num_partitions: 1,
+            cost_analysis: crate::compiler::CostAnalysis {
+                flops: 1.0,
+                transcendentals: 0.0,
+                bytes_accessed: 256.0,
+                optimal_seconds: 1.0e-6,
+            },
+            memory_stats: crate::compiler::CompiledMemoryStats {
+                generated_code_size_in_bytes: i64::try_from(imem_bytes.len()).unwrap_or(256),
+                argument_size_in_bytes: 256,
+                output_size_in_bytes: 256,
+                alias_size_in_bytes: 0,
+                temp_size_in_bytes: 256,
+            },
+            mosaic_metadata: crate::compiler::MosaicTargetMetadata::default(),
+            source_bytes: Vec::new(),
+            compile_options_bytes: Vec::new(),
+        };
+        Ok(self.execute_compiled_program(&synthetic_prog, input_buffers, output_count))
     }
 
     /// Initializes `SyncFlag` counters and executes all `IMEM` overlays in a [`crate::proto::DeepseaExecutableProto`].
@@ -221,14 +450,21 @@ impl TpuCoreVmState {
     }
 
     /// Dispatches a `TN_QUEUE_CONTINUATION` [`crate::proto::HostCommandEnvelopeProto`] event,
-    /// updating the `SREG[0]` continuation sequence register and `SYNC_FLAGS[0]`.
+    /// updating the `SREG[0]` continuation sequence register, processing `IMEM` or `DMA_H2D` payloads
+    /// when `opcode == 1` or `opcode == 2`, and incrementing `SYNC_FLAGS[0]`.
     ///
     /// # Arguments
     ///
     /// * `cmd` - Host command envelope from the `TensorCore` continuation queue.
     #[allow(clippy::indexing_slicing)]
-    pub const fn dispatch_host_command(&mut self, cmd: &crate::proto::HostCommandEnvelopeProto) {
+    pub fn dispatch_host_command(&mut self, cmd: &crate::proto::HostCommandEnvelopeProto) {
         self.sreg[0] = cmd.continuation_id;
+        if cmd.opcode == 1 {
+            self.execute_imem_bytes(&cmd.payload);
+        } else {
+            self.vmem_allocations
+                .insert(cmd.continuation_id * 256, cmd.payload.clone());
+        }
         self.sync_flags[0] = self.sync_flags[0].wrapping_add(1);
     }
 
@@ -260,6 +496,11 @@ impl TpuCoreVmState {
             ));
             self.vreg_words[in_slot & 63] = word0;
             self.vmem_words[in_slot & 255] = word0;
+            #[allow(clippy::cast_possible_truncation)]
+            self.vreg_tiles
+                .insert((in_slot & 255) as u8, in_buf.clone());
+            self.vmem_allocations
+                .insert((in_slot as u64) * 256, in_buf.clone());
         }
 
         let mut registers = input_buffers;
@@ -287,6 +528,9 @@ impl TpuCoreVmState {
                 .output_shape
                 .as_ref()
                 .map_or(default_elem_type, |s| s.element_type);
+            if let Some(&rhs_bytes) = op_slices.last() {
+                self.mxu_weights = bundle_elem_type.unpack_to_f64_vec(rhs_bytes);
+            }
             let evaluated =
                 SimulatedTpuHal::eval_bundle_with_attrs(bundle, bundle_elem_type, &op_slices);
             let word0 = u32::from_le(bytemuck::pod_read_unaligned::<u32>(
@@ -294,6 +538,11 @@ impl TpuCoreVmState {
             ));
             self.vreg_words[bundle.output_slot & 63] = word0;
             self.vmem_words[bundle.output_slot & 255] = word0;
+            #[allow(clippy::cast_possible_truncation)]
+            self.vreg_tiles
+                .insert((bundle.output_slot & 255) as u8, evaluated.clone());
+            self.vmem_allocations
+                .insert((bundle.output_slot as u64) * 256, evaluated.clone());
             last_result.clone_from(&evaluated);
             registers[bundle.output_slot] = evaluated;
         }
@@ -355,3 +604,378 @@ impl TpuCoreVmState {
 
 /// Alias for [`TpuCoreVmState`] (`DeepSeaVm` architectural VLIW execution engine).
 pub type DeepSeaVm = TpuCoreVmState;
+
+/// `SparseCore` optimizer algorithm for embedding weight updates (`SparseCoreOptimizer`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SparseCoreOptimizer {
+    /// Stochastic Gradient Descent (`w -= lr * g`).
+    Sgd {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+    },
+    /// Adaptive Gradient (`accum += g * g; w -= lr * g / sqrt(accum + eps)`).
+    Adagrad {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// Numerical stability epsilon (`eps`).
+        epsilon: f32,
+    },
+    /// Adaptive Moment Estimation (`m = b1*m + (1-b1)*g; v = b2*v + (1-b2)*g^2; w -= lr * m / (sqrt(v) + eps)`).
+    Adam {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// Exponential decay rate for first moment (`beta1`, e.g. `0.9`).
+        beta1: f32,
+        /// Exponential decay rate for second moment (`beta2`, e.g. `0.999`).
+        beta2: f32,
+        /// Numerical stability epsilon (`eps`, e.g. `1e-8`).
+        epsilon: f32,
+    },
+    /// Follow-The-Regularized-Leader (`FTRL-Proximal`) sparse embedding optimizer.
+    Ftrl {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// Learning rate power (`lr_power`, typically `-0.5`).
+        learning_rate_power: f32,
+        /// L1 regularization strength (`l1`).
+        l1_regularization: f32,
+        /// L2 regularization strength (`l2`).
+        l2_regularization: f32,
+    },
+    /// Root Mean Square Propagation (`accum = decay * accum + (1 - decay) * g^2; mom = momentum * mom + lr * g / sqrt(accum + eps); w -= mom`).
+    RmsProp {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// Discounting factor (`decay`, e.g. `0.9`).
+        decay: f32,
+        /// Momentum factor (`momentum`, e.g. `0.0` or `0.9`).
+        momentum: f32,
+        /// Numerical stability epsilon (`eps`).
+        epsilon: f32,
+    },
+    /// Classical / Nesterov Momentum (`mom = momentum * mom + g; w -= lr * mom`).
+    Momentum {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// Momentum decay factor (`momentum`, e.g. `0.9`).
+        momentum: f32,
+    },
+    /// Evolved Sign Momentum (`Lion`: `c = b1 * m + (1 - b1) * g; w -= lr * (sign(c) + wd * w); m = b2 * m + (1 - b2) * g`).
+    Lion {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// Update interpolation factor (`beta1`, e.g. `0.9`).
+        beta1: f32,
+        /// EMA momentum factor (`beta2`, e.g. `0.99`).
+        beta2: f32,
+        /// Decoupled weight decay (`weight_decay`).
+        weight_decay: f32,
+    },
+}
+
+/// Architectural `SparseCore` (`SC0`..`SC3`) embedding gather & scatter-update state machine (`SparseCoreVmState`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SparseCoreVmState {
+    /// `SparseCore` ordinal index (`0..4`).
+    pub core_index: u32,
+    /// Flattened `[vocab_size, embedding_dim]` embedding table weights in HBM/VMEM.
+    pub table_weights: Vec<f32>,
+    /// Flattened `[vocab_size, embedding_dim]` primary accumulator / first-moment (`m` / `accum`) state.
+    pub accumulator: Vec<f32>,
+    /// Flattened `[vocab_size, embedding_dim]` secondary auxiliary (`v` / `mom` / `linear`) state.
+    pub secondary_state: Vec<f32>,
+    /// Vocabulary row count.
+    pub vocab_size: usize,
+    /// Embedding vector width (`dimension`).
+    pub embedding_dim: usize,
+    /// Total sparse gather/scatter steps executed.
+    pub steps_executed: u64,
+}
+
+impl SparseCoreVmState {
+    /// Creates a new [`SparseCoreVmState`] for a table of shape `[vocab_size, embedding_dim]`.
+    ///
+    /// # Arguments
+    ///
+    /// * `core_index` - `SparseCore` ordinal (`0..4`).
+    /// * `vocab_size` - Number of rows in the embedding table.
+    /// * `embedding_dim` - Width of each embedding row.
+    /// * `initial_fill` - Initial weight scalar (`e.g. 0.1`).
+    #[must_use]
+    pub fn new(
+        core_index: u32,
+        vocab_size: usize,
+        embedding_dim: usize,
+        initial_fill: f32,
+    ) -> Self {
+        let len = vocab_size.saturating_mul(embedding_dim).max(1);
+        Self {
+            core_index,
+            table_weights: vec![initial_fill; len],
+            accumulator: vec![0.1_f32; len],
+            secondary_state: vec![0.0_f32; len],
+            vocab_size: vocab_size.max(1),
+            embedding_dim: embedding_dim.max(1),
+            steps_executed: 0,
+        }
+    }
+
+    /// Executes a deduplicated sparse embedding lookup (`Gather`) for `row_ids`.
+    ///
+    /// # Arguments
+    ///
+    /// * `row_ids` - Slice of vocabulary row indices to gather.
+    #[must_use]
+    pub fn sparse_gather(&mut self, row_ids: &[u32]) -> Vec<f32> {
+        let mut out = Vec::with_capacity(row_ids.len() * self.embedding_dim);
+        for &raw_id in row_ids {
+            let row = (raw_id as usize) % self.vocab_size;
+            let start = row * self.embedding_dim;
+            for col in 0..self.embedding_dim {
+                let val = self.table_weights.get(start + col).copied().unwrap_or(0.0);
+                out.push(val);
+            }
+        }
+        self.steps_executed = self.steps_executed.wrapping_add(1);
+        out
+    }
+
+    /// Applies sparse gradients to `row_ids` using `optimizer` (`ScatterAccumulate`).
+    ///
+    /// # Arguments
+    ///
+    /// * `row_ids` - Vocabulary row indices receiving gradient updates.
+    /// * `gradients` - Flattened gradient slice (`row_ids.len() * embedding_dim`).
+    /// * `optimizer` - [`SparseCoreOptimizer`] update rule (`Sgd`, `Adagrad`, `Adam`, `Ftrl`, `RmsProp`, `Momentum`, or `Lion`).
+    pub fn sparse_scatter_update(
+        &mut self,
+        row_ids: &[u32],
+        gradients: &[f32],
+        optimizer: SparseCoreOptimizer,
+    ) {
+        for (i, &raw_id) in row_ids.iter().enumerate() {
+            let row = (raw_id as usize) % self.vocab_size;
+            let row_base = row * self.embedding_dim;
+            let grad_base = i * self.embedding_dim;
+            for col in 0..self.embedding_dim {
+                let g = gradients.get(grad_base + col).copied().unwrap_or(0.0);
+                let idx = row_base + col;
+                self.update_single_element(idx, g, optimizer);
+            }
+        }
+        self.steps_executed = self.steps_executed.wrapping_add(1);
+    }
+
+    /// Updates a single embedding parameter element at `idx` with gradient `g` and `optimizer`.
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` - Flattened parameter index (`row * embedding_dim + col`).
+    /// * `g` - Scalar gradient value.
+    /// * `optimizer` - [`SparseCoreOptimizer`] update rule.
+    fn update_single_element(&mut self, idx: usize, g: f32, optimizer: SparseCoreOptimizer) {
+        match optimizer {
+            SparseCoreOptimizer::Sgd { learning_rate } => {
+                self.table_weights.get_mut(idx).into_iter().for_each(|w| {
+                    *w = learning_rate.mul_add(-g, *w);
+                });
+            }
+            SparseCoreOptimizer::Adagrad {
+                learning_rate,
+                epsilon,
+            } => {
+                let mut new_acc = 0.1_f32;
+                self.accumulator.get_mut(idx).into_iter().for_each(|acc| {
+                    *acc = g.mul_add(g, *acc);
+                    new_acc = *acc;
+                });
+                let delta = learning_rate * g / (new_acc + epsilon).sqrt();
+                self.table_weights.get_mut(idx).into_iter().for_each(|w| {
+                    *w -= delta;
+                });
+            }
+            SparseCoreOptimizer::Adam {
+                learning_rate,
+                beta1,
+                beta2,
+                epsilon,
+            } => {
+                self.apply_adam_element(idx, g, learning_rate, beta1, beta2, epsilon);
+            }
+            SparseCoreOptimizer::Ftrl {
+                learning_rate,
+                learning_rate_power,
+                l1_regularization,
+                l2_regularization,
+            } => {
+                self.apply_ftrl_element(
+                    idx,
+                    g,
+                    learning_rate,
+                    learning_rate_power,
+                    l1_regularization,
+                    l2_regularization,
+                );
+            }
+            SparseCoreOptimizer::RmsProp {
+                learning_rate,
+                decay,
+                momentum,
+                epsilon,
+            } => {
+                self.apply_rmsprop_element(idx, g, learning_rate, decay, momentum, epsilon);
+            }
+            SparseCoreOptimizer::Momentum {
+                learning_rate,
+                momentum,
+            } => {
+                let mut mom_val = 0.0_f32;
+                self.secondary_state
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|mom| {
+                        *mom = momentum.mul_add(*mom, g);
+                        mom_val = *mom;
+                    });
+                self.table_weights.get_mut(idx).into_iter().for_each(|w| {
+                    *w = learning_rate.mul_add(-mom_val, *w);
+                });
+            }
+            SparseCoreOptimizer::Lion {
+                learning_rate,
+                beta1,
+                beta2,
+                weight_decay,
+            } => {
+                let m_prev = self.accumulator.get(idx).copied().unwrap_or(0.0);
+                let c = beta1.mul_add(m_prev, (1.0 - beta1) * g);
+                let sign_c = c.signum();
+                self.table_weights.get_mut(idx).into_iter().for_each(|w| {
+                    *w = learning_rate.mul_add(-weight_decay.mul_add(*w, sign_c), *w);
+                });
+                self.accumulator.get_mut(idx).into_iter().for_each(|m| {
+                    *m = beta2.mul_add(*m, (1.0 - beta2) * g);
+                });
+            }
+        }
+    }
+
+    /// Applies an `FTRL-Proximal` update step to a single parameter element at `idx`.
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` - Flattened parameter index.
+    /// * `g` - Scalar gradient value.
+    /// * `learning_rate` - Learning rate (`lr`).
+    /// * `learning_rate_power` - Learning rate power (`lr_power`).
+    /// * `l1_regularization` - L1 regularization strength.
+    /// * `l2_regularization` - L2 regularization strength.
+    fn apply_ftrl_element(
+        &mut self,
+        idx: usize,
+        g: f32,
+        learning_rate: f32,
+        learning_rate_power: f32,
+        l1_regularization: f32,
+        l2_regularization: f32,
+    ) {
+        let old_acc = self.accumulator.get(idx).copied().unwrap_or(0.1).max(1e-8);
+        let new_acc = g.mul_add(g, old_acc);
+        self.accumulator.get_mut(idx).into_iter().for_each(|acc| {
+            *acc = new_acc;
+        });
+        let sigma = (new_acc.powf(-learning_rate_power) - old_acc.powf(-learning_rate_power))
+            / learning_rate.max(1e-8);
+        let w_prev = self.table_weights.get(idx).copied().unwrap_or(0.0);
+        let mut z_val = 0.0_f32;
+        self.secondary_state.get_mut(idx).into_iter().for_each(|z| {
+            *z += sigma.mul_add(-w_prev, g);
+            z_val = *z;
+        });
+        let sign_z = z_val.signum();
+        let new_w = if z_val.abs() <= l1_regularization {
+            0.0_f32
+        } else {
+            let denom = 2.0_f32.mul_add(
+                l2_regularization,
+                new_acc.powf(-learning_rate_power) / learning_rate.max(1e-8),
+            );
+            sign_z.mul_add(l1_regularization, -z_val) / denom.max(1e-8)
+        };
+        self.table_weights.get_mut(idx).into_iter().for_each(|w| {
+            *w = new_w;
+        });
+    }
+
+    /// Applies an `Adam` update step to a single parameter element at `idx`.
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` - Flattened parameter index.
+    /// * `g` - Scalar gradient value.
+    /// * `learning_rate` - Learning rate (`lr`).
+    /// * `beta1` - First-moment decay (`beta1`).
+    /// * `beta2` - Second-moment decay (`beta2`).
+    /// * `epsilon` - Stability epsilon (`eps`).
+    fn apply_adam_element(
+        &mut self,
+        idx: usize,
+        g: f32,
+        learning_rate: f32,
+        beta1: f32,
+        beta2: f32,
+        epsilon: f32,
+    ) {
+        let mut m_val = 0.0_f32;
+        self.accumulator.get_mut(idx).into_iter().for_each(|m| {
+            *m = beta1.mul_add(*m, (1.0 - beta1) * g);
+            m_val = *m;
+        });
+        let mut v_val = 0.0_f32;
+        self.secondary_state.get_mut(idx).into_iter().for_each(|v| {
+            *v = beta2.mul_add(*v, (1.0 - beta2) * g * g);
+            v_val = *v;
+        });
+        let delta = learning_rate * m_val / (v_val.sqrt() + epsilon);
+        self.table_weights.get_mut(idx).into_iter().for_each(|w| {
+            *w -= delta;
+        });
+    }
+
+    /// Applies an `RMSProp` update step to a single parameter element at `idx`.
+    ///
+    /// # Arguments
+    ///
+    /// * `idx` - Flattened parameter index.
+    /// * `g` - Scalar gradient value.
+    /// * `learning_rate` - Learning rate (`lr`).
+    /// * `decay` - Discounting factor (`decay`).
+    /// * `momentum` - Momentum factor (`momentum`).
+    /// * `epsilon` - Stability epsilon (`eps`).
+    fn apply_rmsprop_element(
+        &mut self,
+        idx: usize,
+        g: f32,
+        learning_rate: f32,
+        decay: f32,
+        momentum: f32,
+        epsilon: f32,
+    ) {
+        let mut acc_val = 0.1_f32;
+        self.accumulator.get_mut(idx).into_iter().for_each(|acc| {
+            *acc = decay.mul_add(*acc, (1.0 - decay) * g * g);
+            acc_val = *acc;
+        });
+        let mut mom_val = 0.0_f32;
+        self.secondary_state
+            .get_mut(idx)
+            .into_iter()
+            .for_each(|mom| {
+                *mom = momentum.mul_add(*mom, learning_rate * g / (acc_val + epsilon).sqrt());
+                mom_val = *mom;
+            });
+        self.table_weights.get_mut(idx).into_iter().for_each(|w| {
+            *w -= mom_val;
+        });
+    }
+}

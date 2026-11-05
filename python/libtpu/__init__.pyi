@@ -140,6 +140,27 @@ class TpuBuffer:
         """Transfers the `S32` device buffer contents back to host memory as a list of ints."""
         ...
 
+    def to_memoryview(self) -> memoryview:
+        """Returns a read-only `memoryview` over the buffer bytes read from HBM."""
+        ...
+
+    @property
+    def __array_interface__(self) -> dict[str, object]:
+        """Returns the NumPy `__array_interface__` dictionary for this buffer."""
+        ...
+
+    def __dlpack_device__(self) -> tuple[int, int]:
+        """Returns the DLPack `(device_type, device_id)` tuple (`kDLOneAPI = 14`, `0`)."""
+        ...
+
+    def __dlpack__(self, stream: int | None = None) -> object:
+        """Returns a CPython `PyCapsule` (`"dltensor"`) wrapping the device buffer pointer.
+
+        Args:
+            stream: Optional stream identifier.
+        """
+        ...
+
     def close(self) -> None:
         """Releases the underlying `PJRT_Buffer` handle."""
         ...
@@ -354,3 +375,281 @@ Client = TpuClient
 DeviceBuffer = TpuBuffer
 LoadedExecutable = TpuExecutable
 Profiler = TpuProfiler
+
+class DistributedCoordinator:
+    """In-memory multi-slice key-value and collective coordination helper."""
+
+    def __init__(self) -> None:
+        """Initializes an empty `DistributedCoordinator` directory."""
+        ...
+
+    def put_key_value(self, key: str, value: bytes) -> None:
+        """Stores `value` under `key` in the coordination directory.
+
+        Args:
+            key: Coordination directory key string.
+            value: Raw byte payload to store.
+        """
+        ...
+
+    def get_key_value(self, key: str) -> bytes:
+        """Retrieves the value stored under `key` from the coordination directory.
+
+        Args:
+            key: Coordination directory key string.
+        """
+        ...
+
+    def wait_at_barrier(self, barrier_id: int) -> int:
+        """Increments and returns the arrival count for `barrier_id`.
+
+        Args:
+            barrier_id: Monotonic barrier identifier.
+        """
+        ...
+
+    def try_get_key_value(self, key: str) -> bytes | None:
+        """Non-blocking lookup (`TryGetKeyValue`), returning `None` if `key` is absent.
+
+        Args:
+            key: Coordination directory key string.
+        """
+        ...
+
+    def get_key_value_dir(self, prefix: str) -> dict[str, bytes]:
+        """Returns all `(key, value)` entries whose key starts with `prefix` (`GetKeyValueDir`).
+
+        Args:
+            prefix: Directory prefix string.
+        """
+        ...
+
+    def cancel_barrier(self, barrier_id: int) -> bool:
+        """Cancels an active `barrier_id` (`CancelBarrier`).
+
+        Args:
+            barrier_id: Monotonic barrier identifier to cancel.
+        """
+        ...
+
+DistributedCoordinatorClient = DistributedCoordinator
+
+class PhaseCompiler:
+    """Strongly-typed Python wrapper over `PJRT_PhaseCompile_Extension`."""
+
+    def __init__(self) -> None:
+        """Initializes a `PhaseCompiler` instance."""
+        ...
+
+    def phase_names(self) -> list[str]:
+        """Returns the list of supported TPU compilation phase names."""
+        ...
+
+    def run_phase(self, phase_name: str, program_bytes: bytes) -> bytes:
+        """Runs a named compilation phase on `program_bytes`.
+
+        Args:
+            phase_name: Name of the compilation phase to execute.
+            program_bytes: Input MLIR or HLO program bytes.
+        """
+        ...
+
+    def run_all_phases(self, program_bytes: bytes) -> bytes:
+        """Sequentially executes all 5 TPU compilation phases on `program_bytes`.
+
+        Args:
+            program_bytes: Initial MLIR or HLO program bytes.
+        """
+        ...
+
+    def close(self) -> None:
+        """Destroys the native `PJRT_PhaseCompile_Compiler*` handle."""
+        ...
+
+    def __enter__(self) -> PhaseCompiler:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `PhaseCompiler` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple if raised.
+        """
+        ...
+
+class MegascaleContext:
+    """Strongly-typed Python wrapper over `PJRT_Megascale_Extension`."""
+
+    def __init__(self, num_slices: int = 2, slice_id: int = 0) -> None:
+        """Initializes a `MegascaleContext`.
+
+        Args:
+            num_slices: Number of TPU slices in the MegaScale topology.
+            slice_id: Local MegaScale slice index.
+        """
+        ...
+
+    def num_slices(self) -> int:
+        """Returns the number of TPU slices in this MegaScale context."""
+        ...
+
+    def slice_id(self) -> int:
+        """Returns the local slice ID of this MegaScale context."""
+        ...
+
+    def serialize_config(self) -> bytes:
+        """Serializes the multi-slice config via `PJRT_MultiSlice_Config_Serialize`."""
+        ...
+
+    def barrier(self) -> int:
+        """Executes a multi-slice MegaScale barrier and increments the arrival counter."""
+        ...
+
+    def close(self) -> None:
+        """Deletes the native multi-slice config and MegaScale client context handles."""
+        ...
+
+    def __enter__(self) -> MegascaleContext:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `MegascaleContext` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple if raised.
+        """
+        ...
+
+class Communicator:
+    """Strongly-typed Python wrapper over `PJRT_Collectives_Extension`."""
+
+    def __init__(self, device_ids: Sequence[int] | None = None) -> None:
+        """Initializes a collective `Communicator`.
+
+        Args:
+            device_ids: Optional sequence of participating logical device IDs.
+        """
+        ...
+
+    def device_ids(self) -> tuple[int, ...]:
+        """Returns the logical device IDs participating in this communicator."""
+        ...
+
+    def all_reduce(self, send_buf: TpuBuffer, recv_buf: TpuBuffer, reduction_op: int = 0) -> None:
+        """Executes an `AllReduce` collective via `PJRT_Communicator_AllReduce`.
+
+        Args:
+            send_buf: Source `TpuBuffer`.
+            recv_buf: Destination `TpuBuffer`.
+            reduction_op: Reduction kind (`0`=Sum, `1`=Product, `2`=Min, `3`=Max).
+        """
+        ...
+
+    def reduce_scatter(
+        self, send_buf: TpuBuffer, recv_buf: TpuBuffer, reduction_op: int = 0
+    ) -> None:
+        """Executes a `ReduceScatter` collective via `PJRT_Communicator_ReduceScatter`.
+
+        Args:
+            send_buf: Source `TpuBuffer`.
+            recv_buf: Destination `TpuBuffer`.
+            reduction_op: Reduction kind (`0`=Sum, `1`=Product, `2`=Min, `3`=Max).
+        """
+        ...
+
+    def all_gather(self, send_buf: TpuBuffer, recv_buf: TpuBuffer) -> None:
+        """Executes an `AllGather` collective via `PJRT_Communicator_AllGather`.
+
+        Args:
+            send_buf: Source `TpuBuffer`.
+            recv_buf: Destination `TpuBuffer`.
+        """
+        ...
+
+    def all_to_all(self, send_buf: TpuBuffer, recv_buf: TpuBuffer) -> None:
+        """Executes an `AllToAll` collective via `PJRT_Communicator_AllToAll`.
+
+        Args:
+            send_buf: Source `TpuBuffer`.
+            recv_buf: Destination `TpuBuffer`.
+        """
+        ...
+
+    def collective_permute(self, send_buf: TpuBuffer, recv_buf: TpuBuffer) -> None:
+        """Executes a `CollectivePermute` via `PJRT_Communicator_CollectivePermute`.
+
+        Args:
+            send_buf: Source `TpuBuffer`.
+            recv_buf: Destination `TpuBuffer`.
+        """
+        ...
+
+    def to_string(self) -> str:
+        """Returns the communicator description string via `PJRT_Communicator_ToString`."""
+        ...
+
+    def close(self) -> None:
+        """Destroys the `PJRT_Collectives_Communicator*` via `PJRT_Communicator_Destroy`."""
+        ...
+
+    def __enter__(self) -> Communicator:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `Communicator` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple if raised.
+        """
+        ...
+
+class EmbeddingEngine:
+    """Strongly-typed Python wrapper over `TpuEmbeddingEngine_*` SparseCore tables."""
+
+    def __init__(self) -> None:
+        """Initializes an `EmbeddingEngine` backed by `TpuEmbeddingEngine_*` in `libtpu.so`."""
+        ...
+
+    def write_parameters(self, table_name: str, values: Sequence[float]) -> int:
+        """Writes `values` into the SparseCore embedding table `table_name`.
+
+        Args:
+            table_name: Embedding table identifier.
+            values: Sequence of float parameter values.
+        """
+        ...
+
+    def read_parameters(self, table_name: str) -> list[float]:
+        """Reads the float parameter values stored in `table_name`.
+
+        Args:
+            table_name: Embedding table identifier.
+        """
+        ...
+
+    def close(self) -> None:
+        """Frees the native `TpuEmbeddingEngineState*` handle."""
+        ...
+
+    def __enter__(self) -> EmbeddingEngine:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `EmbeddingEngine` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple if raised.
+        """
+        ...
+
+def get_pjrt_c_api_capsule() -> object:
+    """Returns a `PyCapsule` (`"pjrt_c_api"`) wrapping `GetPjrtApi()`."""
+    ...
+
+def get_sdk_c_api_capsule() -> object:
+    """Returns a `PyCapsule` (`"libtpu.sdk._C_API"`) wrapping `GetLibtpuSdkApi()`."""
+    ...

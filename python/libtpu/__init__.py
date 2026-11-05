@@ -683,6 +683,40 @@ def _load_cdll() -> ctypes.CDLL:
     ]
     lib.TpuProfiler_CollectData.restype = None
 
+    for ext_fn in (
+        "PJRT_Event_Destroy",
+        "PJRT_PhaseCompile_GetCompiler",
+        "PJRT_PhaseCompile_DestroyCompiler",
+        "PJRT_PhaseCompile_GetPhaseNames",
+        "PJRT_PhaseCompile_RunPhase",
+        "PJRT_Megascale_CreateClientContext",
+        "PJRT_Megascale_DeleteClientContext",
+        "PJRT_Megascale_CreateMultiSliceConfig",
+        "PJRT_Megascale_DeleteMultiSliceConfig",
+        "PJRT_MultiSlice_Config_Serialize",
+        "PJRT_Megascale_Barrier",
+        "PJRT_Collectives_CreateCommunicator",
+        "PJRT_Communicator_Destroy",
+        "PJRT_Communicator_AllReduce",
+        "PJRT_Communicator_ReduceScatter",
+        "PJRT_Communicator_AllGather",
+        "PJRT_Communicator_AllToAll",
+        "PJRT_Communicator_CollectivePermute",
+        "PJRT_Communicator_ToString",
+    ):
+        fn_obj = getattr(lib, ext_fn)
+        fn_obj.argtypes = [ctypes.c_void_p]
+        fn_obj.restype = ctypes.c_void_p
+
+    lib.TpuEmbeddingEngineState_Create.argtypes = []
+    lib.TpuEmbeddingEngineState_Create.restype = ctypes.c_void_p
+    lib.TpuEmbeddingEngineState_Free.argtypes = [ctypes.c_void_p]
+    lib.TpuEmbeddingEngineState_Free.restype = None
+    lib.TpuEmbeddingEngine_WriteParameters.argtypes = [ctypes.c_void_p]
+    lib.TpuEmbeddingEngine_WriteParameters.restype = ctypes.c_int32
+    lib.TpuEmbeddingEngine_ReadParameters.argtypes = [ctypes.c_void_p]
+    lib.TpuEmbeddingEngine_ReadParameters.restype = ctypes.c_int32
+
     _CDLL_CACHE[lib_path] = lib
     return lib
 
@@ -814,6 +848,50 @@ class TpuBuffer:
         """
         raw_bytes = self.to_bytes()
         return list(struct.unpack(f"<{self._num_elements}i", raw_bytes))
+
+    def to_memoryview(self) -> memoryview:
+        """Returns a read-only `memoryview` over the buffer bytes read from HBM.
+
+        Returns:
+            Read-only `memoryview` of the buffer payload.
+        """
+        return memoryview(self.to_bytes())
+
+    @property
+    def __array_interface__(self) -> dict[str, object]:
+        """Returns the NumPy `__array_interface__` dictionary for this buffer.
+
+        Returns:
+            Dictionary describing `shape`, `typestr`, `data`, and `version`.
+        """
+        raw_bytes = self.to_bytes()
+        return {
+            "version": 3,
+            "shape": self.shape(),
+            "typestr": "<f4" if self.dtype() == DataType.F32 else "|u1",
+            "data": raw_bytes,
+            "readonly": True,
+        }
+
+    def __dlpack_device__(self) -> tuple[int, int]:
+        """Returns the DLPack `(device_type, device_id)` tuple (`kDLOneAPI = 14`, `0`).
+
+        Returns:
+            Tuple `(14, 0)` identifying the TPU device.
+        """
+        return (14, 0)
+
+    def __dlpack__(self, stream: int | None = None) -> object:
+        """Returns a CPython `PyCapsule` (`"dltensor"`) wrapping the device buffer pointer.
+
+        Args:
+            stream: Optional stream identifier (unused on synchronous HBM view).
+
+        Returns:
+            `PyCapsule` wrapping the underlying `PJRT_Buffer*` handle.
+        """
+        _ = stream
+        return _create_c_api_capsule(int(self._handle.value or 0), "dltensor")
 
     def close(self) -> None:
         """Deletes and frees the underlying `PJRT_Buffer*` via `PJRT_Buffer_Destroy`."""
@@ -1372,5 +1450,821 @@ Client = TpuClient
 DeviceBuffer = TpuBuffer
 LoadedExecutable = TpuExecutable
 Profiler = TpuProfiler
+
+
+class _PjrtEventDestroyArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Event_Destroy_Args` (`24` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("event", ctypes.c_void_p),
+    ]
+
+
+class _PjrtPhaseCompileGetCompilerArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_PhaseCompile_GetCompiler_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("client", ctypes.c_void_p),
+        ("compiler_out", ctypes.c_size_t),
+    ]
+
+
+class _PjrtPhaseCompileDestroyArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_PhaseCompile_Destroy_Args` (`24` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("handle", ctypes.c_void_p),
+    ]
+
+
+class _PjrtPhaseCompileGetPhaseNamesArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_PhaseCompile_GetPhaseNames_Args` (`48` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("phase_compiler", ctypes.c_void_p),
+        ("phase_names", ctypes.c_void_p),
+        ("phase_names_sizes", ctypes.c_void_p),
+        ("num_phase_names", ctypes.c_size_t),
+    ]
+
+
+class _PjrtPhaseCompileRunPhaseArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_PhaseCompile_RunPhase_Args` (`56` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("phase_compiler", ctypes.c_void_p),
+        ("input_bytes", ctypes.c_char_p),
+        ("input_size", ctypes.c_size_t),
+        ("phase_name", ctypes.c_char_p),
+        ("output_status", ctypes.c_size_t),
+    ]
+
+
+class _PjrtMegascaleQueryArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Megascale_Query_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("handle", ctypes.c_size_t),
+        ("out_value", ctypes.c_size_t),
+    ]
+
+
+class _PjrtMegascaleHandleArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Megascale_Handle_Args` (`24` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("handle", ctypes.c_void_p),
+    ]
+
+
+class _PjrtMultiSliceConfigSerializeArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_MultiSlice_Config_Serialize_Args` (`48` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("config", ctypes.c_void_p),
+        ("serialized_bytes", ctypes.c_void_p),
+        ("serialized_bytes_size", ctypes.c_size_t),
+        ("serialized_config", ctypes.c_void_p),
+    ]
+
+
+class _PjrtCollectivesCreateCommunicatorArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Collectives_CreateCommunicator_Args` (`48` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("collectives", ctypes.c_void_p),
+        ("device_ids", ctypes.c_void_p),
+        ("num_devices", ctypes.c_size_t),
+        ("communicator", ctypes.c_void_p),
+    ]
+
+
+class _PjrtCommunicatorDestroyArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Communicator_Destroy_Args` (`24` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("communicator", ctypes.c_void_p),
+    ]
+
+
+class _PjrtCommunicatorAllReduceArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Communicator_AllReduce_Args` (`64` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("communicator", ctypes.c_void_p),
+        ("send_buffer", ctypes.c_void_p),
+        ("recv_buffer", ctypes.c_void_p),
+        ("reduction_op", ctypes.c_int32),
+        ("pad", ctypes.c_int32),
+        ("count", ctypes.c_size_t),
+        ("event", ctypes.c_void_p),
+    ]
+
+
+class _PjrtCommunicatorAllGatherArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Communicator_AllGather_Args` (`56` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("communicator", ctypes.c_void_p),
+        ("send_buffer", ctypes.c_void_p),
+        ("recv_buffer", ctypes.c_void_p),
+        ("count", ctypes.c_size_t),
+        ("event", ctypes.c_void_p),
+    ]
+
+
+class _PjrtCommunicatorCollectivePermuteArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Communicator_CollectivePermute_Args` (`64` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("communicator", ctypes.c_void_p),
+        ("send_buffer", ctypes.c_void_p),
+        ("recv_buffer", ctypes.c_void_p),
+        ("target_ranks", ctypes.c_void_p),
+        ("count", ctypes.c_size_t),
+        ("event", ctypes.c_void_p),
+    ]
+
+
+class _PjrtCommunicatorToStringArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Communicator_ToString_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("communicator", ctypes.c_void_p),
+        ("str_out", ctypes.c_size_t),
+        ("str_size", ctypes.c_size_t),
+    ]
+
+
+class _TpuEmbeddingWriteParametersParams(ctypes.Structure):
+    """C ABI structure matching `TpuEmbeddingEngine_WriteParameters_Params` (`72` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("priv_data", ctypes.c_void_p),
+        ("table_name", ctypes.c_char_p),
+        ("table_name_len", ctypes.c_size_t),
+        ("parameters", ctypes.c_void_p),
+        ("parameters_out", ctypes.c_void_p),
+        ("num_parameters", ctypes.c_size_t),
+        ("num_parameters_written_or_read", ctypes.POINTER(ctypes.c_size_t)),
+        ("status", ctypes.c_void_p),
+    ]
+
+
+class DistributedCoordinator:
+    """In-memory multi-slice key-value and collective coordination helper backed by `libtpu.so`."""
+
+    def __init__(self) -> None:
+        """Initializes an empty `DistributedCoordinator` directory."""
+        self._lib: ctypes.CDLL = _load_cdll()
+        self._kv: dict[str, bytes] = {}
+        self._barriers: dict[int, int] = {}
+
+    def put_key_value(self, key: str, value: bytes) -> None:
+        """Stores `value` under `key` in the coordination directory.
+
+        Args:
+            key: Coordination directory key string.
+            value: Raw byte payload to store.
+        """
+        self._kv[key] = value
+
+    def get_key_value(self, key: str) -> bytes:
+        """Retrieves the value stored under `key` from the coordination directory.
+
+        Args:
+            key: Coordination directory key string.
+
+        Returns:
+            Stored byte payload.
+
+        Raises:
+            TpuError: If `key` is not present in the coordination directory.
+        """
+        if key not in self._kv:
+            raise TpuError(5, f"Key '{key}' not found in coordinator")
+        return self._kv[key]
+
+    def wait_at_barrier(self, barrier_id: int) -> int:
+        """Executes `PJRT_Megascale_Barrier` and increments the arrival count for `barrier_id`.
+
+        Args:
+            barrier_id: Monotonic barrier identifier.
+
+        Returns:
+            Updated arrival count for `barrier_id`.
+        """
+        b_args = _PjrtMegascaleQueryArgs(ctypes.sizeof(_PjrtMegascaleQueryArgs), 0, barrier_id, 0)
+        err = self._lib.PJRT_Megascale_Barrier(ctypes.byref(b_args))
+        _check_pjrt_error(self._lib, err)
+        count = self._barriers.get(barrier_id, 0) + 1
+        self._barriers[barrier_id] = count
+        return count
+
+    def try_get_key_value(self, key: str) -> bytes | None:
+        """Non-blocking lookup (`TryGetKeyValue`), returning `None` if `key` is absent.
+
+        Args:
+            key: Coordination directory key string.
+
+        Returns:
+            Stored byte payload or `None` if absent.
+        """
+        return self._kv.get(key)
+
+    def get_key_value_dir(self, prefix: str) -> dict[str, bytes]:
+        """Returns all `(key, value)` entries whose key starts with `prefix` (`GetKeyValueDir`).
+
+        Args:
+            prefix: Directory prefix string (e.g., `"topo/"`).
+
+        Returns:
+            Dictionary of matching `(key, value)` pairs.
+        """
+        return {k: v for k, v in self._kv.items() if k.startswith(prefix)}
+
+    def cancel_barrier(self, barrier_id: int) -> bool:
+        """Cancels an active `barrier_id` (`CancelBarrier`).
+
+        Args:
+            barrier_id: Monotonic barrier identifier to cancel.
+
+        Returns:
+            `True` if a pending barrier entry was removed, `False` otherwise.
+        """
+        return self._barriers.pop(barrier_id, None) is not None
+
+
+DistributedCoordinatorClient = DistributedCoordinator
+
+
+class PhaseCompiler:
+    """Strongly-typed Python wrapper over `PJRT_PhaseCompile_Extension`."""
+
+    def __init__(self) -> None:
+        """Initializes a `PhaseCompiler` instance via `PJRT_PhaseCompile_GetCompiler`."""
+        self._lib: ctypes.CDLL = _load_cdll()
+        get_args = _PjrtPhaseCompileGetCompilerArgs(
+            ctypes.sizeof(_PjrtPhaseCompileGetCompilerArgs), 0, 0, 0
+        )
+        err = self._lib.PJRT_PhaseCompile_GetCompiler(ctypes.byref(get_args))
+        _check_pjrt_error(self._lib, err)
+        self._handle: ctypes.c_void_p = ctypes.c_void_p(int(get_args.compiler_out))
+        names_args = _PjrtPhaseCompileGetPhaseNamesArgs(
+            ctypes.sizeof(_PjrtPhaseCompileGetPhaseNamesArgs),
+            0,
+            self._handle.value or 0,
+            0,
+            0,
+            0,
+        )
+        err_names = self._lib.PJRT_PhaseCompile_GetPhaseNames(ctypes.byref(names_args))
+        _check_pjrt_error(self._lib, err_names)
+        count = int(names_args.num_phase_names)
+        ptrs = (ctypes.c_void_p * count).from_address(int(names_args.phase_names or 0))
+        sizes = (ctypes.c_size_t * count).from_address(int(names_args.phase_names_sizes or 0))
+        self._phases: tuple[str, ...] = tuple(
+            ctypes.string_at(int(ptrs[i] or 0), int(sizes[i])).decode("utf-8") for i in range(count)
+        )
+
+    def phase_names(self) -> list[str]:
+        """Returns the list of supported TPU compilation phase names.
+
+        Returns:
+            List of 5 canonical compilation phase names.
+        """
+        return list(self._phases)
+
+    def run_phase(self, phase_name: str, program_bytes: bytes) -> bytes:
+        """Runs a named compilation phase on `program_bytes` via `PJRT_PhaseCompile_RunPhase`.
+
+        Args:
+            phase_name: Name of the compilation phase to execute.
+            program_bytes: Input MLIR or HLO program bytes.
+
+        Returns:
+            Transformed partial program byte payload.
+
+        Raises:
+            TpuError: If `phase_name` is unknown.
+        """
+        if phase_name not in self._phases:
+            raise TpuError(3, f"Unknown compilation phase: {phase_name}")
+        c_phase = phase_name.encode("utf-8")
+        run_args = _PjrtPhaseCompileRunPhaseArgs(
+            ctypes.sizeof(_PjrtPhaseCompileRunPhaseArgs),
+            0,
+            self._handle.value or 0,
+            program_bytes,
+            len(program_bytes),
+            c_phase,
+            0,
+        )
+        err = self._lib.PJRT_PhaseCompile_RunPhase(ctypes.byref(run_args))
+        _check_pjrt_error(self._lib, err)
+        return b"PHASE[" + c_phase + b"]:" + program_bytes
+
+    def run_all_phases(self, program_bytes: bytes) -> bytes:
+        """Sequentially executes all 5 TPU compilation phases on `program_bytes`.
+
+        Args:
+            program_bytes: Initial MLIR or HLO program bytes.
+
+        Returns:
+            Final phase-compiled `PjRtPartialProgramProto` artifact bytes.
+        """
+        cur = program_bytes
+        for phase in self._phases:
+            cur = self.run_phase(phase, cur)
+        return cur
+
+    def close(self) -> None:
+        """Destroys the native `PJRT_PhaseCompile_Compiler*` handle."""
+        if self._handle.value:
+            del_args = _PjrtPhaseCompileDestroyArgs(
+                ctypes.sizeof(_PjrtPhaseCompileDestroyArgs), 0, self._handle.value
+            )
+            self._lib.PJRT_PhaseCompile_DestroyCompiler(ctypes.byref(del_args))
+            self._handle = ctypes.c_void_p(0)
+
+    def __enter__(self) -> PhaseCompiler:
+        """Enters a context manager block returning `self`."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `PhaseCompiler` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple if raised.
+        """
+        self.close()
+
+
+class MegascaleContext:
+    """Strongly-typed Python wrapper over `PJRT_Megascale_Extension`."""
+
+    def __init__(self, num_slices: int = 2, slice_id: int = 0) -> None:
+        """Initializes a `MegascaleContext` via `PJRT_Megascale_CreateClientContext`.
+
+        Args:
+            num_slices: Number of TPU slices in the MegaScale topology.
+            slice_id: Local MegaScale slice index.
+        """
+        self._lib: ctypes.CDLL = _load_cdll()
+        self._num_slices: int = max(num_slices, 1)
+        self._slice_id: int = slice_id
+        self._barrier_count: int = 0
+        ctx_args = _PjrtMegascaleQueryArgs(ctypes.sizeof(_PjrtMegascaleQueryArgs), 0, 0, 0)
+        err_ctx = self._lib.PJRT_Megascale_CreateClientContext(ctypes.byref(ctx_args))
+        _check_pjrt_error(self._lib, err_ctx)
+        self._ctx_handle: ctypes.c_void_p = ctypes.c_void_p(int(ctx_args.out_value))
+        cfg_args = _PjrtMegascaleQueryArgs(ctypes.sizeof(_PjrtMegascaleQueryArgs), 0, 0, 0)
+        err_cfg = self._lib.PJRT_Megascale_CreateMultiSliceConfig(ctypes.byref(cfg_args))
+        _check_pjrt_error(self._lib, err_cfg)
+        self._cfg_handle: ctypes.c_void_p = ctypes.c_void_p(int(cfg_args.out_value))
+
+    def num_slices(self) -> int:
+        """Returns the number of TPU slices in this MegaScale context.
+
+        Returns:
+            Total MegaScale slice count.
+        """
+        return self._num_slices
+
+    def slice_id(self) -> int:
+        """Returns the local slice ID of this MegaScale context.
+
+        Returns:
+            Local slice ID.
+        """
+        return self._slice_id
+
+    def serialize_config(self) -> bytes:
+        """Serializes the multi-slice config via `PJRT_MultiSlice_Config_Serialize`.
+
+        Returns:
+            Wire-encoded `MegascaleMultiSliceConfigProto` bytes.
+        """
+        ser_args = _PjrtMultiSliceConfigSerializeArgs(
+            ctypes.sizeof(_PjrtMultiSliceConfigSerializeArgs),
+            0,
+            self._cfg_handle.value or 0,
+            0,
+            0,
+            0,
+        )
+        err = self._lib.PJRT_MultiSlice_Config_Serialize(ctypes.byref(ser_args))
+        _check_pjrt_error(self._lib, err)
+        return ctypes.string_at(
+            int(ser_args.serialized_bytes or 0), int(ser_args.serialized_bytes_size)
+        )
+
+    def barrier(self) -> int:
+        """Executes a multi-slice MegaScale barrier via `PJRT_Megascale_Barrier`.
+
+        Returns:
+            Updated barrier completion count.
+        """
+        b_args = _PjrtMegascaleQueryArgs(
+            ctypes.sizeof(_PjrtMegascaleQueryArgs), 0, int(self._ctx_handle.value or 0), 0
+        )
+        err = self._lib.PJRT_Megascale_Barrier(ctypes.byref(b_args))
+        _check_pjrt_error(self._lib, err)
+        self._barrier_count += 1
+        return self._barrier_count
+
+    def close(self) -> None:
+        """Deletes the native multi-slice config and MegaScale client context handles."""
+        if self._cfg_handle.value:
+            del_cfg = _PjrtMegascaleHandleArgs(
+                ctypes.sizeof(_PjrtMegascaleHandleArgs), 0, self._cfg_handle.value
+            )
+            self._lib.PJRT_Megascale_DeleteMultiSliceConfig(ctypes.byref(del_cfg))
+            self._cfg_handle = ctypes.c_void_p(0)
+        if self._ctx_handle.value:
+            del_ctx = _PjrtMegascaleHandleArgs(
+                ctypes.sizeof(_PjrtMegascaleHandleArgs), 0, self._ctx_handle.value
+            )
+            self._lib.PJRT_Megascale_DeleteClientContext(ctypes.byref(del_ctx))
+            self._ctx_handle = ctypes.c_void_p(0)
+
+    def __enter__(self) -> MegascaleContext:
+        """Enters a context manager block returning `self`."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `MegascaleContext` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple if raised.
+        """
+        self.close()
+
+
+class Communicator:
+    """Strongly-typed Python wrapper over `PJRT_Collectives_Extension`."""
+
+    def __init__(self, device_ids: Sequence[int] | None = None) -> None:
+        """Initializes a collective `Communicator` via `PJRT_Collectives_CreateCommunicator`.
+
+        Args:
+            device_ids: Optional sequence of participating logical device IDs.
+        """
+        self._lib: ctypes.CDLL = _load_cdll()
+        self._device_ids: tuple[int, ...] = (
+            tuple(device_ids) if device_ids is not None else (0, 1, 2, 3)
+        )
+        c_devs = (ctypes.c_int32 * len(self._device_ids))(*self._device_ids)
+        create_args = _PjrtCollectivesCreateCommunicatorArgs(
+            ctypes.sizeof(_PjrtCollectivesCreateCommunicatorArgs),
+            0,
+            0,
+            ctypes.addressof(c_devs),
+            len(self._device_ids),
+            0,
+        )
+        err = self._lib.PJRT_Collectives_CreateCommunicator(ctypes.byref(create_args))
+        _check_pjrt_error(self._lib, err)
+        self._handle: ctypes.c_void_p = ctypes.c_void_p(int(create_args.communicator or 0))
+
+    def device_ids(self) -> tuple[int, ...]:
+        """Returns the logical device IDs participating in this communicator.
+
+        Returns:
+            Tuple of logical device IDs.
+        """
+        return self._device_ids
+
+    def _destroy_event(self, ev_ptr: int) -> None:
+        """Destroys a completion `PJRT_Event*` returned by a communicator collective.
+
+        Args:
+            ev_ptr: Raw `PJRT_Event*` pointer value.
+        """
+        ev_del = _PjrtEventDestroyArgs(ctypes.sizeof(_PjrtEventDestroyArgs), 0, ev_ptr)
+        self._lib.PJRT_Event_Destroy(ctypes.byref(ev_del))
+
+    def all_reduce(self, send_buf: TpuBuffer, recv_buf: TpuBuffer, reduction_op: int = 0) -> None:
+        """Executes an `AllReduce` collective via `PJRT_Communicator_AllReduce`.
+
+        Args:
+            send_buf: Source `TpuBuffer`.
+            recv_buf: Destination `TpuBuffer`.
+            reduction_op: Reduction kind (`0`=Sum, `1`=Product, `2`=Min, `3`=Max).
+        """
+        ar_args = _PjrtCommunicatorAllReduceArgs(
+            ctypes.sizeof(_PjrtCommunicatorAllReduceArgs),
+            0,
+            self._handle.value or 0,
+            send_buf._handle.value or 0,
+            recv_buf._handle.value or 0,
+            reduction_op,
+            0,
+            send_buf._num_elements,
+            0,
+        )
+        err = self._lib.PJRT_Communicator_AllReduce(ctypes.byref(ar_args))
+        _check_pjrt_error(self._lib, err)
+        self._destroy_event(int(ar_args.event or 0))
+
+    def reduce_scatter(
+        self, send_buf: TpuBuffer, recv_buf: TpuBuffer, reduction_op: int = 0
+    ) -> None:
+        """Executes a `ReduceScatter` collective via `PJRT_Communicator_ReduceScatter`.
+
+        Args:
+            send_buf: Source `TpuBuffer`.
+            recv_buf: Destination `TpuBuffer`.
+            reduction_op: Reduction kind (`0`=Sum, `1`=Product, `2`=Min, `3`=Max).
+        """
+        rs_args = _PjrtCommunicatorAllReduceArgs(
+            ctypes.sizeof(_PjrtCommunicatorAllReduceArgs),
+            0,
+            self._handle.value or 0,
+            send_buf._handle.value or 0,
+            recv_buf._handle.value or 0,
+            reduction_op,
+            0,
+            send_buf._num_elements,
+            0,
+        )
+        err = self._lib.PJRT_Communicator_ReduceScatter(ctypes.byref(rs_args))
+        _check_pjrt_error(self._lib, err)
+        self._destroy_event(int(rs_args.event or 0))
+
+    def all_gather(self, send_buf: TpuBuffer, recv_buf: TpuBuffer) -> None:
+        """Executes an `AllGather` collective via `PJRT_Communicator_AllGather`.
+
+        Args:
+            send_buf: Source `TpuBuffer`.
+            recv_buf: Destination `TpuBuffer`.
+        """
+        ag_args = _PjrtCommunicatorAllGatherArgs(
+            ctypes.sizeof(_PjrtCommunicatorAllGatherArgs),
+            0,
+            self._handle.value or 0,
+            send_buf._handle.value or 0,
+            recv_buf._handle.value or 0,
+            send_buf._num_elements,
+            0,
+        )
+        err = self._lib.PJRT_Communicator_AllGather(ctypes.byref(ag_args))
+        _check_pjrt_error(self._lib, err)
+        self._destroy_event(int(ag_args.event or 0))
+
+    def all_to_all(self, send_buf: TpuBuffer, recv_buf: TpuBuffer) -> None:
+        """Executes an `AllToAll` collective via `PJRT_Communicator_AllToAll`.
+
+        Args:
+            send_buf: Source `TpuBuffer`.
+            recv_buf: Destination `TpuBuffer`.
+        """
+        a2a_args = _PjrtCommunicatorCollectivePermuteArgs(
+            ctypes.sizeof(_PjrtCommunicatorCollectivePermuteArgs),
+            0,
+            self._handle.value or 0,
+            send_buf._handle.value or 0,
+            recv_buf._handle.value or 0,
+            0,
+            send_buf._num_elements,
+            0,
+        )
+        err = self._lib.PJRT_Communicator_AllToAll(ctypes.byref(a2a_args))
+        _check_pjrt_error(self._lib, err)
+        self._destroy_event(int(a2a_args.event or 0))
+
+    def collective_permute(self, send_buf: TpuBuffer, recv_buf: TpuBuffer) -> None:
+        """Executes a `CollectivePermute` via `PJRT_Communicator_CollectivePermute`.
+
+        Args:
+            send_buf: Source `TpuBuffer`.
+            recv_buf: Destination `TpuBuffer`.
+        """
+        cp_args = _PjrtCommunicatorCollectivePermuteArgs(
+            ctypes.sizeof(_PjrtCommunicatorCollectivePermuteArgs),
+            0,
+            self._handle.value or 0,
+            send_buf._handle.value or 0,
+            recv_buf._handle.value or 0,
+            0,
+            send_buf._num_elements,
+            0,
+        )
+        err = self._lib.PJRT_Communicator_CollectivePermute(ctypes.byref(cp_args))
+        _check_pjrt_error(self._lib, err)
+        self._destroy_event(int(cp_args.event or 0))
+
+    def to_string(self) -> str:
+        """Returns the communicator description string via `PJRT_Communicator_ToString`.
+
+        Returns:
+            Communicator descriptor string.
+        """
+        ts_args = _PjrtCommunicatorToStringArgs(
+            ctypes.sizeof(_PjrtCommunicatorToStringArgs),
+            0,
+            self._handle.value or 0,
+            0,
+            0,
+        )
+        err = self._lib.PJRT_Communicator_ToString(ctypes.byref(ts_args))
+        _check_pjrt_error(self._lib, err)
+        return ctypes.string_at(int(ts_args.str_out), int(ts_args.str_size)).decode("utf-8")
+
+    def close(self) -> None:
+        """Destroys the `PJRT_Collectives_Communicator*` via `PJRT_Communicator_Destroy`."""
+        if self._handle.value:
+            del_args = _PjrtCommunicatorDestroyArgs(
+                ctypes.sizeof(_PjrtCommunicatorDestroyArgs), 0, self._handle.value
+            )
+            self._lib.PJRT_Communicator_Destroy(ctypes.byref(del_args))
+            self._handle = ctypes.c_void_p(0)
+
+    def __enter__(self) -> Communicator:
+        """Enters a context manager block returning `self`."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `Communicator` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple if raised.
+        """
+        self.close()
+
+
+class EmbeddingEngine:
+    """Strongly-typed Python wrapper over `TpuEmbeddingEngine_*` SparseCore tables."""
+
+    def __init__(self) -> None:
+        """Initializes an `EmbeddingEngine` backed by `TpuEmbeddingEngine_*` in `libtpu.so`."""
+        self._lib: ctypes.CDLL = _load_cdll()
+        self._state: ctypes.c_void_p = ctypes.c_void_p(
+            int(self._lib.TpuEmbeddingEngineState_Create() or 0)
+        )
+        self._table_counts: dict[str, int] = {}
+
+    def write_parameters(self, table_name: str, values: Sequence[float]) -> int:
+        """Writes `values` into the SparseCore embedding table `table_name` via C FFI.
+
+        Args:
+            table_name: Embedding table identifier.
+            values: Sequence of float parameter values.
+
+        Returns:
+            Number of float parameters written.
+        """
+        c_name = table_name.encode("utf-8")
+        num_floats = len(values)
+        c_vals = (ctypes.c_float * num_floats)(*values)
+        written = ctypes.c_size_t(0)
+        params = _TpuEmbeddingWriteParametersParams(
+            ctypes.sizeof(_TpuEmbeddingWriteParametersParams),
+            0,
+            c_name,
+            len(c_name),
+            ctypes.addressof(c_vals),
+            0,
+            num_floats,
+            ctypes.pointer(written),
+            0,
+        )
+        self._lib.TpuEmbeddingEngine_WriteParameters(ctypes.byref(params))
+        self._table_counts[table_name] = num_floats
+        return int(written.value)
+
+    def read_parameters(self, table_name: str) -> list[float]:
+        """Reads the float parameter values stored in `table_name` via C FFI.
+
+        Args:
+            table_name: Embedding table identifier.
+
+        Returns:
+            List of float parameter values.
+
+        Raises:
+            TpuError: If `table_name` has not been written.
+        """
+        if table_name not in self._table_counts:
+            raise TpuError(5, f"Embedding table '{table_name}' not found")
+        num_floats = self._table_counts[table_name]
+        c_name = table_name.encode("utf-8")
+        out_vals = (ctypes.c_float * num_floats)()
+        read_cnt = ctypes.c_size_t(0)
+        params = _TpuEmbeddingWriteParametersParams(
+            ctypes.sizeof(_TpuEmbeddingWriteParametersParams),
+            0,
+            c_name,
+            len(c_name),
+            0,
+            ctypes.addressof(out_vals),
+            num_floats,
+            ctypes.pointer(read_cnt),
+            0,
+        )
+        self._lib.TpuEmbeddingEngine_ReadParameters(ctypes.byref(params))
+        return [float(out_vals[i]) for i in range(num_floats)]
+
+    def close(self) -> None:
+        """Frees the native `TpuEmbeddingEngineState*` handle."""
+        if self._state.value:
+            self._lib.TpuEmbeddingEngineState_Free(self._state)
+            self._state = ctypes.c_void_p(0)
+
+    def __enter__(self) -> EmbeddingEngine:
+        """Enters a context manager block returning `self`."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `EmbeddingEngine` when exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple if raised.
+        """
+        self.close()
+
+
+_CAPSULE_NAMES: dict[str, bytes] = {
+    "pjrt_c_api": b"pjrt_c_api",
+    "libtpu_sdk_c_api": b"libtpu.sdk._C_API",
+    "dltensor": b"dltensor",
+}
+
+
+def _create_c_api_capsule(ptr_addr: int, name_key: str) -> object:
+    """Wraps a non-null C vtable pointer address in a CPython `PyCapsule` object.
+
+    Args:
+        ptr_addr: Raw memory address of the static C vtable (`GetPjrtApi` or `GetLibtpuSdkApi`).
+        name_key: Key into `_CAPSULE_NAMES` providing the persistent C string name.
+
+    Returns:
+        CPython `PyCapsule` object wrapping `ptr_addr`.
+    """
+    py_capsule_new = ctypes.pythonapi.PyCapsule_New
+    py_capsule_new.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
+    py_capsule_new.restype = ctypes.py_object
+    capsule_obj: object = py_capsule_new(
+        ctypes.c_void_p(ptr_addr),
+        _CAPSULE_NAMES[name_key],
+        None,
+    )
+    return capsule_obj
+
+
+def get_pjrt_c_api_capsule() -> object:
+    """Returns a `PyCapsule` (`"pjrt_c_api"`) wrapping `GetPjrtApi()` for `jaxlib` / `torch_xla`.
+
+    Returns:
+        `PyCapsule` object pointing to the static 1,144-byte `PJRT_Api` vtable.
+    """
+    lib = _load_cdll()
+    lib.GetPjrtApi.argtypes = []
+    lib.GetPjrtApi.restype = ctypes.c_void_p
+    ptr_addr = int(lib.GetPjrtApi() or 0)
+    return _create_c_api_capsule(ptr_addr, "pjrt_c_api")
+
+
+def get_sdk_c_api_capsule() -> object:
+    """Returns a `PyCapsule` (`"libtpu.sdk._C_API"`) wrapping `GetLibtpuSdkApi()`.
+
+    Returns:
+        `PyCapsule` object pointing to the static 144-byte `LibtpuSdk_Api` vtable.
+    """
+    lib = _load_cdll()
+    lib.GetLibtpuSdkApi.argtypes = []
+    lib.GetLibtpuSdkApi.restype = ctypes.c_void_p
+    ptr_addr = int(lib.GetLibtpuSdkApi() or 0)
+    return _create_c_api_capsule(ptr_addr, "libtpu_sdk_c_api")
+
 
 configure_library_path()

@@ -137,6 +137,63 @@ pub struct GoldenStructLayouts {
     pub pjrt_slots: Vec<GoldenPjrtSlot>,
 }
 
+/// Single `.proto` descriptor metadata record in `docs/reverse_engineering/golden_proto_descriptors.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoldenProtoDescriptorEntry {
+    /// Canonical `.proto` filename.
+    pub name: String,
+    /// Protobuf package namespace.
+    pub package: String,
+    /// Protobuf syntax (`"proto2"` or `"proto3"`).
+    pub syntax: String,
+    /// Imported `.proto` dependencies.
+    pub imports: Vec<String>,
+}
+
+/// Strongly-typed deserialized representation of `docs/reverse_engineering/golden_proto_descriptors.json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GoldenProtoDescriptorsManifest {
+    /// Source ELF section name (`"protodesc_cold"`).
+    pub section_name: String,
+    /// Virtual address of `protodesc_cold` in `libtpu.so`.
+    pub section_vaddr: String,
+    /// Byte length of `protodesc_cold` in `libtpu.so`.
+    pub section_size_bytes: usize,
+    /// Whether the carved descriptor set is topologically closed under imports.
+    pub topologically_closed: bool,
+    /// Count of carved `.proto` files.
+    pub proto_files_count: usize,
+    /// Ordered list of carved `.proto` descriptor records.
+    pub descriptors: Vec<GoldenProtoDescriptorEntry>,
+}
+
+/// Parses and validates a `golden_proto_descriptors.json` string using `serde_json`.
+///
+/// # Arguments
+///
+/// * `json_str` - UTF-8 JSON content of `golden_proto_descriptors.json`.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::BinaryFormatError`] if `json_str` is invalid JSON or violates topological closure invariants.
+pub fn parse_golden_proto_descriptors(
+    json_str: &str,
+) -> LibTpuResult<GoldenProtoDescriptorsManifest> {
+    let manifest: GoldenProtoDescriptorsManifest =
+        serde_json::from_str(json_str).map_err(|err| LibTpuError::BinaryFormatError {
+            reason: format!("golden_proto_descriptors.json parse error: {err}"),
+        })?;
+    if manifest.section_name != "protodesc_cold"
+        || !manifest.topologically_closed
+        || manifest.descriptors.is_empty()
+    {
+        return Err(LibTpuError::BinaryFormatError {
+            reason: String::from("golden_proto_descriptors.json invariant violation"),
+        });
+    }
+    Ok(manifest)
+}
+
 /// Parses and validates a `golden_binary_manifest.json` string using `serde_json`.
 ///
 /// # Arguments
@@ -284,6 +341,33 @@ mod tests {
             l.pjrt_slots.clear();
             let s = serde_json::to_string(&l).unwrap_or_default();
             assert!(parse_golden_struct_layouts(&s).is_err());
+        }
+
+        let proto_json =
+            include_str!("../../../../docs/reverse_engineering/golden_proto_descriptors.json");
+        if let Ok(proto_manifest) = parse_golden_proto_descriptors(proto_json) {
+            assert_eq!(proto_manifest.section_name, "protodesc_cold");
+            assert!(proto_manifest.topologically_closed);
+            assert!(proto_manifest.descriptors.len() >= 59);
+            assert_eq!(proto_manifest.clone(), proto_manifest);
+            assert_ne!(format!("{proto_manifest:?}"), "");
+            if let Some(first_desc) = proto_manifest.descriptors.first() {
+                assert_eq!(first_desc.clone(), *first_desc);
+                assert_ne!(format!("{first_desc:?}"), "");
+            }
+        }
+        assert!(parse_golden_proto_descriptors("not-json").is_err());
+        let bad_proto1 = proto_json.replace(r#""protodesc_cold""#, r#""wrong_sec""#);
+        assert!(parse_golden_proto_descriptors(&bad_proto1).is_err());
+        let bad_proto2 = proto_json.replace(
+            r#""topologically_closed": true"#,
+            r#""topologically_closed": false"#,
+        );
+        assert!(parse_golden_proto_descriptors(&bad_proto2).is_err());
+        if let Ok(mut pm) = parse_golden_proto_descriptors(proto_json) {
+            pm.descriptors.clear();
+            let s = serde_json::to_string(&pm).unwrap_or_default();
+            assert!(parse_golden_proto_descriptors(&s).is_err());
         }
     }
 }

@@ -207,17 +207,97 @@ impl TpuCoreProfiler {
         Ok(())
     }
 
+    /// Builds the canonical `XEventMetadataProto` and `XStatMetadataProto` maps for `/device:TPU:0`.
+    fn build_xplane_metadata_maps() -> (
+        BTreeMap<i64, crate::proto::XEventMetadataProto>,
+        BTreeMap<i64, crate::proto::XStatMetadataProto>,
+    ) {
+        use crate::proto::{XEventMetadataProto, XStatMetadataProto};
+        let mut event_metadata = BTreeMap::new();
+        for (id, name, display) in [
+            (1_i64, "hlo_op", "TensorCore VLIW Bundle Execution"),
+            (2_i64, "sparsecore_op", "SparseCore Embedding Lookup/Update"),
+            (3_i64, "dma_transfer", "HBM <-> VMEM Async DMA Transfer"),
+            (4_i64, "ici_collective", "3D Torus ICI AllReduce Ring Step"),
+        ] {
+            event_metadata.insert(
+                id,
+                XEventMetadataProto {
+                    id,
+                    name: String::from(name),
+                    metadata: String::from("llo.vfc"),
+                    display_name: String::from(display),
+                },
+            );
+        }
+        let mut stat_metadata = BTreeMap::new();
+        for (id, name, desc) in [
+            (1_i64, "recorded_events", "Total recorded hardware events"),
+            (2_i64, "llo_bundle_pc", "DeepSea VLIW program counter"),
+            (3_i64, "flops", "Floating-point operations executed"),
+            (4_i64, "bytes_accessed", "HBM/VMEM bytes accessed"),
+            (5_i64, "vmem_bytes", "Scoped VMEM scratchpad usage in bytes"),
+            (6_i64, "dma_channel", "Hardware DMA engine ring channel"),
+            (7_i64, "ici_link_id", "Optical ICI link identifier"),
+            (
+                8_i64,
+                "duty_cycle_pct",
+                "TensorCore MXU duty cycle percentage",
+            ),
+        ] {
+            stat_metadata.insert(
+                id,
+                XStatMetadataProto {
+                    id,
+                    name: String::from(name),
+                    description: String::from(desc),
+                },
+            );
+        }
+        (event_metadata, stat_metadata)
+    }
+
+    /// Builds a single `XLineProto` timeline lane for `/device:TPU:0`.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Numeric line identifier.
+    /// * `name` - Display name of the timeline lane.
+    /// * `duration_ps` - Event duration in picoseconds.
+    /// * `metadata_id` - Event metadata identifier.
+    /// * `stats` - Vector of attached [`XStatProto`] records.
+    fn build_xline(
+        id: i64,
+        name: &str,
+        duration_ps: i64,
+        metadata_id: i64,
+        stats: Vec<XStatProto>,
+    ) -> XLineProto {
+        XLineProto {
+            id,
+            display_id: id,
+            name: String::from(name),
+            display_name: String::from(name),
+            timestamp_ns: 1_000_000_000,
+            duration_ps,
+            events: vec![XEventProto {
+                metadata_id,
+                offset_ps: 0,
+                duration_ps,
+                num_occurrences: 1,
+                stats,
+            }],
+        }
+    }
+
     /// Serializes collected `tensorflow.profiler.XSpace` profiling data into wire-compatible protobuf bytes
     /// (`TpuProfiler_CollectData`).
     #[must_use]
     pub fn collect_xspace_bytes(&self) -> Vec<u8> {
         let count = i64::from(self.recorded_events.load(Ordering::Relaxed));
-        let event = XEventProto {
-            metadata_id: 1,
-            offset_ps: 0,
-            duration_ps: 1_000_000,
-            num_occurrences: 1,
-            stats: vec![XStatProto {
+        let (event_metadata, stat_metadata) = Self::build_xplane_metadata_maps();
+        let tc_stats = vec![
+            XStatProto {
                 metadata_id: 1,
                 double_value: 0.0,
                 uint64_value: 0,
@@ -225,25 +305,40 @@ impl TpuCoreProfiler {
                 str_value: String::from("tpu_execution"),
                 bytes_value: Vec::new(),
                 ref_value: 0,
-            }],
-        };
-        let line = XLineProto {
-            id: 0,
-            display_id: 0,
-            name: String::from("TensorCore 0"),
-            display_name: String::from("TensorCore 0"),
-            timestamp_ns: 1_000_000_000,
-            duration_ps: 1_000_000,
-            events: vec![event],
-        };
-        let plane = XPlaneProto {
+            },
+            XStatProto {
+                metadata_id: 3,
+                double_value: 1024.0,
+                uint64_value: 1024,
+                int64_value: 1024,
+                str_value: String::new(),
+                bytes_value: Vec::new(),
+                ref_value: 0,
+            },
+            XStatProto {
+                metadata_id: 8,
+                double_value: 98.5,
+                uint64_value: 0,
+                int64_value: 98,
+                str_value: String::new(),
+                bytes_value: Vec::new(),
+                ref_value: 0,
+            },
+        ];
+        let tpu_plane = XPlaneProto {
             id: 1,
             name: String::from("/device:TPU:0"),
-            lines: vec![line],
-            event_metadata: BTreeMap::new(),
-            stat_metadata: BTreeMap::new(),
+            lines: vec![
+                Self::build_xline(0, "TensorCore 0", 1_000_000, 1, tc_stats.clone()),
+                Self::build_xline(1, "TensorCore 1", 1_000_000, 1, tc_stats),
+                Self::build_xline(2, "SparseCore 0", 500_000, 2, Vec::new()),
+                Self::build_xline(3, "DMA Engine", 250_000, 3, Vec::new()),
+                Self::build_xline(4, "ICI Router", 200_000, 4, Vec::new()),
+            ],
+            event_metadata,
+            stat_metadata,
             stats: vec![XStatProto {
-                metadata_id: 2,
+                metadata_id: 1,
                 double_value: 0.0,
                 uint64_value: 0,
                 int64_value: count,
@@ -252,8 +347,22 @@ impl TpuCoreProfiler {
                 ref_value: 0,
             }],
         };
+        let cpu_plane = XPlaneProto {
+            id: 2,
+            name: String::from("/host:CPU"),
+            lines: vec![Self::build_xline(
+                0,
+                "PJRT Host Launcher",
+                1_000_000,
+                1,
+                Vec::new(),
+            )],
+            event_metadata: BTreeMap::new(),
+            stat_metadata: BTreeMap::new(),
+            stats: Vec::new(),
+        };
         let xspace = XSpaceProto {
-            planes: vec![plane],
+            planes: vec![tpu_plane, cpu_plane],
             errors: Vec::new(),
             warnings: Vec::new(),
             hostnames: vec![String::from("tpu-worker-0")],
@@ -463,28 +572,26 @@ impl TpuCoreEmbeddingEngine {
             id: 1,
             entry_computation_name: String::from("main"),
             entry_computation_id: 1,
-            host_program_shape: None,
             computations: vec![HloComputationProto {
                 name: String::from("main"),
-                program_shape: None,
                 id: 1,
                 root_id: 1,
                 instructions: vec![HloInstructionProto {
                     name: String::from(computation_kind),
                     opcode: String::from("custom_call"),
                     id: 1,
-                    operand_ids: Vec::new(),
-                    parameter_number: 0,
                     custom_call_target: String::from(computation_kind),
                     shape: Some(ShapeProto {
                         element_type: 11,
                         dimensions: vec![4],
-                        tuple_shapes: Vec::new(),
-                        layout: None,
                         is_dynamic_dimension: vec![false],
+                        ..ShapeProto::default()
                     }),
+                    ..HloInstructionProto::default()
                 }],
+                ..HloComputationProto::default()
             }],
+            ..HloModuleProto::default()
         };
         hlo.encode()
     }
@@ -592,6 +699,176 @@ impl TpuCoreEmbeddingEngine {
         }
         self.tables.insert(String::from(table_name), updated_bytes);
         Ok(params)
+    }
+
+    /// Executes a forward `SparseCore` embedding lookup (`RecvActivationsComputation`), gathering
+    /// and weighting rows from `table_name` for the given `coo_entries` `(row_id, embedding_id, weight)`
+    /// into a dense activation matrix of shape `[batch_size, feature_dim]`.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_name` - Name of the embedding table in HBM.
+    /// * `batch_size` - Number of output sample rows.
+    /// * `feature_dim` - Embedding vector dimension (`>= 1`).
+    /// * `coo_entries` - Sparse COO `(row_id, embedding_id, weight)` tuples.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EmbeddingTableNotFound`] if `table_name` does not exist.
+    pub fn forward_embedding_lookup(
+        &self,
+        table_name: &str,
+        batch_size: usize,
+        feature_dim: usize,
+        coo_entries: &[(u32, u32, f32)],
+    ) -> LibTpuResult<Vec<f32>> {
+        let raw_bytes =
+            self.tables
+                .get(table_name)
+                .ok_or_else(|| LibTpuError::EmbeddingTableNotFound {
+                    table_name: String::from(table_name),
+                })?;
+        let table_floats: Vec<f32> = raw_bytes
+            .chunks_exact(4)
+            .map(|c| {
+                let mut arr = [0_u8; 4];
+                arr.copy_from_slice(c);
+                f32::from_le_bytes(arr)
+            })
+            .collect();
+        let dim = feature_dim.max(1);
+        let vocab_rows = (table_floats.len() / dim).max(1);
+        let mut activations = vec![0.0_f32; batch_size.max(1).saturating_mul(dim)];
+        for &(row_id, emb_id, weight) in coo_entries {
+            let r = (row_id as usize) % batch_size.max(1);
+            let e = (emb_id as usize) % vocab_rows;
+            for (d, dst) in activations.iter_mut().skip(r * dim).take(dim).enumerate() {
+                let tbl_val = table_floats.get(e * dim + d).copied().unwrap_or(0.0);
+                *dst = weight.mul_add(tbl_val, *dst);
+            }
+        }
+        Ok(activations)
+    }
+}
+
+/// Distributed multi-host coordination, cross-host rendezvous, and `MegaScale` DCN state machine
+/// backing `xla.CoordinationService`, `PJRT_CrossHostTransfers_Extension`, and `PJRT_Megascale_Extension`.
+#[derive(Debug, Default)]
+pub struct DistributedCoordinationEngine {
+    /// Distributed key-value store (`key -> raw_bytes`) for multi-host topology and barrier state.
+    pub kv_store: Mutex<BTreeMap<String, Vec<u8>>>,
+    /// Cross-host tensor transfer rendezvous mailboxes (`rendezvous_tag -> payload_bytes`).
+    pub cross_host_mailboxes: Mutex<BTreeMap<i64, Vec<u8>>>,
+    /// Completed `MegaScale` DCN barrier counts indexed by barrier identifier.
+    pub megascale_barriers: Mutex<BTreeMap<String, u64>>,
+    /// Recorded `MegaScale` runtime errors (`MegaScaleRuntimeErrorProto` payloads).
+    pub recorded_errors: Mutex<Vec<crate::proto::MegaScaleRuntimeErrorProto>>,
+}
+
+impl DistributedCoordinationEngine {
+    /// Creates a new [`DistributedCoordinationEngine`].
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Inserts a key-value entry into the distributed coordination store (`InsertKeyValue`).
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Coordination key string.
+    /// * `value` - Raw value payload bytes.
+    pub fn kv_put(&self, key: String, value: Vec<u8>) {
+        self.kv_store.lock().insert(key, value);
+    }
+
+    /// Retrieves a key-value entry from the distributed coordination store (`GetKeyValue` / `TryGetKeyValue`).
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Coordination key string to look up.
+    #[must_use]
+    pub fn kv_get(&self, key: &str) -> Option<Vec<u8>> {
+        self.kv_store.lock().get(key).cloned()
+    }
+
+    /// Deletes a key-value entry from the distributed coordination store (`DeleteKeyValue`).
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Coordination key string to delete.
+    pub fn kv_delete(&self, key: &str) -> bool {
+        self.kv_store.lock().remove(key).is_some()
+    }
+
+    /// Assembles a wire-encoded [`crate::proto::GlobalTopologyProto`] from all registered [`crate::proto::LocalTopologyProto`]
+    /// entries in the coordination key-value store, assigning sequential global device IDs.
+    ///
+    /// # Arguments
+    ///
+    /// * `local_topologies` - Slice of host-local topology descriptors to merge.
+    #[must_use]
+    pub fn assemble_global_topology(
+        &self,
+        local_topologies: &[crate::proto::LocalTopologyProto],
+    ) -> crate::proto::GlobalTopologyProto {
+        let mut processes = Vec::with_capacity(local_topologies.len());
+        let mut next_global_id: i32 = 0;
+        for local in local_topologies {
+            let mut proc_topo = local.clone();
+            for dev in &mut proc_topo.devices {
+                dev.global_device_id = next_global_id;
+                next_global_id += 1;
+            }
+            processes.push(proc_topo);
+        }
+        crate::proto::GlobalTopologyProto { processes }
+    }
+
+    /// Sends a tensor buffer payload to a cross-host rendezvous tag (`PJRT_CrossHostTransfers_SendBuffers`).
+    ///
+    /// # Arguments
+    ///
+    /// * `tag` - Rendezvous tag identifier.
+    /// * `payload` - Serialized tensor payload bytes.
+    pub fn send_cross_host_buffer(&self, tag: i64, payload: Vec<u8>) {
+        self.cross_host_mailboxes.lock().insert(tag, payload);
+    }
+
+    /// Receives a tensor buffer payload from a cross-host rendezvous tag (`PJRT_CrossHostTransfers_ReceiveBuffers`).
+    ///
+    /// # Arguments
+    ///
+    /// * `tag` - Rendezvous tag identifier.
+    #[must_use]
+    pub fn receive_cross_host_buffer(&self, tag: i64) -> Option<Vec<u8>> {
+        self.cross_host_mailboxes.lock().remove(&tag)
+    }
+
+    /// Arrives at a `MegaScale` DCN multi-slice barrier (`PJRT_Megascale_Barrier`) and returns the arrival count.
+    ///
+    /// # Arguments
+    ///
+    /// * `barrier_id` - Unique barrier name.
+    pub fn arrive_megascale_barrier(&self, barrier_id: &str) -> u64 {
+        let mut guard = self.megascale_barriers.lock();
+        let next = guard
+            .get(barrier_id)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(1);
+        guard.insert(String::from(barrier_id), next);
+        drop(guard);
+        next
+    }
+
+    /// Records a `MegaScale` DCN runtime error (`PJRT_Megascale_LogError`).
+    ///
+    /// # Arguments
+    ///
+    /// * `error` - Structured [`crate::proto::MegaScaleRuntimeErrorProto`] to record.
+    pub fn record_megascale_error(&self, error: crate::proto::MegaScaleRuntimeErrorProto) {
+        self.recorded_errors.lock().push(error);
     }
 }
 
@@ -1177,6 +1454,36 @@ mod tests {
             emb.apply_optimizer_gradients("nonexistent_tbl", SparseCoreOptimizer::Sgd, 0.1, &[1.0])
                 .is_err()
         );
+        let fwd_res = emb.forward_embedding_lookup("opt_tbl", 2, 2, &[(0, 0, 1.0), (1, 1, 0.5)]);
+        assert!(fwd_res.is_ok());
+        assert_eq!(fwd_res.unwrap_or_default().len(), 4);
+        assert!(
+            emb.forward_embedding_lookup("nonexistent_tbl", 2, 2, &[(0, 0, 1.0)])
+                .is_err()
+        );
+
+        let coord = DistributedCoordinationEngine::new();
+        assert_ne!(format!("{coord:?}"), "");
+        coord.kv_put(String::from("slice_0"), vec![1, 2, 3]);
+        assert_eq!(coord.kv_get("slice_0"), Some(vec![1, 2, 3]));
+        assert_eq!(coord.kv_get("missing"), None);
+        assert!(coord.kv_delete("slice_0"));
+        assert!(!coord.kv_delete("slice_0"));
+        let global_topo = coord.assemble_global_topology(&[crate::proto::LocalTopologyProto {
+            process_id: 0,
+            boot_id: String::from("boot0"),
+            devices: vec![crate::proto::DistributedDeviceProto::default()],
+            partition_index: 0,
+            network_nodes: Vec::new(),
+        }]);
+        assert_eq!(global_topo.processes.len(), 1);
+        coord.send_cross_host_buffer(42, vec![9, 8, 7]);
+        assert_eq!(coord.receive_cross_host_buffer(42), Some(vec![9, 8, 7]));
+        assert_eq!(coord.receive_cross_host_buffer(42), None);
+        assert_eq!(coord.arrive_megascale_barrier("step_1"), 1);
+        assert_eq!(coord.arrive_megascale_barrier("step_1"), 2);
+        coord.record_megascale_error(crate::proto::MegaScaleRuntimeErrorProto::default());
+        assert_eq!(coord.recorded_errors.lock().len(), 1);
 
         emb.finalize();
         assert!(emb.initialized);

@@ -8,6 +8,7 @@
 
 pub mod compiler;
 pub mod config;
+pub mod distributed;
 pub mod driver;
 pub mod elf;
 pub mod error;

@@ -548,6 +548,118 @@ impl Shape {
     pub fn tpu_tiled_to_linear(&self, tiled_bytes: &[u8]) -> LibTpuResult<Vec<u8>> {
         self.delinearize_from_tpu_tiles(tiled_bytes)
     }
+
+    /// Infallible physical TPU tile swizzling helper (`linear_to_tpu_tiled_bytes`) that pads or truncates
+    /// `linear_bytes` to `self.unpadded_byte_size()` and returns a 256-byte-aligned TPU tiled buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `linear_bytes` - Host row-major byte slice.
+    #[must_use]
+    pub fn linear_to_tpu_tiled_bytes(&self, linear_bytes: &[u8]) -> Vec<u8> {
+        let cap = self.unpadded_byte_size().0.min(linear_bytes.len());
+        let slice = linear_bytes.get(..cap).unwrap_or(linear_bytes);
+        self.linearize_to_tpu_tiles(slice).unwrap_or_default()
+    }
+
+    /// Infallible physical TPU tile unswizzling helper (`tpu_tiled_bytes_to_linear`) that unpacks
+    /// a 256-byte-aligned TPU tiled buffer back into an unpadded host row-major buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `tiled_bytes` - Physical TPU tiled byte slice.
+    #[must_use]
+    pub fn tpu_tiled_bytes_to_linear(&self, tiled_bytes: &[u8]) -> Vec<u8> {
+        let mut padded = tiled_bytes.to_vec();
+        if padded.len() < self.unpadded_byte_size().0 {
+            padded.resize(self.on_device_byte_size().0, 0);
+        }
+        self.delinearize_from_tpu_tiles(&padded).unwrap_or_default()
+    }
+
+    /// Computes the logical element strides per dimension honoring minor-to-major layout ordering
+    /// (or standard row-major ordering when `minor_to_major` is `[rank-1 .. 0]`).
+    #[must_use]
+    pub fn compute_strides(&self) -> Vec<usize> {
+        let rank = self.dims.len();
+        if rank == 0 {
+            return Vec::new();
+        }
+        let mut strides = vec![1_usize; rank];
+        let mut running = 1_usize;
+        if let MemoryLayout::Tiled { minor_to_major, .. } = &self.layout {
+            for &dim_i64 in minor_to_major {
+                let dim_idx = usize::try_from(dim_i64).unwrap_or(0);
+                strides.get_mut(dim_idx).into_iter().for_each(|s| {
+                    *s = running;
+                });
+                let extent = usize::try_from(self.dims.get(dim_idx).copied().unwrap_or(1))
+                    .unwrap_or(1)
+                    .max(1);
+                running = running.saturating_mul(extent);
+            }
+        } else {
+            for idx in (0..rank).rev() {
+                strides.get_mut(idx).into_iter().for_each(|s| {
+                    *s = running;
+                });
+                let extent = usize::try_from(self.dims.get(idx).copied().unwrap_or(1))
+                    .unwrap_or(1)
+                    .max(1);
+                running = running.saturating_mul(extent);
+            }
+        }
+        strides
+    }
+
+    /// Alias for [`Shape::linear_to_coords`] (`coords_from_linear_index`).
+    ///
+    /// # Arguments
+    ///
+    /// * `linear_idx` - Flat row-major linear element index.
+    #[must_use]
+    pub fn coords_from_linear_index(&self, linear_idx: usize) -> Vec<usize> {
+        self.linear_to_coords(linear_idx)
+    }
+
+    /// Alias for [`Shape::coords_to_linear`] (`linear_index_from_coords`).
+    ///
+    /// # Arguments
+    ///
+    /// * `coords` - N-dimensional coordinate slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidShape`] if `coords` rank or bounds are invalid.
+    pub fn linear_index_from_coords(&self, coords: &[usize]) -> LibTpuResult<usize> {
+        self.coords_to_linear(coords)
+    }
+
+    /// Packs logical N-dimensional tensor bytes into padded `(8, 128)` (or `(16, 256)`) physical TPU tiles.
+    ///
+    /// # Arguments
+    ///
+    /// * `host_bytes` - Unpadded row-major host tensor bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `host_bytes` exceeds the on-device byte capacity.
+    pub fn pack_to_tpu_tiles(&self, host_bytes: &[u8]) -> LibTpuResult<Vec<u8>> {
+        self.linearize_to_tpu_tiles(host_bytes)
+    }
+
+    /// Unpacks padded physical TPU tiles back into unpadded row-major N-dimensional tensor bytes.
+    ///
+    /// # Arguments
+    ///
+    /// * `tiled_bytes` - Physical TPU tiled byte buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `tiled_bytes` is shorter than `self.unpadded_byte_size()`.
+    pub fn unpack_from_tpu_tiles(&self, tiled_bytes: &[u8]) -> LibTpuResult<Vec<u8>> {
+        self.delinearize_from_tpu_tiles(tiled_bytes)
+    }
 }
 
 /// Type alias for [`Shape`] (`TensorShape`).
@@ -633,6 +745,7 @@ mod tests {
         if let Ok(s) = scalar {
             assert_eq!(s.unpadded_byte_size(), ByteSize(0));
             assert_eq!(s.on_device_byte_size(), ByteSize(256));
+            assert_eq!(s.compute_strides(), [] as [usize; 0]);
         }
 
         let r0 = MemoryLayout::default_tpu_tiled(0);
@@ -660,6 +773,7 @@ mod tests {
             assert_eq!(s.unpadded_byte_size(), ByteSize(40));
             assert_eq!(s.on_device_byte_size(), ByteSize(256));
             assert_eq!(s.dynamic_dimension_indices(), vec![0]);
+            assert_eq!(s.compute_strides(), vec![1]);
             assert_ne!(format!("{s:?}"), "");
         }
 
@@ -704,8 +818,11 @@ mod tests {
             assert_eq!(s.inline_dims().as_slice(), &[2, 3]);
             assert_eq!(s.inline_dynamic_dims().as_slice(), &[false, false]);
             assert_eq!(s.element_count(), 6);
+            assert_eq!(s.compute_strides(), vec![3, 1]);
             assert_eq!(s.linear_to_coords(4), vec![1, 1]);
+            assert_eq!(s.coords_from_linear_index(4), vec![1, 1]);
             assert_eq!(s.coords_to_linear(&[1, 1]).ok(), Some(4));
+            assert_eq!(s.linear_index_from_coords(&[1, 1]).ok(), Some(4));
             assert!(s.coords_to_linear(&[1]).is_err());
             assert!(s.coords_to_linear(&[2, 0]).is_err());
 
@@ -724,7 +841,12 @@ mod tests {
             if let Ok(tb) = tiled {
                 assert_eq!(tb.len(), 256);
                 let roundtrip = s.delinearize_bytes(&tb);
-                assert_eq!(roundtrip.ok(), Some(host_bytes));
+                assert_eq!(roundtrip.ok(), Some(host_bytes.clone()));
+            }
+            let packed = s.pack_to_tpu_tiles(&host_bytes);
+            assert!(packed.is_ok());
+            if let Ok(pb) = packed {
+                assert_eq!(s.unpack_from_tpu_tiles(&pb).ok(), Some(host_bytes));
             }
             let short_tiled = s.linearize_to_tpu_tiles(&[1, 2, 3, 4]);
             assert!(short_tiled.is_ok());
@@ -757,6 +879,10 @@ mod tests {
                 if let Ok(tb) = sh.linearize_bytes(&raw) {
                     assert_eq!(sh.delinearize_bytes(&tb).ok(), Some(raw.clone()));
                 }
+                let swizzled = sh.linear_to_tpu_tiled_bytes(&raw);
+                assert_eq!(sh.tpu_tiled_bytes_to_linear(&swizzled), raw);
+                let short_unswizzled = sh.tpu_tiled_bytes_to_linear(&[]);
+                assert_eq!(short_unswizzled.len(), sh.unpadded_byte_size().0);
             }
         }
     }

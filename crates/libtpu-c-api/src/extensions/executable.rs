@@ -551,9 +551,8 @@ unsafe fn handle_tpu_executable_hlo_module_with_config(
             name: e.inner.program.name.clone(),
             entry_computation_name: String::from("main"),
             entry_computation_id: 1,
-            computations: Vec::new(),
-            host_program_shape: None,
             id: 1,
+            ..libtpu_core::proto::HloModuleProto::default()
         }
     });
     let encoded = libtpu_core::proto::HloModuleProtoWithConfig {

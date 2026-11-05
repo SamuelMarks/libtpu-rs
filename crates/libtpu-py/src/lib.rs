@@ -36,6 +36,127 @@ pub struct CPythonModuleDefBase {
     pub m_copy: usize,
 }
 
+/// `CPython` `METH_VARARGS` calling convention flag (`0x0001`).
+pub const METH_VARARGS: i32 = 0x0001;
+
+/// `CPython` `METH_NOARGS` calling convention flag (`0x0004`).
+pub const METH_NOARGS: i32 = 0x0004;
+
+/// `CPython` multi-phase module initialization slot ID `Py_mod_exec` (`2`).
+pub const PY_MOD_EXEC_SLOT: i32 = 2;
+
+/// `CPython` Stable ABI (`abi3`) C function pointer type (`PyCFunction`).
+pub type PyCFunction =
+    unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+
+/// `CPython` Stable ABI (`abi3`) method descriptor (`PyMethodDef`, `32` bytes on 64-bit targets).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CPythonMethodDef {
+    /// Null-terminated method name (`ml_name`).
+    pub ml_name: *const std::os::raw::c_char,
+    /// C callback function pointer (`ml_meth`, `0` for sentinel).
+    pub ml_meth: Option<PyCFunction>,
+    /// Calling convention flags (`ml_flags`, e.g., [`METH_NOARGS`] or [`METH_VARARGS`]).
+    pub ml_flags: i32,
+    /// Reserved 4-byte structure padding on 64-bit targets.
+    pub pad: i32,
+    /// Null-terminated method docstring (`ml_doc`).
+    pub ml_doc: *const std::os::raw::c_char,
+}
+
+// SAFETY: `CPythonMethodDef` holds only static `'static` C-string pointers and C function pointers.
+unsafe impl Sync for CPythonMethodDef {}
+
+/// `CPython` Stable ABI (`abi3`) `Py_mod_exec` callback signature (`unsafe extern "C" fn(*mut c_void) -> i32`).
+pub type PyModExecFunction = unsafe extern "C" fn(*mut std::ffi::c_void) -> i32;
+
+/// `CPython` Stable ABI (`abi3`) multi-phase module slot descriptor (`PyModuleDef_Slot`, `16` bytes on 64-bit targets).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct CPythonModuleDefSlot {
+    /// Slot identifier (`slot`, e.g., [`PY_MOD_EXEC_SLOT`] or `0` for sentinel).
+    pub slot: i32,
+    /// Explicit 4-byte alignment padding.
+    pub pad: i32,
+    /// Slot callback pointer (`value`).
+    pub value: Option<PyModExecFunction>,
+}
+
+// SAFETY: `CPythonModuleDefSlot` holds only static C function pointers and integers.
+unsafe impl Sync for CPythonModuleDefSlot {}
+
+/// Native `CPython` `METH_NOARGS` callback returning the active `PY_SDK_ABI_HEADER` descriptor address
+/// (`_get_sdk_abi_header`).
+///
+/// # Arguments
+///
+/// * `self_obj` - Module object pointer (`PyObject*`).
+/// * `_args` - Unused argument pointer (`NULL` for `METH_NOARGS`).
+///
+/// # Safety
+///
+/// Safe to invoke from both `CPython` and standalone C/Rust callers; returns `self_obj` if non-null,
+/// or `&raw const PY_SDK_ABI_HEADER` cast to `*mut c_void`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn py_sdk_get_abi_header(
+    self_obj: *mut std::ffi::c_void,
+    _args: *mut std::ffi::c_void,
+) -> *mut std::ffi::c_void {
+    if !self_obj.is_null() {
+        return self_obj;
+    }
+    (&raw const PY_SDK_ABI_HEADER)
+        .cast_mut()
+        .cast::<std::ffi::c_void>()
+}
+
+/// Native `CPython` `Py_mod_exec` multi-phase initialization slot callback (`py_sdk_mod_exec`).
+///
+/// # Arguments
+///
+/// * `module_obj` - Module object pointer (`PyObject*`).
+///
+/// # Safety
+///
+/// Returns `0` (`success`) when `module_obj` is non-null, or `-1` when `module_obj` is null.
+#[unsafe(no_mangle)]
+pub const unsafe extern "C" fn py_sdk_mod_exec(module_obj: *mut std::ffi::c_void) -> i32 {
+    if module_obj.is_null() { -1 } else { 0 }
+}
+
+/// Static `PyMethodDef` table exported by [`PySdkAbiHeader`].
+pub static PY_SDK_METHOD_TABLE: [CPythonMethodDef; 2] = [
+    CPythonMethodDef {
+        ml_name: c"_get_sdk_abi_header".as_ptr(),
+        ml_meth: Some(py_sdk_get_abi_header),
+        ml_flags: METH_NOARGS,
+        pad: 0,
+        ml_doc: c"Returns the static PySdkAbiHeader descriptor pointer.".as_ptr(),
+    },
+    CPythonMethodDef {
+        ml_name: std::ptr::null(),
+        ml_meth: None,
+        ml_flags: 0,
+        pad: 0,
+        ml_doc: std::ptr::null(),
+    },
+];
+
+/// Static `PyModuleDef_Slot` table for `libtpu.sdk`.
+pub static PY_SDK_SLOT_TABLE: [CPythonModuleDefSlot; 2] = [
+    CPythonModuleDefSlot {
+        slot: PY_MOD_EXEC_SLOT,
+        pad: 0,
+        value: Some(py_sdk_mod_exec),
+    },
+    CPythonModuleDefSlot {
+        slot: 0,
+        pad: 0,
+        value: None,
+    },
+];
+
 /// `CPython` Stable ABI (`abi3`) module definition (`PyModuleDef`) returned by [`PyInit_sdk`].
 #[repr(C)]
 #[derive(Debug)]
@@ -48,10 +169,10 @@ pub struct PySdkAbiHeader {
     pub m_doc: *const std::os::raw::c_char,
     /// Per-module state size in bytes (`-1` for stateless global module).
     pub m_size: isize,
-    /// Method table pointer (`m_methods`, `0`).
-    pub m_methods: usize,
-    /// Multi-phase slot table pointer (`m_slots`, `0`).
-    pub m_slots: usize,
+    /// Method table pointer (`m_methods` -> [`PY_SDK_METHOD_TABLE`]).
+    pub m_methods: *const CPythonMethodDef,
+    /// Multi-phase slot table pointer (`m_slots`, `NULL` for single-phase `PyModule_Create2` compatibility).
+    pub m_slots: *const CPythonModuleDefSlot,
     /// GC traverse callback (`m_traverse`, `0`).
     pub m_traverse: usize,
     /// GC clear callback (`m_clear`, `0`).
@@ -64,7 +185,7 @@ pub struct PySdkAbiHeader {
     pub abi_version: usize,
 }
 
-// SAFETY: `PySdkAbiHeader` contains only static `'static` C-string pointers and integer fields.
+// SAFETY: `PySdkAbiHeader` contains only static `'static` C-string/table pointers and integer fields.
 unsafe impl Sync for PySdkAbiHeader {}
 
 /// Static [`PySdkAbiHeader`] (`PyModuleDef`) singleton exposed to C/Python extension loaders via [`PyInit_sdk`].
@@ -81,8 +202,8 @@ static PY_SDK_ABI_HEADER: PySdkAbiHeader = PySdkAbiHeader {
     m_name: c"sdk".as_ptr(),
     m_doc: c"libtpu.sdk CPython Stable ABI (abi3) module".as_ptr(),
     m_size: -1,
-    m_methods: 0,
-    m_slots: 0,
+    m_methods: PY_SDK_METHOD_TABLE.as_ptr(),
+    m_slots: PY_SDK_SLOT_TABLE.as_ptr(),
     m_traverse: 0,
     m_clear: 0,
     m_free: 0,
@@ -266,6 +387,31 @@ impl PyTpuRuntime {
         }
         Ok(out_arr)
     }
+
+    /// Encodes an MLIR source module into a binary `ML\xefR` bytecode container, compiles the
+    /// bytecode container on `self.client`, and executes it on `device_id` with `inputs`.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Target logical TPU device ID.
+    /// * `mlir_source` - Textual MLIR module string to encode into `ML\xefR` bytecode.
+    /// * `shape` - Input/output tensor [`Shape`].
+    /// * `inputs` - Slice of raw byte slices for each input operand.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`libtpu_core::error::LibTpuError`] if parsing, bytecode compilation, or execution fails.
+    pub fn compile_mlir_bytecode_and_execute(
+        &self,
+        device_id: DeviceId,
+        mlir_source: &str,
+        shape: &Shape,
+        inputs: &[&[u8]],
+    ) -> LibTpuResult<Vec<Vec<u8>>> {
+        let ast_mod = libtpu_core::compiler::parse_mlir_ast_module(mlir_source)?;
+        let bc_bytes = libtpu_core::compiler::MlirBytecodeHeader::encode_from_ast_module(&ast_mod);
+        self.execute_shaped_tensor(device_id, "mlir", &bc_bytes, shape, inputs)
+    }
 }
 
 /// High-level Rust bridge backing `libtpu.sdk` (`tpumonitoring`, `tpuz`, `slice`, `debug`).
@@ -373,12 +519,48 @@ pub fn init_py_sdk_module(
     &raw const PY_SDK_ABI_HEADER
 }
 
+/// Executes an in-memory multi-replica `AllReduce` sum across `f32` slices via [`libtpu_core::distributed::CollectiveRuntimeEngine`].
+///
+/// # Arguments
+///
+/// * `replicas` - Slice of 4-element `f32` arrays (one per replica).
+#[must_use]
+pub fn execute_multi_replica_all_reduce_f32_4(replicas: &[[f32; 4]]) -> Vec<[f32; 4]> {
+    let raw_bufs: Vec<Vec<u8>> = replicas
+        .iter()
+        .map(|arr| arr.iter().flat_map(|&v| v.to_le_bytes()).collect())
+        .collect();
+    let reduced = libtpu_core::distributed::CollectiveRuntimeEngine::execute_all_reduce(
+        &raw_bufs,
+        ElementType::F32,
+        libtpu_core::types::CollectiveReductionOp::Sum,
+    );
+    reduced
+        .into_iter()
+        .map(|buf| {
+            let mut out = [0.0_f32; 4];
+            for (dst, chunk) in out.iter_mut().zip(buf.chunks_exact(4)) {
+                let mut b = [0_u8; 4];
+                b.copy_from_slice(chunk);
+                *dst = f32::from_le_bytes(b);
+            }
+            out
+        })
+        .collect()
+}
+
 /// Native C-ABI entrypoint matching `PyInit_sdk` in `libtpu/sdk.so` (`0x004198c0`).
 ///
 /// Returns the static [`PySdkAbiHeader`] descriptor pointer so C/Python
 /// extension loaders and `dlsym(..., "PyInit_sdk")` callers can inspect `libtpu.sdk`.
 #[unsafe(no_mangle)]
 pub const extern "C" fn PyInit_sdk() -> *const PySdkAbiHeader {
+    &raw const PY_SDK_ABI_HEADER
+}
+
+/// Alias C-ABI module initializer (`PyInit_libtpu_py`) returning [`PySdkAbiHeader`].
+#[unsafe(no_mangle)]
+pub const extern "C" fn PyInit_libtpu_py() -> *const PySdkAbiHeader {
     &raw const PY_SDK_ABI_HEADER
 }
 
@@ -427,8 +609,38 @@ mod tests {
     #[test]
     fn test_py_tpu_runtime() {
         assert_eq!(PyTpuRuntime::pjrt_api_version(), (0, 116));
+        let ar_res = execute_multi_replica_all_reduce_f32_4(&[
+            [1.0, 2.0, 3.0, 4.0],
+            [10.0, 20.0, 30.0, 40.0],
+        ]);
+        assert_eq!(
+            ar_res,
+            vec![[11.0, 22.0, 33.0, 44.0], [11.0, 22.0, 33.0, 44.0]]
+        );
         assert!(!PyTpuRuntime::sdk_api_ptr().is_null());
         assert!(!PyInit_sdk().is_null());
+        assert_eq!(PyInit_libtpu_py(), PyInit_sdk());
+        assert!(!PY_SDK_ABI_HEADER.m_methods.is_null());
+        assert!(!PY_SDK_ABI_HEADER.m_slots.is_null());
+        assert_eq!(PY_SDK_METHOD_TABLE[0].ml_flags, METH_NOARGS);
+        assert_ne!(
+            format!("{:?}{:?}", PY_SDK_METHOD_TABLE[0], PY_SDK_SLOT_TABLE[0]),
+            ""
+        );
+        assert_eq!(PY_SDK_SLOT_TABLE[0].slot, PY_MOD_EXEC_SLOT);
+        // SAFETY: Testing `py_sdk_get_abi_header` and `py_sdk_mod_exec` with null and non-null pointers.
+        unsafe {
+            let hdr_ptr = py_sdk_get_abi_header(std::ptr::null_mut(), std::ptr::null_mut());
+            assert!(!hdr_ptr.is_null());
+            let mut dummy_mod: i32 = 1;
+            let self_ptr = std::ptr::from_mut(&mut dummy_mod).cast::<std::ffi::c_void>();
+            assert_eq!(
+                py_sdk_get_abi_header(self_ptr, std::ptr::null_mut()),
+                self_ptr
+            );
+            assert_eq!(py_sdk_mod_exec(std::ptr::null_mut()), -1);
+            assert_eq!(py_sdk_mod_exec(self_ptr), 0);
+        }
         assert_eq!(init_py_sdk_module(None, None), &raw const PY_SDK_ABI_HEADER);
         assert_eq!(
             init_py_sdk_module(Some(mock_py_not_initialized), None),
@@ -507,6 +719,24 @@ mod tests {
                 &[1.0, 2.0, 3.0, 4.0],
             );
             assert_eq!(sum.ok(), Some([2.0, 4.0, 6.0, 8.0]));
+            let bc_sh = Shape {
+                element_type: ElementType::F32,
+                dims: vec![4],
+                dynamic_dims: vec![false],
+                layout: libtpu_core::types::MemoryLayout::default_tpu_tiled(1),
+            };
+            let bc_in = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
+            let bc_res = rt.compile_mlir_bytecode_and_execute(
+                DeviceId(0),
+                "module @py_bc { func.func public @main(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.add %arg0, %arg1 : tensor<4xf32> return %0 : tensor<4xf32> } }",
+                &bc_sh,
+                &[&bc_in, &bc_in],
+            );
+            assert!(bc_res.is_ok());
+            assert!(
+                rt.compile_mlir_bytecode_and_execute(DeviceId(0), "", &bc_sh, &[&bc_in])
+                    .is_err()
+            );
             assert!(matches!(
                 rt.execute_f32_4(DeviceId(0), b"", &[1.0; 4]),
                 Err(libtpu_core::error::LibTpuError::CompilationFailed { .. })

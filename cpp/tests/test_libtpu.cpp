@@ -359,9 +359,18 @@ int main() {
   libtpu::Memory mem_view(nullptr);
   libtpu::Executable exec_view(nullptr);
   libtpu::PhaseCompiler phase_compiler;
-  libtpu::MegascaleContext ms_ctx;
+  libtpu::PhaseCompiler phase_moved(
+      static_cast<libtpu::PhaseCompiler &&>(phase_compiler));
+  phase_compiler = static_cast<libtpu::PhaseCompiler &&>(phase_moved);
+  libtpu::MegaScaleContext ms_ctx;
+  libtpu::MegaScaleContext ms_moved(
+      static_cast<libtpu::MegaScaleContext &&>(ms_ctx));
+  ms_ctx = static_cast<libtpu::MegaScaleContext &&>(ms_moved);
   libtpu::EmbeddingEngine emb_engine;
-  libtpu::Communicator comm;
+  libtpu::CollectivesCommunicator comm;
+  libtpu::CollectivesCommunicator comm_moved(
+      static_cast<libtpu::CollectivesCommunicator &&>(comm));
+  comm = static_cast<libtpu::CollectivesCommunicator &&>(comm_moved);
   float ar_out[4] = {0.0F, 0.0F, 0.0F, 0.0F};
   if (dev_view.raw() != nullptr || mem_view.raw() != nullptr ||
       exec_view.raw() != nullptr || !comm.all_reduce(b0, &b1, 4).is_ok() ||
@@ -380,6 +389,55 @@ int main() {
       emb_engine.state_handle() == nullptr ||
       static_cast<int32_t>(libtpu::TpuVersion::V5e) != topo.version()) {
     return 28;
+  }
+
+  libtpu::Result<int32_t> ok_res(42);
+  libtpu::Result<int32_t> err_res(libtpu::Status(LibTpuCStatus{
+      static_cast<int32_t>(libtpu::ErrorCode::Internal), nullptr}));
+  libtpu::CollectiveCommunicator coll_comm;
+  libtpu::MultiSliceConfig ms_cfg;
+  const float emb_init[4] = {1.5F, 2.5F, 3.5F, 4.5F};
+  float emb_read[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+  const std::string part_cfg = emb_engine.partition_parameters("table_0", 7);
+  const size_t emb_written =
+      emb_engine.write_parameters("table_0", 7, emb_init, 4);
+  const size_t emb_read_cnt =
+      emb_engine.read_parameters("table_0", 7, emb_read, 4);
+  if (!ok_res.is_ok() || ok_res.value() != 42 || !ok_res.status().is_ok() ||
+      err_res.is_ok() || ms_cfg.num_slices() == 0 ||
+      !coll_comm.all_reduce(b0, &b1, 4).is_ok() ||
+      !coll_comm.reduce_scatter(b0, &b1, 4).is_ok() ||
+      !coll_comm.all_gather(b0, &b1, 4).is_ok() ||
+      !coll_comm.all_to_all(b0, &b1, 4).is_ok() ||
+      !coll_comm.collective_permute(b0, &b1, 4).is_ok() ||
+      coll_comm.to_string().empty() || !api_view.default_layout_allocated() ||
+      api_view.create_raw_buffer_device_ptr(b0) == 0 ||
+      api_view.cross_host_send(9) == 0 || part_cfg.empty() ||
+      emb_written != 4 || emb_read_cnt != 4 || emb_read[0] != 1.5F ||
+      emb_engine.build_load_optimizer_hlo() == 0) {
+    return 29;
+  }
+
+  libtpu::AsyncTransferManager atm(client);
+  libtpu::AsyncTransferManager atm_moved(
+      static_cast<libtpu::AsyncTransferManager &&>(atm));
+  atm = static_cast<libtpu::AsyncTransferManager &&>(atm_moved);
+  libtpu::Buffer atm_buf;
+  const int64_t nd_dims[2] = {2, 2};
+  float nd_out[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+  if (atm.buffer_size(0) == 0 || atm.device() == nullptr ||
+      !atm.transfer_data(0, host_f0, 0, sizeof(host_f0), true).is_ok() ||
+      !atm.retrieve_buffer(0, &atm_buf).is_ok() || atm_buf.raw() == nullptr ||
+      !client
+           .compile_and_execute_nd(
+               0, "mlir", reinterpret_cast<const uint8_t *>(mlir_code),
+               std::strlen(mlir_code), libtpu::DataType::F32, nd_dims, 2,
+               reinterpret_cast<const uint8_t *>(host_f0),
+               reinterpret_cast<const uint8_t *>(host_f1), sizeof(host_f0),
+               reinterpret_cast<uint8_t *>(nd_out))
+           .is_ok() ||
+      nd_out[0] != 11.0F || nd_out[3] != 44.0F) {
+    return 30;
   }
 
   return 0;

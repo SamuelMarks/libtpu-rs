@@ -82,6 +82,215 @@ pub struct ObjectCrateBinaryReport {
     pub dynamic_symbol_names: Vec<String>,
 }
 
+/// ELF64 file header (`Elf64_Ehdr`, `64` bytes, `#[repr(C)]`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Elf64Ehdr {
+    /// 16-byte ELF identification array (`\x7fELF`, class, data, version, OS ABI).
+    pub e_ident: [u8; 16],
+    /// Object file type (`ET_DYN = 3`).
+    pub e_type: u16,
+    /// Target architecture (`EM_X86_64 = 62`, `EM_AARCH64 = 183`).
+    pub e_machine: u16,
+    /// Object file version (`EV_CURRENT = 1`).
+    pub e_version: u32,
+    /// Entry point virtual address.
+    pub e_entry: u64,
+    /// Program header table file offset.
+    pub e_phoff: u64,
+    /// Section header table file offset.
+    pub e_shoff: u64,
+    /// Processor-specific flags.
+    pub e_flags: u32,
+    /// ELF header size in bytes (`64`).
+    pub e_ehsize: u16,
+    /// Program header table entry size (`56`).
+    pub e_phentsize: u16,
+    /// Program header table entry count.
+    pub e_phnum: u16,
+    /// Section header table entry size (`64`).
+    pub e_shentsize: u16,
+    /// Section header table entry count.
+    pub e_shnum: u16,
+    /// Section header string table index.
+    pub e_shstrndx: u16,
+}
+
+const _: () = assert!(size_of::<Elf64Ehdr>() == 64);
+
+/// ELF64 program header (`Elf64_Phdr`, `56` bytes, `#[repr(C)]`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Elf64Phdr {
+    /// Segment type (`p_type`).
+    pub p_type: u32,
+    /// Segment flags (`p_flags`).
+    pub p_flags: u32,
+    /// Segment file offset (`p_offset`).
+    pub p_offset: u64,
+    /// Segment virtual address (`p_vaddr`).
+    pub p_vaddr: u64,
+    /// Segment physical address (`p_paddr`).
+    pub p_paddr: u64,
+    /// Segment file image size (`p_filesz`).
+    pub p_filesz: u64,
+    /// Segment memory image size (`p_memsz`).
+    pub p_memsz: u64,
+    /// Segment alignment (`p_align`).
+    pub p_align: u64,
+}
+
+const _: () = assert!(size_of::<Elf64Phdr>() == 56);
+
+/// ELF64 section header (`Elf64_Shdr`, `64` bytes, `#[repr(C)]`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Elf64Shdr {
+    /// Section name offset in `.shstrtab`.
+    pub sh_name: u32,
+    /// Section type (`sh_type`).
+    pub sh_type: u32,
+    /// Section attribute flags (`sh_flags`).
+    pub sh_flags: u64,
+    /// Section virtual address (`sh_addr`).
+    pub sh_addr: u64,
+    /// Section file offset (`sh_offset`).
+    pub sh_offset: u64,
+    /// Section size in bytes (`sh_size`).
+    pub sh_size: u64,
+    /// Associated section index (`sh_link`).
+    pub sh_link: u32,
+    /// Extra section information (`sh_info`).
+    pub sh_info: u32,
+    /// Section alignment (`sh_addralign`).
+    pub sh_addralign: u64,
+    /// Fixed-size entry byte size (`sh_entsize`).
+    pub sh_entsize: u64,
+}
+
+const _: () = assert!(size_of::<Elf64Shdr>() == 64);
+
+/// ELF64 symbol table entry (`Elf64_Sym`, `24` bytes, `#[repr(C)]`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Elf64Sym {
+    /// Symbol name offset in `.dynstr` or `.strtab`.
+    pub st_name: u32,
+    /// Symbol type and binding attributes (`st_info`).
+    pub st_info: u8,
+    /// Symbol visibility (`st_other`).
+    pub st_other: u8,
+    /// Section header index (`st_shndx`).
+    pub st_shndx: u16,
+    /// Symbol value / virtual address (`st_value`).
+    pub st_value: u64,
+    /// Symbol byte size (`st_size`).
+    pub st_size: u64,
+}
+
+const _: () = assert!(size_of::<Elf64Sym>() == 24);
+
+/// ELF64 relocation entry with explicit addend (`Elf64_Rela`, `24` bytes, `#[repr(C)]`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct Elf64Rela {
+    /// Relocation target virtual address (`r_offset`).
+    pub r_offset: u64,
+    /// Symbol table index and relocation type (`r_info`).
+    pub r_info: u64,
+    /// Signed constant addend (`r_addend`).
+    pub r_addend: i64,
+}
+
+const _: () = assert!(size_of::<Elf64Rela>() == 24);
+
+/// Binary search table entry decoded from a DWARF `.eh_frame_hdr` section (`PT_GNU_EH_FRAME`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EhFrameHdrEntry {
+    /// Resolved function start virtual address (`initial_loc`).
+    pub initial_location_vaddr: u64,
+    /// Resolved `.eh_frame` FDE descriptor virtual address (`fde_ptr`).
+    pub fde_vaddr: u64,
+}
+
+/// Zero-copy parses an [`Elf64Ehdr`] (`64` bytes) from the start of an ELF64 image.
+///
+/// # Arguments
+///
+/// * `bytes` - Raw ELF64 binary slice (at least `64` bytes starting with `\x7fELF\x02\x01`).
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::BinaryFormatError`] if `bytes` is shorter than `64` bytes or is not a 64-bit little-endian ELF.
+pub fn parse_elf64_ehdr_zero_copy(bytes: &[u8]) -> LibTpuResult<Elf64Ehdr> {
+    let head = bytes
+        .get(0..64)
+        .ok_or_else(|| LibTpuError::BinaryFormatError {
+            reason: String::from("ELF64 image shorter than 64-byte Elf64_Ehdr"),
+        })?;
+    let ehdr = bytemuck::pod_read_unaligned::<Elf64Ehdr>(head);
+    if ehdr.e_ident.get(0..6) != Some(b"\x7fELF\x02\x01") {
+        return Err(LibTpuError::BinaryFormatError {
+            reason: String::from("Invalid ELF64 little-endian magic in Elf64_Ehdr"),
+        });
+    }
+    Ok(ehdr)
+}
+
+/// Parses a GNU `.eh_frame_hdr` section (`version = 1`, `DW_EH_PE_datarel | DW_EH_PE_sdata4` table)
+/// to recover the sorted `(initial_location_vaddr, fde_vaddr)` binary search index for internal functions.
+///
+/// # Arguments
+///
+/// * `hdr_bytes` - Raw `.eh_frame_hdr` section bytes.
+/// * `hdr_vaddr` - Virtual address of the `.eh_frame_hdr` section in the ELF image.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::BinaryFormatError`] if `hdr_bytes` has an unsupported version or is truncated.
+pub fn parse_eh_frame_hdr_table(
+    hdr_bytes: &[u8],
+    hdr_vaddr: u64,
+) -> LibTpuResult<Vec<EhFrameHdrEntry>> {
+    let header = hdr_bytes
+        .get(0..12)
+        .ok_or_else(|| LibTpuError::BinaryFormatError {
+            reason: String::from(".eh_frame_hdr shorter than 12-byte header"),
+        })?;
+    let version = header.first().copied().unwrap_or(0);
+    if version != 1 {
+        return Err(LibTpuError::BinaryFormatError {
+            reason: format!("Unsupported .eh_frame_hdr version {version}"),
+        });
+    }
+    let fde_count = u32::from_le(bytemuck::pod_read_unaligned::<u32>(
+        header.get(8..12).unwrap_or(&[0; 4]),
+    )) as usize;
+    let table_bytes = hdr_bytes
+        .get(12..12_usize.saturating_add(fde_count.saturating_mul(8)))
+        .ok_or_else(|| LibTpuError::BinaryFormatError {
+            reason: String::from(".eh_frame_hdr binary search table truncated"),
+        })?;
+    let mut entries = Vec::with_capacity(fde_count);
+    for chunk in table_bytes.chunks_exact(8) {
+        let init_rel = i32::from_le(bytemuck::pod_read_unaligned::<i32>(
+            chunk.get(0..4).unwrap_or(&[0; 4]),
+        ));
+        let fde_rel = i32::from_le(bytemuck::pod_read_unaligned::<i32>(
+            chunk.get(4..8).unwrap_or(&[0; 4]),
+        ));
+        #[allow(clippy::cast_sign_loss)]
+        let initial_location_vaddr = hdr_vaddr.wrapping_add(i64::from(init_rel) as u64);
+        #[allow(clippy::cast_sign_loss)]
+        let fde_vaddr = hdr_vaddr.wrapping_add(i64::from(fde_rel) as u64);
+        entries.push(EhFrameHdrEntry {
+            initial_location_vaddr,
+            fde_vaddr,
+        });
+    }
+    Ok(entries)
+}
+
 /// Function address range recovered from a DWARF `.eh_frame` Frame Description Entry (`FDE`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EhFrameFunctionRange {
@@ -147,6 +356,57 @@ pub struct RttiClassHierarchyEntry {
     pub typeinfo_vaddr: u64,
     /// Virtual address of `_ZTS*` (`typeinfo name for ...`) if present.
     pub typeinfo_name_vaddr: u64,
+}
+
+/// ELF64 program header (`Phdr`) segment summary extracted via `goblin` (`ElfProgramHeaderInfo`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ElfProgramHeaderInfo {
+    /// Segment type (`p_type`, e.g., `PT_LOAD = 1`, `PT_DYNAMIC = 2`, `PT_TLS = 7`, `PT_GNU_EH_FRAME = 0x6474e550`).
+    pub p_type: u32,
+    /// Segment permission flags (`p_flags`, bitmask of `PF_X = 1`, `PF_W = 2`, `PF_R = 4`).
+    pub p_flags: u32,
+    /// File byte offset of the segment (`p_offset`).
+    pub p_offset: u64,
+    /// Virtual memory load address (`p_vaddr`).
+    pub p_vaddr: u64,
+    /// File image byte size (`p_filesz`).
+    pub p_filesz: u64,
+    /// Memory image byte size (`p_memsz`).
+    pub p_memsz: u64,
+    /// Segment alignment (`p_align`).
+    pub p_align: u64,
+}
+
+/// Parses an ELF64 shared library byte slice using `goblin` and extracts all program headers
+/// (`PT_LOAD`, `PT_DYNAMIC`, `PT_GNU_EH_FRAME`, `PT_TLS`).
+///
+/// # Arguments
+///
+/// * `bytes` - Raw ELF64 binary image bytes.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError`] if `bytes` is not a valid ELF image.
+pub fn inspect_elf_program_headers(bytes: &[u8]) -> LibTpuResult<Vec<ElfProgramHeaderInfo>> {
+    let obj = Object::parse(bytes)?;
+    let Object::Elf(elf) = obj else {
+        return Err(LibTpuError::BinaryFormatError {
+            reason: String::from("Expected ELF binary for program header inspection"),
+        });
+    };
+    let mut headers = Vec::with_capacity(elf.program_headers.len());
+    for ph in &elf.program_headers {
+        headers.push(ElfProgramHeaderInfo {
+            p_type: ph.p_type,
+            p_flags: ph.p_flags,
+            p_offset: ph.p_offset,
+            p_vaddr: ph.p_vaddr,
+            p_filesz: ph.p_filesz,
+            p_memsz: ph.p_memsz,
+            p_align: ph.p_align,
+        });
+    }
+    Ok(headers)
 }
 
 /// Parses an ELF or Mach-O shared library byte slice using `goblin` and extracts its
@@ -536,6 +796,18 @@ pub(super) fn build_synthetic_elf64() -> Vec<u8> {
     push_shdr(&mut buf, 19, 11, dynsym_off as u64, 0, 2, 0);
     push_shdr(&mut buf, 27, 4, rela_off as u64, rela_size, 0, 24);
     push_shdr(&mut buf, 27, 4, rela_off as u64, 0, 0, 0);
+
+    let phoff = buf.len();
+    buf[32..40].copy_from_slice(&(phoff as u64).to_le_bytes());
+    buf[54..56].copy_from_slice(&56_u16.to_le_bytes());
+    buf[56..58].copy_from_slice(&1_u16.to_le_bytes());
+    let mut phdr = [0_u8; 56];
+    phdr[0..4].copy_from_slice(&1_u32.to_le_bytes()); // PT_LOAD
+    phdr[4..8].copy_from_slice(&5_u32.to_le_bytes()); // PF_R | PF_X
+    phdr[32..40].copy_from_slice(&4096_u64.to_le_bytes());
+    phdr[40..48].copy_from_slice(&4096_u64.to_le_bytes());
+    phdr[48..56].copy_from_slice(&4096_u64.to_le_bytes());
+    buf.extend_from_slice(&phdr);
     buf
 }
 
@@ -548,6 +820,69 @@ mod tests {
     #[test]
     fn test_goblin_and_object_inspect_binary_symbols() {
         let elf_bytes = build_synthetic_elf64();
+        let ehdr = parse_elf64_ehdr_zero_copy(&elf_bytes);
+        assert!(ehdr.is_ok());
+        if let Ok(h) = ehdr {
+            assert_eq!(h.e_machine, 62);
+            assert_eq!(h.e_ehsize, 64);
+            assert_eq!(h.clone(), h);
+            assert_ne!(format!("{h:?}"), "");
+        }
+        assert!(parse_elf64_ehdr_zero_copy(&[0_u8; 16]).is_err());
+        assert!(parse_elf64_ehdr_zero_copy(&[0_u8; 64]).is_err());
+
+        let program_hdr = Elf64Phdr {
+            p_type: 1,
+            p_flags: 5,
+            p_offset: 0,
+            p_vaddr: 0,
+            p_paddr: 0,
+            p_filesz: 64,
+            p_memsz: 64,
+            p_align: 4096,
+        };
+        assert_eq!(program_hdr.clone(), program_hdr);
+        assert_ne!(format!("{program_hdr:?}"), "");
+        let section_hdr: Elf64Shdr = bytemuck::Zeroable::zeroed();
+        assert_eq!(section_hdr.clone(), section_hdr);
+        assert_ne!(format!("{section_hdr:?}"), "");
+        let zero_sym: Elf64Sym = bytemuck::Zeroable::zeroed();
+        assert_eq!(zero_sym.clone(), zero_sym);
+        assert_ne!(format!("{zero_sym:?}"), "");
+        let zero_rela: Elf64Rela = bytemuck::Zeroable::zeroed();
+        assert_eq!(zero_rela.clone(), zero_rela);
+        assert_ne!(format!("{zero_rela:?}"), "");
+
+        let mut hdr_buf = Vec::new();
+        hdr_buf.extend_from_slice(&[1, 0x1b, 0x03, 0x3b]);
+        hdr_buf.extend_from_slice(&16_i32.to_le_bytes());
+        hdr_buf.extend_from_slice(&1_u32.to_le_bytes());
+        hdr_buf.extend_from_slice(&0x1000_i32.to_le_bytes());
+        hdr_buf.extend_from_slice(&0x0020_i32.to_le_bytes());
+        let hdr_entries = parse_eh_frame_hdr_table(&hdr_buf, 0x09CE_0000);
+        assert!(hdr_entries.is_ok());
+        if let Ok(list) = hdr_entries {
+            assert_eq!(list.len(), 1);
+            assert_eq!(list[0].initial_location_vaddr, 0x09CE_1000);
+            assert_eq!(list[0].fde_vaddr, 0x09CE_0020);
+            assert_eq!(list[0].clone(), list[0]);
+            assert_ne!(format!("{:?}", list[0]), "");
+        }
+        assert!(parse_eh_frame_hdr_table(&[1, 2, 3], 0x1000).is_err());
+        assert!(parse_eh_frame_hdr_table(&[2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 0x1000).is_err());
+        assert!(parse_eh_frame_hdr_table(&[1, 0, 0, 0, 0, 0, 0, 0, 5, 0, 0, 0], 0x1000).is_err());
+
+        let phdrs = inspect_elf_program_headers(&elf_bytes);
+        assert!(phdrs.is_ok());
+        if let Ok(ph_list) = phdrs {
+            assert_eq!(ph_list.len(), 1);
+            assert_eq!(ph_list[0].p_type, 1);
+            assert_eq!(ph_list[0].p_flags, 5);
+            assert_eq!(ph_list[0].clone(), ph_list[0]);
+            assert_ne!(format!("{:?}", ph_list[0]), "");
+        }
+        assert!(inspect_elf_program_headers(b"bad").is_err());
+
         let report_res = inspect_binary_symbols(&elf_bytes);
         assert!(report_res.is_ok());
         if let Ok(report) = report_res {
@@ -575,6 +910,7 @@ mod tests {
         if let Ok(macho_rep) = inspect_binary_symbols(&macho_buf) {
             assert_eq!(macho_rep.format, BinaryFormatKind::MachO);
         }
+        assert!(inspect_elf_program_headers(&macho_buf).is_err());
 
         let obj_res = inspect_object_crate_sections(&elf_bytes);
         assert!(obj_res.is_ok());

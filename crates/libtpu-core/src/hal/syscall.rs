@@ -262,6 +262,46 @@ impl EmulatedKernelDriverBackend {
         self.bar0_registers.lock().insert(csr_offset, value);
     }
 
+    /// Resets all architectural CSRs for `generation` to their hardware reset defaults.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target [`crate::types::TpuGeneration`].
+    pub fn reset_csrs_for_generation(&self, generation: crate::types::TpuGeneration) {
+        let map = super::ChipRegisterMap::for_generation(generation);
+        let mut guard = self.bar0_registers.lock();
+        for desc in map.csr_descriptors() {
+            guard.insert(desc.byte_offset, desc.reset_value);
+        }
+    }
+
+    /// Writes a 64-bit BAR0 CSR value enforcing the [`super::CsrAccessPermission`] (`ReadOnly`,
+    /// `ReadWrite`, `WriteOnly`, `WriteOneToClear`) for `generation`.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target [`crate::types::TpuGeneration`].
+    /// * `csr_offset` - Byte offset of the BAR0 CSR.
+    /// * `write_value` - 64-bit value written by software.
+    #[must_use]
+    pub fn write_csr_checked(
+        &self,
+        generation: crate::types::TpuGeneration,
+        csr_offset: u64,
+        write_value: u64,
+    ) -> u64 {
+        let map = super::ChipRegisterMap::for_generation(generation);
+        let mut guard = self.bar0_registers.lock();
+        let current = guard.get(&csr_offset).copied().unwrap_or(0);
+        let next = map
+            .lookup_by_offset(csr_offset)
+            .map_or(write_value, |desc| {
+                desc.apply_write_value(current, write_value)
+            });
+        guard.insert(csr_offset, next);
+        next
+    }
+
     /// Updates BAR0 thermal, power, and duty-cycle telemetry CSRs after executing `cycles` VLIW bundles.
     ///
     /// # Arguments
@@ -430,9 +470,78 @@ pub const POSIX_FIOCLEX_IOCTL: u64 = 0x5451;
 /// Low-level POSIX C library (`libc`) FFI wrappers for [`PosixKernelDriverBackend`].
 mod posix_libc {
     pub(super) use libc::{
-        MAP_ANON as MAP_ANONYMOUS, MAP_PRIVATE, MAP_SHARED, O_RDWR, PROT_READ, PROT_WRITE, close,
-        ioctl, mmap, munmap, open, pipe,
+        MAP_ANON as MAP_ANONYMOUS, MAP_PRIVATE, MAP_SHARED, O_RDWR, POLLIN, PROT_READ, PROT_WRITE,
+        close, ioctl, mmap, munmap, open, pipe, poll, pollfd, read, write,
     };
+}
+
+/// Discovered Google Cloud TPU `PCIe` function metadata from `/sys/bus/pci/devices/*` (`DiscoveredPciDevice`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredPciDevice {
+    /// PCI Bus:Device.Function address string (e.g., `"0000:00:04.0"`).
+    pub bdf_address: String,
+    /// PCI vendor ID (`0x1AE0` for Google LLC).
+    pub vendor_id: u16,
+    /// PCI device ID (`0x0027` v2/v3, `0x0056` v4, `0x0063` v5e, `0x0062` v5p, `0x006F` v6e, `0x0075` v7x).
+    pub device_id: u16,
+    /// Classified Cloud TPU hardware generation.
+    pub generation: crate::types::TpuGeneration,
+    /// Host NUMA node index (`0` when unspecified).
+    pub numa_node: u32,
+}
+
+/// Scans a Linux `sysfs` PCI devices directory (e.g., `"/sys/bus/pci/devices"`) and returns all
+/// discovered Google Cloud TPU (`vendor == 0x1ae0`) [`DiscoveredPciDevice`] entries sorted by BDF address.
+///
+/// # Arguments
+///
+/// * `sysfs_pci_devices_dir` - Path to `/sys/bus/pci/devices` or a synthetic test directory.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError`] if reading the directory fails.
+pub fn discover_sysfs_tpu_pci_devices(
+    sysfs_pci_devices_dir: &std::path::Path,
+) -> LibTpuResult<Vec<DiscoveredPciDevice>> {
+    use crate::types::TpuGeneration;
+    let mut devices = Vec::new();
+    let entries = std::fs::read_dir(sysfs_pci_devices_dir)?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let vendor_str = std::fs::read_to_string(path.join("vendor")).unwrap_or_default();
+        let device_str = std::fs::read_to_string(path.join("device")).unwrap_or_default();
+        let parse_hex_u16 = |s: &str| -> u16 {
+            let trimmed = s.trim().trim_start_matches("0x").trim_start_matches("0X");
+            u16::from_str_radix(trimmed, 16).unwrap_or(0)
+        };
+        let vendor_id = parse_hex_u16(&vendor_str);
+        if vendor_id != 0x1AE0 {
+            continue;
+        }
+        let device_id = parse_hex_u16(&device_str);
+        let generation = match device_id {
+            0x0027 => TpuGeneration::V3,
+            0x0056 => TpuGeneration::V4,
+            0x0062 => TpuGeneration::V5p,
+            0x006F => TpuGeneration::V6e,
+            0x0075 => TpuGeneration::V7x,
+            _ => TpuGeneration::V5e,
+        };
+        let numa_node = std::fs::read_to_string(path.join("numa_node"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0);
+        let bdf_address = entry.file_name().to_string_lossy().into_owned();
+        devices.push(DiscoveredPciDevice {
+            bdf_address,
+            vendor_id,
+            device_id,
+            generation,
+            numa_node,
+        });
+    }
+    devices.sort_by(|a, b| a.bdf_address.cmp(&b.bdf_address));
+    Ok(devices)
 }
 
 /// Real POSIX kernel driver backend invoking `libc` `open`, `close`, `ioctl`, `mmap`, `munmap`,
@@ -637,6 +746,85 @@ impl PosixKernelDriverBackend {
     ) -> LibTpuResult<()> {
         self.close_device(write_fd.0)?;
         self.close_device(read_fd.0)
+    }
+
+    /// Writes an 8-byte little-endian interrupt counter increment (`counter_delta`) to `write_fd`.
+    ///
+    /// # Arguments
+    ///
+    /// * `write_fd` - Write end [`EventFdHandle`] of an event descriptor pair.
+    /// * `counter_delta` - 64-bit interrupt counter increment to signal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EventFdError`] if `libc::write` fails.
+    pub fn signal_eventfd(&self, write_fd: EventFdHandle, counter_delta: u64) -> LibTpuResult<()> {
+        let bytes = counter_delta.to_le_bytes();
+        // SAFETY: `bytes` is a valid 8-byte stack buffer.
+        let written = unsafe {
+            posix_libc::write(
+                write_fd.0,
+                bytes.as_ptr().cast::<std::ffi::c_void>(),
+                bytes.len(),
+            )
+        };
+        if written != 8 {
+            return Err(LibTpuError::EventFdError {
+                operation: "write",
+                errno: 5,
+                message: format!("Failed to write 8-byte eventfd counter on fd={write_fd}"),
+            });
+        }
+        Ok(())
+    }
+
+    /// Polls `read_fd` for up to `timeout_ms` milliseconds using `libc::poll` and reads the 8-byte
+    /// interrupt completion counter when signaled.
+    ///
+    /// # Arguments
+    ///
+    /// * `read_fd` - Read end [`EventFdHandle`] registered for MSI-X / Gasket interrupts.
+    /// * `timeout_ms` - Maximum poll timeout in milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EventFdError`] if `poll` times out (`<= 0`) or reading the 8-byte counter fails.
+    pub fn wait_for_interrupt_eventfd(
+        &self,
+        read_fd: EventFdHandle,
+        timeout_ms: i32,
+    ) -> LibTpuResult<u64> {
+        let mut pfd = posix_libc::pollfd {
+            fd: read_fd.0,
+            events: posix_libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: `pfd` is a valid single-element `pollfd` struct on the stack.
+        let ready = unsafe { posix_libc::poll(std::ptr::from_mut(&mut pfd), 1, timeout_ms) };
+        if ready <= 0 {
+            return Err(LibTpuError::EventFdError {
+                operation: "poll",
+                errno: 110,
+                message: format!("Interrupt eventfd poll timed out or failed on fd={read_fd}"),
+            });
+        }
+        let mut buf = [0_u8; 8];
+        // SAFETY: `buf` is a valid 8-byte mutable buffer on the stack.
+        let n = unsafe {
+            posix_libc::read(
+                read_fd.0,
+                buf.as_mut_ptr().cast::<std::ffi::c_void>(),
+                buf.len(),
+            )
+        };
+        if n != 8 {
+            return Err(LibTpuError::EventFdError {
+                operation: "read",
+                errno: 5,
+                message: format!("Short read ({n} bytes) on interrupt eventfd fd={read_fd}"),
+            });
+        }
+        Ok(u64::from_le_bytes(buf))
     }
 
     /// Allocates a single OS-backed event notification descriptor (`eventfd` / pipe read end).

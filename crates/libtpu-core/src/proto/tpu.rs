@@ -29,6 +29,170 @@ impl_proto_schema_message!(
     "tpu.TpuCompilationEnvironmentProto"
 );
 
+impl TpuCompilationEnvironmentProto {
+    /// Looks up a compiler flag field by name or numeric tag on this [`TpuCompilationEnvironmentProto`]
+    /// or in the full `xla.jellyfish.TpuCompilationEnvironmentProto` descriptor schema
+    /// and returns its string representation (matching `PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString`).
+    ///
+    /// # Arguments
+    ///
+    /// * `field_query` - Field name (e.g., `"xla_tpu_enable_megacore_fusion"` or `"--xla_tpu_scoped_vmem_limit_kib"`) or field tag (`"1"`..`"4"`).
+    #[must_use]
+    pub fn get_field_as_string(&self, field_query: &str) -> String {
+        let normalized = field_query.trim().trim_start_matches('-');
+        match normalized {
+            "1" | "xla_tpu_enable_megacore_fusion" => {
+                self.xla_tpu_enable_megacore_fusion.to_string()
+            }
+            "2" | "xla_tpu_enable_async_collective_fusion" => {
+                self.xla_tpu_enable_async_collective_fusion.to_string()
+            }
+            "3" | "xla_tpu_scoped_vmem_limit_kib" => self.xla_tpu_scoped_vmem_limit_kib.to_string(),
+            "4" | "custom_flags" => self.custom_flags.clone(),
+            _ => {
+                if let Some(val) = self
+                    .custom_flags
+                    .split(',')
+                    .filter_map(|entry| entry.split_once('='))
+                    .find_map(|(k, v)| {
+                        (k.trim().trim_start_matches('-') == normalized)
+                            .then(|| String::from(v.trim()))
+                    })
+                {
+                    return val;
+                }
+                let pool = crate::proto::descriptor::global_descriptor_pool();
+                for msg_name in [
+                    "tpu.TpuCompilationEnvironmentProto",
+                    "xla.jellyfish.EmitterLearnedCostModelOptions",
+                    "xla.jellyfish.MemorySpaceAssignmentOptions",
+                ] {
+                    if let Some(msg_desc) = pool.get_message_by_name(msg_name)
+                        && let Some(field_desc) = msg_desc.get_field_by_name(normalized)
+                    {
+                        let dyn_msg = prost_reflect::DynamicMessage::new(msg_desc);
+                        let default_val = dyn_msg.get_field(&field_desc);
+                        return format!("{default_val:?}");
+                    }
+                }
+                String::from("default")
+            }
+        }
+    }
+
+    /// Updates a compiler flag field by name or numeric tag from a string value, or appends a `key=value`
+    /// override to `custom_flags` for extended `xla.jellyfish.TpuCompilationEnvironmentProto` flags.
+    ///
+    /// # Arguments
+    ///
+    /// * `field_name` - Flag name or numeric field tag.
+    /// * `value_str` - String representation of the new flag value.
+    pub fn set_field_from_str(&mut self, field_name: &str, value_str: &str) {
+        let normalized = field_name.trim().trim_start_matches('-');
+        let val = value_str.trim();
+        match normalized {
+            "1" | "xla_tpu_enable_megacore_fusion" => {
+                self.xla_tpu_enable_megacore_fusion = matches!(val, "true" | "1" | "TRUE" | "yes");
+            }
+            "2" | "xla_tpu_enable_async_collective_fusion" => {
+                self.xla_tpu_enable_async_collective_fusion =
+                    matches!(val, "true" | "1" | "TRUE" | "yes");
+            }
+            "3" | "xla_tpu_scoped_vmem_limit_kib" => {
+                self.xla_tpu_scoped_vmem_limit_kib = val.parse::<i64>().unwrap_or(16_384);
+            }
+            "4" | "custom_flags" => {
+                self.custom_flags = String::from(val);
+            }
+            _ => {
+                if !self.custom_flags.is_empty() {
+                    self.custom_flags.push(',');
+                }
+                self.custom_flags.push_str(normalized);
+                self.custom_flags.push('=');
+                self.custom_flags.push_str(val);
+            }
+        }
+    }
+
+    /// Parses a whitespace- or comma-delimited CLI flag string (e.g., `"--xla_tpu_enable_megacore_fusion=true --xla_tpu_scoped_vmem_limit_kib=32768"`)
+    /// into a [`TpuCompilationEnvironmentProto`], resolving numeric tags or field names against
+    /// `xla.jellyfish.TpuCompilationEnvironmentProto` in [`crate::proto::descriptor::global_descriptor_pool`].
+    ///
+    /// # Arguments
+    ///
+    /// * `cli_flags` - Raw CLI flag string.
+    #[must_use]
+    pub fn from_cli_flags(cli_flags: &str) -> Self {
+        let mut env = Self {
+            xla_tpu_enable_megacore_fusion: true,
+            xla_tpu_enable_async_collective_fusion: true,
+            xla_tpu_scoped_vmem_limit_kib: 16_384,
+            custom_flags: String::new(),
+        };
+        for token in cli_flags.split(|c: char| c.is_whitespace() || c == ',') {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some((k, v)) = trimmed.split_once('=') {
+                env.set_field_from_str(k, v);
+            } else {
+                env.set_field_from_str(trimmed, "true");
+            }
+        }
+        env
+    }
+
+    /// Applies this [`TpuCompilationEnvironmentProto`] onto a mutable [`crate::config::TpuInitConfig`].
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Target [`crate::config::TpuInitConfig`] to update.
+    pub fn apply_to_init_config(&self, config: &mut crate::config::TpuInitConfig) {
+        config.extra_flags.insert(
+            String::from("xla_tpu_enable_megacore_fusion"),
+            self.xla_tpu_enable_megacore_fusion.to_string(),
+        );
+        config.extra_flags.insert(
+            String::from("xla_tpu_enable_async_collective_fusion"),
+            self.xla_tpu_enable_async_collective_fusion.to_string(),
+        );
+        config.extra_flags.insert(
+            String::from("xla_tpu_scoped_vmem_limit_kib"),
+            self.xla_tpu_scoped_vmem_limit_kib.to_string(),
+        );
+        for (k, v) in self
+            .custom_flags
+            .split(',')
+            .filter_map(|entry| entry.split_once('='))
+        {
+            config
+                .extra_flags
+                .insert(String::from(k.trim()), String::from(v.trim()));
+        }
+    }
+
+    /// Lists all field names registered in the `TpuCompilationEnvironmentProto` and `xla.jellyfish` descriptors.
+    #[must_use]
+    pub fn list_jellyfish_schema_field_names() -> Vec<String> {
+        let pool = crate::proto::descriptor::global_descriptor_pool();
+        let mut fields = Vec::new();
+        for msg_name in [
+            "tpu.TpuCompilationEnvironmentProto",
+            "xla.jellyfish.EmitterLearnedCostModelOptions",
+            "xla.jellyfish.MemorySpaceAssignmentOptions",
+        ] {
+            if let Some(desc) = pool.get_message_by_name(msg_name) {
+                for f in desc.fields() {
+                    fields.push(String::from(f.name()));
+                }
+            }
+        }
+        fields
+    }
+}
+
 /// Wire-compatible `tpu.TpuTopologyArgsProto` (`tpu_topology.proto`).
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct TpuTopologyArgsProto {
@@ -227,8 +391,8 @@ impl_proto_schema_message!(
     "tensorflow.tpu.SparseCoreTableLayouts"
 );
 
-/// Wire-compatible `tensorflow.tpu.CompilationResultProto` (`xla/tpu/protobuf/compilation_result.proto`).
-#[derive(Clone, PartialEq, Eq, Message)]
+/// Wire-compatible `tensorflow.tpu.CompilationResultProto` (`tensorflow/core/protobuf/tpu/compilation_result.proto`).
+#[derive(Clone, PartialEq, Message)]
 pub struct CompilationResultProto {
     /// Abseil status code (`0` = OK, field `1`).
     #[prost(int32, tag = "1")]

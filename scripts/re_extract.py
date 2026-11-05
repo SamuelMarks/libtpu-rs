@@ -246,6 +246,118 @@ def reconstruct_itanium_vtable(
     }
 
 
+def parse_eh_frame_cfi_records(
+    eh_frame_bytes: bytes,
+    eh_frame_vaddr: int = 0,
+) -> list[dict[str, int]]:
+    """Parses DWARF `.eh_frame` CIE and FDE records to extract internal function bounds.
+
+    Args:
+        eh_frame_bytes: Raw `.eh_frame` section bytes.
+        eh_frame_vaddr: Base virtual address of `.eh_frame` in the ELF image.
+
+    Returns:
+        List of dictionaries with `"start_vaddr"`, `"end_vaddr"`, and `"byte_len"`.
+    """
+    cursor = 0
+    records: list[dict[str, int]] = []
+    while cursor + 4 <= len(eh_frame_bytes):
+        length = struct.unpack_from("<I", eh_frame_bytes, cursor)[0]
+        cursor += 4
+        if length >= 12 and cursor + length <= len(eh_frame_bytes):
+            entry = eh_frame_bytes[cursor : cursor + length]
+            cie_id = struct.unpack_from("<I", entry, 0)[0]
+            if cie_id != 0:
+                rel_pc, byte_len = struct.unpack_from("<iI", entry, 4)
+                pc_vaddr = (eh_frame_vaddr + cursor + 4 + rel_pc) & 0xFFFFFFFFFFFFFFFF
+                records.append(
+                    {
+                        "start_vaddr": pc_vaddr,
+                        "end_vaddr": pc_vaddr + byte_len,
+                        "byte_len": byte_len,
+                    }
+                )
+        cursor += max(length, 4)
+    return records
+
+
+def analyze_aarch64_prologue(code: bytes, entrypoint_vaddr: int = 0) -> dict[str, object]:
+    """Decodes an AArch64 (`arm64`) function prologue to extract `struct_size` and call targets.
+
+    Args:
+        code: Raw little-endian 32-bit AArch64 instruction stream.
+        entrypoint_vaddr: Virtual address of the first instruction in `code`.
+
+    Returns:
+        Dictionary with `"expected_struct_size"` and `"call_targets"`.
+    """
+    expected_size: int | None = None
+    calls: list[int] = []
+    for idx in range(0, len(code) - (len(code) % 4), 4):
+        word = struct.unpack_from("<I", code, idx)[0]
+        pc = entrypoint_vaddr + idx
+        if (word & 0x7F80001F) == 0x7100001F and expected_size is None:
+            imm12 = (word >> 10) & 0xFFF
+            if imm12 > 0:
+                expected_size = int(imm12)
+        elif (word & 0xFC000000) == 0x94000000:
+            imm26 = word & 0x03FFFFFF
+            if imm26 & (1 << 25):
+                imm26 -= 1 << 26
+            calls.append(pc + (imm26 * 4))
+    return {"expected_struct_size": expected_size, "call_targets": calls}
+
+
+def recover_rodata_jump_table(
+    rodata_bytes: bytes,
+    table_vaddr: int,
+    entry_count: int,
+) -> list[int]:
+    """Recovers resolved target virtual addresses from a `.rodata` signed-32-bit jump table.
+
+    Args:
+        rodata_bytes: Raw `.rodata` section bytes beginning at `table_vaddr`.
+        table_vaddr: Base virtual address of the jump table.
+        entry_count: Number of 4-byte signed offsets to decode.
+
+    Returns:
+        List of resolved case target virtual addresses (`table_vaddr + offset`).
+    """
+    targets: list[int] = []
+    max_bytes = min(len(rodata_bytes) - (len(rodata_bytes) % 4), max(entry_count, 0) * 4)
+    for idx in range(0, max_bytes, 4):
+        rel = struct.unpack_from("<i", rodata_bytes, idx)[0]
+        targets.append((table_vaddr + rel) & 0xFFFFFFFFFFFFFFFF)
+    return targets
+
+
+def build_call_graph_summary(
+    callers: list[tuple[str, int, list[int]]],
+    symbol_map: dict[int, str],
+) -> list[dict[str, object]]:
+    """Constructs an inter-procedural Call Graph edge list from caller targets and symbols.
+
+    Args:
+        callers: List of `(caller_name, caller_vaddr, call_target_vaddrs)` tuples.
+        symbol_map: Mapping from symbol virtual address to symbol name.
+
+    Returns:
+        List of dictionaries describing each directed `(caller, callee)` call edge.
+    """
+    edges: list[dict[str, object]] = []
+    for caller_name, caller_vaddr, targets in callers:
+        for target_vaddr in targets:
+            edges.append(
+                {
+                    "caller_name": caller_name,
+                    "caller_vaddr": caller_vaddr,
+                    "callee_name": symbol_map.get(target_vaddr, "<indirect>"),
+                    "callee_vaddr": target_vaddr,
+                }
+            )
+    return edges
+
+
 def disassemble_x86_64_prologue(code: bytes) -> PrologueInstructionReport:
     """Decodes an x86-64 function prologue to extract `struct_size` and `[rdi + disp]` accesses.
 

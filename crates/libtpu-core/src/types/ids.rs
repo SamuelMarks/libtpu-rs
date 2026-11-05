@@ -121,6 +121,14 @@ pub struct SemaphoreId(pub u32);
 #[display("{_0}")]
 pub struct SyncFlagId(pub u32);
 
+/// Compact 16-bit architectural hardware synchronization flag identifier (`SflagId`, `0..512`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("sf{_0}")]
+pub struct SflagId(pub u16);
+
 /// Instruction Memory (`IMEM`) or `SparseCore` overlay identifier (`OverlayId`).
 #[repr(transparent)]
 #[derive(
@@ -291,6 +299,9 @@ pub struct BarrierId(pub u64);
 #[display("s{_0}")]
 pub struct SregIndex(pub u8);
 
+/// Type alias for [`SregIndex`] (`SregId`, `0..32`).
+pub type SregId = SregIndex;
+
 /// `TensorCore` Vector Register index (`VregIndex`, `0..64`).
 #[repr(transparent)]
 #[derive(
@@ -298,6 +309,9 @@ pub struct SregIndex(pub u8);
 )]
 #[display("v{_0}")]
 pub struct VregIndex(pub u8);
+
+/// Type alias for [`VregIndex`] (`VregId`, `0..64`).
+pub type VregId = VregIndex;
 
 /// `TensorCore` Scalar Predicate Register index (`PregIndex`, `0..16`).
 #[repr(transparent)]
@@ -307,6 +321,9 @@ pub struct VregIndex(pub u8);
 #[display("p{_0}")]
 pub struct PregIndex(pub u8);
 
+/// Type alias for [`PregIndex`] (`PregId`, `0..16`).
+pub type PregId = PregIndex;
+
 /// `TensorCore` Vector Mask Register index (`VmregIndex`, `0..8`).
 #[repr(transparent)]
 #[derive(
@@ -314,6 +331,9 @@ pub struct PregIndex(pub u8);
 )]
 #[display("vm{_0}")]
 pub struct VmregIndex(pub u8);
+
+/// Type alias for [`VmregIndex`] (`VmaskIndex`, `0..8`).
+pub type VmaskIndex = VmregIndex;
 
 /// `TensorCore` Matrix Multiply Unit (MXU) accumulator register index (`MatmulAccIndex`, `0..4`).
 #[repr(transparent)]
@@ -328,6 +348,30 @@ pub struct MatmulAccIndex(pub u8);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into)]
 #[display("{_0:#04x}")]
 pub struct VmaskBits(pub u8);
+
+/// MLIR / `StableHLO` / HLO SSA value identifier (`SsaValueId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("%{_0}")]
+pub struct SsaValueId(pub u32);
+
+/// MLIR / `StableHLO` basic block identifier inside a region (`BlockId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("^bb{_0}")]
+pub struct BlockId(pub u32);
+
+/// MLIR / `StableHLO` nested region identifier inside an operation (`RegionId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("region#{_0}")]
+pub struct RegionId(pub u32);
 
 #[cfg(test)]
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
@@ -400,6 +444,10 @@ mod tests {
         let sflag = SyncFlagId::from(7_u32) + SyncFlagId(1) - SyncFlagId(1);
         assert_eq!(u32::from(sflag), 7);
         assert_eq!(sflag.to_string(), "7");
+
+        let sf16 = SflagId::from(12_u16) + SflagId(1) - SflagId(1);
+        assert_eq!(u16::from(sf16), 12);
+        assert_eq!(sf16.to_string(), "sf12");
 
         let ov_id = OverlayId::from(5_u32) + OverlayId(1) - OverlayId(1);
         assert_eq!(u32::from(ov_id), 5);
@@ -501,7 +549,7 @@ mod tests {
         assert_eq!(u8::from(preg), 1);
         assert_eq!(preg.to_string(), "p1");
 
-        let mask_reg_idx = VmregIndex::from(3_u8) + VmregIndex(1) - VmregIndex(1);
+        let mask_reg_idx: VmaskIndex = VmregIndex::from(3_u8) + VmregIndex(1) - VmregIndex(1);
         assert_eq!(u8::from(mask_reg_idx), 3);
         assert_eq!(mask_reg_idx.to_string(), "vm3");
 
@@ -512,5 +560,17 @@ mod tests {
         let vmask = VmaskBits::from(0xff_u8);
         assert_eq!(u8::from(vmask), 0xff);
         assert_eq!(vmask.to_string(), "0xff");
+
+        let ssa_id = SsaValueId::from(5_u32) + SsaValueId(1) - SsaValueId(1);
+        assert_eq!(u32::from(ssa_id), 5);
+        assert_eq!(ssa_id.to_string(), "%5");
+
+        let blk_id = BlockId::from(0_u32) + BlockId(1) - BlockId(1);
+        assert_eq!(u32::from(blk_id), 0);
+        assert_eq!(blk_id.to_string(), "^bb0");
+
+        let region_ident = RegionId::from(2_u32) + RegionId(1) - RegionId(1);
+        assert_eq!(u32::from(region_ident), 2);
+        assert_eq!(region_ident.to_string(), "region#2");
     }
 }

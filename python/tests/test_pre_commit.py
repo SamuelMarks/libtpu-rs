@@ -969,6 +969,42 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     assert cpp_vt["typeinfo_vaddr"] == 0x6000
     assert cpp_vt["methods"] == [0x7000]
 
+    eh_stream = (
+        struct.pack("<II", 12, 0)
+        + b"\x01\x00\x01\x78\x10\x00\x00\x00"
+        + struct.pack("<IIiI", 12, 12, 0x100, 64)
+        + struct.pack("<I", 4)
+        + b"\x01\x02\x03\x04"
+        + struct.pack("<I", 0)
+    )
+    eh_recs = re_ext.parse_eh_frame_cfi_records(eh_stream, 0x1000)
+    assert len(eh_recs) == 1
+    assert eh_recs[0]["byte_len"] == 64
+    assert re_ext.parse_eh_frame_cfi_records(struct.pack("<I", 0), 0) == []
+    assert re_ext.parse_eh_frame_cfi_records(b"", 0) == []
+
+    arm_stream = struct.pack(
+        "<IIIII",
+        0x7100001F,  # cmp x0, #0 (ignored since imm12 == 0)
+        0xF101601F,  # cmp x0, #88
+        0x94000010,  # bl +64
+        0x97FFFFF0,  # bl -64 (negative sign-extended imm26)
+        0xD65F03C0,  # ret (neither cmp nor bl)
+    )
+    arm_rep = re_ext.analyze_aarch64_prologue(arm_stream, 0x4000)
+    assert arm_rep["expected_struct_size"] == 88
+    assert arm_rep["call_targets"] == [0x4048, 0x3FCC]
+
+    jt_bytes = struct.pack("<iii", 0x10, 0x20, -0x08)
+    assert re_ext.recover_rodata_jump_table(jt_bytes, 0x2000, 3) == [0x2010, 0x2020, 0x1FF8]
+    cg_edges = re_ext.build_call_graph_summary(
+        [("GetPjrtApi", 0x1000, [0x2000, 0x3000])],
+        {0x2000: "pjrt::CreatePjrtApi"},
+    )
+    assert len(cg_edges) == 2
+    assert cg_edges[0]["callee_name"] == "pjrt::CreatePjrtApi"
+    assert cg_edges[1]["callee_name"] == "<indirect>"
+
     code1 = bytes(
         [
             0x48,

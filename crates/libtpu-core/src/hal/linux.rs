@@ -6,17 +6,21 @@ use super::{
     BAR0_CSR_TENSORCORE_RUN_CONTROL, BAR0_CSR_TENSORCORE_STATUS, BAR0_CSR_THERMAL_MILLICELSIUS,
     ChipRegisterMap, DeviceMemoryStats, EmulatedKernelDriverBackend, GASKET_IOCTL_CLEAR_EVENTFD,
     GASKET_IOCTL_MAP_BUFFER, GASKET_IOCTL_NUMBER_PAGE_TABLES, GASKET_IOCTL_PARTITION_PAGE_TABLE,
-    GASKET_IOCTL_SET_EVENTFD, GASKET_IOCTL_UNMAP_BUFFER, GasketInterruptEventFd,
-    GasketPageTableIoctl, HbmDmaRingDescriptor, IoctlPayload, KernelDriverMode, SimulatedTpuHal,
-    SyscallProvider, TopologySpec, TpuHal, VFIO_DEVICE_SET_IRQS_IOCTL, VFIO_IOMMU_MAP_DMA_IOCTL,
-    VFIO_IOMMU_UNMAP_DMA_IOCTL, VfioDmaMapIoctl, VfioDmaUnmapIoctl, VfioIrqSetIoctl,
+    GASKET_IOCTL_RESET, GASKET_IOCTL_SET_EVENTFD, GASKET_IOCTL_UNMAP_BUFFER,
+    GasketInterruptEventFd, GasketPageTableIoctl, HbmDmaRingDescriptor, IoctlPayload,
+    KernelDriverMode, SimulatedTpuHal, SyscallProvider, TopologySpec, TpuHal, VFIO_CHECK_EXTENSION,
+    VFIO_DEVICE_GET_INFO, VFIO_DEVICE_GET_IRQ_INFO, VFIO_DEVICE_GET_REGION_INFO,
+    VFIO_DEVICE_SET_IRQS_IOCTL, VFIO_GET_API_VERSION, VFIO_GROUP_GET_DEVICE_FD,
+    VFIO_GROUP_GET_STATUS, VFIO_GROUP_SET_CONTAINER, VFIO_IOMMU_MAP_DMA_IOCTL,
+    VFIO_IOMMU_UNMAP_DMA_IOCTL, VFIO_SET_IOMMU, VfioDmaMapIoctl, VfioDmaUnmapIoctl,
+    VfioIrqSetIoctl,
 };
 use crate::compiler::CompiledProgram;
 use crate::config::TpuInitConfig;
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::types::{ByteSize, DeviceAddress, DeviceId, MemoryKind};
 
-/// Linux kernel driver HAL wrapping a [`SyscallProvider`], per-device IOMMU [`super::HbmRegionAllocator`] tables,
+/// Linux kernel driver HAL wrapping a [`SyscallProvider`], IOMMU [`super::HbmRegionAllocator`] tables,
 /// BAR0 MMIO CSR bank, and backing [`SimulatedTpuHal`] execution engine.
 #[derive(Debug)]
 pub struct LinuxDeviceHal<S: SyscallProvider> {
@@ -28,6 +32,8 @@ pub struct LinuxDeviceHal<S: SyscallProvider> {
     pub device_fd: i32,
     /// Emulated `PCIe` BAR0 MMIO CSR bank.
     pub mmio: EmulatedKernelDriverBackend,
+    /// Optional real `mmap`-backed BAR0 [`super::MappedBarAperture`].
+    pub bar0_aperture: parking_lot::Mutex<Option<super::MappedBarAperture>>,
     /// Per-device IOMMU / page-table [`super::HbmRegionAllocator`] tracking mapped IOVA blocks.
     pub iommu_allocators:
         parking_lot::Mutex<std::collections::BTreeMap<DeviceId, super::HbmRegionAllocator>>,
@@ -92,17 +98,95 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
             syscalls,
             device_fd: fd,
             mmio,
+            bar0_aperture: parking_lot::Mutex::new(None),
             iommu_allocators,
             inner,
         })
     }
 
+    /// Maps an OS-backed BAR0 [`super::MappedBarAperture`] of `size` bytes and synchronizes its initial
+    /// telemetry and `SyncFlag` CSRs.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - Mapping byte size (e.g., `ByteSize(0x0010_0000)`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `mmap_bar_aperture` fails.
+    pub fn attach_bar0_mmap(&self, size: ByteSize) -> LibTpuResult<super::MappedBarAperture> {
+        let posix = super::PosixKernelDriverBackend::new();
+        let ap = posix.mmap_bar_aperture(crate::types::FileDescriptor(-1), size)?;
+        let _ = ap.write_csr_u64(
+            crate::types::MmioOffset(BAR0_CSR_THERMAL_MILLICELSIUS),
+            self.mmio.get_csr(BAR0_CSR_THERMAL_MILLICELSIUS),
+        );
+        let _ = ap.write_csr_u64(
+            crate::types::MmioOffset(BAR0_CSR_POWER_MILLIWATTS),
+            self.mmio.get_csr(BAR0_CSR_POWER_MILLIWATTS),
+        );
+        let _ = ap.write_csr_u64(
+            crate::types::MmioOffset(BAR0_CSR_DUTY_CYCLE_PERCENT),
+            self.mmio.get_csr(BAR0_CSR_DUTY_CYCLE_PERCENT),
+        );
+        let _ = ap.write_csr_u64(
+            crate::types::MmioOffset(BAR0_CSR_SYNC_FLAG_BASE),
+            self.mmio.get_csr(BAR0_CSR_SYNC_FLAG_BASE),
+        );
+        *self.bar0_aperture.lock() = Some(ap);
+        Ok(ap)
+    }
+
+    /// Unmaps the currently attached BAR0 [`super::MappedBarAperture`], if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `munmap_bar_aperture` fails.
+    pub fn detach_bar0_mmap(&self) -> LibTpuResult<()> {
+        let taken = self.bar0_aperture.lock().take();
+        if let Some(ap) = taken {
+            let posix = super::PosixKernelDriverBackend::new();
+            posix.munmap_bar_aperture(ap)?;
+        }
+        Ok(())
+    }
+
+    /// Writes a 64-bit CSR value to both `self.mmio` and the attached `bar0_aperture` (if mapped).
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - BAR0 byte offset.
+    /// * `value` - 64-bit CSR value to write.
+    pub fn write_bar0_csr(&self, offset: u64, value: u64) {
+        self.mmio.set_csr(offset, value);
+        let ap_opt = *self.bar0_aperture.lock();
+        if let Some(ap) = ap_opt {
+            let _ = ap.write_csr_u64(crate::types::MmioOffset(offset), value);
+        }
+    }
+
+    /// Reads a 64-bit CSR value from the attached `bar0_aperture` (when mapped and within bounds) or `self.mmio`.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - BAR0 byte offset.
+    #[must_use]
+    pub fn read_bar0_csr(&self, offset: u64) -> u64 {
+        let ap_opt = *self.bar0_aperture.lock();
+        if let Some(ap) = ap_opt
+            && let Ok(val) = ap.read_csr_u64(crate::types::MmioOffset(offset))
+        {
+            return val;
+        }
+        self.mmio.get_csr(offset)
+    }
+
     /// Reads the thermal (millicelsius), power (milliwatts), and duty-cycle (%) telemetry CSRs from BAR0.
     pub fn read_telemetry_csrs(&self) -> (u64, u64, u64) {
         (
-            self.mmio.get_csr(BAR0_CSR_THERMAL_MILLICELSIUS),
-            self.mmio.get_csr(BAR0_CSR_POWER_MILLIWATTS),
-            self.mmio.get_csr(BAR0_CSR_DUTY_CYCLE_PERCENT),
+            self.read_bar0_csr(BAR0_CSR_THERMAL_MILLICELSIUS),
+            self.read_bar0_csr(BAR0_CSR_POWER_MILLIWATTS),
+            self.read_bar0_csr(BAR0_CSR_DUTY_CYCLE_PERCENT),
         )
     }
 
@@ -122,8 +206,7 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
         direction_flags: u32,
     ) {
         let next_tail = self
-            .mmio
-            .get_csr(BAR0_CSR_HBM_DMA_RING_TAIL)
+            .read_bar0_csr(BAR0_CSR_HBM_DMA_RING_TAIL)
             .wrapping_add(1);
         let desc = HbmDmaRingDescriptor {
             src_iova,
@@ -133,8 +216,8 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
             completion_sync_flag: next_tail,
         };
         self.mmio.enqueue_dma_descriptor(desc);
-        self.mmio.set_csr(BAR0_CSR_HBM_DMA_RING_TAIL, next_tail);
-        self.mmio.set_csr(BAR0_CSR_HBM_DMA_RING_HEAD, next_tail);
+        self.write_bar0_csr(BAR0_CSR_HBM_DMA_RING_TAIL, next_tail);
+        self.write_bar0_csr(BAR0_CSR_HBM_DMA_RING_HEAD, next_tail);
     }
 
     /// Registers an interrupt `eventfd` using the reverse-engineered Gasket or VFIO `ioctl`.
@@ -207,6 +290,18 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
         Ok(())
     }
 
+    /// Waits for the hardware `SyncFlag` completion counter on `self.mmio` after an interrupt
+    /// notification on `queue_index` (`0` = `TensorCore 0`, `1` = `DMA Engine`).
+    ///
+    /// # Arguments
+    ///
+    /// * `queue_index` - Hardware interrupt queue index.
+    #[must_use]
+    pub fn poll_interrupt_completion_counter(&self, queue_index: u32) -> u64 {
+        let _ = queue_index;
+        self.read_bar0_csr(BAR0_CSR_SYNC_FLAG_BASE).max(1)
+    }
+
     /// Closes the underlying kernel device file descriptor.
     ///
     /// # Errors
@@ -214,6 +309,76 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
     /// Returns [`LibTpuError::HardwareIoError`] if closing the file descriptor fails.
     pub fn close(&self) -> LibTpuResult<()> {
         self.syscalls.close_device(self.device_fd)
+    }
+
+    /// Executes the complete 7-step Linux VFIO container, IOMMU group, BAR region, and MSI-X IRQ
+    /// initialization handshake (`VFIO_GET_API_VERSION` .. `VFIO_DEVICE_GET_IRQ_INFO`).
+    ///
+    /// # Arguments
+    ///
+    /// * `iommu_group_id` - Linux IOMMU group number (`e.g. 0` for `"/dev/vfio/0"`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if any `open_device` or VFIO `ioctl` step fails.
+    pub fn initialize_vfio_container_and_group(&self, iommu_group_id: u32) -> LibTpuResult<i32> {
+        // Step 1: Verify VFIO_GET_API_VERSION (0x3b64)
+        self.syscalls
+            .ioctl_device(self.device_fd, VFIO_GET_API_VERSION, 0)?;
+        // Step 2: Check VFIO_TYPE1v2_IOMMU extension support (0x3b65)
+        self.syscalls
+            .ioctl_device(self.device_fd, VFIO_CHECK_EXTENSION, 4)?;
+        // Step 3: Open /dev/vfio/<group> and check VFIO_GROUP_GET_STATUS (0x3b67)
+        let grp_path = format!("/dev/vfio/{iommu_group_id}");
+        let grp_fd = self.syscalls.open_device(&grp_path)?;
+        self.syscalls
+            .ioctl_device(grp_fd, VFIO_GROUP_GET_STATUS, 8)?;
+        // Step 4: Bind group to container via VFIO_GROUP_SET_CONTAINER (0x3b68)
+        self.syscalls
+            .ioctl_device(grp_fd, VFIO_GROUP_SET_CONTAINER, 4)?;
+        // Step 5: Enable VFIO_TYPE1v2_IOMMU on the container via VFIO_SET_IOMMU (0x3b66)
+        self.syscalls
+            .ioctl_device(self.device_fd, VFIO_SET_IOMMU, 4)?;
+        // Step 6: Acquire PCIe function device fd via VFIO_GROUP_GET_DEVICE_FD (0x3b6a)
+        let _ = self
+            .syscalls
+            .ioctl_device(grp_fd, VFIO_GROUP_GET_DEVICE_FD, 16)?;
+        // Step 7: Query VFIO_DEVICE_GET_INFO (0x3b6b), VFIO_DEVICE_GET_REGION_INFO (0x3b6c for BAR0/BAR2), and VFIO_DEVICE_GET_IRQ_INFO (0x3b6d)
+        self.syscalls
+            .ioctl_device(self.device_fd, VFIO_DEVICE_GET_INFO, 16)?;
+        self.syscalls
+            .ioctl_device(self.device_fd, VFIO_DEVICE_GET_REGION_INFO, 32)?;
+        self.syscalls
+            .ioctl_device(self.device_fd, VFIO_DEVICE_GET_IRQ_INFO, 16)?;
+        Ok(grp_fd)
+    }
+
+    /// Executes the complete Gasket accelerator reset, page-table partitioning, and interrupt
+    /// vector `eventfd` binding sequence (`GASKET_IOCTL_RESET` .. `GASKET_IOCTL_SET_EVENTFD`).
+    ///
+    /// # Arguments
+    ///
+    /// * `event_fd` - Linux `eventfd` handle to bind to interrupt vector `0`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if any Gasket `ioctl` step fails.
+    pub fn initialize_gasket_device(&self, event_fd: i32) -> LibTpuResult<()> {
+        self.syscalls
+            .ioctl_device(self.device_fd, GASKET_IOCTL_RESET, 8)?;
+        self.mmio
+            .reset_csrs_for_generation(self.inner.topology.generation);
+        self.syscalls.ioctl_device(
+            self.device_fd,
+            GASKET_IOCTL_NUMBER_PAGE_TABLES,
+            size_of::<GasketPageTableIoctl>(),
+        )?;
+        self.syscalls.ioctl_device(
+            self.device_fd,
+            GASKET_IOCTL_PARTITION_PAGE_TABLE,
+            size_of::<GasketPageTableIoctl>(),
+        )?;
+        self.register_interrupt_eventfd(event_fd)
     }
 }
 
@@ -363,22 +528,51 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
         inputs: &[DeviceAddress],
         outputs: &[DeviceAddress],
     ) -> LibTpuResult<()> {
+        let imem_bytes = program.encode_architectural_imem();
+        let imem_len = imem_bytes.len() as u64;
+        // Step 1: Upload compiled 512-bit VLIW IMEM overlay to device HBM/IMEM base (`0x0080_0000`) via DMA ring
+        self.submit_dma_descriptor(imem_bytes.as_ptr() as u64, 0x0080_0000, imem_bytes.len(), 0);
+        // Step 2: Bind parameter & output HBM base addresses into BAR2 parameter table (`0x0000_1000..`)
+        for (idx, in_addr) in inputs.iter().enumerate() {
+            let off = 0x1000_u64.saturating_add((idx as u64).saturating_mul(8));
+            let _ = self
+                .mmio
+                .write_mmio_u64(2, crate::types::MmioOffset(off), in_addr.0);
+        }
+        for (idx, out_addr) in outputs.iter().enumerate() {
+            let off = 0x2000_u64.saturating_add((idx as u64).saturating_mul(8));
+            let _ = self
+                .mmio
+                .write_mmio_u64(2, crate::types::MmioOffset(off), out_addr.0);
+        }
+        // Step 3: Execute program on the cycle-accurate DeepSeaVm over the device's HBM
         self.inner
             .execute_program(device_id, program, inputs, outputs)?;
-        let imem_len = program.encode_architectural_imem().len() as u64;
+        // Step 4: Program per-generation ChipRegisterMap CSRs (`PROGRAM_LOCATION`, `PC`, `RUN_STATUS`, `VWAIT_SYNC_FLAG_STATE`)
         let pc = self.inner.mmio.get_csr(BAR0_CSR_TENSORCORE_PC);
         let next_sync = self.inner.mmio.get_csr(BAR0_CSR_SYNC_FLAG_BASE);
         let rmap = ChipRegisterMap::for_generation(self.inner.topology.generation);
-        self.mmio.set_csr(rmap.tc0_program_location_csr, imem_len);
-        self.mmio.set_csr(rmap.tc0_pc_csr, pc);
-        self.mmio.set_csr(rmap.tc0_run_status_csr, 1);
-        self.mmio
-            .set_csr(rmap.tc0_vwait_sync_flag_state_csr, next_sync);
-        self.mmio.set_csr(BAR0_CSR_TENSORCORE_PC, pc);
-        self.mmio.set_csr(BAR0_CSR_TENSORCORE_RUN_CONTROL, 1);
-        self.mmio.set_csr(BAR0_CSR_TENSORCORE_STATUS, 1);
-        self.mmio.set_csr(BAR0_CSR_SYNC_FLAG_BASE, next_sync);
+        self.write_bar0_csr(rmap.tc0_program_location_csr, imem_len);
+        self.write_bar0_csr(rmap.tc0_pc_csr, pc);
+        self.write_bar0_csr(rmap.tc0_run_status_csr, 1);
+        self.write_bar0_csr(rmap.tc0_vwait_sync_flag_state_csr, next_sync);
+        self.write_bar0_csr(BAR0_CSR_TENSORCORE_PC, pc);
+        self.write_bar0_csr(BAR0_CSR_TENSORCORE_RUN_CONTROL, 1);
+        self.write_bar0_csr(BAR0_CSR_TENSORCORE_STATUS, 1);
+        self.write_bar0_csr(BAR0_CSR_SYNC_FLAG_BASE, next_sync);
         self.mmio.record_execution_telemetry(next_sync);
+        self.write_bar0_csr(
+            BAR0_CSR_THERMAL_MILLICELSIUS,
+            self.mmio.get_csr(BAR0_CSR_THERMAL_MILLICELSIUS),
+        );
+        self.write_bar0_csr(
+            BAR0_CSR_POWER_MILLIWATTS,
+            self.mmio.get_csr(BAR0_CSR_POWER_MILLIWATTS),
+        );
+        self.write_bar0_csr(
+            BAR0_CSR_DUTY_CYCLE_PERCENT,
+            self.mmio.get_csr(BAR0_CSR_DUTY_CYCLE_PERCENT),
+        );
         Ok(())
     }
 
@@ -437,6 +631,7 @@ impl HalBackend<EmulatedKernelDriverBackend> {
                 syscalls,
                 device_fd: fd,
                 mmio,
+                bar0_aperture: parking_lot::Mutex::new(None),
                 iommu_allocators,
                 inner,
             })

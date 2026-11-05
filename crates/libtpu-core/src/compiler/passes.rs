@@ -255,7 +255,166 @@ impl CompiledProgram {
         })
     }
 
-    /// Pass 1: HLO verification and shape inference across parameter, bundle, and output shapes.
+    /// Infers the output [`Shape`] for a single [`TpuInstructionBundle`] from its attributes
+    /// and the current SSA `slot_shapes` table.
+    ///
+    /// # Arguments
+    ///
+    /// * `bundle` - Instruction bundle to infer the output shape for.
+    /// * `slot_shapes` - Mapping from SSA register slot index to known [`Shape`].
+    /// * `fallback_shape` - Default fallback [`Shape`] when no operand shape is known.
+    #[allow(clippy::too_many_lines)]
+    fn infer_bundle_output_shape(
+        bundle: &TpuInstructionBundle,
+        slot_shapes: &std::collections::BTreeMap<usize, Shape>,
+        fallback_shape: &Shape,
+    ) -> Shape {
+        if let Some(existing) = &bundle.attrs.output_shape {
+            return existing.clone();
+        }
+        let first_op_shape = bundle
+            .operand_slots
+            .first()
+            .and_then(|s| slot_shapes.get(s))
+            .unwrap_or(fallback_shape);
+        match bundle.opcode {
+            TpuOpCode::Constant if !bundle.attrs.constant_bytes.is_empty() => {
+                let elem_bytes = first_op_shape.element_type.byte_size().max(1);
+                let count = i64::try_from(bundle.attrs.constant_bytes.len() / elem_bytes)
+                    .unwrap_or(1)
+                    .max(1);
+                Shape {
+                    element_type: first_op_shape.element_type,
+                    dims: vec![count],
+                    dynamic_dims: vec![false],
+                    layout: MemoryLayout::default_tpu_tiled(1),
+                }
+            }
+            TpuOpCode::Transpose => {
+                let dims: Vec<i64> = bundle
+                    .attrs
+                    .permutation
+                    .iter()
+                    .map(|&axis| first_op_shape.dims.get(axis).copied().unwrap_or(1))
+                    .collect();
+                let rank = dims.len();
+                Shape {
+                    element_type: first_op_shape.element_type,
+                    dims,
+                    dynamic_dims: vec![false; rank],
+                    layout: MemoryLayout::default_tpu_tiled(rank),
+                }
+            }
+            TpuOpCode::Slice => {
+                let dims: Vec<i64> = bundle
+                    .attrs
+                    .slice_limits
+                    .iter()
+                    .enumerate()
+                    .map(|(ax, &lim)| {
+                        let start = bundle.attrs.slice_starts.get(ax).copied().unwrap_or(0);
+                        let stride = bundle
+                            .attrs
+                            .slice_strides
+                            .get(ax)
+                            .copied()
+                            .unwrap_or(1)
+                            .max(1);
+                        let extent = lim.saturating_sub(start).div_ceil(stride).max(1);
+                        i64::try_from(extent).unwrap_or(1)
+                    })
+                    .collect();
+                let rank = dims.len();
+                Shape {
+                    element_type: first_op_shape.element_type,
+                    dims,
+                    dynamic_dims: vec![false; rank],
+                    layout: MemoryLayout::default_tpu_tiled(rank),
+                }
+            }
+            TpuOpCode::Pad => {
+                let mut dims = Vec::with_capacity(first_op_shape.dims.len());
+                for (ax, &base_d) in first_op_shape.dims.iter().enumerate() {
+                    let low =
+                        i64::try_from(bundle.attrs.pad_edge_low.get(ax).copied().unwrap_or(0))
+                            .unwrap_or(0);
+                    let high =
+                        i64::try_from(bundle.attrs.pad_edge_high.get(ax).copied().unwrap_or(0))
+                            .unwrap_or(0);
+                    let inter =
+                        i64::try_from(bundle.attrs.pad_interior.get(ax).copied().unwrap_or(0))
+                            .unwrap_or(0);
+                    let gaps = (base_d - 1).max(0).saturating_mul(inter);
+                    dims.push(
+                        base_d
+                            .saturating_add(low)
+                            .saturating_add(high)
+                            .saturating_add(gaps),
+                    );
+                }
+                let rank = dims.len();
+                Shape {
+                    element_type: first_op_shape.element_type,
+                    dims,
+                    dynamic_dims: vec![false; rank],
+                    layout: MemoryLayout::default_tpu_tiled(rank),
+                }
+            }
+            TpuOpCode::Concatenate => {
+                let mut dims = first_op_shape.dims.clone();
+                let c_dim = bundle.attrs.concat_dim;
+                let mut total_extent: i64 = 0;
+                for op_slot in &bundle.operand_slots {
+                    let ext = slot_shapes
+                        .get(op_slot)
+                        .and_then(|s| s.dims.get(c_dim).copied())
+                        .unwrap_or(1);
+                    total_extent = total_extent.saturating_add(ext);
+                }
+                dims.get_mut(c_dim).into_iter().for_each(|d_mut| {
+                    *d_mut = total_extent.max(*d_mut);
+                });
+                let rank = dims.len();
+                Shape {
+                    element_type: first_op_shape.element_type,
+                    dims,
+                    dynamic_dims: vec![false; rank],
+                    layout: MemoryLayout::default_tpu_tiled(rank),
+                }
+            }
+            TpuOpCode::ReduceSumF32 | TpuOpCode::ReduceMax | TpuOpCode::ReduceMin => {
+                let mut dims: Vec<i64> = first_op_shape
+                    .dims
+                    .iter()
+                    .enumerate()
+                    .filter(|(ax, _)| !bundle.attrs.reduce_dims.contains(ax))
+                    .map(|(_, &d)| d)
+                    .collect();
+                if dims.is_empty() {
+                    dims.push(1);
+                }
+                let rank = dims.len();
+                Shape {
+                    element_type: first_op_shape.element_type,
+                    dims,
+                    dynamic_dims: vec![false; rank],
+                    layout: MemoryLayout::default_tpu_tiled(rank),
+                }
+            }
+            TpuOpCode::CompareEq
+            | TpuOpCode::CompareLt
+            | TpuOpCode::CompareGt
+            | TpuOpCode::IsFinite => Shape {
+                element_type: ElementType::Pred,
+                dims: first_op_shape.dims.clone(),
+                dynamic_dims: first_op_shape.dynamic_dims.clone(),
+                layout: first_op_shape.layout.clone(),
+            },
+            _ => first_op_shape.clone(),
+        }
+    }
+
+    /// Pass 1: HLO verification and per-instruction shape inference across parameter, bundle, and output shapes.
     #[allow(clippy::or_fun_call)]
     pub fn pass_hlo_verification_and_shape_inference(&mut self) {
         self.memory_stats.generated_code_size_in_bytes =
@@ -266,11 +425,15 @@ impl CompiledProgram {
             dynamic_dims: vec![false],
             layout: MemoryLayout::default_tpu_tiled(1),
         });
+        let mut slot_shapes: std::collections::BTreeMap<usize, Shape> =
+            std::collections::BTreeMap::new();
+        for (idx, sh) in self.parameter_shapes.iter().enumerate() {
+            slot_shapes.insert(idx, sh.clone());
+        }
         for bundle in &mut self.instruction_bundles {
-            let _ = bundle
-                .attrs
-                .output_shape
-                .get_or_insert(fallback_shape.clone());
+            let inferred = Self::infer_bundle_output_shape(bundle, &slot_shapes, &fallback_shape);
+            slot_shapes.insert(bundle.output_slot, inferred.clone());
+            bundle.attrs.output_shape = Some(inferred);
         }
         let mut arg_bytes: i64 = 0;
         for sh in &self.parameter_shapes {
@@ -294,6 +457,62 @@ impl CompiledProgram {
             .resize(self.parameter_shapes.len(), MemoryKind::DeviceHbm);
         self.output_memory_kinds
             .resize(self.output_shapes.len(), MemoryKind::DeviceHbm);
+
+        if self.num_partitions > 1 && !self.mosaic_metadata.sharding.is_empty() {
+            let default_sharding = self.mosaic_metadata.sharding.clone();
+            for bundle in &mut self.instruction_bundles {
+                bundle.attrs.sharding_spec.clone_from(&default_sharding);
+            }
+        }
+    }
+
+    /// Pass 3b (`spmd_partitioning`): Normalizes SPMD replica/partition counts and automatically
+    /// synthesizes `AllReduceSumF32`, `ReduceScatter`, `AllGather`, or `AllToAll` collective
+    /// bundles when GSPMD / Shardy (`sdy`) sharded contractions or resharding transitions occur.
+    pub fn pass_spmd_partitioning(&mut self) {
+        self.num_replicas = self.num_replicas.max(1);
+        self.num_partitions = self.num_partitions.max(1);
+        if self.num_partitions <= 1 {
+            return;
+        }
+        let mut updated = Vec::with_capacity(self.instruction_bundles.len() * 2);
+        for bundle in self.instruction_bundles.drain(..) {
+            let sharding = bundle.attrs.sharding_spec.clone();
+            let is_contraction = matches!(
+                bundle.opcode,
+                TpuOpCode::DotGeneralF32 | TpuOpCode::Convolution
+            );
+            let out_slot = bundle.output_slot;
+            let out_shape = bundle.attrs.output_shape.clone();
+            updated.push(bundle);
+
+            if is_contraction && !sharding.is_empty() {
+                let coll_op = if sharding.contains("reduce_scatter") {
+                    TpuOpCode::ReduceScatter
+                } else if sharding.contains("all_gather") {
+                    TpuOpCode::AllGather
+                } else if sharding.contains("all_to_all") {
+                    TpuOpCode::AllToAll
+                } else {
+                    TpuOpCode::AllReduceSumF32
+                };
+                let pc = u32::try_from(updated.len()).unwrap_or(0);
+                updated.push(TpuInstructionBundle {
+                    pc_offset: pc,
+                    opcode: coll_op,
+                    operand_slots: vec![out_slot],
+                    output_slot: out_slot,
+                    sync_flag_id: pc + 1,
+                    attrs: InstructionAttrs {
+                        input_shapes: out_shape.clone().into_iter().collect(),
+                        output_shape: out_shape,
+                        sharding_spec: sharding,
+                        ..InstructionAttrs::default()
+                    },
+                });
+            }
+        }
+        self.instruction_bundles = updated;
     }
 
     /// Pass 3: TPU `(8, 128)` matrix sublane layout assignment and sub-packing tiling.
@@ -308,21 +527,30 @@ impl CompiledProgram {
 
     /// Pass 4: HLO operator fusion across producer-consumer instruction bundles.
     pub fn pass_hlo_operator_fusion(&mut self) {
-        let next_ops: Vec<Option<TpuOpCode>> = self
+        let next_info: Vec<Option<(TpuOpCode, usize, Vec<usize>)>> = self
             .instruction_bundles
             .iter()
             .skip(1)
-            .map(|b| Some(b.opcode))
+            .map(|b| Some((b.opcode, b.output_slot, b.operand_slots.clone())))
             .chain(std::iter::once(None))
             .collect();
         for (idx, (bundle, next_opt)) in self
             .instruction_bundles
             .iter_mut()
-            .zip(next_ops)
+            .zip(next_info)
             .enumerate()
         {
-            if bundle.opcode == TpuOpCode::DotGeneralF32 {
-                bundle.attrs.fused_epilogue_op = next_opt;
+            if matches!(
+                bundle.opcode,
+                TpuOpCode::DotGeneralF32 | TpuOpCode::Convolution
+            ) && let Some((ep_op, _ep_out, ep_operands)) = next_opt
+            {
+                bundle.attrs.fused_epilogue_op = Some(ep_op);
+                for &extra_slot in &ep_operands {
+                    if extra_slot != bundle.output_slot {
+                        bundle.operand_slots.push(extra_slot);
+                    }
+                }
             }
             bundle.pc_offset = u32::try_from(idx).unwrap_or(0);
         }
@@ -405,18 +633,17 @@ impl CompiledProgram {
         }
     }
 
-    /// Pass 3b (`spmd_partitioning`): Normalizes SPMD replica/partition counts and collective opcodes.
-    pub fn pass_spmd_partitioning(&mut self) {
-        self.num_replicas = self.num_replicas.max(1);
-        self.num_partitions = self.num_partitions.max(1);
-    }
-
-    /// Pass 4b (`algebraic_simplifier`): Canonicalizes reshape/identity bundles, normalizes operand slots,
+    /// Pass 4b (`algebraic_simplifier`): Canonicalizes reshape/transpose/identity bundles, normalizes operand slots,
     /// and folds uniform identity/zero constants (`x + 0 = x`, `0 + x = x`, `x - 0 = x`, `x * 1 = x`,
-    /// `1 * x = x`, `x * 0 = 0`, `0 * x = 0`) when **all** elements of the constant tensor match.
+    /// `1 * x = x`, `x * 0 = 0`, `0 * x = 0`, `x / 1 = x`) when **all** elements of the constant tensor match.
     pub fn pass_algebraic_simplifier(&mut self) {
         let mut const_vals: std::collections::BTreeMap<usize, Vec<f64>> =
             std::collections::BTreeMap::new();
+        let mut transpose_map: std::collections::BTreeMap<usize, (usize, Vec<usize>)> =
+            std::collections::BTreeMap::new();
+        let mut reshape_map: std::collections::BTreeMap<usize, usize> =
+            std::collections::BTreeMap::new();
+
         for bundle in &mut self.instruction_bundles {
             if bundle.opcode == TpuOpCode::Constant && !bundle.attrs.constant_bytes.is_empty() {
                 let et = bundle
@@ -433,7 +660,40 @@ impl CompiledProgram {
             if bundle.operand_slots.is_empty() && bundle.opcode.arity() > 0 {
                 bundle.operand_slots.push(0);
             }
-            if let [s0, s1] = bundle.operand_slots.as_slice() {
+            if bundle.opcode == TpuOpCode::Transpose {
+                let src_slot = bundle.operand_slots.first().copied().unwrap_or(0);
+                if let Some((orig_src, prev_perm)) = transpose_map.get(&src_slot).cloned() {
+                    let composed: Vec<usize> = bundle
+                        .attrs
+                        .permutation
+                        .iter()
+                        .map(|&ax| prev_perm.get(ax).copied().unwrap_or(ax))
+                        .collect();
+                    bundle.operand_slots = vec![orig_src];
+                    bundle.attrs.permutation.clone_from(&composed);
+                }
+                let is_id_perm = bundle
+                    .attrs
+                    .permutation
+                    .iter()
+                    .enumerate()
+                    .all(|(i, &p)| i == p)
+                    && !bundle.attrs.permutation.is_empty();
+                if is_id_perm {
+                    bundle.opcode = TpuOpCode::Identity;
+                } else {
+                    let cur_src = bundle.operand_slots.first().copied().unwrap_or(src_slot);
+                    transpose_map.insert(
+                        bundle.output_slot,
+                        (cur_src, bundle.attrs.permutation.clone()),
+                    );
+                }
+            } else if bundle.opcode == TpuOpCode::Reshape {
+                let src_slot = bundle.operand_slots.first().copied().unwrap_or(0);
+                let orig_src = reshape_map.get(&src_slot).copied().unwrap_or(src_slot);
+                bundle.operand_slots = vec![orig_src];
+                reshape_map.insert(bundle.output_slot, orig_src);
+            } else if let [s0, s1] = bundle.operand_slots.as_slice() {
                 let s0 = *s0;
                 let s1 = *s1;
                 let c0_all_zero = const_vals
@@ -452,6 +712,7 @@ impl CompiledProgram {
                 let keep_s0 = match bundle.opcode {
                     TpuOpCode::AddF32 | TpuOpCode::SubF32 => c1_all_zero,
                     TpuOpCode::MulF32 => c1_all_one | c0_all_zero,
+                    TpuOpCode::DivF32 => c1_all_one,
                     _ => false,
                 };
                 let keep_s1 = match bundle.opcode {
@@ -524,6 +785,34 @@ impl CompiledProgram {
         packed
     }
 
+    /// Computes polyhedral loop tile bounds and double-buffered (`ping`/`pong`) `VMEM` DMA prefetch
+    /// schedules for all lowered instruction bundles in this [`CompiledProgram`].
+    #[must_use]
+    pub fn compute_polyhedral_tile_schedules(&self) -> Vec<super::vliw::PolyhedralTileSchedule> {
+        let tpu_gen = crate::config::global_init_config().generation;
+        let default_shape = Shape {
+            element_type: ElementType::F32,
+            dims: vec![8, 128],
+            dynamic_dims: vec![false, false],
+            layout: MemoryLayout::default_tpu_tiled(2),
+        };
+        let fallback_shape = self.output_shapes.first().unwrap_or(&default_shape);
+        let mut schedules = Vec::with_capacity(self.instruction_bundles.len());
+        let mut base_vmem = 0_u64;
+        for (idx, bundle) in self.instruction_bundles.iter().enumerate() {
+            let sh = bundle.attrs.output_shape.as_ref().unwrap_or(fallback_shape);
+            let sched = super::vliw::PolyhedralTileSchedule::from_shape(
+                sh,
+                tpu_gen,
+                base_vmem,
+                bundle.sync_flag_id.max(u32::try_from(idx + 1).unwrap_or(1)),
+            );
+            base_vmem = sched.pong_vmem_offset.saturating_add(4096);
+            schedules.push(sched);
+        }
+        schedules
+    }
+
     /// Pass 11 (`vliw_bundle_packing`): Packs all instruction bundles into 64-byte [`TensorCoreVliwBundle`]s
     /// and updates `generated_code_size_in_bytes`.
     pub fn pass_vliw_bundle_packing(&mut self) {
@@ -581,9 +870,10 @@ impl CompiledProgram {
             .collect()
     }
 
-    /// Pass 4c (`constant_folding`): Folds unary (`NegF32`) and binary (`AddF32`, `MulF32`)
-    /// operations whose inputs are compile-time [`TpuOpCode::Constant`] bundles into
-    /// precomputed [`TpuOpCode::Constant`] bundles using each bundle's [`ElementType`].
+    /// Pass 4c (`constant_folding`): Folds unary (`NegF32`, `Abs`, `ExpF32`, `TanhF32`, `Sqrt`)
+    /// and binary (`AddF32`, `SubF32`, `MulF32`, `MaxF32`, `MinF32`) operations whose inputs
+    /// are compile-time [`TpuOpCode::Constant`] bundles into precomputed [`TpuOpCode::Constant`]
+    /// bundles using each bundle's [`ElementType`].
     pub fn pass_constant_folding(&mut self) {
         let mut const_map: std::collections::BTreeMap<usize, Vec<f64>> =
             std::collections::BTreeMap::new();
@@ -600,22 +890,52 @@ impl CompiledProgram {
             }
             let s0 = bundle.operand_slots.first().copied().unwrap_or(usize::MAX);
             let s1 = bundle.operand_slots.get(1).copied().unwrap_or(usize::MAX);
-            if bundle.opcode == TpuOpCode::NegF32
-                && let Some(v0) = const_map.get(&s0)
-            {
-                let folded: Vec<f64> = v0.iter().map(|&x| -x).collect();
+            let is_foldable_unary = matches!(
+                bundle.opcode,
+                TpuOpCode::NegF32
+                    | TpuOpCode::Abs
+                    | TpuOpCode::ExpF32
+                    | TpuOpCode::TanhF32
+                    | TpuOpCode::Sqrt
+            );
+            let is_foldable_binary = matches!(
+                bundle.opcode,
+                TpuOpCode::AddF32
+                    | TpuOpCode::SubF32
+                    | TpuOpCode::MulF32
+                    | TpuOpCode::MaxF32
+                    | TpuOpCode::MinF32
+            );
+            if is_foldable_unary && let Some(v0) = const_map.get(&s0) {
+                let op = bundle.opcode;
+                let folded: Vec<f64> = v0
+                    .iter()
+                    .map(|&x| match op {
+                        TpuOpCode::Abs => x.abs(),
+                        TpuOpCode::ExpF32 => x.exp(),
+                        TpuOpCode::TanhF32 => x.tanh(),
+                        TpuOpCode::Sqrt => x.sqrt(),
+                        _ => -x,
+                    })
+                    .collect();
                 bundle.opcode = TpuOpCode::Constant;
                 bundle.operand_slots.clear();
                 bundle.attrs.constant_bytes = et.pack_from_f64_slice(&folded);
                 const_map.insert(bundle.output_slot, folded);
-            } else if matches!(bundle.opcode, TpuOpCode::AddF32 | TpuOpCode::MulF32)
+            } else if is_foldable_binary
                 && let (Some(v0), Some(v1)) = (const_map.get(&s0), const_map.get(&s1))
             {
-                let is_add = bundle.opcode == TpuOpCode::AddF32;
+                let op = bundle.opcode;
                 let folded: Vec<f64> = v0
                     .iter()
                     .zip(v1.iter())
-                    .map(|(&a, &b)| if is_add { a + b } else { a * b })
+                    .map(|(&a, &b)| match op {
+                        TpuOpCode::AddF32 => a + b,
+                        TpuOpCode::SubF32 => a - b,
+                        TpuOpCode::MaxF32 => a.max(b),
+                        TpuOpCode::MinF32 => a.min(b),
+                        _ => a * b,
+                    })
                     .collect();
                 bundle.opcode = TpuOpCode::Constant;
                 bundle.operand_slots.clear();
@@ -623,6 +943,26 @@ impl CompiledProgram {
                 const_map.insert(bundle.output_slot, folded);
             }
         }
+    }
+
+    /// Pass 4e (`dead_code_elimination`): Computes backward reachability from `output_slots`
+    /// and removes side-effect-free instruction bundles whose `output_slot` is never transitively read.
+    pub fn pass_dead_code_elimination(&mut self) {
+        if self.output_slots.is_empty() {
+            return;
+        }
+        let mut live_slots: std::collections::BTreeSet<usize> =
+            self.output_slots.iter().copied().collect();
+        for bundle in self.instruction_bundles.iter().rev() {
+            if bundle.opcode.has_side_effects() || live_slots.contains(&bundle.output_slot) {
+                live_slots.insert(bundle.output_slot);
+                for &op_slot in &bundle.operand_slots {
+                    live_slots.insert(op_slot);
+                }
+            }
+        }
+        self.instruction_bundles
+            .retain(|b| b.opcode.has_side_effects() || live_slots.contains(&b.output_slot));
     }
 
     /// Pass 4d (`common_subexpression_elimination`): Deduplicates identical pure instruction

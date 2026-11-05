@@ -43,7 +43,7 @@ petgraph = { version = "0.8", default-features = false, features = ["stable_grap
 proptest = { version = "1.12", default-features = false, features = ["std"] }
 prost = { version = "0.14", default-features = false, features = ["derive"] }
 prost-build = { version = "0.14", default-features = false }
-prost-reflect = { version = "0.16", default-features = false, features = ["serde"] }
+prost-reflect = { version = "0.16", default-features = false, features = ["serde", "text-format"] }
 prost-types = { version = "0.14", default-features = false }
 protox = { version = "0.10", default-features = false }
 rustix = { version = "1.1", default-features = false }

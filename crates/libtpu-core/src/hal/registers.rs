@@ -88,6 +88,135 @@ pub const VFIO_IOMMU_UNMAP_DMA_IOCTL: u64 = 0x0000_3b72;
 /// Alias for [`VFIO_IOMMU_UNMAP_DMA_IOCTL`] (`0x3b72`).
 pub const VFIO_IOMMU_UNMAP_DMA: u64 = VFIO_IOMMU_UNMAP_DMA_IOCTL;
 
+/// Hardware CSR access permission classification from `asic_sw.tools.RegisterTranslatorData`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CsrAccessPermission {
+    /// Read-Only hardware status/telemetry register (`RO`).
+    ReadOnly,
+    /// Read-Write hardware control/configuration register (`RW`).
+    ReadWrite,
+    /// Write-Only hardware doorbell/command register (`WO`).
+    WriteOnly,
+    /// Write-1-to-Clear sticky interrupt or fault register (`W1C`).
+    WriteOneToClear,
+}
+
+/// Architectural CSR bitfield specification (`CsrBitfieldSpec`) within a 64-bit `DeepSea` CSR.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CsrBitfieldSpec {
+    /// Symbolic bitfield name (e.g., `"RUN_STATUS"`, `"PC"`, `"VWAIT_STATE"`).
+    pub name: &'static str,
+    /// Least-significant bit index (`0..63`).
+    pub lsb: u8,
+    /// Most-significant bit index (`lsb..63`).
+    pub msb: u8,
+    /// Hardware access permission for this bitfield.
+    pub access: CsrAccessPermission,
+}
+
+impl CsrBitfieldSpec {
+    /// Extracts this bitfield's unsigned value from a 64-bit register `reg_value`.
+    ///
+    /// # Arguments
+    ///
+    /// * `reg_value` - Raw 64-bit CSR value.
+    #[must_use]
+    pub const fn unpack(self, reg_value: u64) -> u64 {
+        let width = self.msb.saturating_sub(self.lsb).saturating_add(1);
+        let mask = if width >= 64 {
+            u64::MAX
+        } else {
+            (1_u64 << width).wrapping_sub(1)
+        };
+        (reg_value >> self.lsb) & mask
+    }
+
+    /// Inserts `field_value` into `reg_value` at `[lsb..=msb]` and returns the updated 64-bit word.
+    ///
+    /// # Arguments
+    ///
+    /// * `reg_value` - Existing 64-bit CSR value.
+    /// * `field_value` - Bitfield value to pack into `[lsb..=msb]`.
+    #[must_use]
+    pub const fn pack(self, reg_value: u64, field_value: u64) -> u64 {
+        let width = self.msb.saturating_sub(self.lsb).saturating_add(1);
+        let mask = if width >= 64 {
+            u64::MAX
+        } else {
+            (1_u64 << width).wrapping_sub(1)
+        };
+        let shifted_mask = mask << self.lsb;
+        (reg_value & !shifted_mask) | ((field_value & mask) << self.lsb)
+    }
+}
+
+/// Complete `asic_sw.tools.RegisterTranslatorData` register node descriptor (`CsrRegisterDescriptor`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CsrRegisterDescriptor {
+    /// Hierarchical path in `RegisterTranslatorData` (e.g., `"tc_0.tcs_core_state.RUN_STATUS"`).
+    pub full_path: &'static str,
+    /// Physical BAR0 MMIO byte offset (`CsrAddress`).
+    pub byte_offset: u64,
+    /// Register access permission (`RO`, `RW`, `WO`, `W1C`).
+    pub access: CsrAccessPermission,
+    /// Reset default value (`0` for status registers).
+    pub reset_value: u64,
+    /// Architectural bitfields packed inside this 64-bit register.
+    pub bitfields: &'static [CsrBitfieldSpec],
+}
+
+impl CsrRegisterDescriptor {
+    /// Applies a 64-bit software write `write_val` to `current_val` respecting `self.access`
+    /// (`ReadOnly`, `ReadWrite`, `WriteOnly`, `WriteOneToClear`).
+    ///
+    /// # Arguments
+    ///
+    /// * `current_val` - Current 64-bit CSR value before the write.
+    /// * `write_val` - 64-bit value written by the host driver.
+    #[must_use]
+    pub const fn apply_write_value(&self, current_val: u64, write_val: u64) -> u64 {
+        match self.access {
+            CsrAccessPermission::ReadOnly => current_val,
+            CsrAccessPermission::ReadWrite | CsrAccessPermission::WriteOnly => write_val,
+            CsrAccessPermission::WriteOneToClear => current_val & !write_val,
+        }
+    }
+
+    /// Unpacks the bitfield named `bitfield_name` from `reg_value`, if present.
+    ///
+    /// # Arguments
+    ///
+    /// * `reg_value` - Raw 64-bit CSR value.
+    /// * `bitfield_name` - Symbolic bitfield name (`"STATE"`, `"FAULT_CODE"`, `"VALUE"`).
+    #[must_use]
+    pub fn unpack_bitfield(&self, reg_value: u64, bitfield_name: &str) -> Option<u64> {
+        self.bitfields
+            .iter()
+            .find(|bf| bf.name == bitfield_name)
+            .map(|bf| bf.unpack(reg_value))
+    }
+
+    /// Packs `field_value` into the bitfield named `bitfield_name` within `reg_value`, if present.
+    ///
+    /// # Arguments
+    ///
+    /// * `reg_value` - Existing 64-bit CSR value.
+    /// * `bitfield_name` - Symbolic bitfield name (`"STATE"`, `"FAULT_CODE"`, `"VALUE"`).
+    /// * `field_value` - New bitfield value to pack.
+    #[must_use]
+    pub fn pack_bitfield(
+        &self,
+        reg_value: u64,
+        bitfield_name: &str,
+        field_value: u64,
+    ) -> Option<u64> {
+        self.bitfields
+            .iter()
+            .find(|bf| bf.name == bitfield_name)
+            .map(|bf| bf.pack(reg_value, field_value))
+    }
+}
+
 /// Per-generation `asic_sw::deepsea` hardware register and memory layout specification
 /// extracted from `libtpu.so` (`*_pf_csrs.br`, `*_chip_configs_*.binarypb`, and
 /// `current_tpu_runtime_abi.binarypb`).
@@ -282,6 +411,323 @@ impl ChipRegisterMap {
                 3_187_408_896,
             ),
         }
+    }
+
+    /// Standard `RUN_STATUS` bitfield slice (`IDLE`, `RUNNING`, `COMPLETED`, `FAULT`).
+    const RUN_STATUS_BITFIELDS: [CsrBitfieldSpec; 2] = [
+        CsrBitfieldSpec {
+            name: "STATE",
+            lsb: 0,
+            msb: 3,
+            access: CsrAccessPermission::ReadOnly,
+        },
+        CsrBitfieldSpec {
+            name: "FAULT_CODE",
+            lsb: 4,
+            msb: 15,
+            access: CsrAccessPermission::WriteOneToClear,
+        },
+    ];
+
+    /// Standard 64-bit full-width value bitfield slice.
+    const VALUE64_BITFIELDS: [CsrBitfieldSpec; 1] = [CsrBitfieldSpec {
+        name: "VALUE",
+        lsb: 0,
+        msb: 63,
+        access: CsrAccessPermission::ReadWrite,
+    }];
+
+    /// Returns the `TensorCore` 0 and 1 [`CsrRegisterDescriptor`] list for this chip generation.
+    #[allow(clippy::too_many_lines)]
+    fn tensor_core_csr_descriptors(&self) -> Vec<CsrRegisterDescriptor> {
+        let tc0_base = self.tc0_run_status_csr & !0xFFF_u64;
+        let tc1_base = tc0_base.wrapping_add(0x0010_0000);
+        vec![
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tcs_core_state.CORE_RESET",
+                byte_offset: tc0_base,
+                access: CsrAccessPermission::WriteOnly,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tcs_core_state.RUN_STATUS",
+                byte_offset: self.tc0_run_status_csr,
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 1,
+                bitfields: &Self::RUN_STATUS_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tcs_core_state.PC",
+                byte_offset: self.tc0_pc_csr,
+                access: CsrAccessPermission::ReadWrite,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tcs_core_state.PROGRAM_LOCATION",
+                byte_offset: self.tc0_program_location_csr,
+                access: CsrAccessPermission::ReadWrite,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tc_main_status.VWAIT_STATE",
+                byte_offset: self.tc0_vwait_state_csr,
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 0,
+                bitfields: &Self::RUN_STATUS_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tc_main_status.VWAIT_SYNC_FLAG_STATE",
+                byte_offset: self.tc0_vwait_sync_flag_state_csr,
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tc_main_status.SCALAR_ALU_STATUS",
+                byte_offset: self.tc0_vwait_sync_flag_state_csr.wrapping_add(8),
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 0,
+                bitfields: &Self::RUN_STATUS_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tc_main_status.MXU0_STATUS",
+                byte_offset: self.tc0_vwait_sync_flag_state_csr.wrapping_add(16),
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 0,
+                bitfields: &Self::RUN_STATUS_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tc_main_status.MXU1_STATUS",
+                byte_offset: self.tc0_vwait_sync_flag_state_csr.wrapping_add(24),
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 0,
+                bitfields: &Self::RUN_STATUS_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tc_main_status.XLU_STATUS",
+                byte_offset: self.tc0_vwait_sync_flag_state_csr.wrapping_add(32),
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 0,
+                bitfields: &Self::RUN_STATUS_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tc_main_status.VMEM_FAULT_ADDR",
+                byte_offset: self.tc0_vwait_sync_flag_state_csr.wrapping_add(40),
+                access: CsrAccessPermission::WriteOneToClear,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tc_main_status.SMEM_FAULT_ADDR",
+                byte_offset: self.tc0_vwait_sync_flag_state_csr.wrapping_add(48),
+                access: CsrAccessPermission::WriteOneToClear,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_0.tc_main_status.IMEM_PARITY_ERR",
+                byte_offset: self.tc0_vwait_sync_flag_state_csr.wrapping_add(56),
+                access: CsrAccessPermission::WriteOneToClear,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_1.tcs_core_state.RUN_STATUS",
+                byte_offset: tc1_base.wrapping_add(0x18),
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 1,
+                bitfields: &Self::RUN_STATUS_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_1.tcs_core_state.PC",
+                byte_offset: tc1_base.wrapping_add(0x58),
+                access: CsrAccessPermission::ReadWrite,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "tc_1.tcs_core_state.PROGRAM_LOCATION",
+                byte_offset: tc1_base.wrapping_add(0xA0),
+                access: CsrAccessPermission::ReadWrite,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+        ]
+    }
+
+    /// Returns the structured `asic_sw.tools.RegisterTranslatorData` [`CsrRegisterDescriptor`] list
+    /// for this chip generation.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn csr_descriptors(&self) -> Vec<CsrRegisterDescriptor> {
+        let mut list = self.tensor_core_csr_descriptors();
+        list.extend([
+            CsrRegisterDescriptor {
+                full_path: "ici_router.ICI_ROUTER_LINK_STATUS_0",
+                byte_offset: BAR0_CSR_ICI_ROUTER_LINK_STATE,
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 0x0F,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "ici_router.ICI_BARRIERS_STATE",
+                byte_offset: BAR0_CSR_ICI_ROUTER_LINK_STATE.wrapping_add(8),
+                access: CsrAccessPermission::ReadWrite,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "ici_router.ICI_CRC_ERROR_COUNT",
+                byte_offset: BAR0_CSR_ICI_ROUTER_LINK_STATE.wrapping_add(16),
+                access: CsrAccessPermission::WriteOneToClear,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "hbm_mc.HBM_MC_ECC_CORR_COUNT",
+                byte_offset: BAR0_CSR_HBM_DMA_RING_HEAD.wrapping_add(0x100),
+                access: CsrAccessPermission::WriteOneToClear,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "hbm_mc.HBM_MC_ECC_UNCORR_COUNT",
+                byte_offset: BAR0_CSR_HBM_DMA_RING_HEAD.wrapping_add(0x108),
+                access: CsrAccessPermission::WriteOneToClear,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "hbm_mc.HBM_BANDWIDTH_COUNTER",
+                byte_offset: BAR0_CSR_HBM_DMA_RING_HEAD.wrapping_add(0x110),
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "chip_id.GLOBAL_CHIP_ID",
+                byte_offset: self.global_chip_id_csr,
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+        ]);
+        if self.sc0_run_status_csr != 0 {
+            let sc0_base = self.sc0_run_status_csr & !0xFF_u64;
+            list.extend([
+                CsrRegisterDescriptor {
+                    full_path: "sc_0.scs_core_state.CORE_RESET",
+                    byte_offset: sc0_base,
+                    access: CsrAccessPermission::WriteOnly,
+                    reset_value: 0,
+                    bitfields: &Self::VALUE64_BITFIELDS,
+                },
+                CsrRegisterDescriptor {
+                    full_path: "sc_0.scs_core_state.RUN_STATUS",
+                    byte_offset: self.sc0_run_status_csr,
+                    access: CsrAccessPermission::ReadOnly,
+                    reset_value: 1,
+                    bitfields: &Self::RUN_STATUS_BITFIELDS,
+                },
+                CsrRegisterDescriptor {
+                    full_path: "sc_0.scs_core_state.PC",
+                    byte_offset: sc0_base.wrapping_add(0x58),
+                    access: CsrAccessPermission::ReadWrite,
+                    reset_value: 0,
+                    bitfields: &Self::VALUE64_BITFIELDS,
+                },
+                CsrRegisterDescriptor {
+                    full_path: "sc_0.scs_core_state.PROGRAM_LOCATION",
+                    byte_offset: sc0_base.wrapping_add(0xA0),
+                    access: CsrAccessPermission::ReadWrite,
+                    reset_value: 0,
+                    bitfields: &Self::VALUE64_BITFIELDS,
+                },
+                CsrRegisterDescriptor {
+                    full_path: "sc_0.scs_core_state.DMA_QUEUE_HEAD",
+                    byte_offset: sc0_base.wrapping_add(0xB0),
+                    access: CsrAccessPermission::ReadWrite,
+                    reset_value: 0,
+                    bitfields: &Self::VALUE64_BITFIELDS,
+                },
+                CsrRegisterDescriptor {
+                    full_path: "sc_0.scs_core_state.DMA_QUEUE_TAIL",
+                    byte_offset: sc0_base.wrapping_add(0xB8),
+                    access: CsrAccessPermission::ReadWrite,
+                    reset_value: 0,
+                    bitfields: &Self::VALUE64_BITFIELDS,
+                },
+                CsrRegisterDescriptor {
+                    full_path: "sc_0.scs_core_state.GATHER_SCATTER_STATUS",
+                    byte_offset: sc0_base.wrapping_add(0xC0),
+                    access: CsrAccessPermission::ReadOnly,
+                    reset_value: 0,
+                    bitfields: &Self::RUN_STATUS_BITFIELDS,
+                },
+            ]);
+        }
+        list
+    }
+
+    /// Looks up a hardware [`CsrRegisterDescriptor`] on this [`ChipRegisterMap`] by full or leaf symbolic name.
+    ///
+    /// # Arguments
+    ///
+    /// * `query_name` - Full hierarchical CSR path or leaf register name.
+    #[must_use]
+    pub fn lookup_by_name(&self, query_name: &str) -> Option<CsrRegisterDescriptor> {
+        let trimmed = query_name.trim();
+        self.csr_descriptors().into_iter().find(|desc| {
+            desc.full_path == trimmed
+                || desc
+                    .full_path
+                    .rsplit_once('.')
+                    .is_some_and(|(_, leaf)| leaf == trimmed)
+        })
+    }
+
+    /// Looks up a hardware [`CsrRegisterDescriptor`] on this [`ChipRegisterMap`] by physical BAR0 MMIO byte offset.
+    ///
+    /// # Arguments
+    ///
+    /// * `byte_offset` - Physical BAR0 MMIO byte offset.
+    #[must_use]
+    pub fn lookup_by_offset(&self, byte_offset: u64) -> Option<CsrRegisterDescriptor> {
+        self.csr_descriptors()
+            .into_iter()
+            .find(|desc| desc.byte_offset == byte_offset)
+    }
+
+    /// Looks up a hardware [`CsrRegisterDescriptor`] by full or suffix symbolic name
+    /// (e.g., `"tc_0.tcs_core_state.RUN_STATUS"`, `"RUN_STATUS"`, `"PC"`, `"GLOBAL_CHIP_ID"`).
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Cloud TPU hardware generation (`V2..=V7x`).
+    /// * `query_name` - Full hierarchical CSR path or leaf register name.
+    #[must_use]
+    pub fn lookup_csr_by_name(
+        generation: TpuGeneration,
+        query_name: &str,
+    ) -> Option<CsrRegisterDescriptor> {
+        Self::for_generation(generation).lookup_by_name(query_name)
+    }
+
+    /// Looks up a hardware [`CsrRegisterDescriptor`] by physical BAR0 MMIO byte offset.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Cloud TPU hardware generation (`V2..=V7x`).
+    /// * `byte_offset` - Physical BAR0 MMIO byte offset.
+    #[must_use]
+    pub fn lookup_csr_by_offset(
+        generation: TpuGeneration,
+        byte_offset: u64,
+    ) -> Option<CsrRegisterDescriptor> {
+        Self::for_generation(generation).lookup_by_offset(byte_offset)
     }
 }
 

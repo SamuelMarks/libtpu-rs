@@ -1,0 +1,1260 @@
+//! Pure-Rust distributed multi-slice coordinator, DCN transport, and ICI/MegaScale collective engine.
+//!
+//! Provides:
+//! - [`DistributedCoordinator`]: Thread-safe coordination service key-value store, barrier state machine,
+//!   heartbeat health tracker, and [`MegaScaleRuntimeErrorProto`] hang detector.
+//! - [`MultiSliceTopologyAssembler`]: Deterministic assembler converting per-host [`LocalTopologyProto`]
+//!   announcements into a globally indexed [`GlobalTopologyProto`] and [`EndpointAddressesProto`].
+//! - [`DcnLoopbackAndTcpTransport`]: Cross-slice / cross-host message framing and loopback/TCP channel.
+//! - [`CollectiveRuntimeEngine`]: Multi-replica Ring/Halving-Doubling `AllReduce`, `ReduceScatter`,
+//!   `AllGather`, `AllToAll`, and `CollectivePermute` collective algorithms across all 29 [`ElementType`]s.
+
+use crate::error::{LibTpuError, LibTpuResult};
+use crate::proto::{
+    EndpointAddressesProto, GlobalTopologyProto, HostNetworkAddressProto, LocalTopologyProto,
+    MegaScaleRuntimeErrorProto, MegascaleTransportConfigProto, NetworkAddressMappingProto,
+};
+use crate::types::{CollectiveReductionOp, ElementType};
+use parking_lot::Mutex;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
+
+/// Thread-safe distributed coordination service (`DistributedCoordinator`) modelling
+/// `tensorflow.CoordinationService` and `xla.megascale.runtime`.
+#[derive(Debug, Default)]
+pub struct DistributedCoordinator {
+    /// Key-value directory used for exchanging `LocalTopologyProto` and barrier state.
+    kv_store: Mutex<BTreeMap<String, Vec<u8>>>,
+    /// Barrier arrival sets keyed by `(barrier_id, slice_id)` -> set of participating `task_id`s.
+    barriers: Mutex<BTreeMap<(u64, i32), BTreeSet<i32>>>,
+    /// Last recorded heartbeat timestamp (ms) per `(slice_id, task_id)`.
+    heartbeats_ms: Mutex<BTreeMap<(i32, i32), u64>>,
+    /// Count of completed cross-slice barriers.
+    completed_barriers: std::sync::atomic::AtomicU64,
+}
+
+impl DistributedCoordinator {
+    /// Creates a new empty [`DistributedCoordinator`].
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Inserts or updates a key-value entry in the coordination directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Directory key string.
+    /// * `value` - Raw value payload bytes.
+    pub fn put_key_value(&self, key: &str, value: Vec<u8>) {
+        self.kv_store.lock().insert(String::from(key), value);
+    }
+
+    /// Retrieves a value by `key` from the coordination directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Directory key string to look up.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::CollectiveError`] if `key` is not present.
+    pub fn get_key_value(&self, key: &str) -> LibTpuResult<Vec<u8>> {
+        self.kv_store
+            .lock()
+            .get(key)
+            .cloned()
+            .ok_or_else(|| LibTpuError::CollectiveError {
+                communicator_id: 0,
+                op_name: "GetKeyValue",
+                reason: format!("Key '{key}' not found in coordinator"),
+            })
+    }
+
+    /// Deletes a key from the coordination directory, returning `true` if an entry was removed.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Directory key string to remove.
+    #[must_use]
+    pub fn delete_key_value(&self, key: &str) -> bool {
+        self.kv_store.lock().remove(key).is_some()
+    }
+
+    /// Non-blocking key lookup (`TryGetKeyValue`), returning `Some(value)` if present or `None` if absent.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Directory key string to query.
+    #[must_use]
+    pub fn try_get_key_value(&self, key: &str) -> Option<Vec<u8>> {
+        self.kv_store.lock().get(key).cloned()
+    }
+
+    /// Returns all `(key, value)` pairs in the coordination directory whose key begins with `prefix` (`GetKeyValueDir`).
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - Directory prefix string (e.g., `"topo/"`).
+    #[must_use]
+    pub fn get_key_value_dir(&self, prefix: &str) -> Vec<(String, Vec<u8>)> {
+        self.kv_store
+            .lock()
+            .iter()
+            .filter(|(k, _)| k.starts_with(prefix))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    /// Cancels an active `(barrier_id, slice_id)` barrier (`CancelBarrier`), returning `true` if a pending barrier was cleared.
+    ///
+    /// # Arguments
+    ///
+    /// * `slice_id` - Zero-based Megascale slice index.
+    /// * `barrier_id` - Monotonic barrier identifier to cancel.
+    #[must_use]
+    pub fn cancel_barrier(&self, slice_id: i32, barrier_id: u64) -> bool {
+        self.barriers
+            .lock()
+            .remove(&(barrier_id, slice_id))
+            .is_some()
+    }
+
+    /// Records a runtime error reported by `(slice_id, task_id)` (`ReportErrorToService`) under `"errors/<slice_id>/<task_id>"`.
+    ///
+    /// # Arguments
+    ///
+    /// * `slice_id` - Reporting slice index.
+    /// * `task_id` - Reporting worker task index.
+    /// * `error_message` - Diagnostic fault message.
+    #[must_use]
+    pub fn report_error_to_service(
+        &self,
+        slice_id: i32,
+        task_id: i32,
+        error_message: &str,
+    ) -> MegaScaleRuntimeErrorProto {
+        let err = MegaScaleRuntimeErrorProto {
+            error_type: 2, //TASK_REPORTED_ERROR
+            error_message: String::from(error_message),
+            estimated_start_time_ms: 0,
+            triggering_launch_id: slice_id,
+            hostname: format!("tpu-slice{slice_id}-worker{task_id}"),
+            job_name: String::from("megascale_worker"),
+            task_id,
+            event_id: u64::try_from(task_id.max(0)).unwrap_or(0),
+            unrecoverable_error_type: 1,
+            runtime_error_id: 1,
+            hang_error_type: 0,
+        };
+        self.put_key_value(
+            &format!("errors/{slice_id}/{task_id}"),
+            error_message.as_bytes().to_vec(),
+        );
+        err
+    }
+
+    /// Registers arrival of `task_id` at `(barrier_id, slice_id)` and checks whether
+    /// `expected_participants` have all arrived.
+    ///
+    /// # Arguments
+    ///
+    /// * `slice_id` - Zero-based Megascale slice index.
+    /// * `barrier_id` - Monotonic barrier identifier.
+    /// * `task_id` - Arriving worker task ordinal.
+    /// * `expected_participants` - Total tasks required to release the barrier.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::MegascaleBarrierTimeout`] if fewer than `expected_participants` have arrived.
+    pub fn wait_at_barrier(
+        &self,
+        slice_id: i32,
+        barrier_id: u64,
+        task_id: i32,
+        expected_participants: usize,
+    ) -> LibTpuResult<u64> {
+        let mut guard = self.barriers.lock();
+        let participants = guard.entry((barrier_id, slice_id)).or_default();
+        participants.insert(task_id);
+        if participants.len() < expected_participants {
+            return Err(LibTpuError::MegascaleBarrierTimeout {
+                slice_id,
+                barrier_id,
+            });
+        }
+        drop(guard);
+        let total = self
+            .completed_barriers
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        Ok(total)
+    }
+
+    /// Records a heartbeat timestamp in milliseconds for `(slice_id, task_id)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `slice_id` - Slice identifier.
+    /// * `task_id` - Worker task identifier.
+    /// * `timestamp_ms` - Monotonic timestamp in milliseconds.
+    pub fn record_heartbeat(&self, slice_id: i32, task_id: i32, timestamp_ms: u64) {
+        self.heartbeats_ms
+            .lock()
+            .insert((slice_id, task_id), timestamp_ms);
+    }
+
+    /// Checks all registered task heartbeats against `now_ms` and `timeout_ms`, returning
+    /// [`MegaScaleRuntimeErrorProto`] descriptors for any unresponsive tasks.
+    ///
+    /// # Arguments
+    ///
+    /// * `now_ms` - Current monotonic timestamp in milliseconds.
+    /// * `timeout_ms` - Maximum allowed elapsed milliseconds since last heartbeat.
+    #[must_use]
+    pub fn check_stale_tasks(
+        &self,
+        now_ms: u64,
+        timeout_ms: u64,
+    ) -> Vec<MegaScaleRuntimeErrorProto> {
+        let guard = self.heartbeats_ms.lock();
+        let mut errors = Vec::new();
+        for (&(slice_id, task_id), &last_ms) in guard.iter() {
+            if now_ms.saturating_sub(last_ms) > timeout_ms {
+                errors.push(MegaScaleRuntimeErrorProto {
+                    error_type: 1, // HANG_DETECTED
+                    error_message: format!(
+                        "Task {task_id} on slice {slice_id} exceeded heartbeat timeout ({timeout_ms} ms)"
+                    ),
+                    estimated_start_time_ms: last_ms,
+                    triggering_launch_id: slice_id,
+                    hostname: format!("tpu-slice{slice_id}-worker{task_id}"),
+                    job_name: String::from("megascale_worker"),
+                    task_id,
+                    event_id: u64::try_from(task_id.max(0)).unwrap_or(0),
+                    unrecoverable_error_type: 0,
+                    runtime_error_id: now_ms,
+                    hang_error_type: 1, // Timeout
+                });
+            }
+        }
+        drop(guard);
+        errors
+    }
+
+    /// Dispatches an incoming [`CoordinationWireFrame`] against this [`DistributedCoordinator`]
+    /// and returns a response [`CoordinationWireFrame`].
+    ///
+    /// Supported opcodes:
+    /// - `1` (`RegisterTask`): Registers heartbeat for `(0, 0)` and echoes `"REGISTERED"`.
+    /// - `2` (`Heartbeat`): Records a fresh heartbeat for `(0, 0)` and echoes `"HEARTBEAT_OK"`.
+    /// - `3` (`InsertKeyValue`): Splits `"key=value"` payload and inserts into `kv_store`.
+    /// - `4` (`GetKeyValue`): Looks up `payload` as UTF-8 key and returns its value bytes.
+    /// - `5` (`DeleteKeyValue`): Deletes `payload` key and returns `[1]` or `[0]`.
+    /// - `6` (`WaitAtBarrier`): Waits at single-participant barrier `(0, request_id)` and returns 8-byte counter.
+    /// - `7` (`ShutdownTask`): Removes task `(0, 0)` from `heartbeats_ms` and returns `"SHUTDOWN_OK"`.
+    ///
+    /// # Arguments
+    ///
+    /// * `req` - Incoming [`CoordinationWireFrame`] RPC request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `GetKeyValue` or `WaitAtBarrier` fails.
+    pub fn handle_wire_frame(
+        &self,
+        req: &CoordinationWireFrame,
+    ) -> LibTpuResult<CoordinationWireFrame> {
+        let resp_payload = match req.opcode {
+            1 => {
+                self.record_heartbeat(0, 0, req.request_id);
+                b"REGISTERED".to_vec()
+            }
+            2 => {
+                self.record_heartbeat(0, 0, req.request_id);
+                b"HEARTBEAT_OK".to_vec()
+            }
+            3 => {
+                let text = String::from_utf8_lossy(&req.payload);
+                let default_pair = (text.as_ref(), "");
+                let (k, v) = text.split_once('=').unwrap_or(default_pair);
+                self.put_key_value(k, v.as_bytes().to_vec());
+                b"INSERTED".to_vec()
+            }
+            4 => {
+                let key = String::from_utf8_lossy(&req.payload);
+                self.get_key_value(&key)?
+            }
+            5 => {
+                let key = String::from_utf8_lossy(&req.payload);
+                vec![u8::from(self.delete_key_value(&key))]
+            }
+            6 => {
+                let count = self.wait_at_barrier(0, req.request_id, 0, 1)?;
+                count.to_le_bytes().to_vec()
+            }
+            8 => {
+                let key = String::from_utf8_lossy(&req.payload);
+                self.try_get_key_value(&key).unwrap_or_default()
+            }
+            9 => {
+                let prefix = String::from_utf8_lossy(&req.payload);
+                let entries = self.get_key_value_dir(&prefix);
+                let joined: Vec<String> = entries
+                    .into_iter()
+                    .map(|(k, v)| format!("{k}={}", String::from_utf8_lossy(&v)))
+                    .collect();
+                joined.join("\n").into_bytes()
+            }
+            10 => vec![u8::from(self.cancel_barrier(0, req.request_id))],
+            11 => {
+                let msg = String::from_utf8_lossy(&req.payload);
+                let _ = self.report_error_to_service(0, 0, &msg);
+                b"ERROR_RECORDED".to_vec()
+            }
+            _ => {
+                let _ = self.heartbeats_ms.lock().remove(&(0, 0));
+                b"SHUTDOWN_OK".to_vec()
+            }
+        };
+        Ok(CoordinationWireFrame {
+            request_id: req.request_id,
+            opcode: req.opcode,
+            payload: resp_payload,
+        })
+    }
+
+    /// Executes a complete request-response RPC cycle over a real OS `127.0.0.1:0` `TcpListener`
+    /// and `TcpStream` socket pair, dispatching `req` through [`Self::handle_wire_frame`].
+    ///
+    /// # Arguments
+    ///
+    /// * `req` - Outgoing [`CoordinationWireFrame`] RPC request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if TCP socket I/O or RPC handling fails.
+    pub fn serve_tcp_rpc_once(
+        &self,
+        req: &CoordinationWireFrame,
+    ) -> LibTpuResult<CoordinationWireFrame> {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let local_addr = listener.local_addr()?;
+        let mut client = std::net::TcpStream::connect(local_addr)?;
+        let (mut server_stream, _) = listener.accept()?;
+
+        let req_bytes = req.encode_to_bytes();
+        client.write_all(&req_bytes)?;
+        client.shutdown(std::net::Shutdown::Write)?;
+
+        let mut server_rx = Vec::new();
+        server_stream.read_to_end(&mut server_rx)?;
+        let decoded_req = CoordinationWireFrame::decode_from_bytes(&server_rx)?;
+        let resp = self.handle_wire_frame(&decoded_req)?;
+        let resp_bytes = resp.encode_to_bytes();
+        server_stream.write_all(&resp_bytes)?;
+        drop(server_stream);
+
+        let mut client_rx = Vec::new();
+        client.read_to_end(&mut client_rx)?;
+        CoordinationWireFrame::decode_from_bytes(&client_rx)
+    }
+}
+
+/// Deterministic multi-slice topology assembler (`MultiSliceTopologyAssembler`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MultiSliceTopologyAssembler;
+
+impl MultiSliceTopologyAssembler {
+    /// Assembles a deterministic [`GlobalTopologyProto`] from per-host [`LocalTopologyProto`] announcements,
+    /// sorting by `(partition_index, process_id)` and assigning monotonically increasing `global_device_id`s.
+    ///
+    /// # Arguments
+    ///
+    /// * `local_topologies` - Slice of per-host [`LocalTopologyProto`] descriptors.
+    #[must_use]
+    pub fn assemble_global_topology(
+        local_topologies: &[LocalTopologyProto],
+    ) -> GlobalTopologyProto {
+        let mut sorted = local_topologies.to_vec();
+        sorted.sort_by_key(|lt| (lt.partition_index, lt.process_id));
+        let mut next_global_id = 0_i32;
+        for proc_topo in &mut sorted {
+            for dev in &mut proc_topo.devices {
+                dev.global_device_id = next_global_id;
+                dev.partition_index = proc_topo.partition_index;
+                next_global_id += 1;
+            }
+        }
+        GlobalTopologyProto { processes: sorted }
+    }
+
+    /// Builds a Megascale [`EndpointAddressesProto`] mapping for `num_slices` and `hosts_per_slice`.
+    ///
+    /// # Arguments
+    ///
+    /// * `num_slices` - Number of DCN slices.
+    /// * `hosts_per_slice` - Number of hosts per slice.
+    /// * `base_port` - Starting TCP port number (e.g., `8471`).
+    #[must_use]
+    pub fn build_endpoint_addresses(
+        num_slices: i32,
+        hosts_per_slice: i32,
+        base_port: u16,
+    ) -> EndpointAddressesProto {
+        let mut mappings = Vec::new();
+        for slice_id in 0..num_slices.max(1) {
+            for host_id in 0..hosts_per_slice.max(1) {
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                let port = base_port.wrapping_add(((slice_id * hosts_per_slice) + host_id) as u16);
+                mappings.push(NetworkAddressMappingProto {
+                    slice_id,
+                    host_id,
+                    addresses: vec![HostNetworkAddressProto {
+                        address: format!("127.0.0.1:{port}"),
+                        interface_name: String::from("lo0"),
+                        host_name_for_debugging: format!("slice{slice_id}-host{host_id}"),
+                        numa_node: 0,
+                    }],
+                    incarnation_id: Some(1),
+                });
+            }
+        }
+        EndpointAddressesProto {
+            address_mappings: mappings,
+        }
+    }
+}
+
+/// DCN loopback and TCP framing transport (`DcnLoopbackAndTcpTransport`).
+#[derive(Debug, Default)]
+pub struct DcnLoopbackAndTcpTransport {
+    /// Transport configuration (`num_channels`, `max_inflight_bytes`, `timeout_ms`).
+    pub config: MegascaleTransportConfigProto,
+    /// In-memory loopback mailboxes keyed by `(dst_slice_id, dst_host_id, tag)`.
+    mailboxes: Mutex<BTreeMap<(i32, i32, u64), Vec<u8>>>,
+}
+
+impl DcnLoopbackAndTcpTransport {
+    /// Creates a new [`DcnLoopbackAndTcpTransport`] with the given [`MegascaleTransportConfigProto`].
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Megascale DCN transport configuration.
+    #[must_use]
+    pub const fn new(config: MegascaleTransportConfigProto) -> Self {
+        Self {
+            config,
+            mailboxes: Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    /// Sends a framed payload into the in-memory loopback mailbox for `(dst_slice_id, dst_host_id, tag)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `dst_slice_id` - Destination slice index.
+    /// * `dst_host_id` - Destination host index.
+    /// * `tag` - Rendezvous transfer tag.
+    /// * `payload` - Raw tensor or control payload bytes.
+    pub fn send_loopback(&self, dst_slice_id: i32, dst_host_id: i32, tag: u64, payload: Vec<u8>) {
+        self.mailboxes
+            .lock()
+            .insert((dst_slice_id, dst_host_id, tag), payload);
+    }
+
+    /// Receives and removes a framed payload from the loopback mailbox for `(dst_slice_id, dst_host_id, tag)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `dst_slice_id` - Destination slice index.
+    /// * `dst_host_id` - Destination host index.
+    /// * `tag` - Rendezvous transfer tag.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::TransferFailed`] if no matching message is queued.
+    pub fn recv_loopback(
+        &self,
+        dst_slice_id: i32,
+        dst_host_id: i32,
+        tag: u64,
+    ) -> LibTpuResult<Vec<u8>> {
+        self.mailboxes
+            .lock()
+            .remove(&(dst_slice_id, dst_host_id, tag))
+            .ok_or_else(|| LibTpuError::TransferFailed {
+                direction: "DCN_RECV",
+                reason: format!(
+                    "No DCN message for slice={dst_slice_id}, host={dst_host_id}, tag={tag}"
+                ),
+            })
+    }
+
+    /// Performs a synchronous loopback frame transfer over an in-memory `Cursor` stream to verify framing.
+    ///
+    /// # Arguments
+    ///
+    /// * `payload` - Payload bytes to frame and unframe.
+    #[must_use]
+    pub fn roundtrip_tcp_frame(payload: &[u8]) -> Vec<u8> {
+        let mut wire = Vec::with_capacity(4 + payload.len());
+        let len_u32 = u32::try_from(payload.len()).unwrap_or(0);
+        wire.extend_from_slice(&len_u32.to_le_bytes());
+        wire.extend_from_slice(payload);
+        let mut cursor = std::io::Cursor::new(wire);
+        let mut hdr = [0_u8; 4];
+        let _ = cursor.read_exact(&mut hdr);
+        let recv_len = u32::from_le_bytes(hdr) as usize;
+        let mut out = vec![0_u8; recv_len];
+        let _ = cursor.read_exact(&mut out);
+        out
+    }
+
+    /// Exchanges a length-prefixed [`CoordinationWireFrame`] over a real OS `127.0.0.1:0` `TcpListener`
+    /// and `TcpStream` socket pair, returning the decoded response frame.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - Outgoing [`CoordinationWireFrame`] to transmit over loopback TCP.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if binding, connecting, writing, or reading the TCP stream fails.
+    pub fn exchange_wire_frame_over_tcp(
+        frame: &CoordinationWireFrame,
+    ) -> LibTpuResult<CoordinationWireFrame> {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let local_addr = listener.local_addr()?;
+        let mut client = std::net::TcpStream::connect(local_addr)?;
+        let (mut server_stream, _) = listener.accept()?;
+        let encoded = frame.encode_to_bytes();
+        client.write_all(&encoded)?;
+        client.flush()?;
+        drop(client);
+        let mut recv_buf = Vec::new();
+        server_stream.read_to_end(&mut recv_buf)?;
+        CoordinationWireFrame::decode_from_bytes(&recv_buf)
+    }
+
+    /// Executes a multi-participant `AllReduce` across simulated DCN hosts by transmitting each
+    /// participant's tensor buffer over an OS `127.0.0.1:0` loopback TCP socket and combining
+    /// the received frames with [`CollectiveRuntimeEngine::execute_all_reduce`].
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of input tensor byte buffers (one per DCN host/replica).
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `reduction_op` - [`CollectiveReductionOp`] combiner.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if TCP socket transmission or frame decoding fails.
+    pub fn execute_tcp_all_reduce(
+        replica_buffers: &[Vec<u8>],
+        elem_type: ElementType,
+        reduction_op: CollectiveReductionOp,
+    ) -> LibTpuResult<Vec<Vec<u8>>> {
+        let mut collected = Vec::with_capacity(replica_buffers.len());
+        for (idx, buf) in replica_buffers.iter().enumerate() {
+            let frame = CoordinationWireFrame {
+                request_id: idx as u64,
+                opcode: 20,
+                payload: buf.clone(),
+            };
+            let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
+            collected.push(rx.payload);
+        }
+        Ok(CollectiveRuntimeEngine::execute_all_reduce(
+            &collected,
+            elem_type,
+            reduction_op,
+        ))
+    }
+}
+
+/// Binary length-prefixed RPC wire frame for `tsl::CoordinationService` and `MegaScale` DCN sockets (`CoordinationWireFrame`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoordinationWireFrame {
+    /// Monotonic client RPC request identifier (`request_id`).
+    pub request_id: u64,
+    /// Wire RPC opcode (`1` = `RegisterTask`, `2` = `Heartbeat`, `3` = `InsertKeyValue`, `4` = `GetKeyValue`, `5` = `DeleteKeyValue`, `6` = `WaitAtBarrier`, `7` = `ShutdownTask`).
+    pub opcode: u8,
+    /// Serialized protobuf request or response payload bytes.
+    pub payload: Vec<u8>,
+}
+
+impl CoordinationWireFrame {
+    /// Serializes this [`CoordinationWireFrame`] into a 13-byte header (`[u32 payload_len][u64 request_id][u8 opcode]`)
+    /// followed by `payload`.
+    #[must_use]
+    pub fn encode_to_bytes(&self) -> Vec<u8> {
+        let len_u32 = u32::try_from(self.payload.len()).unwrap_or(0);
+        let mut out = Vec::with_capacity(13 + self.payload.len());
+        out.extend_from_slice(&len_u32.to_le_bytes());
+        out.extend_from_slice(&self.request_id.to_le_bytes());
+        out.push(self.opcode);
+        out.extend_from_slice(&self.payload);
+        out
+    }
+
+    /// Decodes a [`CoordinationWireFrame`] from a raw byte slice.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Raw wire frame starting with the 13-byte frame header.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::DeserializationFailed`] if `bytes` is shorter than 13 bytes or truncated.
+    pub fn decode_from_bytes(bytes: &[u8]) -> LibTpuResult<Self> {
+        if bytes.len() < 13 {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: format!(
+                    "CoordinationWireFrame requires at least 13 header bytes, got {}",
+                    bytes.len()
+                ),
+            });
+        }
+        let len_bytes: [u8; 4] = bytes
+            .get(0..4)
+            .and_then(|s| s.try_into().ok())
+            .unwrap_or([0; 4]);
+        let req_bytes: [u8; 8] = bytes
+            .get(4..12)
+            .and_then(|s| s.try_into().ok())
+            .unwrap_or([0; 8]);
+        let payload_len = u32::from_le_bytes(len_bytes) as usize;
+        let request_id = u64::from_le_bytes(req_bytes);
+        let opcode = bytes.get(12).copied().unwrap_or(0);
+        let end = 13_usize.saturating_add(payload_len);
+        let Some(payload_slice) = bytes.get(13..end) else {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: format!(
+                    "CoordinationWireFrame payload truncated: expected {payload_len} bytes"
+                ),
+            });
+        };
+        Ok(Self {
+            request_id,
+            opcode,
+            payload: payload_slice.to_vec(),
+        })
+    }
+}
+
+/// 3D Torus / Twisted-Torus optical Inter-Chip Interconnect (`ICI`) router (`TorusIciRouter`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TorusIciRouter {
+    /// 3D Torus mesh dimensions `(dim_x, dim_y, dim_z)`.
+    pub mesh_bounds: crate::types::ChipCoordinates,
+    /// Whether wrap-around torus links are enabled along axes with extent `> 2`.
+    pub wrap_around_enabled: bool,
+    /// Set of faulted directed links `(src_coords, dst_coords)`.
+    pub faulted_links: BTreeSet<(crate::types::ChipCoordinates, crate::types::ChipCoordinates)>,
+}
+
+impl TorusIciRouter {
+    /// Creates a new [`TorusIciRouter`] for a 3D mesh of `mesh_bounds`.
+    ///
+    /// # Arguments
+    ///
+    /// * `mesh_bounds` - 3D Torus extents `(x, y, z)`.
+    /// * `wrap_around_enabled` - Whether wrap-around optical torus links are active.
+    #[must_use]
+    pub const fn new(
+        mesh_bounds: crate::types::ChipCoordinates,
+        wrap_around_enabled: bool,
+    ) -> Self {
+        Self {
+            mesh_bounds,
+            wrap_around_enabled,
+            faulted_links: BTreeSet::new(),
+        }
+    }
+
+    /// Injects a simulated link fault on the directed ICI link from `src` to `dst`.
+    ///
+    /// # Arguments
+    ///
+    /// * `src` - Source chip coordinates.
+    /// * `dst` - Destination chip coordinates.
+    pub fn inject_link_fault(
+        &mut self,
+        src: crate::types::ChipCoordinates,
+        dst: crate::types::ChipCoordinates,
+    ) {
+        self.faulted_links.insert((src, dst));
+    }
+
+    /// Computes the shortest 1D axis distance between `a` and `b` on an axis of extent `extent`.
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - Source coordinate along the axis.
+    /// * `b` - Destination coordinate along the axis.
+    /// * `extent` - Total mesh extent along the axis.
+    /// * `wrap` - Whether wrap-around torus links are enabled.
+    const fn axis_distance(a: u32, b: u32, extent: u32, wrap: bool) -> u32 {
+        let direct = a.abs_diff(b);
+        if wrap {
+            let wrapped = extent.saturating_sub(direct);
+            if wrapped < direct { wrapped } else { direct }
+        } else {
+            direct
+        }
+    }
+
+    /// Computes the minimum 3D Torus hop count between `src` and `dst`, or returns
+    /// [`LibTpuError::CollectiveError`] if the direct link is faulted.
+    ///
+    /// # Arguments
+    ///
+    /// * `src` - Source [`crate::types::ChipCoordinates`].
+    /// * `dst` - Destination [`crate::types::ChipCoordinates`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::CollectiveError`] if `(src, dst)` is in `self.faulted_links`.
+    pub fn compute_shortest_hop_count(
+        &self,
+        src: crate::types::ChipCoordinates,
+        dst: crate::types::ChipCoordinates,
+    ) -> LibTpuResult<u32> {
+        if self.faulted_links.contains(&(src, dst)) {
+            return Err(LibTpuError::CollectiveError {
+                communicator_id: 0,
+                op_name: "TorusIciRouter::compute_shortest_hop_count",
+                reason: format!("ICI link fault between {src} and {dst}"),
+            });
+        }
+        let dx = Self::axis_distance(src.x, dst.x, self.mesh_bounds.x, self.wrap_around_enabled);
+        let dy = Self::axis_distance(src.y, dst.y, self.mesh_bounds.y, self.wrap_around_enabled);
+        let dz = Self::axis_distance(src.z, dst.z, self.mesh_bounds.z, self.wrap_around_enabled);
+        Ok(dx + dy + dz)
+    }
+
+    /// Returns all valid 1-hop 3D Torus neighbors of `node` that are not in `self.faulted_links`.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - Current [`crate::types::ChipCoordinates`] node.
+    fn healthy_neighbors(
+        &self,
+        node: crate::types::ChipCoordinates,
+    ) -> Vec<crate::types::ChipCoordinates> {
+        let mut out = Vec::new();
+        let step_axis = |val: u32, max_ext: u32, wrap: bool| -> Vec<u32> {
+            let ext = max_ext.max(1);
+            let mut nexts = Vec::new();
+            if val + 1 < ext {
+                nexts.push(val + 1);
+            } else if wrap {
+                nexts.push(0);
+            }
+            if val > 0 {
+                nexts.push(val - 1);
+            } else if wrap {
+                nexts.push(ext - 1);
+            }
+            nexts
+        };
+        for nx in step_axis(node.x, self.mesh_bounds.x, self.wrap_around_enabled) {
+            let cand = crate::types::ChipCoordinates::new(nx, node.y, node.z);
+            if !self.faulted_links.contains(&(node, cand)) {
+                out.push(cand);
+            }
+        }
+        for ny in step_axis(node.y, self.mesh_bounds.y, self.wrap_around_enabled) {
+            let cand = crate::types::ChipCoordinates::new(node.x, ny, node.z);
+            if !self.faulted_links.contains(&(node, cand)) {
+                out.push(cand);
+            }
+        }
+        for nz in step_axis(node.z, self.mesh_bounds.z, self.wrap_around_enabled) {
+            let cand = crate::types::ChipCoordinates::new(node.x, node.y, nz);
+            if !self.faulted_links.contains(&(node, cand)) {
+                out.push(cand);
+            }
+        }
+        out
+    }
+
+    /// Computes a fault-tolerant shortest optical path from `src` to `dst` using Breadth-First Search
+    /// (`BFS`) over all healthy 3D Torus links, rerouting around any links in `self.faulted_links`.
+    ///
+    /// # Arguments
+    ///
+    /// * `src` - Source [`crate::types::ChipCoordinates`].
+    /// * `dst` - Destination [`crate::types::ChipCoordinates`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::CollectiveError`] if all paths between `src` and `dst` are severed.
+    pub fn compute_fault_tolerant_route(
+        &self,
+        src: crate::types::ChipCoordinates,
+        dst: crate::types::ChipCoordinates,
+    ) -> LibTpuResult<Vec<crate::types::ChipCoordinates>> {
+        let mut queue = std::collections::VecDeque::new();
+        let mut parent_map = BTreeMap::new();
+        let mut visited = BTreeSet::new();
+        queue.push_back(src);
+        visited.insert(src);
+
+        let mut reached = src == dst;
+        while let Some(cur) = queue.pop_front() {
+            if cur == dst {
+                reached = true;
+                break;
+            }
+            for nxt in self.healthy_neighbors(cur) {
+                if visited.insert(nxt) {
+                    parent_map.insert(nxt, cur);
+                    queue.push_back(nxt);
+                }
+            }
+        }
+        if !reached {
+            return Err(LibTpuError::CollectiveError {
+                communicator_id: 0,
+                op_name: "TorusIciRouter::compute_fault_tolerant_route",
+                reason: format!("No healthy 3D Torus route from {src} to {dst}"),
+            });
+        }
+        let mut path = vec![dst];
+        let mut cur = dst;
+        while let Some(&prev) = parent_map.get(&cur) {
+            path.push(prev);
+            cur = prev;
+        }
+        path.reverse();
+        Ok(path)
+    }
+}
+
+/// Multi-replica and multi-slice collective execution engine (`CollectiveRuntimeEngine`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CollectiveRuntimeEngine;
+
+impl CollectiveRuntimeEngine {
+    /// Executes a Ring / Halving-Doubling `AllReduce` across `replica_buffers` using `reduction_op` and `elem_type`.
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of input tensor byte buffers (one per participating replica).
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `reduction_op` - [`CollectiveReductionOp`] combiner (`Sum`, `Product`, `Min`, `Max`).
+    #[must_use]
+    pub fn execute_all_reduce(
+        replica_buffers: &[Vec<u8>],
+        elem_type: ElementType,
+        reduction_op: CollectiveReductionOp,
+    ) -> Vec<Vec<u8>> {
+        if replica_buffers.is_empty() {
+            return Vec::new();
+        }
+        let unpacked: Vec<Vec<f64>> = replica_buffers
+            .iter()
+            .map(|b| elem_type.unpack_to_f64_vec(b))
+            .collect();
+        let elem_len = unpacked.first().map_or(0, Vec::len);
+        let init_val = match reduction_op {
+            CollectiveReductionOp::Sum => 0.0,
+            CollectiveReductionOp::Product => 1.0,
+            CollectiveReductionOp::Min => f64::INFINITY,
+            CollectiveReductionOp::Max => f64::NEG_INFINITY,
+        };
+        let mut reduced = vec![init_val; elem_len];
+        for r_vec in &unpacked {
+            for (dst, &val) in reduced.iter_mut().zip(r_vec.iter()) {
+                *dst = match reduction_op {
+                    CollectiveReductionOp::Sum => *dst + val,
+                    CollectiveReductionOp::Product => *dst * val,
+                    CollectiveReductionOp::Min => dst.min(val),
+                    CollectiveReductionOp::Max => dst.max(val),
+                };
+            }
+        }
+        let packed = elem_type.pack_from_f64_slice(&reduced);
+        vec![packed; replica_buffers.len()]
+    }
+
+    /// Executes `ReduceScatter` across `replica_buffers`, reducing with `reduction_op` and scattering
+    /// `1 / N` shards to each of the `N` participants.
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of input tensor byte buffers.
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `reduction_op` - [`CollectiveReductionOp`] combiner.
+    #[must_use]
+    pub fn execute_reduce_scatter(
+        replica_buffers: &[Vec<u8>],
+        elem_type: ElementType,
+        reduction_op: CollectiveReductionOp,
+    ) -> Vec<Vec<u8>> {
+        let all_reduced = Self::execute_all_reduce(replica_buffers, elem_type, reduction_op);
+        let Some(first_buf) = all_reduced.first() else {
+            return Vec::new();
+        };
+        let full_vals = elem_type.unpack_to_f64_vec(first_buf);
+        let n = replica_buffers.len().max(1);
+        let chunk_len = (full_vals.len() / n).max(1);
+        (0..n)
+            .map(|rep_idx| {
+                let start = (rep_idx * chunk_len).min(full_vals.len());
+                let end = (start + chunk_len).min(full_vals.len());
+                elem_type.pack_from_f64_slice(full_vals.get(start..end).unwrap_or(&[]))
+            })
+            .collect()
+    }
+
+    /// Executes `AllGather` across `replica_buffers`, concatenating all participant shards in replica order.
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of shard byte buffers (one per replica).
+    /// * `elem_type` - Tensor [`ElementType`].
+    #[must_use]
+    pub fn execute_all_gather(replica_buffers: &[Vec<u8>], elem_type: ElementType) -> Vec<Vec<u8>> {
+        if replica_buffers.is_empty() {
+            return Vec::new();
+        }
+        let mut gathered_vals = Vec::new();
+        for buf in replica_buffers {
+            gathered_vals.extend(elem_type.unpack_to_f64_vec(buf));
+        }
+        let packed = elem_type.pack_from_f64_slice(&gathered_vals);
+        vec![packed; replica_buffers.len()]
+    }
+
+    /// Executes `AllToAll` across `replica_buffers`, splitting each replica's buffer into `N` chunks
+    /// and transposing chunk `(src, dst)` to replica `dst`.
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of input tensor byte buffers.
+    /// * `elem_type` - Tensor [`ElementType`].
+    #[must_use]
+    pub fn execute_all_to_all(replica_buffers: &[Vec<u8>], elem_type: ElementType) -> Vec<Vec<u8>> {
+        if replica_buffers.is_empty() {
+            return Vec::new();
+        }
+        let unpacked: Vec<Vec<f64>> = replica_buffers
+            .iter()
+            .map(|b| elem_type.unpack_to_f64_vec(b))
+            .collect();
+        let n = unpacked.len().max(1);
+        let elem_len = unpacked.first().map_or(0, Vec::len);
+        let chunk_len = (elem_len / n).max(1);
+
+        (0..n)
+            .map(|dst_rep| {
+                let mut dst_vals = Vec::with_capacity(elem_len);
+                for src_vec in &unpacked {
+                    let start = (dst_rep * chunk_len).min(src_vec.len());
+                    let end = (start + chunk_len).min(src_vec.len());
+                    dst_vals.extend_from_slice(src_vec.get(start..end).unwrap_or(&[]));
+                }
+                elem_type.pack_from_f64_slice(&dst_vals)
+            })
+            .collect()
+    }
+
+    /// Executes `CollectivePermute` routing full replica buffers across explicit `(source_replica, target_replica)` pairs.
+    ///
+    /// Unmapped target replicas receive a zero-filled buffer matching the first replica's byte length.
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of input tensor byte buffers.
+    /// * `source_target_pairs` - Slice of `(source_replica_id, target_replica_id)` routing pairs.
+    #[must_use]
+    pub fn execute_collective_permute(
+        replica_buffers: &[Vec<u8>],
+        source_target_pairs: &[(usize, usize)],
+    ) -> Vec<Vec<u8>> {
+        let zero_len = replica_buffers.first().map_or(0, Vec::len);
+        let mut outputs = vec![vec![0_u8; zero_len]; replica_buffers.len()];
+        for &(src, dst) in source_target_pairs {
+            if let (Some(src_buf), Some(dst_slot)) =
+                (replica_buffers.get(src), outputs.get_mut(dst))
+            {
+                dst_slot.clone_from(src_buf);
+            }
+        }
+        outputs
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::indexing_slicing)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+mod tests {
+    use super::*;
+    use crate::proto::DistributedDeviceProto;
+
+    #[test]
+    fn test_distributed_coordinator_and_topology_assembler() {
+        let coord = DistributedCoordinator::new();
+        assert_ne!(format!("{coord:?}"), "");
+        coord.put_key_value("topo/host0", vec![1, 2, 3]);
+        assert_eq!(coord.get_key_value("topo/host0").ok(), Some(vec![1, 2, 3]));
+        assert!(coord.get_key_value("missing_key").is_err());
+        assert!(coord.delete_key_value("topo/host0"));
+        assert!(!coord.delete_key_value("topo/host0"));
+
+        // Barrier with 2 participants
+        assert!(coord.wait_at_barrier(0, 10, 0, 2).is_err());
+        assert_eq!(coord.wait_at_barrier(0, 10, 1, 2).ok(), Some(1));
+
+        // Heartbeats and hang detection
+        coord.record_heartbeat(0, 0, 1000);
+        coord.record_heartbeat(0, 1, 1900);
+        let stale = coord.check_stale_tasks(2000, 500);
+        assert_eq!(stale.len(), 1);
+        assert_eq!(stale[0].task_id, 0);
+        assert_eq!(stale[0].error_type, 1);
+
+        // MultiSliceTopologyAssembler
+        let assembler = MultiSliceTopologyAssembler;
+        assert_eq!(assembler.clone(), MultiSliceTopologyAssembler);
+        assert_ne!(format!("{assembler:?}"), "");
+        let local1 = LocalTopologyProto {
+            process_id: 1,
+            boot_id: String::from("b1"),
+            devices: vec![DistributedDeviceProto {
+                local_device_ordinal: 0,
+                ..DistributedDeviceProto::default()
+            }],
+            partition_index: 0,
+            network_nodes: vec![String::from("sw1")],
+        };
+        let local0 = LocalTopologyProto {
+            process_id: 0,
+            boot_id: String::from("b0"),
+            devices: vec![DistributedDeviceProto {
+                local_device_ordinal: 0,
+                ..DistributedDeviceProto::default()
+            }],
+            partition_index: 0,
+            network_nodes: vec![String::from("sw0")],
+        };
+        let global = MultiSliceTopologyAssembler::assemble_global_topology(&[local1, local0]);
+        assert_eq!(global.processes.len(), 2);
+        assert_eq!(global.processes[0].process_id, 0);
+        assert_eq!(global.processes[0].devices[0].global_device_id, 0);
+        assert_eq!(global.processes[1].devices[0].global_device_id, 1);
+
+        let endpoints = MultiSliceTopologyAssembler::build_endpoint_addresses(2, 2, 8471);
+        assert_eq!(endpoints.address_mappings.len(), 4);
+    }
+
+    #[test]
+    fn test_dcn_transport_and_collective_runtime_engine() {
+        let transport = DcnLoopbackAndTcpTransport::new(MegascaleTransportConfigProto {
+            num_channels: 4,
+            max_inflight_bytes: 1_048_576,
+            timeout_ms: 5000,
+            enable_zstd_compression: false,
+            zstd_compression_level: 0,
+        });
+        assert_ne!(format!("{transport:?}"), "");
+        assert!(transport.recv_loopback(0, 0, 99).is_err());
+        transport.send_loopback(0, 1, 42, vec![10, 20, 30]);
+        assert_eq!(
+            transport.recv_loopback(0, 1, 42).ok(),
+            Some(vec![10, 20, 30])
+        );
+
+        let tcp_rt = DcnLoopbackAndTcpTransport::roundtrip_tcp_frame(b"megascale_dcn_frame");
+        assert_eq!(tcp_rt.as_slice(), b"megascale_dcn_frame");
+
+        let eng = CollectiveRuntimeEngine;
+        assert_eq!(eng.clone(), CollectiveRuntimeEngine);
+        assert_ne!(format!("{eng:?}"), "");
+        assert_eq!(
+            CollectiveRuntimeEngine::execute_all_reduce(
+                &[],
+                ElementType::F32,
+                CollectiveReductionOp::Sum
+            )
+            .len(),
+            0
+        );
+        assert_eq!(
+            CollectiveRuntimeEngine::execute_reduce_scatter(
+                &[],
+                ElementType::F32,
+                CollectiveReductionOp::Sum
+            )
+            .len(),
+            0
+        );
+        assert_eq!(
+            CollectiveRuntimeEngine::execute_all_gather(&[], ElementType::F32).len(),
+            0
+        );
+        assert_eq!(
+            CollectiveRuntimeEngine::execute_all_to_all(&[], ElementType::F32).len(),
+            0
+        );
+
+        let r0 = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
+        let r1 = ElementType::F32.pack_from_f64_slice(&[5.0, 6.0, 7.0, 8.0]);
+        let bufs = vec![r0, r1];
+
+        for op in [
+            CollectiveReductionOp::Sum,
+            CollectiveReductionOp::Product,
+            CollectiveReductionOp::Min,
+            CollectiveReductionOp::Max,
+        ] {
+            let ar = CollectiveRuntimeEngine::execute_all_reduce(&bufs, ElementType::F32, op);
+            assert_eq!(ar.len(), 2);
+        }
+
+        // Verify conservation identity: AllGather(ReduceScatter(X, Sum)) == AllReduce(X, Sum)
+        let rs = CollectiveRuntimeEngine::execute_reduce_scatter(
+            &bufs,
+            ElementType::F32,
+            CollectiveReductionOp::Sum,
+        );
+        let ag = CollectiveRuntimeEngine::execute_all_gather(&rs, ElementType::F32);
+        let ar_sum = CollectiveRuntimeEngine::execute_all_reduce(
+            &bufs,
+            ElementType::F32,
+            CollectiveReductionOp::Sum,
+        );
+        assert_eq!(ag, ar_sum);
+
+        let a2a = CollectiveRuntimeEngine::execute_all_to_all(&bufs, ElementType::F32);
+        assert_eq!(a2a.len(), 2);
+        assert_eq!(
+            ElementType::F32.unpack_to_f64_vec(&a2a[0]),
+            vec![1.0, 2.0, 5.0, 6.0]
+        );
+        assert_eq!(
+            ElementType::F32.unpack_to_f64_vec(&a2a[1]),
+            vec![3.0, 4.0, 7.0, 8.0]
+        );
+
+        let perm =
+            CollectiveRuntimeEngine::execute_collective_permute(&bufs, &[(0, 1), (1, 0), (9, 9)]);
+        assert_eq!(perm[0], bufs[1]);
+        assert_eq!(perm[1], bufs[0]);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_wire_framing_and_torus_ici_router() {
+        let wire_frame = CoordinationWireFrame {
+            request_id: 99,
+            opcode: 3,
+            payload: b"kv_payload".to_vec(),
+        };
+        assert_eq!(wire_frame.clone(), wire_frame);
+        assert_ne!(format!("{wire_frame:?}"), "");
+        let frame_bytes = wire_frame.encode_to_bytes();
+        assert_eq!(
+            CoordinationWireFrame::decode_from_bytes(&frame_bytes),
+            Ok(wire_frame.clone())
+        );
+        assert!(CoordinationWireFrame::decode_from_bytes(&[0; 5]).is_err());
+        assert!(CoordinationWireFrame::decode_from_bytes(&frame_bytes[..15]).is_err());
+        assert_eq!(
+            DcnLoopbackAndTcpTransport::exchange_wire_frame_over_tcp(&wire_frame),
+            Ok(wire_frame)
+        );
+
+        let c0 = crate::types::ChipCoordinates::new(0, 0, 0);
+        let c3 = crate::types::ChipCoordinates::new(3, 0, 0);
+        let mut router = TorusIciRouter::new(crate::types::ChipCoordinates::new(4, 4, 4), true);
+        assert_eq!(router.clone(), router);
+        assert_ne!(format!("{router:?}"), "");
+        assert_eq!(router.compute_shortest_hop_count(c0, c3), Ok(1));
+        assert_eq!(
+            router.compute_shortest_hop_count(c0, crate::types::ChipCoordinates::new(1, 0, 0)),
+            Ok(1)
+        );
+        let non_wrap = TorusIciRouter::new(crate::types::ChipCoordinates::new(4, 4, 4), false);
+        assert_eq!(non_wrap.compute_shortest_hop_count(c0, c3), Ok(3));
+        assert!(non_wrap.compute_fault_tolerant_route(c3, c0).is_ok());
+        assert!(non_wrap.compute_fault_tolerant_route(c0, c3).is_ok());
+        assert_eq!(router.compute_fault_tolerant_route(c0, c0), Ok(vec![c0]));
+        router.inject_link_fault(c0, c3);
+        assert!(router.compute_shortest_hop_count(c0, c3).is_err());
+        let rerouted = router.compute_fault_tolerant_route(c0, c3);
+        assert!(rerouted.is_ok());
+        if let Ok(path) = rerouted {
+            assert_eq!(path.first().copied(), Some(c0));
+            assert_eq!(path.last().copied(), Some(c3));
+            assert!(path.len() >= 4);
+        }
+        // Sever all outgoing links from c0 so BFS returns an error
+        for neigh in [
+            crate::types::ChipCoordinates::new(1, 0, 0),
+            crate::types::ChipCoordinates::new(3, 0, 0),
+            crate::types::ChipCoordinates::new(0, 1, 0),
+            crate::types::ChipCoordinates::new(0, 3, 0),
+            crate::types::ChipCoordinates::new(0, 0, 1),
+            crate::types::ChipCoordinates::new(0, 0, 3),
+        ] {
+            router.inject_link_fault(c0, neigh);
+        }
+        assert!(router.compute_fault_tolerant_route(c0, c3).is_err());
+
+        // Test DistributedCoordinator TCP RPC dispatcher across all opcodes (1..=11)
+        let rpc_coord = DistributedCoordinator::new();
+        assert_eq!(rpc_coord.try_get_key_value("absent"), None);
+        let _ = rpc_coord.wait_at_barrier(0, 110, 0, 2);
+        for (op, payload) in [
+            (1_u8, b"register".as_slice()),
+            (2_u8, b"hb".as_slice()),
+            (3_u8, b"topo/k=val123".as_slice()),
+            (8_u8, b"topo/k".as_slice()),
+            (9_u8, b"topo/".as_slice()),
+            (4_u8, b"topo/k".as_slice()),
+            (5_u8, b"topo/k".as_slice()),
+            (6_u8, b"barrier".as_slice()),
+            (10_u8, b"cancel".as_slice()),
+            (11_u8, b"dcn_link_error".as_slice()),
+            (7_u8, b"shutdown".as_slice()),
+        ] {
+            let req = CoordinationWireFrame {
+                request_id: 100 + u64::from(op),
+                opcode: op,
+                payload: payload.to_vec(),
+            };
+            assert!(rpc_coord.serve_tcp_rpc_once(&req).is_ok());
+        }
+        assert!(!rpc_coord.cancel_barrier(0, 999));
+        let tcp_ar = DcnLoopbackAndTcpTransport::execute_tcp_all_reduce(
+            &[
+                ElementType::F32.pack_from_f64_slice(&[1.0, 2.0]),
+                ElementType::F32.pack_from_f64_slice(&[3.0, 4.0]),
+            ],
+            ElementType::F32,
+            CollectiveReductionOp::Sum,
+        );
+        assert!(tcp_ar.is_ok());
+        if let Ok(ar_bufs) = tcp_ar {
+            assert_eq!(
+                ElementType::F32.unpack_to_f64_vec(&ar_bufs[0]),
+                vec![4.0, 6.0]
+            );
+        }
+        assert!(
+            rpc_coord
+                .handle_wire_frame(&CoordinationWireFrame {
+                    request_id: 1,
+                    opcode: 4,
+                    payload: b"missing".to_vec(),
+                })
+                .is_err()
+        );
+    }
+}

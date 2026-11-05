@@ -34,6 +34,20 @@ pub struct DiscoveredPciTpuDevice {
     pub driver_mode: KernelDriverMode,
     /// Device node path (e.g., `"/dev/accel0"` or `"/dev/vfio/0"`).
     pub device_node_path: String,
+    /// Optional IOMMU group number resolved from `/sys/bus/pci/devices/<bdf>/iommu_group`.
+    pub iommu_group_id: Option<u32>,
+    /// NUMA node affinity parsed from `/sys/bus/pci/devices/<bdf>/numa_node` (`0` default).
+    pub numa_node: i32,
+    /// BAR0 CSR aperture byte size parsed from `resource` or `/sys/class/accel/accel*/bar_size`.
+    pub bar0_size: u64,
+    /// BAR2 HBM/VMEM aperture byte size parsed from `resource`.
+    pub bar2_size: u64,
+    /// Kernel driver version string parsed from `/sys/class/accel/accel*/driver_version`.
+    pub driver_version: String,
+    /// Hardware chip model string parsed from `/sys/class/accel/accel*/chip_model`.
+    pub chip_model: String,
+    /// Whether an active process currently owns the accelerator device (`is_device_owned != 0`).
+    pub is_device_owned: bool,
 }
 
 /// Linux `sysfs` `PCIe` hardware enumerator for Google Cloud TPU ASICs (`0x1ae0`).
@@ -54,7 +68,7 @@ impl PciDeviceEnumerator {
             0x005e | 0x0062 => Some(TpuGeneration::V5p),
             0x0063 => Some(TpuGeneration::V5e),
             0x006f => Some(TpuGeneration::V6e),
-            0x0076 => Some(TpuGeneration::V7x),
+            0x0073 | 0x0076 => Some(TpuGeneration::V7x),
             _ => None,
         }
     }
@@ -70,8 +84,8 @@ impl PciDeviceEnumerator {
         u16::from_str_radix(trimmed, 16).ok()
     }
 
-    /// Scans a `sysfs` PCI devices directory (e.g., `/sys/bus/pci/devices`) and `/dev` root to
-    /// discover all attached Google Cloud TPU `PCIe` functions.
+    /// Scans a `sysfs` PCI devices directory (e.g., `/sys/bus/pci/devices`), `/dev` root,
+    /// and optional `/sys/class/accel` directory to discover all attached Google Cloud TPU `PCIe` functions.
     ///
     /// # Arguments
     ///
@@ -81,6 +95,26 @@ impl PciDeviceEnumerator {
     pub fn scan_sysfs(
         sysfs_pci_dir: &std::path::Path,
         dev_root: &std::path::Path,
+    ) -> Vec<DiscoveredPciTpuDevice> {
+        Self::scan_sysfs_with_accel(
+            sysfs_pci_dir,
+            dev_root,
+            std::path::Path::new("/sys/class/accel"),
+        )
+    }
+
+    /// Scans a `sysfs` PCI devices directory, `/dev` root, and `/sys/class/accel` directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `sysfs_pci_dir` - Path to `/sys/bus/pci/devices`.
+    /// * `dev_root` - Path to `/dev`.
+    /// * `sysfs_accel_dir` - Path to `/sys/class/accel`.
+    #[must_use]
+    pub fn scan_sysfs_with_accel(
+        sysfs_pci_dir: &std::path::Path,
+        dev_root: &std::path::Path,
+        sysfs_accel_dir: &std::path::Path,
     ) -> Vec<DiscoveredPciTpuDevice> {
         let Ok(entries) = std::fs::read_dir(sysfs_pci_dir) else {
             return Vec::new();
@@ -102,12 +136,33 @@ impl PciDeviceEnumerator {
                 let bdf_slot = path
                     .file_name()
                     .map_or_else(String::new, |s| s.to_string_lossy().into_owned());
+                let iommu_group_id = std::fs::read_to_string(path.join("iommu_group"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u32>().ok());
+                let numa_node = std::fs::read_to_string(path.join("numa_node"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<i32>().ok())
+                    .unwrap_or(0)
+                    .max(0);
+                let accel_dir = sysfs_accel_dir.join(format!("accel{idx}"));
+                let bar0_size = std::fs::read_to_string(accel_dir.join("bar_size"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u64>().ok())
+                    .unwrap_or(0x0010_0000);
+                let bar2_size = generation.hbm_capacity_bytes_per_chip().0 as u64;
+                let driver_version = std::fs::read_to_string(accel_dir.join("driver_version"))
+                    .map_or_else(|_| String::from("1.0"), |s| String::from(s.trim()));
+                let chip_model = std::fs::read_to_string(accel_dir.join("chip_model"))
+                    .map_or_else(|_| generation.to_string(), |s| String::from(s.trim()));
+                let is_device_owned = std::fs::read_to_string(accel_dir.join("is_device_owned"))
+                    .is_ok_and(|s| s.trim() == "1");
+                let vfio_grp = iommu_group_id.unwrap_or_else(|| u32::try_from(idx).unwrap_or(0));
                 let (driver_mode, device_node_path) = if path.join("vfio").exists() {
                     (
                         KernelDriverMode::Vfio,
                         dev_root
                             .join("vfio")
-                            .join(idx.to_string())
+                            .join(vfio_grp.to_string())
                             .to_string_lossy()
                             .into_owned(),
                     )
@@ -127,6 +182,13 @@ impl PciDeviceEnumerator {
                     generation,
                     driver_mode,
                     device_node_path,
+                    iommu_group_id,
+                    numa_node,
+                    bar0_size,
+                    bar2_size,
+                    driver_version,
+                    chip_model,
+                    is_device_owned,
                 })
             })
             .collect()

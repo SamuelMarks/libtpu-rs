@@ -29,24 +29,31 @@ pub mod relocations;
 pub mod symbols;
 
 pub use self::carver::{
-    CarvedFileDescriptorSummary, CarvedProtoDesc, FileTocEntry,
+    CarvedFileDescriptorSummary, CarvedProtoDesc, EmbeddedChipResourceBundle, FileTocEntry,
     build_descriptor_pool_from_carved_protos, carve_protodesc_cold_descriptors,
-    carve_protodesc_cold_entries, decode_carved_file_descriptor, decompress_brotli_csr_table,
-    extract_filewrapper_toc, extract_indirect_filewrapper_toc, proto_scalar_type_name,
-    render_proto_schema, verify_descriptor_topological_closure,
+    carve_protodesc_cold_entries, decode_carved_file_descriptor, decode_embedded_chip_resources,
+    decompress_brotli_csr_table, extract_filewrapper_toc, extract_indirect_filewrapper_toc,
+    proto_scalar_type_name, render_proto_schema, verify_descriptor_topological_closure,
 };
 pub use self::disassembler::{
-    ControlFlowGraphReport, DecodedIoctlCallsite, DisassembledFunctionSpec, PrologueLayoutReport,
-    RdiFieldAccess, build_x86_64_cfg, disassemble_function_spec, disassemble_x86_64_prologue,
-    scan_x86_64_ioctl_callsites,
+    AArch64ForensicsAnalyzer, AArch64FunctionSpec, CPythonAbi3IntrospectionReport, CallGraphEdge,
+    CallGraphReport, ControlFlowGraphReport, DecodedIoctlCallsite, DeepSeaBitfieldPattern,
+    DisassembledFunctionSpec, DriverQueuePattern, DwarfCfiFunctionRecord, EhFrameCfiParser,
+    JumpTableDescriptor, PrologueLayoutReport, RdiFieldAccess, RipRelativeStringLiteral,
+    build_interprocedural_call_graph, build_x86_64_cfg, disassemble_function_spec,
+    disassemble_x86_64_prologue, introspect_cpython_abi3_binary, recover_aarch64_jump_table,
+    recover_x86_64_jump_table, scan_x86_64_bitfield_encoders, scan_x86_64_driver_mmio_sequences,
+    scan_x86_64_ioctl_callsites, scan_x86_64_rip_relative_strings,
 };
 pub use self::manifest::{
     ArtifactDigestReport, GoldenBinaryManifest, GoldenExportedSymbol, GoldenExtensionNode,
-    GoldenLibtpuSo, GoldenPjrtSlot, GoldenSdkSo, GoldenStructLayouts, compute_artifact_digests,
-    parse_golden_binary_manifest, parse_golden_struct_layouts,
+    GoldenLibtpuSo, GoldenPjrtSlot, GoldenProtoDescriptorEntry, GoldenProtoDescriptorsManifest,
+    GoldenSdkSo, GoldenStructLayouts, compute_artifact_digests, parse_golden_binary_manifest,
+    parse_golden_proto_descriptors, parse_golden_struct_layouts,
 };
 pub use self::relocations::{
-    ElfRelativeRelocation, ExtractedExtensionNode, R_AARCH64_RELATIVE, R_X86_64_RELATIVE,
+    CppRttiHierarchyExtractor, ElfRelativeRelocation, ExtractedExtensionNode,
+    ItaniumRttiClassDescriptor, ItaniumRttiKind, R_AARCH64_RELATIVE, R_X86_64_RELATIVE,
     ReconstructedCppVtable, ReconstructedFlatApiVtable, ReconstructedPjrtVtable,
     reconstruct_itanium_cpp_vtable, reconstruct_libtpu_sdk_vtable, reconstruct_pjrt_vtable,
     reconstruct_tpu_driver_vtable, resolve_relative_relocations,
@@ -54,7 +61,9 @@ pub use self::relocations::{
 pub use self::symbols::{
     BinaryFormatKind, BinarySectionInfo, BinarySymbolReport, CppNamespaceCategory,
     DemangledCppSymbol, DemangledSymbolEntry, ELF_STB_GLOBAL, ELF_STB_WEAK, EhFrameFunctionRange,
+    EhFrameHdrEntry, Elf64Ehdr, Elf64Phdr, Elf64Rela, Elf64Shdr, Elf64Sym, ElfProgramHeaderInfo,
     ExportedBinarySymbol, ObjectCrateBinaryReport, RttiClassHierarchyEntry,
-    demangle_and_classify_cpp_symbol, inspect_binary_symbols, inspect_object_crate_sections,
-    parse_eh_frame_fde_ranges, reconstruct_rtti_hierarchy,
+    demangle_and_classify_cpp_symbol, inspect_binary_symbols, inspect_elf_program_headers,
+    inspect_object_crate_sections, parse_eh_frame_fde_ranges, parse_eh_frame_hdr_table,
+    parse_elf64_ehdr_zero_copy, reconstruct_rtti_hierarchy,
 };

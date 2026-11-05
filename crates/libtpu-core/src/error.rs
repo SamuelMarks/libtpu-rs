@@ -1119,6 +1119,16 @@ pub enum LibTpuError {
         reason: String,
     },
 
+    /// DWARF `.eh_frame` or `.eh_frame_hdr` Call Frame Information (`CFI`) parsing failed (`DwarfCfiParseError`).
+    #[display("DWARF CFI parse error at offset {offset:#x}: {reason}")]
+    #[from(ignore)]
+    DwarfCfiParseError {
+        /// Byte offset in the `.eh_frame` or `.eh_frame_hdr` section.
+        offset: u64,
+        /// Static diagnostic explanation.
+        reason: &'static str,
+    },
+
     /// Embedded `filewrapper_toc` CSR decompression failure (`BrotliDecompressionError`).
     #[display("Brotli decompression error for '{resource_name}': {reason}")]
     #[from(ignore)]
@@ -1207,6 +1217,90 @@ pub enum LibTpuError {
         snippet: String,
         /// Lexer diagnostic explanation.
         reason: String,
+    },
+
+    /// Recursive-descent MLIR or XLA HLO parser encountered an unexpected token (`UnexpectedToken`).
+    #[display(
+        "Unexpected token at line {line}, column {column}: expected {expected}, found '{found}'"
+    )]
+    #[from(ignore)]
+    UnexpectedToken {
+        /// Description of expected token or grammar construct.
+        expected: String,
+        /// Actual token text encountered.
+        found: String,
+        /// One-based line number of the unexpected token.
+        line: usize,
+        /// One-based column number of the unexpected token.
+        column: usize,
+    },
+
+    /// Recursive-descent MLIR or XLA HLO parser reached unexpected end of input (`UnexpectedEof`).
+    #[display("Unexpected end of input at line {line}, column {column}: expected {expected}")]
+    #[from(ignore)]
+    UnexpectedEof {
+        /// Description of expected token or grammar construct before EOF.
+        expected: String,
+        /// One-based line number at EOF.
+        line: usize,
+        /// One-based column number at EOF.
+        column: usize,
+    },
+
+    /// Referenced SSA value was not defined in the current or enclosing lexical region (`UndefinedSsaValue`).
+    #[display("Undefined SSA value '{name}' referenced at line {line}, column {column}")]
+    #[from(ignore)]
+    UndefinedSsaValue {
+        /// Unresolved SSA identifier (e.g., `%missing`).
+        name: String,
+        /// One-based line number of the reference.
+        line: usize,
+        /// One-based column number of the reference.
+        column: usize,
+    },
+
+    /// Referenced MLIR `#alias` attribute or `!alias` type was not defined (`UndefinedAlias`).
+    #[display("Undefined MLIR alias '{alias}' referenced at line {line}, column {column}")]
+    #[from(ignore)]
+    UndefinedAlias {
+        /// Unresolved `#attr` or `!type` alias identifier.
+        alias: String,
+        /// One-based line number of the reference.
+        line: usize,
+        /// One-based column number of the reference.
+        column: usize,
+    },
+
+    /// Dialect operation failed semantic or structural verification (`DialectVerificationError`).
+    #[display(
+        "Dialect verification error in '{dialect}.{op}' at line {line}, column {column}: {reason}"
+    )]
+    #[from(ignore)]
+    DialectVerificationError {
+        /// Dialect namespace (e.g., `"stablehlo"`, `"sdy"`, `"tpu"`).
+        dialect: String,
+        /// Operation mnemonic (e.g., `"dot_general"`, `"manual_computation"`).
+        op: String,
+        /// Detailed verification failure reason.
+        reason: String,
+        /// One-based source line number.
+        line: usize,
+        /// One-based source column number.
+        column: usize,
+    },
+
+    /// Shape or arity verification/inference failed for an AST operation (`ShapeInferenceError`).
+    #[display("Shape inference error in '{op}' at line {line}, column {column}: {reason}")]
+    #[from(ignore)]
+    ShapeInferenceError {
+        /// Operation name where shape inference or arity checking failed.
+        op: String,
+        /// Detailed explanation of the shape or arity mismatch.
+        reason: String,
+        /// One-based source line number.
+        line: usize,
+        /// One-based source column number.
+        column: usize,
     },
 
     /// Raw instruction opcode byte or integer did not match a valid `TpuOpCode` (`InvalidOpcode`).
@@ -1350,6 +1444,7 @@ impl LibTpuError {
             | Self::HloVerificationError { .. }
             | Self::LayoutAssignmentError { .. }
             | Self::ElfInspectionError { .. }
+            | Self::DwarfCfiParseError { .. }
             | Self::BrotliDecompressionError { .. }
             | Self::Utf8ConversionFailed(_)
             | Self::Utf8ConversionError { .. }
@@ -1359,6 +1454,12 @@ impl LibTpuError {
             | Self::InvalidTransportType { .. }
             | Self::WinnowParseFailed(_)
             | Self::HloLexerError { .. }
+            | Self::UnexpectedToken { .. }
+            | Self::UnexpectedEof { .. }
+            | Self::UndefinedSsaValue { .. }
+            | Self::UndefinedAlias { .. }
+            | Self::DialectVerificationError { .. }
+            | Self::ShapeInferenceError { .. }
             | Self::InvalidOpcode { .. }
             | Self::InvalidReductionOp { .. }
             | Self::JsonSerializationError { .. }
@@ -1467,6 +1568,27 @@ impl LibTpuError {
     #[must_use]
     pub const fn to_c_status_code(&self) -> i32 {
         self.error_code().as_raw()
+    }
+
+    /// Maps this [`LibTpuError`] to its corresponding `tensorflow::error::Code` (`0..=16`).
+    #[must_use]
+    pub const fn tensorflow_error_code(&self) -> i32 {
+        self.error_code().as_raw()
+    }
+
+    /// Maps this [`LibTpuError`] to its corresponding `xla::megascale::runtime::external::MegaScaleRuntimeError`
+    /// hang/fault category (`0` = None, `1` = Timeout, `2` = `NoProgress` / Collective Fault, `3` = Hardware / Transport Fault).
+    #[must_use]
+    pub const fn megascale_error_type(&self) -> i32 {
+        match self {
+            Self::MegascaleBarrierTimeout { .. } | Self::SyncFlagTimeout { .. } => 1,
+            Self::CollectiveError { .. } | Self::DevicePoisoned { .. } => 2,
+            Self::HardwareFault { .. }
+            | Self::HardwareIoError { .. }
+            | Self::IoctlFailed { .. }
+            | Self::VfioIommuError { .. } => 3,
+            _ => 0,
+        }
     }
 
     /// Returns the high-level semantic subsystem category for this [`LibTpuError`].
@@ -2475,6 +2597,13 @@ mod tests {
                 PjrtErrorCode::InvalidArgument,
             ),
             (
+                LibTpuError::DwarfCfiParseError {
+                    offset: 0x20,
+                    reason: "invalid CIE version",
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
                 LibTpuError::BrotliDecompressionError {
                     resource_name: String::from("vfc_pf_csrs.br"),
                     reason: String::from("corrupt stream"),
@@ -2579,6 +2708,58 @@ mod tests {
                 PjrtErrorCode::InvalidArgument,
             ),
             (
+                LibTpuError::UnexpectedToken {
+                    expected: String::from("identifier"),
+                    found: String::from("}"),
+                    line: 3,
+                    column: 12,
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::UnexpectedEof {
+                    expected: String::from("closing brace '}'"),
+                    line: 10,
+                    column: 1,
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::UndefinedSsaValue {
+                    name: String::from("%missing"),
+                    line: 5,
+                    column: 8,
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::UndefinedAlias {
+                    alias: String::from("#unknown_attr"),
+                    line: 2,
+                    column: 4,
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::DialectVerificationError {
+                    dialect: String::from("sdy"),
+                    op: String::from("manual_computation"),
+                    reason: String::from("missing manual_axes"),
+                    line: 6,
+                    column: 10,
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::ShapeInferenceError {
+                    op: String::from("stablehlo.add"),
+                    reason: String::from("operand shape mismatch"),
+                    line: 4,
+                    column: 15,
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
                 LibTpuError::InvalidOpcode { raw_opcode: 0xff },
                 PjrtErrorCode::InvalidArgument,
             ),
@@ -2614,6 +2795,8 @@ mod tests {
             assert_eq!(cloned.abseil_code(), expected_code);
             assert_eq!(cloned.abseil_status_code(), expected_code);
             assert_eq!(cloned.to_c_status_code(), expected_code.as_raw());
+            assert_eq!(cloned.tensorflow_error_code(), expected_code.as_raw());
+            let _ = cloned.megascale_error_type();
             assert_ne!(cloned.category(), "");
             assert_eq!(
                 cloned.is_retriable(),

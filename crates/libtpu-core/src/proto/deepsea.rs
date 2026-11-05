@@ -506,3 +506,285 @@ pub struct TpuExecutableProto {
 }
 
 impl_proto_schema_message!(TpuExecutableProto, "xla.TpuExecutableProto");
+
+/// Wire-compatible `tpu.RegisterTranslatorEntryProto` representing a single CSR node in `*_pf_csrs.br`.
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct RegisterTranslatorEntryProto {
+    /// Hierarchical CSR path (e.g., `"vlc_tc_tcs_core_state.RUN_STATUS"`, field `1`).
+    #[prost(string, tag = "1")]
+    pub full_path: String,
+    /// Physical BAR0 MMIO byte offset (field `2`).
+    #[prost(uint64, tag = "2")]
+    pub byte_offset: u64,
+    /// Register width in bits (`32` or `64`, field `3`).
+    #[prost(uint32, tag = "3")]
+    pub width_bits: u32,
+    /// Access permission string (`"RO"`, `"RW"`, `"WO"`, `"W1C"`, field `4`).
+    #[prost(string, tag = "4")]
+    pub access_mode: String,
+    /// Hardware reset default value (field `5`).
+    #[prost(uint64, tag = "5")]
+    pub reset_value: u64,
+}
+
+impl_proto_schema_message!(
+    RegisterTranslatorEntryProto,
+    "tpu.RegisterTranslatorEntryProto"
+);
+
+/// Wire-compatible `tpu.RegisterTranslatorDataProto` decoded from Brotli-compressed `*_pf_csrs.br` tables.
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct RegisterTranslatorDataProto {
+    /// Internal `DeepSea` ASIC codename (field `1`).
+    #[prost(string, tag = "1")]
+    pub chip_codename: String,
+    /// Cloud TPU generation ordinal (`2..=7`, field `2`).
+    #[prost(int32, tag = "2")]
+    pub tpu_version: i32,
+    /// Hardware ABI version (`65537` or `65539`, field `3`).
+    #[prost(uint64, tag = "3")]
+    pub hardware_abi_version: u64,
+    /// Decoded CSR register descriptors (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub registers: Vec<RegisterTranslatorEntryProto>,
+}
+
+impl_proto_schema_message!(
+    RegisterTranslatorDataProto,
+    "tpu.RegisterTranslatorDataProto"
+);
+
+/// Wire-compatible `tpu.TpuChipConfigProto` decoded from `*_chip_configs_*.binarypb`.
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuChipConfigProto {
+    /// Chip configuration name (e.g., `"pufferfish_megacore_dense"`, field `1`).
+    #[prost(string, tag = "1")]
+    pub chip_name: String,
+    /// Cloud TPU generation ordinal (`2..=7`, field `2`).
+    #[prost(int32, tag = "2")]
+    pub tpu_version: i32,
+    /// Number of `TensorCore`s per chip (`1` or `2`, field `3`).
+    #[prost(uint32, tag = "3")]
+    pub tensor_cores_per_chip: u32,
+    /// Number of `SparseCore`s per chip (`0`, `2`, or `4`, field `4`).
+    #[prost(uint32, tag = "4")]
+    pub sparse_cores_per_chip: u32,
+    /// Total HBM capacity in bytes per chip (field `5`).
+    #[prost(uint64, tag = "5")]
+    pub hbm_capacity_bytes: u64,
+    /// Scoped VMEM capacity in bytes per core (field `6`).
+    #[prost(uint64, tag = "6")]
+    pub vmem_capacity_bytes: u64,
+    /// Scoped SMEM capacity in bytes per core (field `7`).
+    #[prost(uint64, tag = "7")]
+    pub smem_capacity_bytes: u64,
+    /// Whether `MegaCore` mode fuses two `TensorCores` into one logical device (field `8`).
+    #[prost(bool, tag = "8")]
+    pub megacore_enabled: bool,
+}
+
+impl_proto_schema_message!(TpuChipConfigProto, "tpu.TpuChipConfigProto");
+
+/// Wire-compatible `tpu.TpuChipPartsProto` decoded from `*_chip_parts.binarypb` inside `filewrapper_toc`.
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuChipPartsProto {
+    /// Physical ASIC die/part codename (e.g., `"jellyfish"`, `"pufferfish"`, `"viperfish"`, field `1`).
+    #[prost(string, tag = "1")]
+    pub part_name: String,
+    /// Cloud TPU generation ordinal (`2..=9`, field `2`).
+    #[prost(int32, tag = "2")]
+    pub tpu_version: i32,
+    /// Matrix Multiply Unit (`MXU`) systolic array dimension (`128` or `256`, field `3`).
+    #[prost(uint32, tag = "3")]
+    pub mxu_dimension: u32,
+    /// Number of `MXU` systolic units per `TensorCore` (`1`, `2`, or `4`, field `4`).
+    #[prost(uint32, tag = "4")]
+    pub mxu_count_per_core: u32,
+    /// Number of Inter-Chip Interconnect (`ICI`) optical links per chip (`4` or `6`, field `5`).
+    #[prost(uint32, tag = "5")]
+    pub ici_link_count: u32,
+    /// Nominal `TensorCore` clock rate in MHz (field `6`).
+    #[prost(int64, tag = "6")]
+    pub clock_rate_mhz: i64,
+    /// Per-link `ICI` bandwidth in bits per second (field `7`).
+    #[prost(int64, tag = "7")]
+    pub ici_bandwidth_bps: i64,
+    /// On-chip Collective Memory (`CMEM`) capacity per chip in bytes (field `8`).
+    #[prost(uint64, tag = "8")]
+    pub cmem_capacity_bytes: u64,
+}
+
+impl_proto_schema_message!(TpuChipPartsProto, "tpu.TpuChipPartsProto");
+
+/// Wire-compatible `tpu.TpuRuntimeAbiProto` decoded from `current_tpu_runtime_abi.binarypb` inside `filewrapper_toc`.
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuRuntimeAbiProto {
+    /// Base runtime ABI version integer (`1`, field `1`).
+    #[prost(int64, tag = "1")]
+    pub base_abi_version: i64,
+    /// Hardware ISA ABI version (`0x10001` or `0x10003`, field `2`).
+    #[prost(int64, tag = "2")]
+    pub hardware_abi_version: i64,
+    /// Embedded `deepsea_compiler_hash.txt` SHA-256 or build digest (field `3`).
+    #[prost(string, tag = "3")]
+    pub compiler_hash: String,
+    /// Supported ASIC chip configuration names (field `4`).
+    #[prost(string, repeated, tag = "4")]
+    pub supported_chip_variants: Vec<String>,
+}
+
+impl_proto_schema_message!(TpuRuntimeAbiProto, "tpu.TpuRuntimeAbiProto");
+
+/// Wire-compatible `xla.HostOffloadingExecutableProto` (`xla/core/host_offloading/host_offloading_executable.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct HostOffloadingExecutableProto {
+    /// Host-offloaded `xla.HloModuleProto` (field `1`).
+    #[prost(message, optional, tag = "1")]
+    pub hlo_module: Option<crate::proto::hlo::HloModuleProto>,
+    /// Host executable backend type (`0` = Unspecified, `1` = PJRT, `2` = `NanoRT`, field `2`).
+    #[prost(int32, tag = "2")]
+    pub executable_type: i32,
+}
+
+impl_proto_schema_message!(
+    HostOffloadingExecutableProto,
+    "xla.HostOffloadingExecutableProto"
+);
+
+/// Wire-compatible `xla.ffi.ExecutionStateProto` (`xla/ffi/execution_state.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct FfiExecutionStateProto {
+    /// Registered XLA FFI state type name (field `1`).
+    #[prost(string, tag = "1")]
+    pub type_name: String,
+    /// Serialized opaque state payload bytes (field `2`).
+    #[prost(bytes = "vec", tag = "2")]
+    pub state: Vec<u8>,
+}
+
+impl_proto_schema_message!(FfiExecutionStateProto, "xla.ffi.ExecutionStateProto");
+
+/// Wire-compatible `xla.ffi.FlatAttributeProto` (`xla/ffi/attribute_map.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct FfiFlatAttributeProto {
+    /// Raw string or byte attribute value (`oneof value.str`, field `3`).
+    #[prost(bytes = "vec", tag = "3")]
+    pub str: Vec<u8>,
+}
+
+impl_proto_schema_message!(FfiFlatAttributeProto, "xla.ffi.FlatAttributeProto");
+
+/// Wire-compatible `xla.ffi.FlatAttributesMapProto` (`xla/ffi/attribute_map.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct FfiFlatAttributesMapProto {
+    /// Flat attribute dictionary keyed by attribute name (field `1`).
+    #[prost(btree_map = "string, message", tag = "1")]
+    pub attrs: std::collections::BTreeMap<String, FfiFlatAttributeProto>,
+}
+
+impl_proto_schema_message!(FfiFlatAttributesMapProto, "xla.ffi.FlatAttributesMapProto");
+
+impl TargetArgumentsProto {
+    /// Constructs a canonical [`TargetArgumentsProto`] from a [`TpuChipConfigProto`] and [`TpuChipPartsProto`].
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Decoded chip configuration descriptor (`*_chip_configs_*.binarypb`).
+    /// * `parts` - Decoded chip physical parts descriptor (`*_chip_parts.binarypb`).
+    #[must_use]
+    pub fn from_chip_config_and_parts(
+        config: &TpuChipConfigProto,
+        parts: &TpuChipPartsProto,
+    ) -> Self {
+        #[allow(clippy::cast_possible_wrap)]
+        Self {
+            tpu_version: config.tpu_version,
+            chip_variant: config.chip_name.clone(),
+            clock_rate_mhz: parts.clock_rate_mhz,
+            hbm_capacity_bytes: config.hbm_capacity_bytes as i64,
+            vmem_capacity_bytes: config.vmem_capacity_bytes as i64,
+            smem_capacity_bytes: config.smem_capacity_bytes as i64,
+            cmem_capacity_bytes: parts.cmem_capacity_bytes as i64,
+            tensor_cores_per_chip: config.tensor_cores_per_chip as i32,
+            sparse_cores_per_chip: config.sparse_cores_per_chip as i32,
+            mxu_dimension: parts.mxu_dimension as i32,
+            ici_bandwidth_bps: parts.ici_bandwidth_bps,
+        }
+    }
+
+    /// Constructs a canonical [`TargetArgumentsProto`] for a [`crate::types::TpuGeneration`].
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target Cloud TPU hardware generation.
+    #[must_use]
+    pub fn from_generation(generation: crate::types::TpuGeneration) -> Self {
+        let config = TpuChipConfigProto::from_generation(generation);
+        let parts = TpuChipPartsProto::from_generation(generation);
+        Self::from_chip_config_and_parts(&config, &parts)
+    }
+}
+
+impl TpuChipConfigProto {
+    /// Returns the embedded `filewrapper_toc` chip configuration descriptor for `generation`.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Cloud TPU hardware generation.
+    #[must_use]
+    pub fn from_generation(generation: crate::types::TpuGeneration) -> Self {
+        use crate::types::TpuGeneration;
+        let (chip_name, megacore_enabled) = match generation {
+            TpuGeneration::V2 => ("jellyfish_default", false),
+            TpuGeneration::V3 => ("dragonfish_default", false),
+            TpuGeneration::V4 => ("pufferfish_megacore_dense", true),
+            TpuGeneration::V4Lite => ("pufferfish_lite", false),
+            TpuGeneration::V5e => ("viperfish_lite", false),
+            TpuGeneration::V5p => ("viperfish_megacore", true),
+            TpuGeneration::V6e => ("ghostlite", false),
+            TpuGeneration::V7x => ("6acc60406_torch", true),
+        };
+        Self {
+            chip_name: String::from(chip_name),
+            tpu_version: generation as i32,
+            tensor_cores_per_chip: generation.tensor_cores_per_chip(),
+            sparse_cores_per_chip: generation.sparse_cores_per_chip(),
+            hbm_capacity_bytes: generation.hbm_capacity_bytes_per_chip().0 as u64,
+            vmem_capacity_bytes: generation.vmem_capacity_bytes_per_core().0 as u64,
+            smem_capacity_bytes: generation.smem_capacity_bytes_per_core().0 as u64,
+            megacore_enabled,
+        }
+    }
+}
+
+impl TpuChipPartsProto {
+    /// Returns the embedded `filewrapper_toc` physical die parts descriptor for `generation`.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Cloud TPU hardware generation.
+    #[must_use]
+    pub fn from_generation(generation: crate::types::TpuGeneration) -> Self {
+        use crate::types::TpuGeneration;
+        let (part_name, clock_rate_mhz, ici_bandwidth_bps) = match generation {
+            TpuGeneration::V2 => ("jellyfish", 700, 100_000_000_000),
+            TpuGeneration::V3 => ("dragonfish", 940, 200_000_000_000),
+            TpuGeneration::V4 => ("pufferfish", 1050, 400_000_000_000),
+            TpuGeneration::V4Lite => ("pufferfish_lite", 1050, 200_000_000_000),
+            TpuGeneration::V5e => ("viperfish_lite", 1050, 400_000_000_000),
+            TpuGeneration::V5p => ("viperfish", 1250, 800_000_000_000),
+            TpuGeneration::V6e => ("ghostlite", 1500, 800_000_000_000),
+            TpuGeneration::V7x => ("6acc60406", 1750, 1_600_000_000_000),
+        };
+        Self {
+            part_name: String::from(part_name),
+            tpu_version: generation as i32,
+            mxu_dimension: generation.mxu_dimension(),
+            mxu_count_per_core: generation.mxu_count_per_core(),
+            ici_link_count: generation.ici_link_count(),
+            clock_rate_mhz,
+            ici_bandwidth_bps,
+            cmem_capacity_bytes: generation.cmem_capacity_bytes().0 as u64,
+        }
+    }
+}
