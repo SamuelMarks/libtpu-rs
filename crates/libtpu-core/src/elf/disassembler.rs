@@ -1245,6 +1245,62 @@ pub fn build_interprocedural_call_graph(
     }
 }
 
+/// Result of comparing an x86-64 or `AArch64` prologue's extracted `struct_size` against [`super::GoldenStructLayouts`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrologueStructSizeVerification {
+    /// `PJRT_Api` 64-bit word index (`5..=142`) or extension slot ordinal.
+    pub slot_index: usize,
+    /// Mangled C++ or C symbol name for the entrypoint.
+    pub symbol_name: String,
+    /// Extracted minimum `struct_size` from the prologue (`CMP QWORD PTR [RDI], imm` or `CMP Xn, #imm12`).
+    pub extracted_struct_size: Option<usize>,
+    /// Expected minimum `struct_size` recorded in `golden_struct_layouts.json`.
+    pub golden_min_struct_size: usize,
+    /// Whether the extracted prologue constant matches the golden specification.
+    pub matches_golden: bool,
+}
+
+/// Scans a batch of x86-64 or `AArch64` PJRT entrypoint prologues (`(slot_index, code_bytes, is_aarch64)`)
+/// and verifies each extracted `struct_size` constant against [`super::GoldenStructLayouts`].
+///
+/// # Arguments
+///
+/// * `prologues` - Slice of `(word_index, machine_code_bytes, is_aarch64)` tuples.
+/// * `golden_layouts` - Parsed [`super::GoldenStructLayouts`] reference.
+#[must_use]
+pub fn verify_prologue_struct_sizes_against_golden(
+    prologues: &[(usize, &[u8], bool)],
+    golden_layouts: &super::GoldenStructLayouts,
+) -> Vec<PrologueStructSizeVerification> {
+    let mut results = Vec::with_capacity(prologues.len());
+    for &(word_idx, code, is_aarch64) in prologues {
+        let extracted = if is_aarch64 {
+            AArch64ForensicsAnalyzer::analyze_function(code, 0)
+                .expected_struct_size
+                .map(|v| v as usize)
+        } else {
+            disassemble_x86_64_prologue(code)
+                .expected_struct_size
+                .map(|v| v as usize)
+        };
+        if let Some(slot) = golden_layouts
+            .pjrt_slots
+            .iter()
+            .find(|s| s.word_index == word_idx)
+        {
+            let matches_golden = extracted == Some(slot.min_struct_size);
+            results.push(PrologueStructSizeVerification {
+                slot_index: word_idx,
+                symbol_name: slot.mangled_symbol.clone(),
+                extracted_struct_size: extracted,
+                golden_min_struct_size: slot.min_struct_size,
+                matches_golden,
+            });
+        }
+    }
+    results
+}
+
 #[cfg(test)]
 #[allow(
     clippy::indexing_slicing,
@@ -1736,5 +1792,29 @@ mod tests {
         assert_ne!(format!("{cg:?}"), "");
         assert_eq!(cg.edges[0].clone(), cg.edges[0]);
         assert_ne!(format!("{:?}", cg.edges[0]), "");
+
+        let layouts_json =
+            include_str!("../../../../docs/reverse_engineering/golden_struct_layouts.json");
+        if let Ok(golden) = super::super::parse_golden_struct_layouts(layouts_json)
+            && let Some(first_slot) = golden.pjrt_slots.first()
+        {
+            let sz_u8 = (first_slot.min_struct_size & 0x7F) as u8;
+            let x86_pro: [u8; 5] = [0x48, 0x83, 0x3F, sz_u8, 0xC3];
+            let arm_word: u32 = 0xF100_001F | ((first_slot.min_struct_size as u32 & 0xFFF) << 10);
+            let arm_pro = arm_word.to_le_bytes();
+            let verifications = verify_prologue_struct_sizes_against_golden(
+                &[
+                    (first_slot.word_index, &x86_pro, false),
+                    (first_slot.word_index, &arm_pro, true),
+                    (9999, &x86_pro, false),
+                ],
+                &golden,
+            );
+            assert_eq!(verifications.len(), 2);
+            assert!(verifications[0].matches_golden);
+            assert!(verifications[1].matches_golden);
+            assert_eq!(verifications[0].clone(), verifications[0]);
+            assert_ne!(format!("{:?}", verifications[0]), "");
+        }
     }
 }

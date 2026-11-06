@@ -1,6 +1,6 @@
 # `libtpu-rs` Usage & Integration Guide
 
-`libtpu-rs` is a clean-room, pure-Rust drop-in replacement for the Google Cloud TPU runtime library (`libtpu` v0.0.50). It exports the exact C11 binary ABI expected by OpenXLA PJRT (`GetPjrtApi` v0.116 with 138 vtable slots and 17 chained TPU extensions), `LibtpuSdk_Api` (`GetLibtpuSdkApi`), `TpuDriver_*` (`TpuDriver_Initialize`), `TpuEmbeddingEngine_*` (`SparseCore`), `TpuProfiler_*` (`XSpace`), `TpuTopology_*`, and `TfTpu_*` entrypoints.
+`libtpu-rs` is a clean-room, pure-Rust drop-in replacement for the Google Cloud TPU runtime library (`libtpu` v0.0.52). It exports the exact C11 binary ABI expected by OpenXLA PJRT (`GetPjrtApi` v0.116 with 138 vtable slots and 17 chained TPU extensions), `LibtpuSdk_Api` (`GetLibtpuSdkApi`), `TpuDriver_*` (`TpuDriver_Initialize`), `TpuEmbeddingEngine_*` (`SparseCore`), `TpuProfiler_*` (`XSpace`), `TpuTopology_*`, and `TfTpu_*` entrypoints.
 
 Because `libtpu-rs` has zero closed-source binary dependencies and includes both a Linux Gasket/VFIO hardware backend (`/dev/accel*`, `/dev/vfio/*`) and a deterministic in-memory `SimulatedTpuHal` (supporting TPU `v2`, `v3`, `v4`, `v4lite`, `v5e`, `v5p`, `v6e`, and `v7x`), you can use it either on physical Cloud TPU VMs or locally on macOS/Linux/Windows workstations for offline TPU compilation, topology simulation, profiling, and testing.
 
@@ -80,7 +80,7 @@ ctest --test-dir cpp/build --output-on-failure
 
 ## 2. Hacking JAX, TensorFlow, and PyTorch/XLA (`torch-tpu`) to Use `libtpu-rs`
 
-Official ML frameworks (`jax`, `torch_xla`, `tensorflow`) load `libtpu.so` dynamically at runtime via `dlopen()` and resolve `GetPjrtApi` (or legacy `TfTpu_Initialize` / `TpuDriver_Initialize`). Because `libtpu-rs` exports the exact symbol table and struct layouts of `libtpu` v0.0.50, you can hijack any existing framework installation to run against `libtpu-rs` without recompiling the framework.
+Official ML frameworks (`jax`, `torch_xla`, `tensorflow`) load `libtpu.so` dynamically at runtime via `dlopen()` and resolve `GetPjrtApi` (or legacy `TfTpu_Initialize` / `TpuDriver_Initialize`). Because `libtpu-rs` exports the exact symbol table and struct layouts of `libtpu` v0.0.52, you can hijack any existing framework installation to run against `libtpu-rs` without recompiling the framework.
 
 Below are the specific mechanisms for each framework.
 
@@ -324,7 +324,7 @@ python3 train.py
 
 ### 2.5 Drop-in Wheel Replacement in Virtual Environments & Containers
 
-Because `libtpu-rs`'s `pyproject.toml` defines `name = "libtpu"` and `version = "0.0.50"`, it satisfies `pip` dependency checks for packages that depend on `libtpu==0.0.50` (such as `jax[tpu]` or `torch_xla`).
+Because `libtpu-rs`'s `pyproject.toml` defines `name = "libtpu"` and `version = "0.0.52"`, it satisfies `pip` dependency checks for packages that depend on `libtpu==0.0.52` (such as `jax[tpu]` or `torch_xla`).
 
 To replace the official `libtpu` wheel in any `venv`, `uv`, `poetry`, or Docker image:
 
@@ -424,19 +424,19 @@ install_name_tool -change "@rpath/libtpu.dylib" \
 
 ### 2.8 Repacking an Official `libtpu-*.whl` Archive with `libtpu-rs` Binaries
 
-In locked-down production environments where `pip install --require-hashes` or an internal PyPI mirror is used, `pip` validates the wheel filename, metadata, and `RECORD` SHA-256 digests. You can unpack an official `libtpu-0.0.50-*.whl`, swap the binary with `libtpu-rs`, recompute `.dist-info/RECORD` hashes using `wheel pack`, and deploy the modified wheel:
+In locked-down production environments where `pip install --require-hashes` or an internal PyPI mirror is used, `pip` validates the wheel filename, metadata, and `RECORD` SHA-256 digests. You can unpack an official `libtpu-0.0.52-*.whl`, swap the binary with `libtpu-rs`, recompute `.dist-info/RECORD` hashes using `wheel pack`, and deploy the modified wheel:
 
 ```bash
 # 1. Unpack the official wheel
-wheel unpack libtpu-0.0.50-cp311-cp311-manylinux_2_31_x86_64.whl -d /tmp/wheel_edit
+wheel unpack libtpu-0.0.52-cp311-cp311-manylinux_2_31_x86_64.whl -d /tmp/wheel_edit
 
 # 2. Replace the official libtpu.so (and optionally sdk.so) with libtpu-rs
-cp -f target/release/libtpu.so /tmp/wheel_edit/libtpu-0.0.50/libtpu/libtpu.so
-rm -f /tmp/wheel_edit/libtpu-0.0.50/libtpu/sdk.so
-cp -rf python/libtpu/* /tmp/wheel_edit/libtpu-0.0.50/libtpu/
+cp -f target/release/libtpu.so /tmp/wheel_edit/libtpu-0.0.52/libtpu/libtpu.so
+rm -f /tmp/wheel_edit/libtpu-0.0.52/libtpu/sdk.so
+cp -rf python/libtpu/* /tmp/wheel_edit/libtpu-0.0.52/libtpu/
 
 # 3. Repack the wheel (automatically regenerates SHA-256 hashes in RECORD)
-wheel pack /tmp/wheel_edit/libtpu-0.0.50 -d /tmp/repacked_wheels/
+wheel pack /tmp/wheel_edit/libtpu-0.0.52 -d /tmp/repacked_wheels/
 ```
 
 ---

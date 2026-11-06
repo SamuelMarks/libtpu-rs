@@ -10,7 +10,7 @@
 //! 6. `PJRT_Shardings_Extension` (`40` bytes, `ext_type = 19`)
 //! 7. `PJRT_Megascale_Extension` (`248` bytes, `ext_type = 18`)
 //! 8. `PJRT_TpuExecutable_Extension` (`96` bytes, `ext_type = 17`)
-//! 9. `PJRT_TpuTopology_Extension` (`272` bytes, `ext_type = 16`)
+//! 9. `PJRT_TpuTopology_Extension` (`280` bytes, `ext_type = 16`)
 //! 10. `PJRT_Callback_Extension` (`40` bytes, `ext_type = 14`)
 //! 11. `PJRT_PhaseCompile_Extension` (`64` bytes, `ext_type = 9`)
 //! 12. `PJRT_CrossHostTransfers_Extension` (`56` bytes, `ext_type = 12`)
@@ -156,6 +156,10 @@ pub struct ExtensionRuntimeState {
     pub serialized_artifact_cursor: usize,
     /// Keyed registry of buffers allocated by `PJRT_PhaseCompile_Extension` freed by `PJRT_PhaseCompile_CBuffersDestroy`.
     pub phase_compile_buffers: std::collections::BTreeMap<usize, Box<[u8]>>,
+    /// Bounded 16-slot ring of sharding pointer address arrays for `PJRT_Shardings_Extension`.
+    pub sharding_ptr_arrays: Vec<Box<[usize]>>,
+    /// Bounded 16-slot ring of sharding size arrays for `PJRT_Shardings_Extension`.
+    pub sharding_size_arrays: Vec<Box<[usize]>>,
 }
 
 /// Process-wide [`ExtensionRuntimeState`] singleton.
@@ -595,6 +599,8 @@ pub struct PJRT_TpuTopology_Extension {
     pub get_slice_configs: PjrtFn,
     /// Slot 31 (`0x108`): `get_default_platform_config`.
     pub get_default_platform_config: PjrtFn,
+    /// Slot 32 (`0x110`): `compute_subslice_for_devices`.
+    pub compute_subslice_for_devices: PjrtFn,
 }
 
 // SAFETY: Immutable static vtable structure.
@@ -780,9 +786,10 @@ const _: () = assert!(
         is_tpu_cancellation_placeholder_error
     ) == 0x58
 );
-const _: () = assert!(size_of::<PJRT_TpuTopology_Extension>() == 272);
-const _: () =
-    assert!(std::mem::offset_of!(PJRT_TpuTopology_Extension, get_default_platform_config) == 0x108);
+const _: () = assert!(size_of::<PJRT_TpuTopology_Extension>() == 280);
+const _: () = assert!(
+    std::mem::offset_of!(PJRT_TpuTopology_Extension, compute_subslice_for_devices) == 0x110
+);
 const _: () = assert!(size_of::<PJRT_Callback_Extension>() == 40);
 const _: () = assert!(std::mem::offset_of!(PJRT_Callback_Extension, invoke_callback) == 0x20);
 const _: () = assert!(size_of::<PJRT_PhaseCompile_Extension>() == 64);
@@ -932,7 +939,7 @@ pub static EXT_10_CALLBACK: PJRT_Callback_Extension = PJRT_Callback_Extension {
 /// Static Node 9 (`PJRT_TpuTopology_Extension`).
 pub static EXT_09_TPU_TOPOLOGY: PJRT_TpuTopology_Extension = PJRT_TpuTopology_Extension {
     base: PJRT_Extension_Base {
-        struct_size: 272,
+        struct_size: 280,
         ext_type: 16,
         pad: 0,
         next: ptr::addr_of!(EXT_10_CALLBACK.base),
@@ -968,6 +975,7 @@ pub static EXT_09_TPU_TOPOLOGY: PJRT_TpuTopology_Extension = PJRT_TpuTopology_Ex
     get_slice_config: PJRT_TpuTopology_GetSliceConfig,
     get_slice_configs: PJRT_TpuTopology_GetSliceConfigs,
     get_default_platform_config: PJRT_TpuTopology_GetDefaultPlatformConfig,
+    compute_subslice_for_devices: PJRT_TpuTopology_ComputeSubsliceForDevices,
 };
 
 /// Static Node 8 (`PJRT_TpuExecutable_Extension`).
@@ -1179,7 +1187,7 @@ mod tests {
             let mut valid_sz: [usize; 12] = [96, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
             assert!(PJRT_Extension_ValidateArgs(valid_sz.as_mut_ptr().cast()).is_null());
 
-            let ext_fns: [PjrtFn; 138] = [
+            let ext_fns: [PjrtFn; 139] = [
                 GLOBAL_PLUGIN_PROFILER_API.error_destroy,
                 GLOBAL_PLUGIN_PROFILER_API.error_message,
                 GLOBAL_PLUGIN_PROFILER_API.error_get_code,
@@ -1289,6 +1297,7 @@ mod tests {
                 EXT_09_TPU_TOPOLOGY.get_slice_config,
                 EXT_09_TPU_TOPOLOGY.get_slice_configs,
                 EXT_09_TPU_TOPOLOGY.get_default_platform_config,
+                EXT_09_TPU_TOPOLOGY.compute_subslice_for_devices,
                 EXT_10_CALLBACK.register_callback,
                 EXT_10_CALLBACK.invoke_callback,
                 EXT_11_PHASE_COMPILE.phase_compile_get_compiler,
@@ -2362,6 +2371,35 @@ mod tests {
             );
             assert_eq!(topo_map.out_first, 1);
             assert_eq!(topo_map.out_second, 1);
+
+            let slice_cfg_c = PJRT_TpuTopology_SliceConfig {
+                name: c"2x2x1".as_ptr(),
+                name_len: 5,
+                dimensions: [2, 2, 1, 0],
+                wraps: [false, false, false, false],
+                num_dimensions: 3,
+                twist: false,
+                pad: [0; 7],
+            };
+            let subslice_dims = [2_i32, 2, 1];
+            let subslice_devs = [0_i32, 1, 2, 3];
+            let mut subslice_origin = [-1_i32; 3];
+            let mut comp_subslice = PJRT_TpuTopology_ComputeSubsliceForDevices_Args {
+                struct_size: size_of::<PJRT_TpuTopology_ComputeSubsliceForDevices_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                subslice_dims: subslice_dims.as_ptr(),
+                num_subslice_dims: subslice_dims.len(),
+                device_ids: subslice_devs.as_ptr(),
+                num_devices: subslice_devs.len(),
+                subslice_origin_out: subslice_origin.as_mut_ptr(),
+            };
+            assert!(
+                PJRT_TpuTopology_ComputeSubsliceForDevices(ptr::addr_of_mut!(comp_subslice).cast())
+                    .is_null()
+            );
+            assert_eq!(subslice_origin, [0, 0, 0]);
+            assert_ne!(format!("{slice_cfg_c:?}{comp_subslice:?}"), "");
 
             unsafe extern "C" fn sample_ext_cb(
                 payload: *mut std::ffi::c_void,

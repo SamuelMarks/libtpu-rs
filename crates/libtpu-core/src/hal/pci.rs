@@ -1,10 +1,11 @@
 //! Linux `sysfs` `PCIe` hardware discovery and TPU topology descriptors.
 //!
-//! Provides [`PciDeviceEnumerator`], [`DeviceSpec`], and [`TopologySpec`].
+//! Provides [`PciDeviceEnumerator`], [`scan_sysfs_pci_tpu_devices`], [`DeviceSpec`], and [`TopologySpec`].
 
+use crate::error::{LibTpuError, LibTpuResult};
 use crate::types::{
-    ChipCoordinates, ChipId, CoreId, DeviceId, HostId, LocalHardwareId, PciDeviceId, PciVendorId,
-    ProcessIndex, TpuGeneration,
+    ChipCoordinates, ChipId, CoreId, DeviceId, HostId, LocalHardwareId, PciBdfAddress, PciDeviceId,
+    PciVendorId, ProcessIndex, TpuGeneration,
 };
 
 /// Kernel driver mode used by [`crate::hal::LinuxDeviceHal`].
@@ -84,6 +85,34 @@ impl PciDeviceEnumerator {
         u16::from_str_radix(trimmed, 16).ok()
     }
 
+    /// Parses a BAR aperture size in bytes from a Linux `/sys/bus/pci/devices/<bdf>/resource` text
+    /// where each line has format `0x<start> 0x<end> 0x<flags>`.
+    ///
+    /// # Arguments
+    ///
+    /// * `resource_text` - Contents of `<sysfs>/<bdf>/resource`.
+    /// * `bar_index` - Zero-based PCI BAR line index (`0` = BAR0, `2` = BAR2).
+    #[must_use]
+    pub fn parse_sysfs_resource_bar_size(resource_text: &str, bar_index: usize) -> Option<u64> {
+        let line = resource_text.lines().nth(bar_index)?.trim();
+        let mut parts = line.split_whitespace();
+        let start_str = parts
+            .next()?
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
+        let end_str = parts
+            .next()?
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
+        let start = u64::from_str_radix(start_str, 16).ok()?;
+        let end = u64::from_str_radix(end_str, 16).ok()?;
+        if end > start {
+            Some(end - start + 1)
+        } else {
+            None
+        }
+    }
+
     /// Scans a `sysfs` PCI devices directory (e.g., `/sys/bus/pci/devices`), `/dev` root,
     /// and optional `/sys/class/accel` directory to discover all attached Google Cloud TPU `PCIe` functions.
     ///
@@ -144,12 +173,18 @@ impl PciDeviceEnumerator {
                     .and_then(|s| s.trim().parse::<i32>().ok())
                     .unwrap_or(0)
                     .max(0);
+                let resource_text =
+                    std::fs::read_to_string(path.join("resource")).unwrap_or_default();
                 let accel_dir = sysfs_accel_dir.join(format!("accel{idx}"));
-                let bar0_size = std::fs::read_to_string(accel_dir.join("bar_size"))
-                    .ok()
-                    .and_then(|s| s.trim().parse::<u64>().ok())
+                let bar0_size = Self::parse_sysfs_resource_bar_size(&resource_text, 0)
+                    .or_else(|| {
+                        std::fs::read_to_string(accel_dir.join("bar_size"))
+                            .ok()
+                            .and_then(|s| s.trim().parse::<u64>().ok())
+                    })
                     .unwrap_or(0x0010_0000);
-                let bar2_size = generation.hbm_capacity_bytes_per_chip().0 as u64;
+                let bar2_size = Self::parse_sysfs_resource_bar_size(&resource_text, 2)
+                    .unwrap_or_else(|| generation.hbm_capacity_bytes_per_chip().0 as u64);
                 let driver_version = std::fs::read_to_string(accel_dir.join("driver_version"))
                     .map_or_else(|_| String::from("1.0"), |s| String::from(s.trim()));
                 let chip_model = std::fs::read_to_string(accel_dir.join("chip_model"))
@@ -205,6 +240,32 @@ impl PciDeviceEnumerator {
     ) -> Vec<DiscoveredPciTpuDevice> {
         Self::scan_sysfs(sysfs_pci_dir, std::path::Path::new("/dev"))
     }
+}
+
+/// Scans `<sysfs_root>/<bdf>` for Google Cloud TPU `PCIe` devices (`0x1ae0`) and returns sorted [`PciBdfAddress`] slots.
+///
+/// # Arguments
+///
+/// * `sysfs_root` - Path to `/sys/bus/pci/devices` (or a synthetic test directory).
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::HardwareIoError`] if `sysfs_root` does not exist or cannot be read.
+pub fn scan_sysfs_pci_tpu_devices(
+    sysfs_root: &std::path::Path,
+) -> LibTpuResult<Vec<PciBdfAddress>> {
+    if !sysfs_root.exists() {
+        return Err(LibTpuError::HardwareIoError {
+            operation: "scan_sysfs_pci_tpu_devices",
+            errno: 2,
+            message: format!("sysfs root '{}' does not exist", sysfs_root.display()),
+        });
+    }
+    let discovered = PciDeviceEnumerator::discover_from_sysfs_root(sysfs_root);
+    Ok(discovered
+        .iter()
+        .filter_map(|dev| PciBdfAddress::parse_bdf(&dev.bdf_slot))
+        .collect())
 }
 
 /// Specification for a single logical TPU device in a discovered topology.

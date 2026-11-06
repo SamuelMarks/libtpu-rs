@@ -302,7 +302,15 @@ impl<'a> HloTextParser<'a> {
                         },
                     );
                 }
-                "to_apply" | "calls" | "condition" | "body" | "scatter_computation" => {
+                "to_apply"
+                | "calls"
+                | "condition"
+                | "body"
+                | "scatter_computation"
+                | "true_computation"
+                | "false_computation"
+                | "select"
+                | "scatter" => {
                     called_computations.insert(key, self.consume_hlo_name().unwrap_or_default());
                 }
                 "dimensions" => {
@@ -774,11 +782,19 @@ fn default_f32_vec4_shape() -> Shape {
 ///
 /// * `ast` - Parsed [`AstModule`] containing [`HloComputationAst`]s.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn hlo_ast_to_proto(ast: &AstModule) -> HloModuleProto {
     let mut computations = Vec::new();
     let mut next_inst_id = 1_i64;
     let mut entry_comp_name = String::new();
     let mut entry_comp_id = 0_i64;
+
+    let comp_name_to_id: BTreeMap<&str, i64> = ast
+        .hlo_computations
+        .iter()
+        .enumerate()
+        .map(|(idx, c)| (c.name.as_str(), i64::try_from(idx + 1).unwrap_or(1)))
+        .collect();
 
     for (comp_idx, comp) in ast.hlo_computations.iter().enumerate() {
         let comp_id = i64::try_from(comp_idx + 1).unwrap_or(1);
@@ -803,11 +819,26 @@ pub fn hlo_ast_to_proto(ast: &AstModule) -> HloModuleProto {
                 .filter_map(|op_name| name_to_id.get(op_name).copied())
                 .collect();
 
+            let mut called_computation_ids: Vec<i64> = inst
+                .called_computations
+                .values()
+                .filter_map(|target_name| comp_name_to_id.get(target_name.as_str()).copied())
+                .collect();
+            called_computation_ids.dedup();
+
+            let dimensions: Vec<i64> = inst
+                .dimensions
+                .iter()
+                .filter_map(|&d| i64::try_from(d).ok())
+                .collect();
+
             instructions.push(HloInstructionProto {
                 name: inst.name.clone(),
                 opcode: inst.opcode.clone(),
                 shape: Some(mlir_type_to_shape_proto(&inst.result_type)),
                 operand_ids,
+                called_computation_ids,
+                dimensions,
                 id,
                 parameter_number: inst
                     .parameter_index
@@ -824,7 +855,7 @@ pub fn hlo_ast_to_proto(ast: &AstModule) -> HloModuleProto {
         }
 
         if root_id == 0 {
-            root_id = instructions.last().map_or(0, |i| i.id);
+            root_id = instructions.last().map_or(1, |i| i.id);
         }
 
         computations.push(HloComputationProto {
@@ -858,6 +889,12 @@ pub fn hlo_proto_to_ast(proto: &HloModuleProto) -> AstModule {
         dimensions: vec![4],
         ..ShapeProto::default()
     };
+    let comp_id_to_name: BTreeMap<i64, String> = proto
+        .computations
+        .iter()
+        .map(|c| (c.id, c.name.clone()))
+        .collect();
+
     let mut hlo_computations = Vec::new();
     for (idx, comp) in proto.computations.iter().enumerate() {
         let is_entry = comp.id == proto.entry_computation_id
@@ -885,7 +922,7 @@ pub fn hlo_proto_to_ast(proto: &HloModuleProto) -> AstModule {
                 inst.opcode.as_str(),
                 "get-tuple-element" | "get_tuple_element"
             )
-            .then_some(param_num);
+            .then_some(usize::try_from(inst.tuple_index.max(0)).unwrap_or(param_num));
             let mut extra_attrs = BTreeMap::new();
             if let Some(p_idx) = parameter_index {
                 extra_attrs.insert(
@@ -905,6 +942,26 @@ pub fn hlo_proto_to_ast(proto: &HloModuleProto) -> AstModule {
                     },
                 );
             }
+            let mut called_computations = BTreeMap::new();
+            let resolved_comp_names: Vec<String> = inst
+                .called_computation_ids
+                .iter()
+                .filter_map(|cid| comp_id_to_name.get(cid).cloned())
+                .collect();
+            if let Some(first_comp) = resolved_comp_names.first() {
+                called_computations.insert(String::from("to_apply"), first_comp.clone());
+                called_computations.insert(String::from("calls"), first_comp.clone());
+                called_computations.insert(String::from("condition"), first_comp.clone());
+                called_computations.insert(String::from("true_computation"), first_comp.clone());
+                let second_comp = resolved_comp_names.get(1).unwrap_or(first_comp);
+                called_computations.insert(String::from("body"), second_comp.clone());
+                called_computations.insert(String::from("false_computation"), second_comp.clone());
+            }
+            let dimensions: Vec<usize> = inst
+                .dimensions
+                .iter()
+                .filter_map(|&d| usize::try_from(d).ok())
+                .collect();
             let op_kind = classify_ast_operation(
                 DialectKind::XlaHlo,
                 &inst.opcode,
@@ -921,11 +978,11 @@ pub fn hlo_proto_to_ast(proto: &HloModuleProto) -> AstModule {
                 operands,
                 parameter_index,
                 tuple_index,
-                called_computations: BTreeMap::new(),
+                called_computations,
                 window: None,
                 conv_dim_labels: None,
                 dot_dims: DotDimensionNumbersAttr::default(),
-                dimensions: Vec::new(),
+                dimensions,
                 slice_bounds: Vec::new(),
                 padding_config: Vec::new(),
                 sharding: None,
@@ -1086,6 +1143,23 @@ fn lower_mlir_functions_and_ops(ast: &AstModule) -> ParsedHloModule {
         .iter()
         .find(|f| f.name == "main")
         .or_else(|| ast.functions.last());
+
+    for func in ast.functions.iter().filter(|f| Some(*f) != entry_func) {
+        for (idx, arg) in func.arguments.iter().enumerate() {
+            ssa_slots.insert(arg.ssa_name.clone(), vec![idx]);
+        }
+        lower_region_operations(
+            &func.body,
+            &mut ssa_slots,
+            &mut tuple_slots,
+            &mut slot_shapes,
+            &mut next_slot,
+            &mut bundles,
+            &mut output_slots,
+            &mut primary_op,
+        );
+        output_slots.clear();
+    }
 
     if let Some(func) = entry_func {
         for arg in &func.arguments {
@@ -1460,6 +1534,8 @@ fn build_instruction_attrs_from_ast(
         feature_group_count: attr_usize(&op.attributes, "feature_group_count").max(1),
         batch_group_count: attr_usize(&op.attributes, "batch_group_count").max(1),
         gather_index_vector_dim: attr_usize(&op.attributes, "index_vector_dim"),
+        gather_slice_sizes: attr_usize_vec(&op.attributes, "slice_sizes"),
+        collapsed_slice_dims: attr_usize_vec(&op.attributes, "collapsed_slice_dims"),
         scatter_update_window_dims: attr_usize_vec(&op.attributes, "update_window_dims"),
         custom_call_target: op
             .attributes
@@ -1537,6 +1613,77 @@ fn build_instruction_attrs_from_ast(
     attrs
 }
 
+/// Lowers a secondary [`HloComputationAst`] (such as a `while` body/condition, `conditional` branch,
+/// or `fusion`/`call` target) into a sequence of [`TpuInstructionBundle`]s.
+///
+/// # Arguments
+///
+/// * `sub_comp` - Secondary [`HloComputationAst`] to lower.
+/// * `caller_op_slots` - Register slot indices passed as arguments by the caller instruction.
+/// * `slot_shapes` - Mutable register slot [`Shape`] table.
+/// * `next_slot` - Mutable register slot counter.
+#[must_use]
+fn lower_hlo_subcomputation_bundles(
+    sub_comp: &HloComputationAst,
+    caller_op_slots: &[usize],
+    slot_shapes: &mut Vec<Shape>,
+    next_slot: &mut usize,
+) -> (Vec<TpuInstructionBundle>, usize) {
+    let mut local_slots: BTreeMap<String, usize> = BTreeMap::new();
+    let mut sub_bundles = Vec::new();
+    let mut last_out_slot = caller_op_slots.first().copied().unwrap_or(0);
+    for sub_inst in &sub_comp.instructions {
+        if let AstOpKind::Parameter { index } = sub_inst.op_kind {
+            let p_idx = sub_inst.parameter_index.unwrap_or(index);
+            let mapped_slot = caller_op_slots.get(p_idx).copied().unwrap_or(last_out_slot);
+            local_slots.insert(sub_inst.name.clone(), mapped_slot);
+            last_out_slot = mapped_slot;
+        }
+        if let AstOpKind::HardwareOp(sub_op) = sub_inst.op_kind {
+            let sub_opnds: Vec<usize> = sub_inst
+                .operands
+                .iter()
+                .filter_map(|n| local_slots.get(n).copied())
+                .collect();
+            let in_sh: Vec<Shape> = sub_opnds
+                .iter()
+                .filter_map(|&s| slot_shapes.get(s).cloned())
+                .collect();
+            let out_sh = sub_inst
+                .result_type
+                .to_shape()
+                .unwrap_or_else(default_f32_vec4_shape);
+            let sub_attrs = InstructionAttrs {
+                input_shapes: in_sh,
+                output_shape: Some(out_sh.clone()),
+                reduce_dims: sub_inst.dimensions.clone(),
+                permutation: sub_inst.dimensions.clone(),
+                broadcast_dims: sub_inst.dimensions.clone(),
+                dot_lhs_contracting_dims: sub_inst.dot_dims.lhs_contracting_dimensions.clone(),
+                dot_rhs_contracting_dims: sub_inst.dot_dims.rhs_contracting_dimensions.clone(),
+                dot_lhs_batch_dims: sub_inst.dot_dims.lhs_batching_dimensions.clone(),
+                dot_rhs_batch_dims: sub_inst.dot_dims.rhs_batching_dimensions.clone(),
+                ..InstructionAttrs::default()
+            };
+            let out_slot = *next_slot;
+            *next_slot += 1;
+            slot_shapes.push(out_sh);
+            local_slots.insert(sub_inst.name.clone(), out_slot);
+            last_out_slot = out_slot;
+            let pc = u32::try_from(sub_bundles.len()).unwrap_or(0);
+            sub_bundles.push(TpuInstructionBundle {
+                pc_offset: pc,
+                opcode: sub_op,
+                operand_slots: sub_opnds,
+                output_slot: out_slot,
+                sync_flag_id: pc + 1,
+                attrs: sub_attrs,
+            });
+        }
+    }
+    (sub_bundles, last_out_slot)
+}
+
 /// Lowers parsed textual XLA HLO [`HloComputationAst`]s into a [`ParsedHloModule`].
 ///
 /// # Arguments
@@ -1608,29 +1755,11 @@ fn lower_hlo_computations(ast: &AstModule) -> ParsedHloModule {
                     }
                 }
                 _ => {
-                    let mut opcode = if let AstOpKind::HardwareOp(hw) = inst.op_kind {
-                        hw
-                    } else {
-                        TpuOpCode::Identity
+                    let mut opcode = match &inst.op_kind {
+                        AstOpKind::HardwareOp(hw) => *hw,
+                        AstOpKind::While => TpuOpCode::While,
+                        _ => TpuOpCode::Conditional,
                     };
-                    // Resolve sub-computation `to_apply=%reducer` or `calls=%sub`
-                    if let Some(sub_comp) = inst
-                        .called_computations
-                        .get("to_apply")
-                        .or_else(|| inst.called_computations.get("calls"))
-                        .or_else(|| inst.called_computations.get("body"))
-                        .and_then(|sub_name| comp_map.get(sub_name.as_str()))
-                    {
-                        for sub_inst in &sub_comp.instructions {
-                            match sub_inst.opcode.as_str() {
-                                "maximum" | "max" => opcode = TpuOpCode::ReduceMax,
-                                "minimum" | "min" => opcode = TpuOpCode::ReduceMin,
-                                _ => {}
-                            }
-                        }
-                    }
-                    primary_op = opcode;
-
                     let mut op_slots: Vec<usize> = inst
                         .operands
                         .iter()
@@ -1639,6 +1768,47 @@ fn lower_hlo_computations(ast: &AstModule) -> ParsedHloModule {
                     if op_slots.is_empty() && opcode.arity() > 0 {
                         op_slots = (0..opcode.arity()).collect();
                     }
+
+                    // Resolve sub-computation `to_apply=%reducer`, `calls=%sub`, or `body`/`condition`
+                    let mut reduce_op_kind = crate::types::CollectiveReductionOp::Sum;
+                    let mut sub_computations = Vec::new();
+                    for sub_comp in inst
+                        .called_computations
+                        .values()
+                        .filter_map(|sub_name| comp_map.get(sub_name.as_str()))
+                    {
+                        for sub_inst in &sub_comp.instructions {
+                            match sub_inst.opcode.as_str() {
+                                "maximum" | "max" => {
+                                    reduce_op_kind = crate::types::CollectiveReductionOp::Max;
+                                    opcode = TpuOpCode::ReduceMax;
+                                }
+                                "minimum" | "min" => {
+                                    reduce_op_kind = crate::types::CollectiveReductionOp::Min;
+                                    opcode = TpuOpCode::ReduceMin;
+                                }
+                                "multiply" | "mul" => {
+                                    reduce_op_kind = crate::types::CollectiveReductionOp::Product;
+                                }
+                                "and" => {
+                                    opcode = TpuOpCode::And;
+                                }
+                                "or" => {
+                                    opcode = TpuOpCode::Or;
+                                }
+                                _ => {}
+                            }
+                        }
+                        let (sb, _) = lower_hlo_subcomputation_bundles(
+                            sub_comp,
+                            &op_slots,
+                            &mut slot_shapes,
+                            &mut next_slot,
+                        );
+                        sub_computations.push(sb);
+                    }
+                    primary_op = opcode;
+
                     let in_shapes: Vec<Shape> = op_slots
                         .iter()
                         .filter_map(|&s| slot_shapes.get(s).cloned())
@@ -1659,6 +1829,8 @@ fn lower_hlo_computations(ast: &AstModule) -> ParsedHloModule {
                         dot_lhs_batch_dims: inst.dot_dims.lhs_batching_dimensions.clone(),
                         dot_rhs_batch_dims: inst.dot_dims.rhs_batching_dimensions.clone(),
                         custom_call_target: inst.custom_call_target.clone().unwrap_or_default(),
+                        reduce_op_kind,
+                        sub_computations,
                         ..InstructionAttrs::default()
                     };
                     if let Some(win) = &inst.window {

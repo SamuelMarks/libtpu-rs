@@ -20,6 +20,90 @@ use crate::config::TpuInitConfig;
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::types::{ByteSize, DeviceAddress, DeviceId, MemoryKind};
 
+/// Discovers attached Google Cloud TPU `PCIe` functions (`0x1ae0`) from a `sysfs` PCI devices directory.
+///
+/// # Arguments
+///
+/// * `sysfs_root` - Path to `/sys/bus/pci/devices` (or a synthetic test directory).
+#[must_use]
+pub fn discover_pcie_tpu_devices_from_sysfs(
+    sysfs_root: &std::path::Path,
+) -> Vec<super::DiscoveredPciTpuDevice> {
+    super::PciDeviceEnumerator::discover_from_sysfs_root(sysfs_root)
+}
+
+/// Hardware DMA & `TensorCore` command-ring queue state machine (`HardwareDoorbellRing`).
+///
+/// Models producer (`tail`) and consumer (`head`) ring pointers, in-flight [`HbmDmaRingDescriptor`]
+/// queue entries, and `eventfd` completion notification counters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HardwareDoorbellRing {
+    /// Ring buffer capacity (power-of-two descriptor count).
+    pub capacity: u32,
+    /// Producer tail pointer (`BAR0_CSR_HBM_DMA_RING_TAIL`).
+    pub tail: u64,
+    /// Consumer head pointer (`BAR0_CSR_HBM_DMA_RING_HEAD`).
+    pub head: u64,
+    /// Monotonic `TensorCore` doorbell ring counter.
+    pub doorbell_count: u64,
+    /// Monotonic `eventfd` interrupt completion signal counter.
+    pub eventfd_signal_count: u64,
+    /// Queued [`HbmDmaRingDescriptor`] entries awaiting completion.
+    pub pending_descriptors: std::collections::VecDeque<HbmDmaRingDescriptor>,
+}
+
+impl Default for HardwareDoorbellRing {
+    fn default() -> Self {
+        Self::new(64)
+    }
+}
+
+impl HardwareDoorbellRing {
+    /// Creates a new [`HardwareDoorbellRing`] with the given `capacity`.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Maximum number of descriptors in the ring (`>= 1`).
+    #[must_use]
+    pub fn new(capacity: u32) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            tail: 0,
+            head: 0,
+            doorbell_count: 0,
+            eventfd_signal_count: 0,
+            pending_descriptors: std::collections::VecDeque::new(),
+        }
+    }
+
+    /// Enqueues a [`HbmDmaRingDescriptor`] into the producer ring and increments `tail` and `doorbell_count`.
+    ///
+    /// # Arguments
+    ///
+    /// * `desc` - 32-byte [`HbmDmaRingDescriptor`] to submit.
+    pub fn enqueue_and_ring_doorbell(&mut self, desc: HbmDmaRingDescriptor) -> u64 {
+        if self.pending_descriptors.len() >= self.capacity as usize {
+            let _ = self.pending_descriptors.pop_front();
+            self.head = self.head.wrapping_add(1);
+        }
+        self.pending_descriptors.push_back(desc);
+        self.tail = self.tail.wrapping_add(1);
+        self.doorbell_count = self.doorbell_count.wrapping_add(1);
+        self.tail
+    }
+
+    /// Drains all in-flight descriptors, advances `head` to `tail`, and increments `eventfd_signal_count`.
+    pub fn process_completions_and_signal_eventfd(&mut self) -> usize {
+        let completed = self.pending_descriptors.len();
+        self.pending_descriptors.clear();
+        self.head = self.tail;
+        if completed > 0 {
+            self.eventfd_signal_count = self.eventfd_signal_count.wrapping_add(1);
+        }
+        completed
+    }
+}
+
 /// Linux kernel driver HAL wrapping a [`SyscallProvider`], IOMMU [`super::HbmRegionAllocator`] tables,
 /// BAR0 MMIO CSR bank, and backing [`SimulatedTpuHal`] execution engine.
 #[derive(Debug)]

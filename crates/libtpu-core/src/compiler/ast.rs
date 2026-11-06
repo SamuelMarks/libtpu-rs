@@ -867,6 +867,114 @@ impl MlirAttribute {
             _ => None,
         }
     }
+
+    /// Formats this [`MlirAttribute`] into canonical MLIR attribute syntax for Section `2` (`kAttrType`) serialization.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn to_mlir_string(&self) -> String {
+        match self {
+            Self::Bool(b) => b.to_string(),
+            Self::Integer { value, .. } => value.to_string(),
+            Self::Float { value, .. } => format!("{value}"),
+            Self::String(s) => format!("\"{s}\""),
+            Self::SymbolRef(parts) => format!("@{}", parts.join("::@")),
+            Self::Array(items) => {
+                let joined = items
+                    .iter()
+                    .map(Self::to_mlir_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("[{joined}]")
+            }
+            Self::DenseI64Array(vals) => {
+                let joined = vals
+                    .iter()
+                    .map(i64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("array<i64: {joined}>")
+            }
+            Self::DenseBoolArray(vals) => {
+                let joined = vals
+                    .iter()
+                    .map(bool::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("array<i1: {joined}>")
+            }
+            Self::DenseElements(de) => {
+                if de.values_f64.len() == 1 {
+                    format!("dense<{}>", de.values_f64.first().copied().unwrap_or(0.0))
+                } else {
+                    let joined = de
+                        .values_f64
+                        .iter()
+                        .map(f64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("dense<[{joined}]>")
+                }
+            }
+            Self::Dictionary(map) => {
+                let entries = map
+                    .iter()
+                    .map(|(k, v)| format!("{k} = {}", v.to_mlir_string()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{{{entries}}}")
+            }
+            Self::ComparisonDirection(dir) => {
+                format!("#stablehlo<comparison_direction {}>", dir.as_str())
+            }
+            Self::DotDimensionNumbers(d) => {
+                let lb = d
+                    .lhs_batching_dimensions
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let rb = d
+                    .rhs_batching_dimensions
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let lc = d
+                    .lhs_contracting_dimensions
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let rc = d
+                    .rhs_contracting_dimensions
+                    .iter()
+                    .map(usize::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "#stablehlo.dot<lhs_batching_dimensions = [{lb}], rhs_batching_dimensions = [{rb}], lhs_contracting_dimensions = [{lc}], rhs_contracting_dimensions = [{rc}]>"
+                )
+            }
+            Self::SdyTensorSharding(sh) => {
+                let dims = sh
+                    .dim_shardings
+                    .iter()
+                    .map(|ds| {
+                        let axes = ds
+                            .axes
+                            .iter()
+                            .map(|a| format!("\"{a}\""))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!("{{{axes}}}")
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("#sdy.sharding<@{}, [{dims}]>", sh.mesh_name)
+            }
+            _ => String::from("\"attr\""),
+        }
+    }
 }
 
 /// Strongly-typed operation classification across all supported dialects.

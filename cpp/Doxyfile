@@ -1,5 +1,5 @@
 PROJECT_NAME           = "libtpu-cpp"
-PROJECT_NUMBER         = "0.0.50"
+PROJECT_NUMBER         = "0.0.52"
 INPUT                  = cpp/src/libtpu.h cpp/src/libtpu.hpp cpp/src/libtpu.cpp cpp/tests/test_libtpu.cpp
 RECURSIVE              = NO
 EXTRACT_ALL            = YES

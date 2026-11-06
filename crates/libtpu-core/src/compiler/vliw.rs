@@ -864,6 +864,7 @@ impl TpuInstructionBundle {
     /// * `generation` - Target Cloud TPU generation (`V4`, `V5e`, `V5p`, `V6e`, `V7x`).
     /// * `stall_cycles` - Number of inter-bundle hazard stall cycles (`0..=15`).
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn encode_for_generation(
         &self,
         generation: crate::types::TpuGeneration,
@@ -885,7 +886,20 @@ impl TpuInstructionBundle {
             .map_or(0_u8, |&d| u8::try_from(d.saturating_add(1)).unwrap_or(0));
 
         let is_mxu = self.opcode == TpuOpCode::DotGeneralF32;
-        let is_xunary = self.opcode.is_transcendental();
+        let is_xunary = self.opcode.is_transcendental()
+            || matches!(
+                self.opcode,
+                TpuOpCode::Transpose
+                    | TpuOpCode::BroadcastInDim
+                    | TpuOpCode::Reverse
+                    | TpuOpCode::Iota
+                    | TpuOpCode::DynamicSlice
+                    | TpuOpCode::Concatenate
+                    | TpuOpCode::Slice
+                    | TpuOpCode::Pad
+                    | TpuOpCode::Gather
+                    | TpuOpCode::Scatter
+            );
         let is_collective = matches!(
             self.opcode,
             TpuOpCode::AllReduceSumF32 | TpuOpCode::AllGather | TpuOpCode::ReduceScatter

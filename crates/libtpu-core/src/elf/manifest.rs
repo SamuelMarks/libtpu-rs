@@ -66,7 +66,7 @@ pub struct GoldenExtensionNode {
 /// `libtpu/libtpu.so` section of [`GoldenBinaryManifest`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoldenLibtpuSo {
-    /// Total file size in bytes (`630,899,976`).
+    /// Total file size in bytes (`467,479,448`).
     pub size_bytes: u64,
     /// Lowercase 64-char hex SHA-256 digest.
     pub sha256: String,
@@ -80,7 +80,7 @@ pub struct GoldenLibtpuSo {
     pub libtpu_sdk_api_struct_size: usize,
     /// `TpuDriverFn` struct size (`224`).
     pub tpu_driver_fn_struct_size: usize,
-    /// Number of exported `.dynsym` functions (`78`).
+    /// Number of exported `.dynsym` functions (`75`).
     pub exported_functions_count: usize,
     /// Exported `.dynsym` function list.
     pub exported_functions: Vec<GoldenExportedSymbol>,
@@ -91,13 +91,13 @@ pub struct GoldenLibtpuSo {
 /// `libtpu/sdk.so` section of [`GoldenBinaryManifest`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GoldenSdkSo {
-    /// Total file size in bytes (`37,821,432`).
+    /// Total file size in bytes (`37,925,248`).
     pub size_bytes: u64,
     /// Lowercase 64-char hex SHA-256 digest.
     pub sha256: String,
     /// Python C-extension entrypoint (`"PyInit_sdk"`).
     pub entrypoint: String,
-    /// Exported Python submodules (`["slice", "tpumonitoring", "tpuz", "debug"]`).
+    /// Exported Python submodules (`["slice", "tpumonitoring", "tpuz", "debug", "diagnostics"]`).
     pub submodules: Vec<String>,
 }
 
@@ -106,7 +106,7 @@ pub struct GoldenSdkSo {
 pub struct GoldenBinaryManifest {
     /// `PyPI` package name (`"libtpu"`).
     pub package: String,
-    /// Package version (`"0.0.50"`).
+    /// Package version (`"0.0.52"`).
     pub version: String,
     /// Wheel filename.
     pub wheel: String,
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_digests_and_golden_manifests() {
-        let digests = compute_artifact_digests(b"libtpu-0.0.50");
+        let digests = compute_artifact_digests(b"libtpu-0.0.52");
         assert_eq!(digests.size_bytes, 13);
         assert_eq!(digests.sha256_hex.len(), 64);
         assert_eq!(digests.blake3_hex.len(), 64);
@@ -283,7 +283,8 @@ mod tests {
             include_str!("../../../../docs/reverse_engineering/golden_binary_manifest.json");
         if let Ok(manifest) = parse_golden_binary_manifest(manifest_json) {
             assert_eq!(manifest.package, "libtpu");
-            assert_eq!(manifest.libtpu_so.exported_functions_count, 78);
+            assert_eq!(manifest.version, "0.0.52");
+            assert_eq!(manifest.libtpu_so.exported_functions_count, 75);
             assert_eq!(manifest.libtpu_so.pjrt_vtable_slots.len(), 138);
             assert_eq!(manifest.clone(), manifest);
             assert_ne!(format!("{manifest:?}"), "");
@@ -300,17 +301,17 @@ mod tests {
         }
         assert!(parse_golden_binary_manifest("not-json").is_err());
         let bad_manifest1 = manifest_json.replace(
-            r#""ef2f7af1f1ca0f27db6a6a3adffdd2b275a3215b121c8f9bc3f6ce842fc7c700""#,
+            r#""f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077""#,
             r#""short""#,
         );
         assert!(parse_golden_binary_manifest(&bad_manifest1).is_err());
         let bad_manifest2 = manifest_json.replace(
-            r#""6d65c03e2b584eaa3b546b6b64931c4b153ad5c4e2b404f578ea548c0fb6d2a4""#,
+            r#""630c772352b470e1f32b7459ac3d60790f8d4d5000747390ebdeb743c1f33186""#,
             r#""short""#,
         );
         assert!(parse_golden_binary_manifest(&bad_manifest2).is_err());
         let bad_manifest3 = manifest_json.replace(
-            r#""exported_functions_count": 78"#,
+            r#""exported_functions_count": 75"#,
             r#""exported_functions_count": 99"#,
         );
         assert!(parse_golden_binary_manifest(&bad_manifest3).is_err());

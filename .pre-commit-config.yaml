@@ -37,7 +37,7 @@ repos:
         always_run: true
 
       - id: google-libtpu-abi
-        name: verify official Google libtpu (libtpu.so v0.0.50) binary ABI compatibility
+        name: verify official Google libtpu (libtpu.so v0.0.52) binary ABI compatibility
         entry: python3 scripts/pre_commit.py abi
         language: system
         pass_filenames: false

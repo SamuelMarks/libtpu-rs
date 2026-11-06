@@ -25,6 +25,8 @@ use std::io::Read;
 pub struct DistributedCoordinator {
     /// Key-value directory used for exchanging `LocalTopologyProto` and barrier state.
     kv_store: Mutex<BTreeMap<String, Vec<u8>>>,
+    /// Condition variable notified whenever a key-value entry is inserted or updated.
+    kv_condvar: parking_lot::Condvar,
     /// Barrier arrival sets keyed by `(barrier_id, slice_id)` -> set of participating `task_id`s.
     barriers: Mutex<BTreeMap<(u64, i32), BTreeSet<i32>>>,
     /// Last recorded heartbeat timestamp (ms) per `(slice_id, task_id)`.
@@ -40,7 +42,8 @@ impl DistributedCoordinator {
         Self::default()
     }
 
-    /// Inserts or updates a key-value entry in the coordination directory.
+    /// Inserts or updates a key-value entry in the coordination directory and wakes any threads
+    /// blocked in [`Self::wait_get_key_value`].
     ///
     /// # Arguments
     ///
@@ -48,6 +51,37 @@ impl DistributedCoordinator {
     /// * `value` - Raw value payload bytes.
     pub fn put_key_value(&self, key: &str, value: Vec<u8>) {
         self.kv_store.lock().insert(String::from(key), value);
+        self.kv_condvar.notify_all();
+    }
+
+    /// Blocks up to `timeout_ms` milliseconds waiting for `key` to be inserted into the
+    /// coordination directory (`WaitGetKeyValue`), returning the value as soon as it is present.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Directory key string to await.
+    /// * `timeout_ms` - Maximum wait timeout in milliseconds (`0` performs an immediate check).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::MegascaleBarrierTimeout`] if `key` does not appear within `timeout_ms`.
+    pub fn wait_get_key_value(&self, key: &str, timeout_ms: u64) -> LibTpuResult<Vec<u8>> {
+        let mut guard = self.kv_store.lock();
+        if let Some(val) = guard.get(key) {
+            return Ok(val.clone());
+        }
+        if timeout_ms > 0 {
+            let _ = self
+                .kv_condvar
+                .wait_for(&mut guard, std::time::Duration::from_millis(timeout_ms));
+            if let Some(val) = guard.get(key) {
+                return Ok(val.clone());
+            }
+        }
+        Err(LibTpuError::MegascaleBarrierTimeout {
+            slice_id: 0,
+            barrier_id: timeout_ms,
+        })
     }
 
     /// Retrieves a value by `key` from the coordination directory.
@@ -261,6 +295,7 @@ impl DistributedCoordinator {
     /// # Errors
     ///
     /// Returns [`LibTpuError`] if `GetKeyValue` or `WaitAtBarrier` fails.
+    #[allow(clippy::too_many_lines)]
     pub fn handle_wire_frame(
         &self,
         req: &CoordinationWireFrame,
@@ -290,7 +325,39 @@ impl DistributedCoordinator {
                 vec![u8::from(self.delete_key_value(&key))]
             }
             6 => {
-                let count = self.wait_at_barrier(0, req.request_id, 0, 1)?;
+                let (slice_id, barrier_id, task_id, expected) = if let [
+                    s0,
+                    s1,
+                    s2,
+                    s3,
+                    b0,
+                    b1,
+                    b2,
+                    b3,
+                    b4,
+                    b5,
+                    b6,
+                    b7,
+                    t0,
+                    t1,
+                    t2,
+                    t3,
+                    e0,
+                    e1,
+                    e2,
+                    e3,
+                    ..,
+                ] = req.payload.as_slice()
+                {
+                    let s_id = i32::from_le_bytes([*s0, *s1, *s2, *s3]);
+                    let b_id = u64::from_le_bytes([*b0, *b1, *b2, *b3, *b4, *b5, *b6, *b7]);
+                    let t_id = i32::from_le_bytes([*t0, *t1, *t2, *t3]);
+                    let exp = u32::from_le_bytes([*e0, *e1, *e2, *e3]);
+                    (s_id, b_id, t_id, (exp as usize).max(1))
+                } else {
+                    (0, req.request_id, 0, 1)
+                };
+                let count = self.wait_at_barrier(slice_id, barrier_id, task_id, expected)?;
                 count.to_le_bytes().to_vec()
             }
             8 => {
@@ -311,6 +378,20 @@ impl DistributedCoordinator {
                 let msg = String::from_utf8_lossy(&req.payload);
                 let _ = self.report_error_to_service(0, 0, &msg);
                 b"ERROR_RECORDED".to_vec()
+            }
+            12 => {
+                let local = LocalTopologyProto::decode(&req.payload)?;
+                let key = format!(
+                    "topo/part{}_proc{}",
+                    local.partition_index, local.process_id
+                );
+                self.put_key_value(&key, req.payload.clone());
+                let locals: Vec<LocalTopologyProto> = self
+                    .get_key_value_dir("topo/")
+                    .into_iter()
+                    .filter_map(|(_, bytes)| LocalTopologyProto::decode(&bytes).ok())
+                    .collect();
+                MultiSliceTopologyAssembler::assemble_global_topology(&locals).encode()
             }
             _ => {
                 let _ = self.heartbeats_ms.lock().remove(&(0, 0));
@@ -424,6 +505,108 @@ impl MultiSliceTopologyAssembler {
         EndpointAddressesProto {
             address_mappings: mappings,
         }
+    }
+}
+
+/// `MegaScale` cross-slice DCN packet compression and checksumming engine (`MegascaleTransport`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MegascaleTransport;
+
+impl MegascaleTransport {
+    /// Magic prefix (`b"MGSZ"`) for compressed `MegaScale` DCN payloads.
+    pub const COMPRESSED_MAGIC: [u8; 4] = *b"MGSZ";
+
+    /// Compresses `payload` using deterministic run-length + byte-run framing and appends a 64-bit
+    /// [`crate::proto::riegeli_highwayhash64`] checksum header (`[4B magic "MGSZ"][4B orig_len][8B hash64][compressed...]`).
+    ///
+    /// # Arguments
+    ///
+    /// * `payload` - Raw uncompressed DCN packet bytes.
+    #[must_use]
+    pub fn compress_payload(payload: &[u8]) -> Vec<u8> {
+        let orig_len = u32::try_from(payload.len()).unwrap_or(u32::MAX);
+        let checksum = crate::proto::riegeli_highwayhash64(payload);
+        let mut out = Vec::with_capacity(16 + payload.len());
+        out.extend_from_slice(&Self::COMPRESSED_MAGIC);
+        out.extend_from_slice(&orig_len.to_le_bytes());
+        out.extend_from_slice(&checksum.to_le_bytes());
+
+        let mut idx = 0_usize;
+        while let Some(&b) = payload.get(idx) {
+            let mut run = 1_usize;
+            while payload.get(idx + run) == Some(&b) {
+                run += 1;
+            }
+            if run >= 4 || b == 0xFF {
+                out.push(0xFF);
+                #[allow(clippy::cast_possible_truncation)]
+                out.push(run.min(255) as u8);
+                out.push(b);
+                idx += run.min(255);
+            } else {
+                out.push(b);
+                idx += 1;
+            }
+        }
+        out
+    }
+
+    /// Decompresses a `MegaScale` DCN packet produced by [`Self::compress_payload`] and verifies its
+    /// 64-bit `HighwayHash64` checksum.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - Compressed `MegaScale` packet bytes (or plain uncompressed bytes if not prefixed with `"MGSZ"`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::DeserializationFailed`] if the compressed frame is truncated or fails checksum verification.
+    pub fn decompress_payload(frame: &[u8]) -> LibTpuResult<Vec<u8>> {
+        if !frame.starts_with(&Self::COMPRESSED_MAGIC) {
+            return Ok(frame.to_vec());
+        }
+        if frame.len() < 16 {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: String::from("truncated MegaScale compressed frame header"),
+            });
+        }
+        let mut len_b = [0_u8; 4];
+        len_b.copy_from_slice(frame.get(4..8).unwrap_or(&[0_u8; 4]));
+        let orig_len = u32::from_le_bytes(len_b) as usize;
+        let mut hash_b = [0_u8; 8];
+        hash_b.copy_from_slice(frame.get(8..16).unwrap_or(&[0_u8; 8]));
+        let expected_hash = u64::from_le_bytes(hash_b);
+
+        let mut out = Vec::with_capacity(orig_len);
+        let body = frame.get(16..).unwrap_or_default();
+        let mut cursor = 0_usize;
+        while let Some(&tag) = body.get(cursor) {
+            if tag == 0xFF {
+                let Some(&count) = body.get(cursor + 1) else {
+                    return Err(LibTpuError::DeserializationFailed {
+                        reason: String::from("truncated MegaScale RLE token"),
+                    });
+                };
+                let Some(&val) = body.get(cursor + 2) else {
+                    return Err(LibTpuError::DeserializationFailed {
+                        reason: String::from("truncated MegaScale RLE value byte"),
+                    });
+                };
+                out.extend(std::iter::repeat_n(val, usize::from(count)));
+                cursor += 3;
+            } else {
+                out.push(tag);
+                cursor += 1;
+            }
+        }
+        if crate::proto::riegeli_highwayhash64(&out) != expected_hash {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: String::from(
+                    "MegaScale compressed payload length or HighwayHash64 mismatch",
+                ),
+            });
+        }
+        Ok(out)
     }
 }
 
@@ -572,6 +755,199 @@ impl DcnLoopbackAndTcpTransport {
             elem_type,
             reduction_op,
         ))
+    }
+
+    /// Executes a multi-participant `AllGather` across simulated DCN slices by transmitting each
+    /// slice's shard buffer over an OS `127.0.0.1:0` loopback TCP socket and concatenating with
+    /// [`CollectiveRuntimeEngine::execute_all_gather`].
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of shard tensor byte buffers (one per DCN slice/replica).
+    /// * `elem_type` - Tensor [`ElementType`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if TCP socket transmission or frame decoding fails.
+    pub fn execute_tcp_all_gather(
+        replica_buffers: &[Vec<u8>],
+        elem_type: ElementType,
+    ) -> LibTpuResult<Vec<Vec<u8>>> {
+        let mut collected = Vec::with_capacity(replica_buffers.len());
+        for (idx, buf) in replica_buffers.iter().enumerate() {
+            let frame = CoordinationWireFrame {
+                request_id: idx as u64,
+                opcode: 21,
+                payload: buf.clone(),
+            };
+            let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
+            collected.push(rx.payload);
+        }
+        Ok(CollectiveRuntimeEngine::execute_all_gather(
+            &collected, elem_type,
+        ))
+    }
+
+    /// Executes a multi-participant `ReduceScatter` across simulated DCN slices over OS `127.0.0.1:0`
+    /// loopback TCP sockets and scatters the reduced shards via [`CollectiveRuntimeEngine::execute_reduce_scatter`].
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of input tensor byte buffers (one per DCN slice/replica).
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `reduction_op` - [`CollectiveReductionOp`] combiner.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if TCP socket transmission or frame decoding fails.
+    pub fn execute_tcp_reduce_scatter(
+        replica_buffers: &[Vec<u8>],
+        elem_type: ElementType,
+        reduction_op: CollectiveReductionOp,
+    ) -> LibTpuResult<Vec<Vec<u8>>> {
+        let mut collected = Vec::with_capacity(replica_buffers.len());
+        for (idx, buf) in replica_buffers.iter().enumerate() {
+            let frame = CoordinationWireFrame {
+                request_id: idx as u64,
+                opcode: 22,
+                payload: buf.clone(),
+            };
+            let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
+            collected.push(rx.payload);
+        }
+        Ok(CollectiveRuntimeEngine::execute_reduce_scatter(
+            &collected,
+            elem_type,
+            reduction_op,
+        ))
+    }
+
+    /// Executes a multi-participant `AllToAll` across simulated DCN slices over OS `127.0.0.1:0`
+    /// loopback TCP sockets via [`CollectiveRuntimeEngine::execute_all_to_all`].
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of input tensor byte buffers (one per DCN slice/replica).
+    /// * `elem_type` - Tensor [`ElementType`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if TCP socket transmission or frame decoding fails.
+    pub fn execute_tcp_all_to_all(
+        replica_buffers: &[Vec<u8>],
+        elem_type: ElementType,
+    ) -> LibTpuResult<Vec<Vec<u8>>> {
+        let mut collected = Vec::with_capacity(replica_buffers.len());
+        for (idx, buf) in replica_buffers.iter().enumerate() {
+            let frame = CoordinationWireFrame {
+                request_id: idx as u64,
+                opcode: 23,
+                payload: buf.clone(),
+            };
+            let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
+            collected.push(rx.payload);
+        }
+        Ok(CollectiveRuntimeEngine::execute_all_to_all(
+            &collected, elem_type,
+        ))
+    }
+}
+
+/// Framed TCP socket server for `OpenXLA` `CoordinationService` (`CoordinationTcpServer`).
+#[derive(Debug)]
+pub struct CoordinationTcpServer {
+    /// Bound local TCP listener (`127.0.0.1:<port>`).
+    listener: std::net::TcpListener,
+    /// Shared [`DistributedCoordinator`] state machine.
+    pub coordinator: std::sync::Arc<DistributedCoordinator>,
+}
+
+impl CoordinationTcpServer {
+    /// Binds a new [`CoordinationTcpServer`] to `bind_addr` (e.g., `"127.0.0.1:0"`).
+    ///
+    /// # Arguments
+    ///
+    /// * `bind_addr` - Socket address string to bind.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if binding the TCP listener fails.
+    pub fn bind(bind_addr: &str) -> LibTpuResult<Self> {
+        let listener = std::net::TcpListener::bind(bind_addr)?;
+        Ok(Self {
+            listener,
+            coordinator: std::sync::Arc::new(DistributedCoordinator::new()),
+        })
+    }
+
+    /// Returns the bound local [`std::net::SocketAddr`] of this coordination server.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if querying the socket address fails.
+    pub fn local_addr(&self) -> LibTpuResult<std::net::SocketAddr> {
+        Ok(self.listener.local_addr()?)
+    }
+
+    /// Accepts and serves a single incoming [`CoordinationWireFrame`] TCP client connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if accepting, reading, handling, or writing the TCP frame fails.
+    pub fn accept_and_serve_one(&self) -> LibTpuResult<CoordinationWireFrame> {
+        use std::io::Write;
+        let (mut stream, _) = self.listener.accept()?;
+        let mut rx_buf = Vec::new();
+        stream.read_to_end(&mut rx_buf)?;
+        let req = CoordinationWireFrame::decode_from_bytes(&rx_buf)?;
+        let resp = self.coordinator.handle_wire_frame(&req)?;
+        stream.write_all(&resp.encode_to_bytes())?;
+        Ok(resp)
+    }
+}
+
+/// Framed TCP socket client for `OpenXLA` `CoordinationService` (`CoordinationTcpClient`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoordinationTcpClient {
+    /// Target `CoordinationTcpServer` socket address.
+    pub server_addr: std::net::SocketAddr,
+}
+
+impl CoordinationTcpClient {
+    /// Creates a new [`CoordinationTcpClient`] targeting `server_addr`.
+    ///
+    /// # Arguments
+    ///
+    /// * `server_addr` - Remote or loopback `SocketAddr` of a [`CoordinationTcpServer`].
+    #[must_use]
+    pub const fn new(server_addr: std::net::SocketAddr) -> Self {
+        Self { server_addr }
+    }
+
+    /// Sends a [`CoordinationWireFrame`] request to `self.server_addr` and awaits the response
+    /// served by `server.accept_and_serve_one()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `server` - Active [`CoordinationTcpServer`] bound to `self.server_addr`.
+    /// * `req` - Outgoing [`CoordinationWireFrame`] request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if TCP socket connection, framing, or RPC execution fails.
+    pub fn call_rpc(
+        &self,
+        server: &CoordinationTcpServer,
+        req: &CoordinationWireFrame,
+    ) -> LibTpuResult<CoordinationWireFrame> {
+        use std::io::Write;
+        let mut client = std::net::TcpStream::connect(self.server_addr)?;
+        client.write_all(&req.encode_to_bytes())?;
+        client.shutdown(std::net::Shutdown::Write)?;
+        let _ = server.accept_and_serve_one()?;
+        let mut rx_buf = Vec::new();
+        client.read_to_end(&mut rx_buf)?;
+        CoordinationWireFrame::decode_from_bytes(&rx_buf)
     }
 }
 
@@ -1232,11 +1608,12 @@ mod tests {
             assert!(rpc_coord.serve_tcp_rpc_once(&req).is_ok());
         }
         assert!(!rpc_coord.cancel_barrier(0, 999));
+        let slice_bufs = [
+            ElementType::F32.pack_from_f64_slice(&[1.0, 2.0]),
+            ElementType::F32.pack_from_f64_slice(&[3.0, 4.0]),
+        ];
         let tcp_ar = DcnLoopbackAndTcpTransport::execute_tcp_all_reduce(
-            &[
-                ElementType::F32.pack_from_f64_slice(&[1.0, 2.0]),
-                ElementType::F32.pack_from_f64_slice(&[3.0, 4.0]),
-            ],
+            &slice_bufs,
             ElementType::F32,
             CollectiveReductionOp::Sum,
         );
@@ -1248,6 +1625,56 @@ mod tests {
             );
         }
         assert!(
+            DcnLoopbackAndTcpTransport::execute_tcp_all_gather(&slice_bufs, ElementType::F32)
+                .is_ok()
+        );
+        assert!(
+            DcnLoopbackAndTcpTransport::execute_tcp_reduce_scatter(
+                &slice_bufs,
+                ElementType::F32,
+                CollectiveReductionOp::Sum
+            )
+            .is_ok()
+        );
+        assert!(
+            DcnLoopbackAndTcpTransport::execute_tcp_all_to_all(&slice_bufs, ElementType::F32)
+                .is_ok()
+        );
+
+        let tcp_srv = CoordinationTcpServer::bind("127.0.0.1:0");
+        assert!(tcp_srv.is_ok());
+        if let Ok(srv) = tcp_srv {
+            assert_ne!(format!("{srv:?}"), "");
+            if let Ok(addr) = srv.local_addr() {
+                let cli = CoordinationTcpClient::new(addr);
+                assert_eq!(cli.clone(), cli);
+                assert_ne!(format!("{cli:?}"), "");
+                let local_p = LocalTopologyProto {
+                    process_id: 0,
+                    boot_id: String::from("b0"),
+                    devices: vec![DistributedDeviceProto {
+                        local_device_ordinal: 0,
+                        ..DistributedDeviceProto::default()
+                    }],
+                    partition_index: 0,
+                    network_nodes: Vec::new(),
+                };
+                let resp = cli.call_rpc(
+                    &srv,
+                    &CoordinationWireFrame {
+                        request_id: 42,
+                        opcode: 12,
+                        payload: local_p.encode(),
+                    },
+                );
+                assert!(resp.is_ok());
+                if let Ok(r_frame) = resp {
+                    let g_topo = GlobalTopologyProto::decode(&r_frame.payload);
+                    assert!(g_topo.is_ok());
+                }
+            }
+        }
+        assert!(
             rpc_coord
                 .handle_wire_frame(&CoordinationWireFrame {
                     request_id: 1,
@@ -1256,5 +1683,64 @@ mod tests {
                 })
                 .is_err()
         );
+
+        // Test wait_get_key_value (immediate hit, timeout miss, and cross-thread condvar wakeup)
+        rpc_coord.put_key_value("ready_key", b"ready_val".to_vec());
+        assert_eq!(
+            rpc_coord.wait_get_key_value("ready_key", 0),
+            Ok(b"ready_val".to_vec())
+        );
+        assert!(rpc_coord.wait_get_key_value("never_key", 0).is_err());
+        assert!(rpc_coord.wait_get_key_value("never_key", 2).is_err());
+
+        let shared_coord = std::sync::Arc::new(DistributedCoordinator::new());
+        let writer_coord = std::sync::Arc::clone(&shared_coord);
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            writer_coord.put_key_value("delayed_key", b"woken".to_vec());
+        });
+        assert_eq!(
+            shared_coord.wait_get_key_value("delayed_key", 500),
+            Ok(b"woken".to_vec())
+        );
+        let _ = handle.join();
+
+        // Test 20-byte multi-participant barrier payload on opcode 6
+        let mut barrier_payload = Vec::with_capacity(20);
+        barrier_payload.extend_from_slice(&0_i32.to_le_bytes());
+        barrier_payload.extend_from_slice(&777_u64.to_le_bytes());
+        barrier_payload.extend_from_slice(&0_i32.to_le_bytes());
+        barrier_payload.extend_from_slice(&1_u32.to_le_bytes());
+        assert!(
+            rpc_coord
+                .handle_wire_frame(&CoordinationWireFrame {
+                    request_id: 777,
+                    opcode: 6,
+                    payload: barrier_payload,
+                })
+                .is_ok()
+        );
+
+        let raw_dcn = vec![0xAA_u8, 0xAA, 0xAA, 0xAA, 0xAA, 0x01, 0xFF, 0x02];
+        let compressed = MegascaleTransport::compress_payload(&raw_dcn);
+        assert_eq!(
+            MegascaleTransport::decompress_payload(&compressed),
+            Ok(raw_dcn)
+        );
+        assert_eq!(
+            MegascaleTransport::decompress_payload(b"plain_uncompressed"),
+            Ok(b"plain_uncompressed".to_vec())
+        );
+        assert!(MegascaleTransport::decompress_payload(b"MGSZshort").is_err());
+        let mut trunc_rle = compressed.clone();
+        trunc_rle.push(0xFF);
+        assert!(MegascaleTransport::decompress_payload(&trunc_rle).is_err());
+        trunc_rle.push(2);
+        assert!(MegascaleTransport::decompress_payload(&trunc_rle).is_err());
+        let mut bad_hash = compressed;
+        bad_hash[8] ^= 0xFF;
+        assert!(MegascaleTransport::decompress_payload(&bad_hash).is_err());
+        assert_eq!(MegascaleTransport.clone(), MegascaleTransport);
+        assert_ne!(format!("{MegascaleTransport:?}"), "");
     }
 }

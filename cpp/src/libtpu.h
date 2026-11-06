@@ -3144,6 +3144,213 @@ PJRT_Error *PJRT_RawBuffer_GetHostPointer(void *raw_args);
  */
 PJRT_Error *PJRT_CrossHostTransfers_SendBuffers(void *raw_args);
 
+/**
+ * @brief Binary slice configuration record returned by
+ * `PJRT_TpuTopology_GetSliceConfig` and `GetSliceConfigs` (`56` bytes).
+ */
+typedef struct PJRT_TpuTopology_SliceConfig {
+  /** @brief Pointer to slice configuration name UTF-8 bytes. */
+  const char *name;
+  /** @brief Byte length of `name`. */
+  size_t name_len;
+  /** @brief Mesh dimensions along up to 4 axes (`[x, y, z, w]`). */
+  int32_t dimensions[4];
+  /** @brief Torus wrap-around flags along up to 4 axes. */
+  bool wraps[4];
+  /** @brief Number of active dimensions (`2` or `3`). */
+  size_t num_dimensions;
+  /** @brief Whether twisted torus routing is enabled. */
+  bool twist;
+  /** @brief Trailing 7-byte alignment padding (`56` bytes total). */
+  uint8_t pad[7];
+} PJRT_TpuTopology_SliceConfig;
+
+/**
+ * @brief Argument structure for `PJRT_TpuTopology_ComputeSubsliceForDevices`
+ * (`64` bytes).
+ */
+typedef struct PJRT_TpuTopology_ComputeSubsliceForDevices_Args {
+  /** @brief Size of this struct (`64`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Topology description handle. */
+  const void *topology;
+  /** @brief Subslice dimension bounds array pointer (`int32_t*`). */
+  const int32_t *subslice_dims;
+  /** @brief Number of subslice dimensions. */
+  size_t num_subslice_dims;
+  /** @brief Device ID array pointer (`int32_t*`). */
+  const int32_t *device_ids;
+  /** @brief Number of devices in `device_ids`. */
+  size_t num_devices;
+  /** @brief Output subslice origin coordinates array pointer (`int32_t*`). */
+  int32_t *subslice_origin_out;
+} PJRT_TpuTopology_ComputeSubsliceForDevices_Args;
+
+/**
+ * @brief Computes subslice origin coordinates for a subset of TPU devices
+ * (`PJRT_TpuTopology_ComputeSubsliceForDevices`).
+ * @param raw_args Pointer to `PJRT_TpuTopology_ComputeSubsliceForDevices_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_TpuTopology_ComputeSubsliceForDevices(void *raw_args);
+
+/**
+ * @brief Argument structure for `PJRT_TpuExecutable_GetTargetArguments` and
+ * `GetHloModuleWithConfig` (`48` bytes).
+ */
+typedef struct PJRT_TpuExecutable_ProtoQuery_Args {
+  /** @brief Size of this struct (`48`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input `PJRT_Executable*` handle. */
+  void *executable;
+  /** @brief Output serialized bytes pointer word. */
+  size_t serialized_bytes;
+  /** @brief Output serialized byte length. */
+  size_t serialized_bytes_size;
+  /** @brief Output metadata holder handle. */
+  void *holder;
+} PJRT_TpuExecutable_ProtoQuery_Args;
+
+/**
+ * @brief Argument structure for `PJRT_ExecutableMetadata_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_Metadata_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Metadata holder handle to destroy. */
+  void *metadata;
+} PJRT_Metadata_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_TpuExecutable_GetCompiledMemoryStats`
+ * (`64` bytes).
+ */
+typedef struct PJRT_TpuExecutable_GetCompiledMemoryStats_Args {
+  /** @brief Size of this struct (`64`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input `PJRT_Executable*` handle. */
+  void *executable;
+  /** @brief Output generated code size in bytes. */
+  int64_t generated_code_size_in_bytes;
+  /** @brief Output argument size in bytes. */
+  int64_t argument_size_in_bytes;
+  /** @brief Output result size in bytes. */
+  int64_t output_size_in_bytes;
+  /** @brief Output aliased size in bytes. */
+  int64_t alias_size_in_bytes;
+  /** @brief Output temporary scratchpad size in bytes. */
+  int64_t temp_size_in_bytes;
+} PJRT_TpuExecutable_GetCompiledMemoryStats_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Megascale_*` 40-byte data/query
+ * operations (`40` bytes).
+ */
+typedef struct PJRT_Megascale_Data_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input handle or field tag. */
+  size_t handle;
+  /** @brief Output primary pointer or value word. */
+  size_t out_first;
+  /** @brief Output secondary length or value word. */
+  size_t out_second;
+} PJRT_Megascale_Data_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Shardings_ParameterShardings` and
+ * `OutputShardings` (`48` bytes).
+ */
+typedef struct PJRT_Shardings_PJRT_Executable_Shardings_Args {
+  /** @brief Size of this struct (`48`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input `PJRT_Executable*` handle. */
+  void *executable;
+  /** @brief Output number of sharding items. */
+  size_t num_items;
+  /** @brief Output array of serialized `OpSharding` byte pointers. */
+  const char *const *shardings;
+  /** @brief Output array of serialized `OpSharding` byte lengths. */
+  const size_t *sharding_sizes;
+} PJRT_Shardings_PJRT_Executable_Shardings_Args;
+
+/**
+ * @brief Queries serialized `TargetArgumentsProto` for an executable
+ * (`PJRT_TpuExecutable_GetTargetArguments`).
+ * @param raw_args Pointer to `PJRT_TpuExecutable_ProtoQuery_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_TpuExecutable_GetTargetArguments(void *raw_args);
+
+/**
+ * @brief Queries serialized `HloModuleProtoWithConfig` for an executable
+ * (`PJRT_TpuExecutable_GetHloModuleWithConfig`).
+ * @param raw_args Pointer to `PJRT_TpuExecutable_ProtoQuery_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_TpuExecutable_GetHloModuleWithConfig(void *raw_args);
+
+/**
+ * @brief Queries compiled memory statistics for a TPU executable
+ * (`PJRT_TpuExecutable_GetCompiledMemoryStats`).
+ * @param raw_args Pointer to `PJRT_TpuExecutable_GetCompiledMemoryStats_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_TpuExecutable_GetCompiledMemoryStats(void *raw_args);
+
+/**
+ * @brief Sets a `TpuCompilationEnvironmentProto` field override
+ * (`PJRT_TpuExecutable_SetTpuCompilationEnv`).
+ * @param raw_args Pointer to `PJRT_Megascale_Query_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_TpuExecutable_SetTpuCompilationEnv(void *raw_args);
+
+/**
+ * @brief Queries a `TpuCompilationEnvironmentProto` field as a string
+ * (`PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString`).
+ * @param raw_args Pointer to `PJRT_Megascale_Data_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *
+PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString(void *raw_args);
+
+/**
+ * @brief Destroys an `ExecutableMetadata` holder
+ * (`PJRT_ExecutableMetadata_Destroy`).
+ * @param raw_args Pointer to `PJRT_Metadata_Destroy_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_ExecutableMetadata_Destroy(void *raw_args);
+
+/**
+ * @brief Queries parameter `OpSharding` protos for an executable
+ * (`PJRT_Shardings_ParameterShardings`).
+ * @param raw_args Pointer to `PJRT_Shardings_PJRT_Executable_Shardings_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Shardings_ParameterShardings(void *raw_args);
+
+/**
+ * @brief Queries output `OpSharding` protos for an executable
+ * (`PJRT_Shardings_OutputShardings`).
+ * @param raw_args Pointer to `PJRT_Shardings_PJRT_Executable_Shardings_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Shardings_OutputShardings(void *raw_args);
+
 /** @cond INTERNAL */
 #if defined(__cplusplus)
 static_assert(sizeof(PJRT_Extension_Base) == 24, "PJRT_Extension_Base == 24");
@@ -3215,6 +3422,9 @@ static_assert(sizeof(PJRT_Collectives_CreateCommunicator_Args) == 48,
 static_assert(sizeof(PJRT_Communicator_Destroy_Args) == 24, "CommDel == 24");
 static_assert(sizeof(PJRT_Communicator_AllReduce_Args) == 64,
               "CommAllReduce == 64");
+static_assert(sizeof(PJRT_TpuTopology_SliceConfig) == 56, "SliceConfig == 56");
+static_assert(sizeof(PJRT_TpuTopology_ComputeSubsliceForDevices_Args) == 64,
+              "ComputeSubslice == 64");
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(PJRT_Extension_Base) == 24, "PJRT_Extension_Base == 24");
 _Static_assert(sizeof(PJRT_Api_Version) == 24, "PJRT_Api_Version == 24");

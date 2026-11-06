@@ -522,6 +522,197 @@ impl ElementType {
         }
         out
     }
+
+    /// Returns `true` if this [`ElementType`] is an exact integer or boolean predicate type
+    /// (`Pred`, `S2`..`S64`, `U2`..`U64`).
+    #[must_use]
+    pub const fn is_integer(self) -> bool {
+        matches!(
+            self,
+            Self::Pred
+                | Self::S2
+                | Self::U2
+                | Self::S4
+                | Self::U4
+                | Self::S8
+                | Self::U8
+                | Self::S16
+                | Self::U16
+                | Self::S32
+                | Self::U32
+                | Self::S64
+                | Self::U64
+        )
+    }
+
+    /// Returns `true` if this [`ElementType`] is an unsigned integer or predicate (`Pred`, `U2`..`U64`).
+    #[must_use]
+    pub const fn is_unsigned_integer(self) -> bool {
+        matches!(
+            self,
+            Self::Pred | Self::U2 | Self::U4 | Self::U8 | Self::U16 | Self::U32 | Self::U64
+        )
+    }
+
+    /// Unpacks a raw little-endian byte buffer of this [`ElementType`] into exact 64-bit two's-complement
+    /// `i64` values without any intermediate `f64` conversion (preserving all 64 bits for `S64` and `U64`).
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Raw little-endian tensor payload.
+    #[must_use]
+    #[allow(clippy::cast_possible_wrap)]
+    pub fn unpack_to_i64_vec(self, bytes: &[u8]) -> Vec<i64> {
+        let aligned_len = |elem_size: usize| (bytes.len() / elem_size) * elem_size;
+        match self {
+            Self::Pred => bytes.iter().map(|&b| i64::from(b != 0)).collect(),
+            Self::U8 => bytes.iter().map(|&b| i64::from(b)).collect(),
+            Self::U4 => bytes.iter().map(|&b| i64::from(b & 0x0F)).collect(),
+            Self::U2 => bytes.iter().map(|&b| i64::from(b & 0x03)).collect(),
+            Self::S8 | Self::S4 | Self::S2 => bytes
+                .iter()
+                .map(|&b| {
+                    let raw = i8::from_le_bytes([b]);
+                    let clamped = match self {
+                        Self::S4 => raw.clamp(-8, 7),
+                        Self::S2 => raw.clamp(-2, 1),
+                        _ => raw,
+                    };
+                    i64::from(clamped)
+                })
+                .collect(),
+            Self::S16 => bytemuck::pod_collect_to_vec::<u8, i16>(
+                bytes.get(..aligned_len(2)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| i64::from(i16::from_le(v)))
+            .collect(),
+            Self::U16 => bytemuck::pod_collect_to_vec::<u8, u16>(
+                bytes.get(..aligned_len(2)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| i64::from(u16::from_le(v)))
+            .collect(),
+            Self::S32 => bytemuck::pod_collect_to_vec::<u8, i32>(
+                bytes.get(..aligned_len(4)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| i64::from(i32::from_le(v)))
+            .collect(),
+            Self::U32 => bytemuck::pod_collect_to_vec::<u8, u32>(
+                bytes.get(..aligned_len(4)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| i64::from(u32::from_le(v)))
+            .collect(),
+            Self::S64 => bytemuck::pod_collect_to_vec::<u8, i64>(
+                bytes.get(..aligned_len(8)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(i64::from_le)
+            .collect(),
+            Self::U64 => bytemuck::pod_collect_to_vec::<u8, u64>(
+                bytes.get(..aligned_len(8)).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| u64::from_le(v) as i64)
+            .collect(),
+            _ => self
+                .unpack_to_f64_vec(bytes)
+                .into_iter()
+                .map(|x| {
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        x as i64
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    /// Packs a slice of exact 64-bit two's-complement `i64` values into a little-endian byte vector
+    /// of this [`ElementType`] without any intermediate `f64` conversion.
+    ///
+    /// # Arguments
+    ///
+    /// * `values` - Exact 64-bit integer values to pack.
+    #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    pub fn pack_from_i64_slice(self, values: &[i64]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(values.len().saturating_mul(self.byte_size().max(1)));
+        match self {
+            Self::Pred => {
+                for &v in values {
+                    out.push(u8::from(v != 0));
+                }
+            }
+            Self::U8 => {
+                for &v in values {
+                    out.push(v as u8);
+                }
+            }
+            Self::U4 => {
+                for &v in values {
+                    out.push((v as u8) & 0x0F);
+                }
+            }
+            Self::U2 => {
+                for &v in values {
+                    out.push((v as u8) & 0x03);
+                }
+            }
+            Self::S8 | Self::S4 | Self::S2 => {
+                for &v in values {
+                    let raw = v as i8;
+                    let clamped = match self {
+                        Self::S4 => raw.clamp(-8, 7),
+                        Self::S2 => raw.clamp(-2, 1),
+                        _ => raw,
+                    };
+                    out.extend_from_slice(&clamped.to_le_bytes());
+                }
+            }
+            Self::S16 => {
+                for &v in values {
+                    out.extend_from_slice(&(v as i16).to_le_bytes());
+                }
+            }
+            Self::U16 => {
+                for &v in values {
+                    out.extend_from_slice(&(v as u16).to_le_bytes());
+                }
+            }
+            Self::S32 => {
+                for &v in values {
+                    out.extend_from_slice(&(v as i32).to_le_bytes());
+                }
+            }
+            Self::U32 => {
+                for &v in values {
+                    out.extend_from_slice(&(v as u32).to_le_bytes());
+                }
+            }
+            Self::S64 => {
+                for &v in values {
+                    out.extend_from_slice(&v.to_le_bytes());
+                }
+            }
+            Self::U64 => {
+                for &v in values {
+                    out.extend_from_slice(&(v as u64).to_le_bytes());
+                }
+            }
+            _ => {
+                let floats: Vec<f64> = values.iter().map(|&v| v as f64).collect();
+                return self.pack_from_f64_slice(&floats);
+            }
+        }
+        out
+    }
 }
 
 #[cfg(test)]
@@ -646,5 +837,50 @@ mod tests {
         assert!(ElementType::f16_bits_to_f32(f16_nan.to_bits()).is_nan());
         let bf16_inf = Bf16Scalar::from_f32(f32::INFINITY);
         assert!(ElementType::bf16_bits_to_f32(bf16_inf.to_bits()).is_infinite());
+
+        assert!(ElementType::S64.is_integer());
+        assert!(!ElementType::S64.is_unsigned_integer());
+        assert!(ElementType::U64.is_integer());
+        assert!(ElementType::U64.is_unsigned_integer());
+        assert!(!ElementType::F32.is_integer());
+        assert!(!ElementType::F32.is_unsigned_integer());
+
+        // Verify exact 64-bit integer round-trip above 2^53 where f64 loses precision
+        let large_s64 = [
+            0x7FFF_FFFF_FFFF_FFFE_i64,
+            0x7FFF_FFFF_FFFF_FFFF_i64,
+            -0x7FFF_FFFF_FFFF_FFFD_i64,
+            0x0020_0000_0000_0001_i64,
+        ];
+        let packed_s64 = ElementType::S64.pack_from_i64_slice(&large_s64);
+        assert_eq!(ElementType::S64.unpack_to_i64_vec(&packed_s64), large_s64);
+
+        let unsigned_samples = [0x7FFF_FFFF_FFFF_FFFF_i64, -1_i64];
+        let unsigned_bytes = ElementType::U64.pack_from_i64_slice(&unsigned_samples);
+        assert_eq!(
+            ElementType::U64.unpack_to_i64_vec(&unsigned_bytes),
+            unsigned_samples
+        );
+
+        for int_et in [
+            ElementType::Pred,
+            ElementType::U2,
+            ElementType::S2,
+            ElementType::U4,
+            ElementType::S4,
+            ElementType::U8,
+            ElementType::S8,
+            ElementType::U16,
+            ElementType::S16,
+            ElementType::U32,
+            ElementType::S32,
+            ElementType::F32,
+        ] {
+            let b = int_et.pack_from_i64_slice(&[0, 1, 2, 1]);
+            let u = int_et.unpack_to_i64_vec(&b);
+            assert_eq!(u.len(), 4);
+            assert_eq!(u.first().copied(), Some(0));
+            assert_eq!(u.get(1).copied(), Some(1));
+        }
     }
 }

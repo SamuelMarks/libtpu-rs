@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright 2026 The OpenXLA Authors and Google LLC.
 // Source: platforms/xla/service/jellyfish/tpu_compilation_environment.proto (embedded in libtpu/libtpu.so protodesc_cold)
-// Commit: cf8a4e9ce78d390b127abb8be17084e1d6cbba63 (libtpu.so SHA-256: ef2f7af1f1ca0f27db6a6a3adffdd2b275a3215b121c8f9bc3f6ce842fc7c700)
+// Commit: cf8a4e9ce78d390b127abb8be17084e1d6cbba63 (libtpu.so SHA-256: f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077)
 // Upstream Reference: https://github.com/openxla/xla/blob/cf8a4e9ce78d390b127abb8be17084e1d6cbba63/xla/xla.proto
 //
 // Embedded FileDescriptorProto: platforms/xla/service/jellyfish/tpu_compilation_environment.proto

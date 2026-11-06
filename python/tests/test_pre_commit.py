@@ -891,9 +891,9 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     fake_pypi_json = json.dumps(
         {
             "urls": [
-                {"filename": "libtpu-0.0.50.tar.gz", "url": "https://x/sdist", "digests": {}},
+                {"filename": "libtpu-0.0.52.tar.gz", "url": "https://x/sdist", "digests": {}},
                 {
-                    "filename": "libtpu-0.0.50-cp311-manylinux_2_31_x86_64.whl",
+                    "filename": "libtpu-0.0.52-cp311-manylinux_2_31_x86_64.whl",
                     "url": "https://files.pythonhosted.org/libtpu.whl",
                     "digests": {"sha256": "deadbeef"},
                 },
@@ -903,11 +903,11 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     with patch.object(
         urllib.request, "urlopen", side_effect=lambda *_a, **_kw: _FakeResp(fake_pypi_json)
     ):
-        url, sha = re_ext.fetch_pypi_wheel_url("0.0.50", "x86_64")
+        url, sha = re_ext.fetch_pypi_wheel_url("0.0.52", "x86_64")
         assert url == "https://files.pythonhosted.org/libtpu.whl"
         assert sha == "deadbeef"
-        with pytest.raises(ValueError, match="No libtpu==0.0.50 wheel found"):
-            re_ext.fetch_pypi_wheel_url("0.0.50", "s390x")
+        with pytest.raises(ValueError, match="No libtpu==0.0.52 wheel found"):
+            re_ext.fetch_pypi_wheel_url("0.0.52", "s390x")
 
     with pytest.raises(ValueError, match="Invalid ELF header"):
         re_ext.parse_elf64_sections_and_dynsym(b"not-an-elf")
@@ -1078,6 +1078,31 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     rep2 = re_ext.disassemble_x86_64_prologue(code2)
     assert rep2.expected_struct_size == 144
 
+    pro_ver = re_ext.verify_prologue_struct_sizes_against_golden(
+        [
+            (7, code1, False),
+            (15, arm_stream, True),
+            (999, code1, False),
+        ],
+        {
+            "pjrt_slots": [
+                {"word_index": 7, "min_struct_size": 40},
+                {"word_index": 15, "min_struct_size": 88},
+                {"word_index": "bad_idx"},
+                "ignored-non-dict",
+            ]
+        },
+    )
+    assert len(pro_ver) == 2
+    assert pro_ver[0]["matches_golden"] is True
+    assert pro_ver[1]["matches_golden"] is True
+    assert (
+        re_ext.verify_prologue_struct_sizes_against_golden(
+            [(7, code1, False)], {"pjrt_slots": "bad"}
+        )
+        == []
+    )
+
     proto_sec = (
         b"\x00\x0a\x02ab\x0a\x0exla_data.proto\x12\x03xla"
         b"\x0a\x09hlo.proto"
@@ -1102,13 +1127,13 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     toc_40 = struct.pack("<QQQQQ", 1, 15, 10, 0, 0)
     assert re_ext.extract_filewrapper_toc(toc_40, blob) == [("tpu_tiles.cfg", b"TILE_8x128")]
 
-    whl_path = tmp_path / "libtpu-0.0.50.whl"
+    whl_path = tmp_path / "libtpu-0.0.52.whl"
     with zipfile.ZipFile(whl_path, "w") as zf:
         zf.writestr("libtpu/__init__.py", "# init")
         zf.writestr("libtpu/libtpu.so", elf_bytes)
 
     summary = re_ext.inspect_wheel_archive(whl_path)
-    assert summary["wheel"] == "libtpu-0.0.50.whl"
+    assert summary["wheel"] == "libtpu-0.0.52.whl"
     assert "libtpu/libtpu.so" in summary["binaries"]  # type: ignore[operator]
 
     real_root = pc.get_repo_root()

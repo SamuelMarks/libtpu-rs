@@ -860,14 +860,14 @@ impl CompiledProgram {
             "f64" => ElementType::F64,
             "bf16" => ElementType::Bf16,
             "f16" => ElementType::F16,
-            "s32" => ElementType::S32,
-            "s64" => ElementType::S64,
-            "s16" => ElementType::S16,
-            "s8" => ElementType::S8,
-            "u32" => ElementType::U32,
-            "u64" => ElementType::U64,
-            "u16" => ElementType::U16,
-            "u8" => ElementType::U8,
+            "s32" | "i32" => ElementType::S32,
+            "s64" | "i64" => ElementType::S64,
+            "s16" | "i16" => ElementType::S16,
+            "s8" | "i8" => ElementType::S8,
+            "u32" | "ui32" => ElementType::U32,
+            "u64" | "ui64" => ElementType::U64,
+            "u16" | "ui16" => ElementType::U16,
+            "u8" | "ui8" => ElementType::U8,
             "i1" | "pred" => ElementType::Pred,
             "c64" | "complex<f32>" => ElementType::C64,
             "c128" | "complex<f64>" => ElementType::C128,
@@ -960,6 +960,11 @@ impl CompiledProgram {
                     id_to_slot.insert(inst.id, out_slot);
                     next_slot += 1;
                     slot_shapes.push(inst_shape.clone());
+                    let inst_dims: Vec<usize> = inst
+                        .dimensions
+                        .iter()
+                        .filter_map(|&d| usize::try_from(d).ok())
+                        .collect();
                     bundles.push(TpuInstructionBundle {
                         pc_offset: pc,
                         opcode: op,
@@ -969,6 +974,10 @@ impl CompiledProgram {
                         attrs: InstructionAttrs {
                             input_shapes: in_shapes,
                             output_shape: Some(inst_shape),
+                            custom_call_target: inst.custom_call_target.clone(),
+                            reduce_dims: inst_dims.clone(),
+                            permutation: inst_dims.clone(),
+                            broadcast_dims: inst_dims,
                             ..InstructionAttrs::default()
                         },
                     });

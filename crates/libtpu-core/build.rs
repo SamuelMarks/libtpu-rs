@@ -278,6 +278,24 @@ message TpuRuntimeAbiProto {
   string compiler_hash = 3;
   repeated string supported_chip_variants = 4;
 }
+
+message SliceConfig {
+  string name = 1;
+  repeated int32 dimensions = 2;
+  repeated bool wraps = 3;
+  bool twist = 4;
+}
+
+message TpuPlatformConfig {
+  string platform_type_name = 1;
+  repeated SliceConfig slice_configs = 2;
+  int64 num_chips_per_tray = 3;
+  int64 num_trays = 4;
+}
+
+message TpuPlatformConfigs {
+  repeated TpuPlatformConfig platform_configs = 1;
+}
 "#,
     ),
     (

@@ -411,6 +411,10 @@ pub struct InstructionAttrs {
     pub sharding_spec: String,
     /// Index vector axis in `start_indices` for `gather` (`index_vector_dim`).
     pub gather_index_vector_dim: usize,
+    /// Per-axis slice extents extracted by `gather` (`slice_sizes`).
+    pub gather_slice_sizes: Vec<usize>,
+    /// Operand axes collapsed after slicing in `gather` (`collapsed_slice_dims`).
+    pub collapsed_slice_dims: Vec<usize>,
     /// Update window axes in `updates` for `scatter` (`update_window_dims`).
     pub scatter_update_window_dims: Vec<usize>,
     /// LHS base dilation factors per spatial dimension in `convolution`.

@@ -63,6 +63,7 @@ impl TpuCompilationEnvironmentProto {
                 }
                 let pool = crate::proto::descriptor::global_descriptor_pool();
                 for msg_name in [
+                    "xla.tpu.TpuCompilationEnvironment",
                     "tpu.TpuCompilationEnvironmentProto",
                     "xla.jellyfish.EmitterLearnedCostModelOptions",
                     "xla.jellyfish.MemorySpaceAssignmentOptions",
@@ -78,6 +79,28 @@ impl TpuCompilationEnvironmentProto {
                 String::from("default")
             }
         }
+    }
+
+    /// Alias for [`Self::get_field_as_string`] that resolves any `--xla_tpu_*` or `--xla_jf_*`
+    /// compiler flag by name or field number.
+    ///
+    /// # Arguments
+    ///
+    /// * `flag_name` - Flag name (with or without leading `--`) or field tag.
+    #[must_use]
+    pub fn get_flag_by_name(&self, flag_name: &str) -> String {
+        self.get_field_as_string(flag_name)
+    }
+
+    /// Alias for [`Self::set_field_from_str`] that updates or records any `--xla_tpu_*` or `--xla_jf_*`
+    /// compiler flag override by name or field number.
+    ///
+    /// # Arguments
+    ///
+    /// * `flag_name` - Flag name (with or without leading `--`) or field tag.
+    /// * `value_str` - String representation of the new flag value.
+    pub fn set_flag_by_name(&mut self, flag_name: &str, value_str: &str) {
+        self.set_field_from_str(flag_name, value_str);
     }
 
     /// Updates a compiler flag field by name or numeric tag from a string value, or appends a `key=value`
@@ -179,6 +202,7 @@ impl TpuCompilationEnvironmentProto {
         let pool = crate::proto::descriptor::global_descriptor_pool();
         let mut fields = Vec::new();
         for msg_name in [
+            "xla.tpu.TpuCompilationEnvironment",
             "tpu.TpuCompilationEnvironmentProto",
             "xla.jellyfish.EmitterLearnedCostModelOptions",
             "xla.jellyfish.MemorySpaceAssignmentOptions",
@@ -488,3 +512,51 @@ impl_proto_schema_message!(
     TpuEmbeddingHostNetworkConfigProto,
     "tpu.TpuEmbeddingHostNetworkConfigProto"
 );
+
+/// Wire-compatible `tpu.SliceConfig` (`tpu_platform_configs.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct SliceConfigProto {
+    /// Slice configuration name (e.g., `"2x2"` or `"2x2x1"`, field `1`).
+    #[prost(string, tag = "1")]
+    pub name: String,
+    /// Mesh dimensions along each axis (field `2`).
+    #[prost(int32, repeated, packed = "true", tag = "2")]
+    pub dimensions: Vec<i32>,
+    /// Torus wrap-around flags along each axis (field `3`).
+    #[prost(bool, repeated, packed = "true", tag = "3")]
+    pub wraps: Vec<bool>,
+    /// Whether twisted torus routing is active (field `4`).
+    #[prost(bool, tag = "4")]
+    pub twist: bool,
+}
+
+impl_proto_schema_message!(SliceConfigProto, "tpu.SliceConfig");
+
+/// Wire-compatible `tpu.TpuPlatformConfig` (`tpu_platform_configs.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuPlatformConfigProto {
+    /// Canonical TPU platform type name (e.g., `"tpuv5e"`, field `1`).
+    #[prost(string, tag = "1")]
+    pub platform_type_name: String,
+    /// Supported slice configurations for this platform (field `2`).
+    #[prost(message, repeated, tag = "2")]
+    pub slice_configs: Vec<SliceConfigProto>,
+    /// Number of TPU chips per physical tray (field `3`).
+    #[prost(int64, tag = "3")]
+    pub num_chips_per_tray: i64,
+    /// Number of physical trays per host (field `4`).
+    #[prost(int64, tag = "4")]
+    pub num_trays: i64,
+}
+
+impl_proto_schema_message!(TpuPlatformConfigProto, "tpu.TpuPlatformConfig");
+
+/// Wire-compatible `tpu.TpuPlatformConfigs` (`tpu_platform_configs.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuPlatformConfigsProto {
+    /// Embedded platform configuration entries across TPU generations (field `1`).
+    #[prost(message, repeated, tag = "1")]
+    pub platform_configs: Vec<TpuPlatformConfigProto>,
+}
+
+impl_proto_schema_message!(TpuPlatformConfigsProto, "tpu.TpuPlatformConfigs");

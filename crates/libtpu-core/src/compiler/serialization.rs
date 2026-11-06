@@ -7,10 +7,11 @@ use crate::proto::{
     CompileOptionsProto, DeepseaConstantPoolEntryProto, DeepseaExecutableProto,
     DeepseaOverlaySectionProto, DeepseaRelocationEntryProto, DeepseaSyncFlagInitProto,
     IsaBundleSlotProto, IsaCoreProgramHeaderProto, IsaProgramProto, IsaSymbolTableEntryProto,
-    IsaVliwBundleProto, LayoutProto, ShapeProto, TargetArgumentsProto, TileProto,
-    TpuExecutableProto, TpuSerializedExecutableProto, sha256_fingerprint_u64,
+    IsaVliwBundleProto, LayoutProto, ProgramRelocationProto, ShapeProto, TargetArgumentsProto,
+    TileProto, TpuCoreProgramAbiProto, TpuExecutableProto, TpuSerializedExecutableProto,
+    sha256_fingerprint_u64,
 };
-use crate::types::{ByteSize, ElementType};
+use crate::types::{ByteSize, DeviceAddress, ElementType};
 
 /// Magic 8-byte header identifying a serialized `libtpu-rs` executable payload (`"LTPUEXEC"`).
 pub const EXECUTABLE_MAGIC: &[u8; 8] = b"LTPUEXEC";
@@ -210,6 +211,7 @@ impl CompiledProgram {
     /// only the active functional unit slots (`scalar_s0`, `vector_v0`, `matrix_m0`, `unary_xlu`, `dma_d0`)
     /// for each lowered [`super::opcode::TpuInstructionBundle`].
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn build_isa_program_proto(&self) -> IsaProgramProto {
         let raw_vliw_stream = self.encode_architectural_imem();
         let mut structured_bundles: Vec<IsaVliwBundleProto> =
@@ -283,6 +285,44 @@ impl CompiledProgram {
             });
         }
         let imem_bytes = u64::try_from(raw_vliw_stream.len()).unwrap_or(0);
+        let schedules = self.compute_polyhedral_tile_schedules();
+        let mut isa_relocations = Vec::new();
+        for (p_idx, _) in self.parameter_shapes.iter().enumerate() {
+            isa_relocations.push(ProgramRelocationProto {
+                offset: i64::try_from((p_idx % self.instruction_bundles.len().max(1)) * 64 + 12)
+                    .unwrap_or(12),
+                kind: 0,
+                target_index: i64::try_from(p_idx).unwrap_or(0),
+                addend: 0,
+            });
+        }
+        for (o_idx, _) in self.output_shapes.iter().enumerate() {
+            let last_b = self.instruction_bundles.len().saturating_sub(1);
+            isa_relocations.push(ProgramRelocationProto {
+                offset: i64::try_from(last_b * 64 + 12).unwrap_or(12),
+                kind: 1,
+                target_index: i64::try_from(o_idx).unwrap_or(0),
+                addend: 0,
+            });
+        }
+        for (b_idx, sched) in schedules.iter().enumerate() {
+            let vmem_off = if (b_idx & 1) == 0 {
+                sched.ping_vmem_offset
+            } else {
+                sched.pong_vmem_offset
+            };
+            isa_relocations.push(ProgramRelocationProto {
+                offset: i64::try_from(b_idx * 64 + 12).unwrap_or(12),
+                kind: 2,
+                target_index: i64::try_from(b_idx).unwrap_or(0),
+                addend: i64::try_from(vmem_off).unwrap_or(0),
+            });
+        }
+        let has_sparse_core = self.instruction_bundles.iter().any(|b| {
+            b.opcode == TpuOpCode::CustomCall
+                && (b.attrs.custom_call_target.contains("SparseCore")
+                    || b.attrs.custom_call_target.contains("TpuEmbedding"))
+        });
         IsaProgramProto {
             isa_architecture: String::from("vfc"),
             isa_abi_version: 163,
@@ -300,7 +340,66 @@ impl CompiledProgram {
                 size_bytes: imem_bytes,
             }],
             fingerprint: sha256_fingerprint_u64(self.fingerprint.as_bytes()),
+            compilation_id: 1,
+            scs_start_bundle: i64::from(has_sparse_core),
+            tile_start_bundle: 0,
+            relocations: isa_relocations,
+            abi: Some(TpuCoreProgramAbiProto {
+                version: 6,
+                variant: String::from("default"),
+                chip_config: String::from("default"),
+                base_abi_version: 165,
+                hardware_abi_version: 65_539,
+                required_compiler_hash: String::from(
+                    "04aaaa86d5833da9604b4c12f1d288aeae18f36853d311e8c143611207b66f52",
+                ),
+            }),
+            program_name: self.name.clone(),
+            oom_during_compilation: false,
         }
+    }
+
+    /// Applies [`ProgramRelocationProto`] entries from [`IsaProgramProto::relocations`] in-place
+    /// onto a raw 64-byte-aligned `IMEM` binary image (`imem_bytes`), patching the scalar immediate
+    /// (`S0.imm32`) field with the resolved `param_addrs`, `output_addrs`, or `VMEM` ping/pong offsets.
+    ///
+    /// # Arguments
+    ///
+    /// * `imem_bytes` - Mutable `IMEM` binary image of 64-byte [`super::vliw::TensorCoreVliwBundle`]s.
+    /// * `relocations` - Slice of [`ProgramRelocationProto`] records to apply.
+    /// * `param_addrs` - Device HBM base addresses for input parameters (`kind == 0`).
+    /// * `output_addrs` - Device HBM base addresses for output buffers (`kind == 1`).
+    pub fn apply_isa_relocations(
+        imem_bytes: &mut [u8],
+        relocations: &[ProgramRelocationProto],
+        param_addrs: &[DeviceAddress],
+        output_addrs: &[DeviceAddress],
+    ) -> usize {
+        let mut applied = 0_usize;
+        for rel in relocations {
+            let off = usize::try_from(rel.offset.max(0)).unwrap_or(0);
+            let idx = usize::try_from(rel.target_index.max(0)).unwrap_or(0);
+            let base_u64 = match rel.kind {
+                0 => param_addrs.get(idx).map_or(0, |a| a.0),
+                1 => output_addrs.get(idx).map_or(0, |a| a.0),
+                _ => 0,
+            };
+            #[allow(clippy::cast_sign_loss)]
+            let patched_u64 = base_u64.wrapping_add(rel.addend as u64);
+            #[allow(clippy::cast_possible_truncation)]
+            let patched_u32 = patched_u64 as u32;
+            let end = off.saturating_add(4).min(imem_bytes.len());
+            for (dst, &src) in imem_bytes
+                .iter_mut()
+                .skip(off)
+                .take(end.saturating_sub(off))
+                .zip(patched_u32.to_le_bytes().iter())
+            {
+                *dst = src;
+            }
+            applied += 1;
+        }
+        applied
     }
 
     /// Converts this [`CompiledProgram`] into a validated [`IsaProgramProto`].
@@ -356,14 +455,14 @@ impl CompiledProgram {
             }],
             concurrent_program_hbm_stack_size: 0,
             has_concurrent_program: false,
-            abi: Some(crate::proto::TpuCoreProgramAbiProto {
+            abi: Some(TpuCoreProgramAbiProto {
                 version: 6,
                 variant: String::from("default"),
                 chip_config: String::from("default"),
-                base_abi_version: 163,
+                base_abi_version: 165,
                 hardware_abi_version: 65_539,
                 required_compiler_hash: String::from(
-                    "00ef0b06b559d6911774f1854abee45cdcb62dc50b6c9535921e52231188d011",
+                    "04aaaa86d5833da9604b4c12f1d288aeae18f36853d311e8c143611207b66f52",
                 ),
             }),
             oom_during_compilation: false,

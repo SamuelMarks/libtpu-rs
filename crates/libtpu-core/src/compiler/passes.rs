@@ -10,6 +10,81 @@ use indexmap::IndexMap;
 use petgraph::algo::toposort;
 use petgraph::stable_graph::StableDiGraph;
 
+/// Parsed GSPMD / `OpenXLA` Shardy (`sdy`) tensor sharding specification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedShardingSpec {
+    /// True if the tensor is replicated across all partitions (`{replicated}`).
+    pub is_replicated: bool,
+    /// Per-dimension tile factors (`[t_0, t_1, ...]`), e.g. `[2, 2]` for `{devices=[2,2]0,1,2,3}`.
+    pub tile_factors: Vec<usize>,
+    /// Canonical normalized sharding identifier used for resharding edge detection.
+    pub canonical_key: String,
+}
+
+impl ParsedShardingSpec {
+    /// Parses a sharding specification string from XLA HLO (`{devices=[2,1]0,1}`, `{replicated}`)
+    /// or `OpenXLA` Shardy (`#sdy.sharding<@mesh, [{"x"}, {}]>`) syntax.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw sharding specification string.
+    /// * `num_partitions` - Total number of SPMD partitions in the compilation environment.
+    #[must_use]
+    pub fn from_str_with_partitions(raw: &str, num_partitions: usize) -> Self {
+        let trimmed = raw.trim();
+        let lower = trimmed.to_ascii_lowercase();
+        let is_replicated = trimmed.is_empty() || lower.contains("replicated");
+        if is_replicated {
+            return Self {
+                is_replicated: true,
+                tile_factors: Vec::new(),
+                canonical_key: String::from("replicated"),
+            };
+        }
+        let bracket_scope = trimmed
+            .split_once('[')
+            .and_then(|(_, rest)| rest.split_once(']'))
+            .map_or(trimmed, |(inner, _)| inner);
+        let mut factors: Vec<usize> = bracket_scope
+            .split(|c: char| !c.is_ascii_digit())
+            .filter_map(|token| token.parse::<usize>().ok())
+            .map(|v| v.max(1))
+            .collect();
+        if factors.is_empty() {
+            factors.push(num_partitions.max(1));
+        }
+        Self {
+            is_replicated: false,
+            tile_factors: factors,
+            canonical_key: String::from(trimmed),
+        }
+    }
+
+    /// Computes the local per-partition [`Shape`] by dividing each dimension `d` of `global_shape`
+    /// by `tile_factors[d]` (rounded up).
+    ///
+    /// # Arguments
+    ///
+    /// * `global_shape` - Global unpartitioned tensor [`Shape`].
+    #[must_use]
+    pub fn partition_shape(&self, global_shape: &Shape) -> Shape {
+        if self.is_replicated {
+            return global_shape.clone();
+        }
+        let mut local_dims = global_shape.dims.clone();
+        for (axis, dim_mut) in local_dims.iter_mut().enumerate() {
+            let factor = i64::try_from(self.tile_factors.get(axis).copied().unwrap_or(1).max(1))
+                .unwrap_or(1);
+            *dim_mut = ((*dim_mut).max(1) + factor - 1) / factor;
+        }
+        Shape {
+            element_type: global_shape.element_type,
+            dims: local_dims,
+            dynamic_dims: global_shape.dynamic_dims.clone(),
+            layout: global_shape.layout.clone(),
+        }
+    }
+}
 /// Strongly-typed Common Subexpression Elimination (`CSE`) equivalence key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CseExpressionKey {
@@ -250,7 +325,7 @@ impl CompiledProgram {
             program_format: String::from("ltpuexec"),
             producer_phase: String::from(phase_name),
             consumer_phases,
-            version: String::from("0.0.50"),
+            version: String::from("0.0.52"),
             program_name: String::from("tpu_partial_program"),
         })
     }
@@ -401,6 +476,86 @@ impl CompiledProgram {
                     layout: MemoryLayout::default_tpu_tiled(rank),
                 }
             }
+            TpuOpCode::Convolution => {
+                let rhs_op_shape = bundle
+                    .operand_slots
+                    .get(1)
+                    .and_then(|s| slot_shapes.get(s))
+                    .unwrap_or(first_op_shape);
+                let rank = first_op_shape.rank();
+                let spatial_rank = rank.saturating_sub(2);
+                let b_groups = i64::try_from(bundle.attrs.batch_group_count.max(1)).unwrap_or(1);
+                let batch = (first_op_shape.dims.first().copied().unwrap_or(1) / b_groups).max(1);
+                let mut dims = Vec::with_capacity(rank.max(1));
+                dims.push(batch);
+                for s in 0..spatial_rank {
+                    let in_d =
+                        usize::try_from(first_op_shape.dims.get(s + 1).copied().unwrap_or(1))
+                            .unwrap_or(1)
+                            .max(1);
+                    let k_d = usize::try_from(rhs_op_shape.dims.get(s).copied().unwrap_or(1))
+                        .unwrap_or(1)
+                        .max(1);
+                    let stride = bundle
+                        .attrs
+                        .window_strides
+                        .get(s)
+                        .copied()
+                        .unwrap_or(1)
+                        .max(1);
+                    let p_low = bundle.attrs.pad_edge_low.get(s).copied().unwrap_or(0);
+                    let p_high = bundle.attrs.pad_edge_high.get(s).copied().unwrap_or(0);
+                    let l_dil = bundle
+                        .attrs
+                        .lhs_dilation
+                        .get(s)
+                        .copied()
+                        .unwrap_or(1)
+                        .max(1);
+                    let r_dil = bundle
+                        .attrs
+                        .rhs_dilation
+                        .get(s)
+                        .copied()
+                        .unwrap_or(1)
+                        .max(1);
+                    let eff_in = (in_d - 1) * l_dil + 1 + p_low + p_high;
+                    let eff_k = (k_d - 1) * r_dil + 1;
+                    let out_d = eff_in.saturating_sub(eff_k) / stride + 1;
+                    dims.push(i64::try_from(out_d.max(1)).unwrap_or(1));
+                }
+                dims.push(
+                    rhs_op_shape
+                        .dims
+                        .get(rank.saturating_sub(1))
+                        .copied()
+                        .unwrap_or(1),
+                );
+                let out_rank = dims.len();
+                Shape {
+                    element_type: first_op_shape.element_type,
+                    dims,
+                    dynamic_dims: vec![false; out_rank],
+                    layout: MemoryLayout::default_tpu_tiled(out_rank),
+                }
+            }
+            TpuOpCode::Gather => {
+                let dims: Vec<i64> = bundle
+                    .attrs
+                    .gather_slice_sizes
+                    .iter()
+                    .enumerate()
+                    .filter(|(ax, _)| !bundle.attrs.collapsed_slice_dims.contains(ax))
+                    .map(|(_, &sz)| i64::try_from(sz.max(1)).unwrap_or(1))
+                    .collect();
+                let rank = dims.len().max(1);
+                Shape {
+                    element_type: first_op_shape.element_type,
+                    dims,
+                    dynamic_dims: vec![false; rank],
+                    layout: MemoryLayout::default_tpu_tiled(rank),
+                }
+            }
             TpuOpCode::CompareEq
             | TpuOpCode::CompareLt
             | TpuOpCode::CompareGt
@@ -449,7 +604,7 @@ impl CompiledProgram {
         self.memory_stats.output_size_in_bytes = out_bytes;
     }
 
-    /// Pass 2: SPMD sharding propagation across replicas and partitions.
+    /// Pass 2: Bidirectional SPMD and Shardy (`sdy`) sharding propagation across replicas and partitions.
     pub fn pass_spmd_sharding_propagation(&mut self) {
         self.num_replicas = self.num_replicas.max(1);
         self.num_partitions = self.num_partitions.max(1);
@@ -461,29 +616,88 @@ impl CompiledProgram {
         if self.num_partitions > 1 && !self.mosaic_metadata.sharding.is_empty() {
             let default_sharding = self.mosaic_metadata.sharding.clone();
             for bundle in &mut self.instruction_bundles {
-                bundle.attrs.sharding_spec.clone_from(&default_sharding);
+                if bundle.attrs.sharding_spec.is_empty() {
+                    bundle.attrs.sharding_spec.clone_from(&default_sharding);
+                }
+            }
+        }
+        let mut slot_sharding: std::collections::BTreeMap<usize, String> =
+            std::collections::BTreeMap::new();
+        for bundle in self.instruction_bundles.iter().rev() {
+            if !bundle.attrs.sharding_spec.is_empty() {
+                for &op_slot in &bundle.operand_slots {
+                    slot_sharding.insert(op_slot, bundle.attrs.sharding_spec.clone());
+                }
+            }
+        }
+        for bundle in &mut self.instruction_bundles {
+            if bundle.attrs.sharding_spec.is_empty() {
+                bundle.attrs.sharding_spec = slot_sharding
+                    .get(&bundle.output_slot)
+                    .cloned()
+                    .unwrap_or_default();
             }
         }
     }
 
-    /// Pass 3b (`spmd_partitioning`): Normalizes SPMD replica/partition counts and automatically
-    /// synthesizes `AllReduceSumF32`, `ReduceScatter`, `AllGather`, or `AllToAll` collective
-    /// bundles when GSPMD / Shardy (`sdy`) sharded contractions or resharding transitions occur.
+    /// Pass 3b (`spmd_partitioning`): Normalizes SPMD replica/partition counts, partitions local
+    /// shard shapes for explicit Shardy (`sdy`) / `OpSharding` tile specs, and automatically
+    /// synthesizes `AllReduceSumF32`, `ReduceScatter`, `AllGather`, `AllToAll`, or `CollectivePermute`
+    /// collective bundles when GSPMD / Shardy sharded contractions or resharding transitions occur.
     pub fn pass_spmd_partitioning(&mut self) {
         self.num_replicas = self.num_replicas.max(1);
         self.num_partitions = self.num_partitions.max(1);
         if self.num_partitions <= 1 {
             return;
         }
+        let mut slot_shardings: std::collections::BTreeMap<usize, ParsedShardingSpec> =
+            std::collections::BTreeMap::new();
         let mut updated = Vec::with_capacity(self.instruction_bundles.len() * 2);
-        for bundle in self.instruction_bundles.drain(..) {
+        for mut bundle in self.instruction_bundles.drain(..) {
             let sharding = bundle.attrs.sharding_spec.clone();
+            let parsed_spec =
+                ParsedShardingSpec::from_str_with_partitions(&sharding, self.num_partitions);
+
+            for &op_slot in &bundle.operand_slots {
+                if let Some(prev_spec) = slot_shardings.get(&op_slot)
+                    && prev_spec.canonical_key != parsed_spec.canonical_key
+                {
+                    let pc = u32::try_from(updated.len()).unwrap_or(0);
+                    updated.push(TpuInstructionBundle {
+                        pc_offset: pc,
+                        opcode: TpuOpCode::CollectivePermute,
+                        operand_slots: vec![op_slot],
+                        output_slot: op_slot,
+                        sync_flag_id: pc + 1,
+                        attrs: InstructionAttrs {
+                            input_shapes: bundle.attrs.input_shapes.clone(),
+                            output_shape: bundle.attrs.input_shapes.first().cloned(),
+                            sharding_spec: sharding.clone(),
+                            ..InstructionAttrs::default()
+                        },
+                    });
+                }
+            }
+
+            bundle.attrs.output_shape.iter().for_each(|out_sh| {
+                let local_sh = parsed_spec.partition_shape(out_sh);
+                let local_bytes =
+                    i64::try_from(local_sh.unpadded_byte_size().0.max(256)).unwrap_or(256);
+                self.memory_stats.temp_size_in_bytes =
+                    self.memory_stats.temp_size_in_bytes.max(local_bytes);
+            });
+
             let is_contraction = matches!(
                 bundle.opcode,
                 TpuOpCode::DotGeneralF32 | TpuOpCode::Convolution
             );
             let out_slot = bundle.output_slot;
             let out_shape = bundle.attrs.output_shape.clone();
+            if !sharding.is_empty() {
+                slot_shardings.insert(out_slot, parsed_spec);
+            }
+            let pc_cur = u32::try_from(updated.len()).unwrap_or(0);
+            bundle.pc_offset = pc_cur;
             updated.push(bundle);
 
             if is_contraction && !sharding.is_empty() {
@@ -836,12 +1050,42 @@ impl CompiledProgram {
         );
     }
 
-    /// Encodes all lowered [`TpuInstructionBundle`]s into architectural 64-byte [`TensorCoreVliwBundle`]s.
+    /// Encodes all lowered [`TpuInstructionBundle`]s into architectural 64-byte [`TensorCoreVliwBundle`]s,
+    /// annotating each bundle with its [`super::vliw::LloVliwScheduler`] hazard stall count, double-buffered (`ping`/`pong`)
+    /// `VMEM` offset, and `AsyncDmaSlot` prefetch/writeback descriptor from [`Self::compute_polyhedral_tile_schedules`].
     #[must_use]
     pub fn encode_vliw_program(&self) -> Vec<TensorCoreVliwBundle> {
-        self.instruction_bundles
-            .iter()
-            .map(TpuInstructionBundle::encode_architectural_bundle)
+        let tpu_gen = crate::config::global_init_config().generation;
+        let llo_sched = super::vliw::LloVliwScheduler::new(tpu_gen);
+        let packed_vliw = llo_sched.schedule_bundles(&self.instruction_bundles);
+        let tile_plans = self.compute_polyhedral_tile_schedules();
+        let last_idx = self.instruction_bundles.len().saturating_sub(1);
+        packed_vliw
+            .into_iter()
+            .zip(tile_plans.iter())
+            .enumerate()
+            .map(|(idx, (mut vliw, plan))| {
+                let vmem_off = if (idx & 1) == 0 {
+                    plan.ping_vmem_offset
+                } else {
+                    plan.pong_vmem_offset
+                };
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    vliw.scalar_slot.imm32 = vliw.scalar_slot.imm32.max(vmem_off as u32);
+                }
+                vliw.dma_slot.dma_opcode = vliw.dma_slot.dma_opcode.max(1);
+                if idx == last_idx {
+                    vliw.dma_slot.src_space = 1;
+                    vliw.dma_slot.dst_space = 0;
+                } else {
+                    vliw.dma_slot.src_space = 0;
+                    vliw.dma_slot.dst_space = 1;
+                }
+                vliw.dma_slot.sync_flag_id = plan.prefetch_sync_flag_id;
+                vliw.header.bundle_flags |= 1 << 3;
+                vliw
+            })
             .collect()
     }
 

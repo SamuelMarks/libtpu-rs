@@ -281,7 +281,7 @@ pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableDestroy(
 unsafe fn handle_abi_version_executable_to_proto(args: &mut PJRT_AbiVersion_ToProto_Args) {
     let encoded = libtpu_core::proto::ExecutableAbiVersionProto {
         platform_id: TPU_PLATFORM_ID,
-        compiler_version: String::from("0.0.50"),
+        compiler_version: String::from("0.0.52"),
         target_generation: global_init_config().generation as i32,
     }
     .encode();
@@ -427,7 +427,17 @@ unsafe fn handle_executable_shardings(args: &mut PJRT_Shardings_PJRT_Executable_
             .as_ref()
     }
     .map_or(1, |e| e.inner.program.output_shapes.len().max(1));
-    let _ = alloc_extension_bytes(encoded);
+    let (byte_ptr, byte_len) = alloc_extension_bytes(encoded);
+    let ptr_vec: Box<[usize]> = vec![byte_ptr as usize; count].into_boxed_slice();
+    let size_vec: Box<[usize]> = vec![byte_len; count].into_boxed_slice();
+    args.shardings = ptr_vec.as_ptr().cast::<*const std::os::raw::c_char>();
+    args.sharding_sizes = size_vec.as_ptr();
+    let mut st = extension_state().lock();
+    st.sharding_ptr_arrays.clear();
+    st.sharding_size_arrays.clear();
+    st.sharding_ptr_arrays.push(ptr_vec);
+    st.sharding_size_arrays.push(size_vec);
+    drop(st);
     args.num_items = count;
 }
 

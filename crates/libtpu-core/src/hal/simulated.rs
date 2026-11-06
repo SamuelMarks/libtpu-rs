@@ -150,7 +150,7 @@ impl SimulatedTpuHal {
 
         let topology = TopologySpec {
             platform_name: String::from("tpu"),
-            platform_version: format!("libtpu-rs 0.0.50 ({generation})"),
+            platform_version: format!("libtpu-rs 0.0.52 ({generation})"),
             generation,
             chip_bounds,
             host_bounds: config.host_bounds,

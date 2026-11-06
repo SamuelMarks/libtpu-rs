@@ -151,6 +151,28 @@ pub struct IsaSymbolTableEntryProto {
 
 impl_proto_schema_message!(IsaSymbolTableEntryProto, "xla.IsaSymbolTableEntryProto");
 
+/// Wire-compatible `platforms_deepsea.jellyfish.ProgramRelocation` (`isa_program.proto` field `38`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ProgramRelocationProto {
+    /// Byte offset inside the encoded VLIW instruction stream (`IMEM`, field `1`).
+    #[prost(int64, tag = "1")]
+    pub offset: i64,
+    /// Relocation kind (`0` = HBM parameter, `1` = HBM output, `2` = VMEM ping/pong, `3` = constant pool, field `2`).
+    #[prost(int32, tag = "2")]
+    pub kind: i32,
+    /// Target parameter/output/constant ordinal index (field `3`).
+    #[prost(int64, tag = "3")]
+    pub target_index: i64,
+    /// Signed byte addend (field `4`).
+    #[prost(int64, tag = "4")]
+    pub addend: i64,
+}
+
+impl_proto_schema_message!(
+    ProgramRelocationProto,
+    "platforms_deepsea.jellyfish.ProgramRelocation"
+);
+
 /// Wire-compatible `xla.IsaProgramProto` (`platforms/xla/service/jellyfish/isa_program.proto`).
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct IsaProgramProto {
@@ -169,6 +191,27 @@ pub struct IsaProgramProto {
     /// Deterministic 64-bit program fingerprint (field `5`).
     #[prost(uint64, tag = "5")]
     pub fingerprint: u64,
+    /// Unique compilation ID (field `20`).
+    #[prost(uint64, tag = "20")]
+    pub compilation_id: u64,
+    /// `SparseCore` sequencer start bundle index (field `23`).
+    #[prost(int64, tag = "23")]
+    pub scs_start_bundle: i64,
+    /// Polyhedral tile loop start bundle index (field `24`).
+    #[prost(int64, tag = "24")]
+    pub tile_start_bundle: i64,
+    /// Program relocations for HBM/VMEM addresses (`platforms_deepsea.jellyfish.ProgramRelocation`, field `38`).
+    #[prost(message, repeated, tag = "38")]
+    pub relocations: Vec<ProgramRelocationProto>,
+    /// Core program ABI version descriptor (`tpu.TpuCoreProgramAbiProto`, field `39`).
+    #[prost(message, optional, tag = "39")]
+    pub abi: Option<TpuCoreProgramAbiProto>,
+    /// Human-readable program name (field `42`).
+    #[prost(string, tag = "42")]
+    pub program_name: String,
+    /// Whether compilation ran out of VMEM/HBM (field `61`).
+    #[prost(bool, tag = "61")]
+    pub oom_during_compilation: bool,
 }
 
 impl_proto_schema_message!(IsaProgramProto, "xla.IsaProgramProto");

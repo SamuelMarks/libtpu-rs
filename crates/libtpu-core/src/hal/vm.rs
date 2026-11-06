@@ -95,6 +95,49 @@ impl TpuCoreVmState {
         Ok(())
     }
 
+    /// Inspects the architectural 2D `[8, 128]` (`8` sublanes $\times$ `128` lanes) `u32` register tile
+    /// for vector register `vreg_index` (`VREG[0..32]`), unpacking any populated bytes from `self.vreg_tiles`
+    /// or broadcasting `self.vreg_words[vreg_index & 63]` across sublane `0`.
+    ///
+    /// # Arguments
+    ///
+    /// * `vreg_index` - Architectural vector register index (`0..32`).
+    #[must_use]
+    #[allow(clippy::indexing_slicing)]
+    pub fn inspect_vreg_2d_lanes(&self, vreg_index: u8) -> [[u32; 128]; 8] {
+        let mut grid = [[0_u32; 128]; 8];
+        if let Some(tile_bytes) = self.vreg_tiles.get(&vreg_index) {
+            for (word_idx, chunk) in tile_bytes.chunks_exact(4).take(8 * 128).enumerate() {
+                let mut b4 = [0_u8; 4];
+                b4.copy_from_slice(chunk);
+                let sublane = word_idx / 128;
+                let lane = word_idx % 128;
+                grid[sublane][lane] = u32::from_le_bytes(b4);
+            }
+        } else {
+            let fallback = self.vreg_words[usize::from(vreg_index) & 63];
+            grid[0][0] = fallback;
+        }
+        grid
+    }
+
+    /// Inspects the 16-element summary of matrix accumulator register `GMR[gmr_index]` (`0..4`).
+    ///
+    /// # Arguments
+    ///
+    /// * `gmr_index` - Matrix accumulator tile index (`0..4`).
+    #[must_use]
+    #[allow(clippy::indexing_slicing)]
+    pub const fn inspect_gmr_tile(&self, gmr_index: usize) -> [f32; 4] {
+        let base = (gmr_index & 3) * 4;
+        [
+            self.mxu_accum[base],
+            self.mxu_accum[base + 1],
+            self.mxu_accum[base + 2],
+            self.mxu_accum[base + 3],
+        ]
+    }
+
     /// Steps the `TensorCore` VLIW sequencer through a slice of 64-byte [`crate::compiler::TensorCoreVliwBundle`]s,
     /// executing `S0` (Scalar ALU + SMEM + conditional branching `opcode == 6`), `V0` (Vector ALU + VMEM),
     /// `M0` (`MXU` systolic matrix accumulator), `X0` (`EUP` transcendental unit), and `D0` (`DMA`/`SyncFlag` engine)
@@ -221,22 +264,27 @@ impl TpuCoreVmState {
     }
 
     /// Applies the `V0` (`VectorAluSlot`) instruction across all elements of the physical tile
-    /// in `vreg_tiles[src0_vreg]` (and `vreg_tiles[src1_vreg]`) when populated.
+    /// in `vreg_tiles[src0_vreg]`, `vreg_tiles[src1_vreg]`, and `vreg_tiles[src2_vreg]` when populated,
+    /// honoring `$vmr` (`vmask`) predication (`Select`, `Clamp`, `Compare*`), integer bitwise ops,
+    /// and quantization (`UniformQuantize`, `UniformDequantize`, `BitcastConvert`).
     ///
     /// # Arguments
     ///
     /// * `vslot` - Architectural `VectorAluSlot` instruction fields.
     /// * `op_opt` - Decoded [`crate::compiler::TpuOpCode`], if valid.
+    #[allow(
+        clippy::too_many_lines,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
     fn step_v0_tile(
         &mut self,
         vslot: &crate::compiler::VectorAluSlot,
         op_opt: Option<crate::compiler::TpuOpCode>,
     ) {
-        #[allow(clippy::cast_possible_truncation)]
         let s0_key = (vslot.src0_vreg & 255) as u8;
-        #[allow(clippy::cast_possible_truncation)]
         let s1_key = (vslot.src1_vreg & 255) as u8;
-        #[allow(clippy::cast_possible_truncation)]
+        let s2_key = (vslot.src2_vreg & 255) as u8;
         let dst_key = (vslot.dst_vreg & 255) as u8;
         let elem_type =
             ElementType::from_raw(i32::from(vslot.element_type)).unwrap_or(ElementType::F32);
@@ -244,12 +292,18 @@ impl TpuCoreVmState {
         let empty: &[u8] = &[];
         let t0_bytes = self.vreg_tiles.get(&s0_key).map_or(empty, Vec::as_slice);
         let t1_bytes = self.vreg_tiles.get(&s1_key).map_or(t0_bytes, Vec::as_slice);
+        let t2_bytes = self.vreg_tiles.get(&s2_key).map_or(t1_bytes, Vec::as_slice);
         let v0 = elem_type.unpack_to_f64_vec(t0_bytes);
         let v1 = elem_type.unpack_to_f64_vec(t1_bytes);
-        let out_vals: Vec<f64> = v0
-            .iter()
-            .zip(v1.iter())
-            .map(|(&a, &b)| match op {
+        let v2 = elem_type.unpack_to_f64_vec(t2_bytes);
+        let len = v0.len();
+        let mut out_vals = Vec::with_capacity(len);
+        for idx in 0..len {
+            let a = v0.get(idx).copied().unwrap_or(0.0);
+            let b = v1.get(idx).copied().unwrap_or(a);
+            let c = v2.get(idx).copied().unwrap_or(b);
+            let mask_bit = (vslot.lane_mask & (1 << (idx & 7))) != 0;
+            let val = match op {
                 crate::compiler::TpuOpCode::SubF32 => a - b,
                 crate::compiler::TpuOpCode::MulF32 => a * b,
                 crate::compiler::TpuOpCode::DivF32 => a / b,
@@ -257,57 +311,227 @@ impl TpuCoreVmState {
                 crate::compiler::TpuOpCode::MinF32 => a.min(b),
                 crate::compiler::TpuOpCode::NegF32 => -a,
                 crate::compiler::TpuOpCode::Abs => a.abs(),
-                crate::compiler::TpuOpCode::Identity => a,
+                crate::compiler::TpuOpCode::Identity
+                | crate::compiler::TpuOpCode::BitcastConvert => a,
+                crate::compiler::TpuOpCode::Select => {
+                    if a != 0.0 && mask_bit {
+                        b
+                    } else {
+                        c
+                    }
+                }
+                crate::compiler::TpuOpCode::Clamp => b.clamp(a, c),
+                crate::compiler::TpuOpCode::CompareEq => {
+                    let eq = (a - b).abs() < 1e-9;
+                    self.vmask.iter_mut().take(1).for_each(|m| *m = eq);
+                    f64::from(u8::from(eq))
+                }
+                crate::compiler::TpuOpCode::CompareLt => {
+                    let lt = a < b;
+                    self.vmask.iter_mut().take(1).for_each(|m| *m = lt);
+                    f64::from(u8::from(lt))
+                }
+                crate::compiler::TpuOpCode::CompareGt => {
+                    let gt = a > b;
+                    self.vmask.iter_mut().take(1).for_each(|m| *m = gt);
+                    f64::from(u8::from(gt))
+                }
+                crate::compiler::TpuOpCode::And => f64::from((a as i32) & (b as i32)),
+                crate::compiler::TpuOpCode::Or => f64::from((a as i32) | (b as i32)),
+                crate::compiler::TpuOpCode::XorBytes => f64::from((a as i32) ^ (b as i32)),
+                crate::compiler::TpuOpCode::Not => f64::from(!(a as i32)),
+                crate::compiler::TpuOpCode::ShiftLeft => {
+                    f64::from((a as i32).wrapping_shl((b.max(0.0) as u32) & 31))
+                }
+                crate::compiler::TpuOpCode::ShiftRightLogical => {
+                    #[allow(clippy::cast_possible_wrap)]
+                    let shifted = ((a as u32) >> ((b.max(0.0) as u32) & 31)) as i32;
+                    f64::from(shifted)
+                }
+                crate::compiler::TpuOpCode::ShiftRightArithmetic => {
+                    f64::from((a as i32) >> ((b.max(0.0) as u32) & 31))
+                }
+                crate::compiler::TpuOpCode::PopulationCount => {
+                    f64::from(((a as i32) as u32).count_ones())
+                }
+                crate::compiler::TpuOpCode::CountLeadingZeros => {
+                    f64::from(((a as i32) as u32).leading_zeros())
+                }
+                crate::compiler::TpuOpCode::UniformQuantize => {
+                    (a * 127.0).round().clamp(-128.0, 127.0)
+                }
+                crate::compiler::TpuOpCode::UniformDequantize => a / 127.0,
                 _ => a + b,
-            })
-            .collect();
+            };
+            out_vals.push(val);
+        }
         let packed = elem_type.pack_from_f64_slice(&out_vals);
         self.vmem_allocations
             .insert(u64::from(dst_key) * 256, packed.clone());
         self.vreg_tiles.insert(dst_key, packed);
     }
 
-    /// Applies the `X0` (`ExtendedUnarySlot`) transcendental instruction across all elements of
-    /// `vreg_tiles[src_vreg]` when populated.
+    /// Applies the `X0` (`ExtendedUnarySlot`) transcendental and cross-lane `XLU` permute instruction
+    /// (`Transpose`, `BroadcastInDim`, `Reverse`, `Iota`, `Roll`, `Concatenate`, `Slice`, `Pad`,
+    /// `Gather`, `Scatter`) across all elements of `vreg_tiles[src_vreg]` when populated.
     ///
     /// # Arguments
     ///
     /// * `xslot` - Architectural `ExtendedUnarySlot` instruction fields.
     /// * `op_opt` - Decoded [`crate::compiler::TpuOpCode`], if valid.
+    #[allow(
+        clippy::too_many_lines,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
     fn step_x0_tile(
         &mut self,
         xslot: crate::compiler::ExtendedUnarySlot,
         op_opt: Option<crate::compiler::TpuOpCode>,
     ) {
-        #[allow(clippy::cast_possible_truncation)]
         let src_key = (xslot.src_vreg & 255) as u8;
-        #[allow(clippy::cast_possible_truncation)]
         let dst_key = (xslot.dst_vreg & 255) as u8;
         let op = op_opt.unwrap_or(crate::compiler::TpuOpCode::ExpF32);
         let empty: &[u8] = &[];
         let t_bytes = self.vreg_tiles.get(&src_key).map_or(empty, Vec::as_slice);
         let vals = ElementType::F32.unpack_to_f64_vec(t_bytes);
-        let out_vals: Vec<f64> = vals
-            .iter()
-            .map(|&x| match op {
-                crate::compiler::TpuOpCode::TanhF32 => x.tanh(),
-                crate::compiler::TpuOpCode::Log => x.ln(),
-                crate::compiler::TpuOpCode::Sqrt => x.sqrt(),
-                crate::compiler::TpuOpCode::Rsqrt => 1.0 / x.sqrt(),
-                crate::compiler::TpuOpCode::Sine => x.sin(),
-                crate::compiler::TpuOpCode::Cosine => x.cos(),
-                _ => x.exp(),
-            })
-            .collect();
+        let out_vals: Vec<f64> = match op {
+            crate::compiler::TpuOpCode::Transpose => {
+                let rows = usize::from(xslot.perm_mode.max(1));
+                let cols = vals.len().checked_div(rows).unwrap_or(1).max(1);
+                let mut tr = vec![0.0_f64; vals.len()];
+                for r in 0..rows {
+                    for c in 0..cols {
+                        for (&src_v, dst_v) in vals
+                            .get(r * cols + c)
+                            .into_iter()
+                            .zip(tr.get_mut(c * rows + r))
+                        {
+                            *dst_v = src_v;
+                        }
+                    }
+                }
+                tr
+            }
+            crate::compiler::TpuOpCode::Reverse => vals.iter().copied().rev().collect(),
+            crate::compiler::TpuOpCode::Iota => {
+                let count = vals.len().max(usize::from(xslot.imm16).max(4));
+                (0..count).map(|i| f64::from(i as u32)).collect()
+            }
+            crate::compiler::TpuOpCode::DynamicSlice => {
+                let mut rolled = vals;
+                let r_len = rolled.len();
+                let shift = usize::from(xslot.imm16.max(1)) % r_len.max(1);
+                rolled.rotate_right(shift.min(r_len));
+                rolled
+            }
+            crate::compiler::TpuOpCode::BroadcastInDim => {
+                let target_len = usize::from(xslot.imm16).max(vals.len()).max(1);
+                let src_len = vals.len().max(1);
+                (0..target_len)
+                    .map(|i| vals.get(i % src_len).copied().unwrap_or(0.0))
+                    .collect()
+            }
+            crate::compiler::TpuOpCode::Slice => {
+                let start = usize::from(xslot.perm_mode).min(vals.len());
+                let limit = usize::from(xslot.imm16.max(1)).min(vals.len()).max(start);
+                vals.get(start..limit).unwrap_or_default().to_vec()
+            }
+            crate::compiler::TpuOpCode::Pad => {
+                let pad_low = usize::from(xslot.perm_mode);
+                let pad_high = usize::from(xslot.imm16);
+                let mut padded = vec![0.0_f64; pad_low];
+                padded.extend_from_slice(&vals);
+                padded.resize(padded.len() + pad_high, 0.0);
+                padded
+            }
+            crate::compiler::TpuOpCode::Concatenate => {
+                let aux_key = (xslot.imm16 & 255) as u8;
+                let aux_bytes = self.vreg_tiles.get(&aux_key).map_or(empty, Vec::as_slice);
+                let mut cat = vals;
+                cat.extend(ElementType::F32.unpack_to_f64_vec(aux_bytes));
+                cat
+            }
+            crate::compiler::TpuOpCode::Gather => {
+                let idx_key = (xslot.imm16 & 255) as u8;
+                let idx_bytes = self.vreg_tiles.get(&idx_key).map_or(t_bytes, Vec::as_slice);
+                let indices = ElementType::F32.unpack_to_f64_vec(idx_bytes);
+                let n = vals.len().max(1);
+                indices
+                    .iter()
+                    .map(|&idx_f| {
+                        vals.get((idx_f.max(0.0) as usize) % n)
+                            .copied()
+                            .unwrap_or(0.0)
+                    })
+                    .collect()
+            }
+            crate::compiler::TpuOpCode::Scatter => {
+                let mut scattered = vals;
+                let upd_key = (xslot.imm16 & 255) as u8;
+                let upd_bytes = self.vreg_tiles.get(&upd_key).map_or(t_bytes, Vec::as_slice);
+                let updates = ElementType::F32.unpack_to_f64_vec(upd_bytes);
+                let pos = usize::from(xslot.perm_mode);
+                for (slot, &u) in scattered.iter_mut().skip(pos).zip(updates.iter()) {
+                    *slot = u;
+                }
+                scattered
+            }
+            _ => vals
+                .iter()
+                .map(|&x| match op {
+                    crate::compiler::TpuOpCode::TanhF32 => x.tanh(),
+                    crate::compiler::TpuOpCode::Log => x.ln(),
+                    crate::compiler::TpuOpCode::Sqrt => x.sqrt(),
+                    crate::compiler::TpuOpCode::Rsqrt => 1.0 / x.sqrt(),
+                    crate::compiler::TpuOpCode::Sine => x.sin(),
+                    crate::compiler::TpuOpCode::Cosine => x.cos(),
+                    _ => x.exp(),
+                })
+                .collect(),
+        };
         let packed = ElementType::F32.pack_from_f64_slice(&out_vals);
         self.vreg_tiles.insert(dst_key, packed);
+    }
+
+    /// Quantizes a single `f64` input operand according to `MatrixMxuSlot::precision_mode`
+    /// before accumulating into `f32`/`f64` inside the systolic MXU array:
+    /// - `0`: `BF16` round-to-nearest-even (`half::bf16::from_f64(x).to_f64()`)
+    /// - `1`: `F32` IEEE-754 (`(x as f32) as f64`)
+    /// - `2`: `INT8` / `S8` clamped signed 8-bit integer (`x.round().clamp(-128.0, 127.0)`)
+    /// - `3`: `F8E4M3FN` / `F8E5M2` 8-bit float (`ElementType::F8E4M3Fn` round-trip)
+    /// - `4`: `S4` / `U4` sub-byte 4-bit integer (`x.round().clamp(-8.0, 7.0)`)
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - Raw `f64` matrix operand value.
+    /// * `precision_mode` - `MatrixMxuSlot::precision_mode` code (`0..=4`).
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    fn quantize_mxu_operand(val: f64, precision_mode: u8) -> f64 {
+        match precision_mode {
+            0 => half::bf16::from_f64(val).to_f64(),
+            2 => val.round().clamp(-128.0, 127.0),
+            3 => {
+                let raw = ElementType::F8E4M3Fn.pack_from_f64_slice(&[val]);
+                ElementType::F8E4M3Fn
+                    .unpack_to_f64_vec(&raw)
+                    .first()
+                    .copied()
+                    .unwrap_or(val)
+            }
+            4 => val.round().clamp(-8.0, 7.0),
+            _ => f64::from(val as f32),
+        }
     }
 
     /// Applies the `M0` (`MatrixMxuSlot`) systolic contraction across `vreg_tiles[lhs_vreg]` and
     /// `mxu_weights` (or `vreg_tiles[rhs_vreg]`) into `vreg_tiles[acc_vreg]`.
     ///
-    /// Performs true 2D square matrix multiplication (`[N, N] * [N, N]`) when the tile length is a
-    /// square matrix (`N * N >= 4`), or elementwise inner contraction otherwise.
+    /// Supports arbitrary rectangular and batched contractions `[B, M, K] x [B, K, N] -> [B, M, N]`
+    /// encoded in `mslot.flags` (`(M << 8) | N`) and `mslot.k_tiles` (`(B << 8) | K`), as well as
+    /// automatic square `[N, N] x [N, N]` inference when `flags <= 1`, and honors `mslot.precision_mode`
+    /// (`BF16`, `F32`, `INT8`, `FP8`, `S4`).
     ///
     /// # Arguments
     ///
@@ -329,19 +553,35 @@ impl TpuCoreVmState {
         } else {
             self.mxu_weights.clone()
         };
-        let n = lhs_vals.len().isqrt().max(1);
-        let mut out_vals = vec![0.0_f64; n * n];
-        for r in 0..n {
-            for c in 0..n {
-                let mut acc = 0.0_f64;
-                for k in 0..n {
-                    let l = lhs_vals.get(r * n + k).copied().unwrap_or(0.0);
-                    let rv = rhs_vals.get(k * n + c).copied().unwrap_or(0.0);
-                    acc = l.mul_add(rv, acc);
+
+        let sq = lhs_vals.len().isqrt().max(1);
+        let m_dim = usize::from(mslot.flags >> 8).max(sq);
+        let n_dim = usize::from((mslot.flags & 0xFF) & !1).max(m_dim);
+        let batch = usize::from(mslot.k_tiles >> 8).max(1);
+        let k_dim = usize::from((mslot.k_tiles & 0xFF) & !1).max(m_dim);
+
+        let mut out_vals = Vec::with_capacity(batch * m_dim * n_dim);
+        for b in 0..batch {
+            let lhs_b_off = b * m_dim * k_dim;
+            let rhs_b_off = b * k_dim * n_dim;
+            for r in 0..m_dim {
+                for c in 0..n_dim {
+                    let mut acc = 0.0_f32;
+                    for k in 0..k_dim {
+                        let raw_l = lhs_vals
+                            .get(lhs_b_off + r * k_dim + k)
+                            .copied()
+                            .unwrap_or(0.0);
+                        let raw_r = rhs_vals
+                            .get(rhs_b_off + k * n_dim + c)
+                            .copied()
+                            .unwrap_or(0.0);
+                        let ql = Self::quantize_mxu_operand(raw_l, mslot.precision_mode) as f32;
+                        let qr = Self::quantize_mxu_operand(raw_r, mslot.precision_mode) as f32;
+                        acc = ql.mul_add(qr, acc);
+                    }
+                    out_vals.push(f64::from(acc));
                 }
-                out_vals.get_mut(r * n + c).into_iter().for_each(|slot| {
-                    *slot = acc;
-                });
             }
         }
         let packed = ElementType::F32.pack_from_f64_slice(&out_vals);

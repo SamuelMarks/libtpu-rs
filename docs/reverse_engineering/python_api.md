@@ -1,23 +1,23 @@
-# `libtpu` Python Wheel & Package API Specification (`libtpu-0.0.50`)
+# `libtpu` Python Wheel & Package API Specification (`libtpu-0.0.52`)
 
 ## 1. Wheel Distribution Metadata
 - **Package Name**: `libtpu`
-- **Version Analyzed**: `0.0.50`
-- **Wheel Archive**: `libtpu-0.0.50-cp311-cp311-manylinux_2_31_x86_64.whl` (214,354,146 bytes compressed)
+- **Version Analyzed**: `0.0.52`
+- **Wheel Archive**: `libtpu-0.0.52-cp311-cp311-manylinux_2_31_x86_64.whl` (137,064,406 bytes compressed)
 - **Supported Python ABIs**: `cp311`, `cp312`, `cp313`, `cp314`, `cp314t` (free-threaded), `cp315`, `cp315t` (free-threaded)
 
 ## 2. Packaged Files (`RECORD`)
 | File Path | Size (Bytes) | SHA-256 Digest (URL-safe Base64) | Purpose |
 | :--- | ---: | :--- | :--- |
 | `libtpu/__init__.py` | 1,131 | `SoGncWaQwZYo1QEXcodPH75Y4C7El2NeXtDnDMAyL4M` | Python entrypoint and `TPU_LIBRARY_PATH` auto-configurator |
-| `libtpu/libtpu.so` | 630,899,976 | `63y9K8fHKDyfbomo0j370rJ1oyFbEhyPm8P6zoQvx8c` (hex: `ef2f7af1f1ca0f27db6a6a3adffdd2b275a3215b121c8f9bc3f6ce842fc7c7`) | Primary ELF64 shared library exporting PJRT, TfTpu, TpuTopology, TpuProfiler, TpuEmbeddingEngine, and LibtpuSdk C APIs |
-| `libtpu/sdk.so` | 37,821,432 | `bWXAPitYTqO2Ram2wSTHEsVOtXE4rQE9XjqVIwPttKk` (hex: `6d65c03e2b584eaa3b546b6b64931c4b153ad5c4e2b404f578ea548c0fb6d2a4`) | Companion C++/Python SDK shared library for telemetry and debug introspection |
+| `libtpu/libtpu.so` | 467,479,448 | `-G3k0EoFjmtRAfc-CCS5XyfizsmW0rkZHZz_2nXAMHc` (hex: `f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077`) | Primary ELF64 shared library exporting PJRT, TfTpu, TpuTopology, TpuProfiler, TpuEmbeddingEngine, and LibtpuSdk C APIs |
+| `libtpu/sdk.so` | 37,925,248 | `Ywx3I1K0cOHzK3RZrD1geQ-NTVAAdHOQ6963Q8HzMYY` (hex: `630c772352b470e1f32b7459ac3d60790f8d4d5000747390ebdeb743c1f33186`) | Companion C++/Python SDK shared library for telemetry, diagnostics, and debug introspection |
 | `libtpu/LICENSE` | 298 | `zRkcmy07EP-5bNpkwrs-l2CFSWfdXWDXLlcgVh7PwSQ` | License notice |
 | `libtpu/THIRD_PARTY_NOTICES.txt` | 813,975 | `64tvOtSU4ZP5i7F6CFUxY8KK7IQqeKQCB_v5V-GXI2M` | Open-source attributions for `libtpu.so` |
 | `libtpu/SDK_THIRD_PARTY_NOTICES.txt` | 243,577 | `gF-LaZX2vepR9jFDJ9VSAdbo1Xd2GBmUupkZjs8SsBY` | Open-source attributions for `sdk.so` |
-| `libtpu-0.0.50.dist-info/METADATA` | 2,061 | `ZxK7NK6zwCO1wC0PTRjMevUptQGdwt9BquxCiuQBps4` | Wheel package metadata |
-| `libtpu-0.0.50.dist-info/WHEEL` | 113 | `QvAd-x6XxWldJJIwKax41x0nqeGGzZdWKAl-5HwV6LQ` | Wheel build tags |
-| `libtpu-0.0.50.dist-info/top_level.txt` | 7 | `osLnDQBl5z7VhfpbHzbmqr5CNtGhnkU3Ue2zh1MfUKQ` | Top-level module name (`libtpu`) |
+| `libtpu-0.0.52.dist-info/METADATA` | 2,061 | `wCKn8kvEkcqREhATlrs9EGWwfxWSKyia7cM-ISVIPSU` | Wheel package metadata |
+| `libtpu-0.0.52.dist-info/WHEEL` | 113 | `QvAd-x6XxWldJJIwKax41x0nqeGGzZdWKAl-5HwV6LQ` | Wheel build tags |
+| `libtpu-0.0.52.dist-info/top_level.txt` | 7 | `osLnDQBl5z7VhfpbHzbmqr5CNtGhnkU3Ue2zh1MfUKQ` | Top-level module name (`libtpu`) |
 
 ## 3. Exact `libtpu/__init__.py` Behavior
 1. **`__version__: str`**:
@@ -31,7 +31,7 @@
    - Configures and retrieves `LIBTPU_INIT_ARGS` flags and synchronizes them with `TfTpu_Initialize`.
 
 ## 4. `libtpu/sdk.so` (`PyInit_sdk`) Nanobind Submodule Hierarchy
-Disassembly of `PyInit_sdk` (`0x00acdc7c`) and its submodule constructors (`BuildDebugSubModule`, `BuildSliceSubModule`, `BuildTpuMonitoringSubModule`, `BuildTpuzSubModule`) in `libtpu/sdk.so` reveals the exact Python API of `libtpu.sdk`:
+Disassembly of `PyInit_sdk` (`0x00ad84b8`) and its submodule constructors (`BuildDebugSubModule`, `BuildDiagnosticsSubModule`, `BuildSliceSubModule`, `BuildTpuMonitoringSubModule`, `BuildTpuzSubModule`) in `libtpu/sdk.so` reveals the exact Python API of `libtpu.sdk`:
 
 1. **`libtpu.sdk.slice`**:
    - `ChipCoordinates(hostname: str, chip_index: int, coordinates: Sequence[int])`:
@@ -51,3 +51,7 @@ Disassembly of `PyInit_sdk` (`0x00acdc7c`) and its submodule constructors (`Buil
    - `register_debug_callback(cb: Callable[..., None]) -> int` — Registers a debug callback via `LibtpuSdk_RegisterDebugCallback` and returns `callback_id`.
    - `unregister_debug_callback(callback_id: int) -> None` — Unregisters `callback_id` via `LibtpuSdk_UnregisterDebugCallback`.
    - `_trigger_debug_callback_for_test(...) -> None` — Triggers registered debug callbacks for testing.
+5. **`libtpu.sdk.diagnostics`**:
+   - `read_compiler_metadata(path: str) -> dict[str, object]` — Reads a `CompilerMetadata` (`platforms_deepsea.jellyfish.xdb.CompilerMetadata`) binary proto from disk and returns a sanitized dictionary with `program_id`, `replica_count`, `num_cores_per_replica`, `is_haltless`, `executable_size`, `optimized_hlo_instruction_count`, `module_name`, and `executable_fingerprint`.
+   - `read_stall_summaries(path: str) -> dict[str, object]` — Reads an `AllCoreStateSummaries` (`libtpu.sdk.tpu_telemetry.AllCoreStateSummaries`) binary proto from disk and returns a dictionary with per-core sequencer state (`core_states`) and optional `artifact_metadata`.
+   - `read_core_dump(path: str) -> dict[str, object]` — Reads and sanitizes a TPU `CoreDump` (`asic_sw.CoreDump`) from a Riegeli or binary protobuf file, returning a dictionary with sanitized `machine_info`, `timestamps`, `hardware`, `core_states`, and `analyzer_reports`.

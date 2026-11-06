@@ -462,6 +462,48 @@ pub struct PJRT_TpuTopology_MappingQuery_Args {
     pub out_second: usize,
 }
 
+/// Binary slice configuration record returned by `PJRT_TpuTopology_GetSliceConfig` and `GetSliceConfigs` (`56` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_SliceConfig {
+    /// Pointer to slice configuration name UTF-8 bytes (e.g., `"2x2x1"`).
+    pub name: *const std::os::raw::c_char,
+    /// Byte length of `name`.
+    pub name_len: usize,
+    /// Mesh dimensions along up to 4 axes (`[x, y, z, w]`).
+    pub dimensions: [i32; 4],
+    /// Torus wrap-around flags along up to 4 axes.
+    pub wraps: [bool; 4],
+    /// Number of active dimensions (`2` or `3`).
+    pub num_dimensions: usize,
+    /// Whether twisted torus routing is enabled.
+    pub twist: bool,
+    /// Trailing 7-byte alignment padding (`56` bytes total).
+    pub pad: [u8; 7],
+}
+
+/// Argument structure for `PJRT_TpuTopology_ComputeSubsliceForDevices` (`64` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ComputeSubsliceForDevices_Args {
+    /// Size of this struct (`64`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Topology description handle.
+    pub topology: *const std::ffi::c_void,
+    /// Subslice dimension bounds array pointer (`int32_t*`).
+    pub subslice_dims: *const i32,
+    /// Number of subslice dimensions.
+    pub num_subslice_dims: usize,
+    /// Device ID array pointer (`int32_t*`).
+    pub device_ids: *const i32,
+    /// Number of devices in `device_ids`.
+    pub num_devices: usize,
+    /// Output subslice origin coordinates array pointer (`int32_t*`).
+    pub subslice_origin_out: *mut i32,
+}
+
 /// Argument structure for `PJRT_Callback_InvokeCallback` (`40` bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -1146,3 +1188,5 @@ const _: () = assert!(size_of::<PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args>() ==
 const _: () = assert!(size_of::<PJRT_Shardings_PJRT_Executable_Shardings_Args>() == 48);
 const _: () = assert!(size_of::<PJRT_PhaseCompile_GetPhaseNames_Args>() == 48);
 const _: () = assert!(size_of::<PJRT_Triton_Compile_Args>() == 88);
+const _: () = assert!(size_of::<PJRT_TpuTopology_SliceConfig>() == 56);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ComputeSubsliceForDevices_Args>() == 64);

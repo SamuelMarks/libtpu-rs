@@ -2,7 +2,7 @@
 
 use crate::pjrt_types::PJRT_Error;
 
-/// Exact byte size of `PJRT_Api` in `libtpu-0.0.50` (`0x478` = 1,144 bytes).
+/// Exact byte size of `PJRT_Api` in `libtpu-0.0.52` (`0x478` = 1,144 bytes).
 pub const PJRT_API_STRUCT_SIZE: usize = 1144;
 
 /// Exact byte size of `PJRT_Api_Version` (`0x18` = 24 bytes).

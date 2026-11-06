@@ -125,7 +125,7 @@ mod tests {
                 client: ptr::null_mut(),
             };
             assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args_opts).cast()).is_null());
-            assert_eq!(kv_called, 1);
+            assert_eq!(kv_called, 2);
             let mut destroy_opts_client = PJRT_Client_Destroy_Args {
                 struct_size: size_of::<PJRT_Client_Destroy_Args>(),
                 extension_start: ptr::null_mut(),

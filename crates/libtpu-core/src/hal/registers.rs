@@ -970,7 +970,7 @@ bitflags::bitflags! {
 
 /// Hardware 32-byte HBM DMA ring descriptor (`HbmDmaRingDescriptor`).
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Pod, Zeroable)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Pod, Zeroable)]
 pub struct HbmDmaRingDescriptor {
     /// Source IOVA or HBM physical address.
     pub src_iova: u64,

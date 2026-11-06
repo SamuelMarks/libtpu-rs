@@ -1,7 +1,7 @@
-# `PJRT_Api` & `LibtpuSdk_Api` Binary Layout Specification (`libtpu-0.0.50`)
+# `PJRT_Api` & `LibtpuSdk_Api` Binary Layout Specification (`libtpu-0.0.52`)
 
 ## 1. `PJRT_Api` Header & Version Layout
-Disassembly of `pjrt::CreatePjrtApi` (`0x0c5a55e0`) in `libtpu.so` reveals the exact binary header of the static `PJRT_Api` structure (`_ZZN4pjrt10tpu_plugin13GetTpuPjrtApiEvE8pjrt_api` at `0x1c8edd80`):
+Disassembly of `pjrt::CreatePjrtApi` (`0x07120760`) in `libtpu.so` reveals the exact binary header of the static `PJRT_Api` structure (`_ZZN4pjrt10tpu_plugin13GetTpuPjrtApiEvE8pjrt_api` at `0x149302c0`):
 
 - **Total `PJRT_Api` Size (`struct_size`)**: `0x478` = **1,144 bytes** (143 64-bit words)
 - **`PJRT_Api_Version`**:

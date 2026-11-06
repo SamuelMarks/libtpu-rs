@@ -430,7 +430,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libtpu-c-api"
-version = "0.0.50"
+version = "0.0.52"
 dependencies = [
  "libtpu-core",
  "parking_lot",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "libtpu-core"
-version = "0.0.50"
+version = "0.0.52"
 dependencies = [
  "bitflags",
  "blake3",
@@ -478,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "libtpu-py"
-version = "0.0.50"
+version = "0.0.52"
 dependencies = [
  "libtpu-core",
 ]

@@ -351,6 +351,367 @@ pub fn sha256_fingerprint_u64(payload: &[u8]) -> u64 {
     u64::from_le_bytes(first8)
 }
 
+/// Official 8-byte Riegeli block header magic (`b"\x83\xaf\x70\xd1\x0d\x88\x4a\x3f"`).
+pub const RIEGELI_BLOCK_MAGIC: [u8; 8] = [0x83, 0xAF, 0x70, 0xD1, 0x0D, 0x88, 0x4A, 0x3F];
+
+/// Canonical 32-byte (`4 x u64`) Google `HighwayHash64` key used by Riegeli (`"riegeli_/records_format_20180226"`).
+pub const RIEGELI_HIGHWAYHASH_KEY: [u64; 4] = [
+    0x5F69_6C65_6765_6972,
+    0x5F73_6472_6F63_6572,
+    0x325F_7461_6D72_6F66,
+    0x3632_3230_3831_3032,
+];
+
+/// Pure-Rust, zero-panic Google `HighwayHash64` state machine (`v0`, `v1`, `mul0`, `mul1` 4x64-bit lanes).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HighwayHash64State {
+    /// Primary 4-lane state vector `v0`.
+    pub v0: [u64; 4],
+    /// Secondary 4-lane state vector `v1`.
+    pub v1: [u64; 4],
+    /// Multiplier 4-lane state vector `mul0`.
+    pub mul0: [u64; 4],
+    /// Multiplier 4-lane state vector `mul1`.
+    pub mul1: [u64; 4],
+}
+
+impl HighwayHash64State {
+    /// Initializes a new [`HighwayHash64State`] with a 4x64-bit key.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - 256-bit (`[u64; 4]`) `HighwayHash` secret key.
+    #[must_use]
+    pub const fn new(key: &[u64; 4]) -> Self {
+        let mul0 = [
+            0xDBE6_D5D5_FE4C_CE2F,
+            0xA409_3822_299F_31D0,
+            0x1319_8A2E_0370_7344,
+            0x243F_6A88_85A3_08D3,
+        ];
+        let mul1 = [
+            0x3BD3_9E10_CB0E_F593,
+            0xC0AC_F169_B5F1_8A8C,
+            0xBE54_66CF_34E9_0C6C,
+            0x4528_21E6_38D0_1377,
+        ];
+        Self {
+            v0: [
+                mul0[0] ^ key[0],
+                mul0[1] ^ key[1],
+                mul0[2] ^ key[2],
+                mul0[3] ^ key[3],
+            ],
+            v1: [
+                mul1[0] ^ key[0].rotate_left(32),
+                mul1[1] ^ key[1].rotate_left(32),
+                mul1[2] ^ key[2].rotate_left(32),
+                mul1[3] ^ key[3].rotate_left(32),
+            ],
+            mul0,
+            mul1,
+        }
+    }
+
+    /// Computes Google `HighwayHash64` over a byte slice using `key`.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Input byte slice to hash.
+    /// * `key` - 256-bit (`[u64; 4]`) `HighwayHash` key.
+    #[must_use]
+    pub fn hash64(data: &[u8], key: &[u64; 4]) -> u64 {
+        let mut state = Self::new(key);
+        let mut chunks = data.chunks_exact(32);
+        for chunk in &mut chunks {
+            let mut lanes = [0_u64; 4];
+            for (dst, src) in lanes.iter_mut().zip(chunk.chunks_exact(8)) {
+                let mut b8 = [0_u8; 8];
+                b8.copy_from_slice(src);
+                *dst = u64::from_le_bytes(b8);
+            }
+            state.update_lanes(&lanes);
+        }
+        let rem = chunks.remainder();
+        if !rem.is_empty() {
+            state.update_remainder(rem);
+        }
+        state.finalize64()
+    }
+
+    /// Absorbs a single 32-byte (`[u64; 4]`) packet into the `HighwayHash` state.
+    ///
+    /// # Arguments
+    ///
+    /// * `packet` - Four 64-bit little-endian words.
+    #[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
+    pub fn update_lanes(&mut self, packet: &[u64; 4]) {
+        for i in 0..4 {
+            self.v1[i] = self.v1[i]
+                .wrapping_add(self.mul0[i])
+                .wrapping_add(packet[i]);
+            self.mul0[i] ^= (self.v1[i] & 0xFFFF_FFFF).wrapping_mul(self.v0[i] >> 32);
+            self.v0[i] = self.v0[i].wrapping_add(self.mul1[i]);
+            self.mul1[i] ^= (self.v0[i] & 0xFFFF_FFFF).wrapping_mul(self.v1[i] >> 32);
+        }
+        let z00 = Self::zipper_merge_word(self.v1[0], self.v1[1]);
+        let z01 = Self::zipper_merge_word(self.v1[2], self.v1[3]);
+        self.v0[0] = self.v0[0].wrapping_add(z00.0);
+        self.v0[1] = self.v0[1].wrapping_add(z00.1);
+        self.v0[2] = self.v0[2].wrapping_add(z01.0);
+        self.v0[3] = self.v0[3].wrapping_add(z01.1);
+
+        let z10 = Self::zipper_merge_word(self.v0[0], self.v0[1]);
+        let z11 = Self::zipper_merge_word(self.v0[2], self.v0[3]);
+        self.v1[0] = self.v1[0].wrapping_add(z10.0);
+        self.v1[1] = self.v1[1].wrapping_add(z10.1);
+        self.v1[2] = self.v1[2].wrapping_add(z11.0);
+        self.v1[3] = self.v1[3].wrapping_add(z11.1);
+    }
+
+    /// Absorbs a trailing remainder slice (`1..=31` bytes) into the `HighwayHash` state.
+    ///
+    /// # Arguments
+    ///
+    /// * `rem` - Trailing byte slice of length `< 32`.
+    #[allow(clippy::indexing_slicing, clippy::needless_range_loop)]
+    pub fn update_remainder(&mut self, rem: &[u8]) {
+        let size_mod32 = rem.len() as u64;
+        for i in 0..4 {
+            self.v0[i] = self.v0[i].wrapping_add((size_mod32 << 32).wrapping_add(size_mod32));
+            let rot = u32::try_from(size_mod32).unwrap_or(0);
+            self.v1[i] = self.v1[i].rotate_left(rot);
+        }
+        let mut buf = [0_u8; 32];
+        for (dst, &src) in buf.iter_mut().zip(rem.iter()) {
+            *dst = src;
+        }
+        let mut lanes = [0_u64; 4];
+        for (dst, src) in lanes.iter_mut().zip(buf.chunks_exact(8)) {
+            let mut b8 = [0_u8; 8];
+            b8.copy_from_slice(src);
+            *dst = u64::from_le_bytes(b8);
+        }
+        self.update_lanes(&lanes);
+    }
+
+    /// Permutes and finalizes the state into a 64-bit `HighwayHash64` digest.
+    #[must_use]
+    pub fn finalize64(&mut self) -> u64 {
+        for _ in 0..4 {
+            let permuted = [
+                self.v0[2].rotate_left(32),
+                self.v0[3].rotate_left(32),
+                self.v0[0].rotate_left(32),
+                self.v0[1].rotate_left(32),
+            ];
+            self.update_lanes(&permuted);
+        }
+        self.v0[0]
+            .wrapping_add(self.v1[0])
+            .wrapping_add(self.mul0[0])
+            .wrapping_add(self.mul1[0])
+    }
+
+    /// Performs the `HighwayHash` byte-level zipper merge over two 64-bit words.
+    ///
+    /// # Arguments
+    ///
+    /// * `v0` - First 64-bit word.
+    /// * `v1` - Second 64-bit word.
+    #[must_use]
+    const fn zipper_merge_word(v0: u64, v1: u64) -> (u64, u64) {
+        let b = v0.to_le_bytes();
+        let c = v1.to_le_bytes();
+        let w0 = u64::from_le_bytes([b[3], c[4], b[2], c[5], c[6], b[0], b[1], c[7]]);
+        let w1 = u64::from_le_bytes([c[3], b[4], c[2], b[5], b[6], c[0], c[1], b[7]]);
+        (w0, w1)
+    }
+}
+
+/// Computes Google `HighwayHash64` over `payload` using [`RIEGELI_HIGHWAYHASH_KEY`].
+///
+/// # Arguments
+///
+/// * `payload` - Byte slice to hash.
+#[must_use]
+pub fn riegeli_highwayhash64(payload: &[u8]) -> u64 {
+    HighwayHash64State::hash64(payload, &RIEGELI_HIGHWAYHASH_KEY)
+}
+
+/// Clean-room Riegeli record container reader and writer (`RiegeliRecordCodec`).
+///
+/// Supports 64-byte block headers (`b"\x83\xaf\x70\xd1\x0d\x88\x4a\x3f"` or `b"riegeli_"`) and chunk headers
+/// with Google [`HighwayHash64State`] header/payload checksums and `64 KiB` (`0x10000`-byte) block boundary
+/// interleaving used by `libtpu.sdk.diagnostics` (`read_core_dump`, `read_stall_summaries`, `read_compiler_metadata`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RiegeliRecordCodec;
+
+impl RiegeliRecordCodec {
+    /// Canonical Riegeli block boundary interval in bytes (`64 KiB` = `65,536` bytes).
+    pub const BLOCK_BOUNDARY_BYTES: usize = 65_536;
+
+    /// Wraps a serialized protobuf payload into a 64-byte Riegeli block + chunk header container
+    /// with Google [`riegeli_highwayhash64`] header and payload hashes in bytes `48..64`.
+    ///
+    /// # Arguments
+    ///
+    /// * `proto_payload` - Raw binary protobuf record bytes.
+    #[must_use]
+    pub fn wrap_record(proto_payload: &[u8]) -> Vec<u8> {
+        let len_u64 = proto_payload.len() as u64;
+        let mut out = Vec::with_capacity(64 + proto_payload.len());
+        out.extend_from_slice(&RIEGELI_BLOCK_MAGIC);
+        out.extend_from_slice(b"riegeli_");
+        out.extend_from_slice(&0_u64.to_le_bytes());
+        out.extend_from_slice(&len_u64.to_le_bytes());
+        out.extend_from_slice(&1_u64.to_le_bytes());
+        out.extend_from_slice(&len_u64.to_le_bytes());
+        let header_hash = riegeli_highwayhash64(&out);
+        let payload_hash = riegeli_highwayhash64(proto_payload);
+        out.extend_from_slice(&header_hash.to_le_bytes());
+        out.extend_from_slice(&payload_hash.to_le_bytes());
+        out.extend_from_slice(proto_payload);
+        out
+    }
+
+    /// Unwraps a Riegeli-framed container if `raw` begins with [`RIEGELI_BLOCK_MAGIC`] or `b"riegeli"`,
+    /// returning the inner protobuf record bytes, or returns `raw` unchanged for plain `.pb` files.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw file bytes (either Riegeli-framed or plain protobuf).
+    #[must_use]
+    pub fn unwrap_record(raw: &[u8]) -> &[u8] {
+        if raw.len() >= 64 && raw.starts_with(&RIEGELI_BLOCK_MAGIC) {
+            return raw.get(64..).unwrap_or(raw);
+        }
+        raw
+    }
+
+    /// Unwraps and validates a Riegeli-framed container, checking the 64-bit `HighwayHash64` header
+    /// and payload checksums when non-zero.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw file bytes (either Riegeli-framed or plain protobuf).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::DeserializationFailed`] if `raw` has a Riegeli magic prefix with
+    /// a non-zero `HighwayHash64` checksum that does not match the header or payload.
+    pub fn unwrap_record_checked(raw: &[u8]) -> LibTpuResult<&[u8]> {
+        if raw.starts_with(&RIEGELI_BLOCK_MAGIC) {
+            let header_prefix = raw.get(..48).unwrap_or_default();
+            let mut h_bytes = [0_u8; 8];
+            let mut p_bytes = [0_u8; 8];
+            h_bytes.copy_from_slice(raw.get(48..56).unwrap_or(&[0_u8; 8]));
+            p_bytes.copy_from_slice(raw.get(56..64).unwrap_or(&[0_u8; 8]));
+            let stored_header_hash = u64::from_le_bytes(h_bytes);
+            let stored_payload_hash = u64::from_le_bytes(p_bytes);
+            let payload = raw.get(64..).unwrap_or_default();
+            let hdr_ok = (u8::from(stored_header_hash == 0)
+                | u8::from(stored_header_hash == riegeli_highwayhash64(header_prefix)))
+                != 0;
+            let pay_ok = (u8::from(stored_payload_hash == 0)
+                | u8::from(stored_payload_hash == riegeli_highwayhash64(payload)))
+                != 0;
+            if (u8::from(hdr_ok) & u8::from(pay_ok)) == 0 {
+                return Err(LibTpuError::DeserializationFailed {
+                    reason: String::from(
+                        "Riegeli HighwayHash64 header or payload checksum mismatch",
+                    ),
+                });
+            }
+            return Ok(payload);
+        }
+        Ok(raw)
+    }
+
+    /// Encodes multiple protobuf records into a Riegeli stream, inserting 24-byte block boundary
+    /// headers (`RIEGELI_BLOCK_MAGIC` + `previous_chunk` + `next_chunk`) at every `64 KiB` (`0x10000`) offset.
+    ///
+    /// # Arguments
+    ///
+    /// * `records` - Slice of serialized protobuf record byte vectors.
+    #[must_use]
+    pub fn wrap_records(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut raw_chunks = Vec::new();
+        for rec in records {
+            raw_chunks.extend_from_slice(&Self::wrap_record(rec));
+        }
+        if raw_chunks.len() < Self::BLOCK_BOUNDARY_BYTES {
+            return raw_chunks;
+        }
+        let mut out = Vec::with_capacity(raw_chunks.len() + 64);
+        let mut src_idx = 0_usize;
+        while src_idx < raw_chunks.len() {
+            let pos_in_block = out.len() % Self::BLOCK_BOUNDARY_BYTES;
+            if (u8::from(!out.is_empty()) & u8::from(pos_in_block == 0)) != 0 {
+                out.extend_from_slice(&RIEGELI_BLOCK_MAGIC);
+                let prev = (src_idx as u64).to_le_bytes();
+                let next = ((raw_chunks.len() - src_idx) as u64).to_le_bytes();
+                out.extend_from_slice(&prev);
+                out.extend_from_slice(&next);
+            }
+            let room = Self::BLOCK_BOUNDARY_BYTES - (out.len() % Self::BLOCK_BOUNDARY_BYTES);
+            let take = room.min(raw_chunks.len() - src_idx);
+            out.extend_from_slice(raw_chunks.get(src_idx..src_idx + take).unwrap_or_default());
+            src_idx += take;
+        }
+        out
+    }
+
+    /// Decodes a multi-record Riegeli stream (stripping any `64 KiB` block boundary headers)
+    /// and verifies each record's `HighwayHash64` checksum.
+    ///
+    /// # Arguments
+    ///
+    /// * `stream` - Raw Riegeli stream bytes produced by [`Self::wrap_records`] or [`Self::wrap_record`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::DeserializationFailed`] if any record header is truncated or fails checksum verification.
+    pub fn unwrap_records(stream: &[u8]) -> LibTpuResult<Vec<Vec<u8>>> {
+        let mut stripped = Vec::with_capacity(stream.len());
+        let mut idx = 0_usize;
+        while let Some(&b) = stream.get(idx) {
+            let is_block_hdr =
+                (u8::from(idx > 0) & u8::from(idx % Self::BLOCK_BOUNDARY_BYTES == 0)) != 0;
+            if is_block_hdr {
+                idx = idx.saturating_add(24).min(stream.len());
+                continue;
+            }
+            stripped.push(b);
+            idx += 1;
+        }
+
+        let mut records = Vec::new();
+        let mut cursor = 0_usize;
+        while cursor < stripped.len() {
+            let rem = stripped.get(cursor..).unwrap_or_default();
+            if !rem.starts_with(&RIEGELI_BLOCK_MAGIC) {
+                return Err(LibTpuError::DeserializationFailed {
+                    reason: String::from("truncated or invalid Riegeli record header in stream"),
+                });
+            }
+            let mut len_bytes = [0_u8; 8];
+            len_bytes.copy_from_slice(rem.get(24..32).unwrap_or(&[0_u8; 8]));
+            let rec_len = usize::try_from(u64::from_le_bytes(len_bytes)).unwrap_or(0);
+            let frame_end = 64_usize.saturating_add(rec_len);
+            let Some(frame) = rem.get(..frame_end) else {
+                return Err(LibTpuError::DeserializationFailed {
+                    reason: String::from("Riegeli record payload extends past stream end"),
+                });
+            };
+            let payload = Self::unwrap_record_checked(frame)?;
+            records.push(payload.to_vec());
+            cursor = cursor.saturating_add(frame_end);
+        }
+        Ok(records)
+    }
+}
+
 /// Verifies that every message in [`ALL_REGISTERED_PROTO_MESSAGE_NAMES`] is present in
 /// [`global_descriptor_pool`] and returns the count of verified message descriptors.
 ///

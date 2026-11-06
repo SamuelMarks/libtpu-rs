@@ -1006,3 +1006,51 @@ pub unsafe extern "C" fn PJRT_TpuTopology_GetDefaultPlatformConfig(
         )
     }
 }
+
+/// Strongly-typed handler for [`PJRT_TpuTopology_ComputeSubsliceForDevices`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_TpuTopology_ComputeSubsliceForDevices_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_TpuTopology_ComputeSubsliceForDevices_Args`].
+unsafe fn handle_tpu_topology_compute_subslice_for_devices(
+    args: &mut PJRT_TpuTopology_ComputeSubsliceForDevices_Args,
+) {
+    let mut st = extension_state().lock();
+    st.is_subslice_topology = true;
+    drop(st);
+    if !args.subslice_origin_out.is_null() {
+        let count = args.num_subslice_dims.min(4);
+        for idx in 0..count {
+            // SAFETY: `subslice_origin_out` has space for `num_subslice_dims` elements.
+            unsafe {
+                *args.subslice_origin_out.add(idx) = 0;
+            }
+        }
+    }
+}
+
+/// Computes the subslice origin coordinates for a subset of TPU devices (`PJRT_TpuTopology_ComputeSubsliceForDevices`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to [`PJRT_TpuTopology_ComputeSubsliceForDevices_Args`].
+///
+/// # Safety
+///
+/// `raw_args` must be null or a valid pointer to [`PJRT_TpuTopology_ComputeSubsliceForDevices_Args`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PJRT_TpuTopology_ComputeSubsliceForDevices(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    unsafe {
+        dispatch_typed_extension_args::<PJRT_TpuTopology_ComputeSubsliceForDevices_Args>(
+            raw_args,
+            handle_tpu_topology_compute_subslice_for_devices,
+        )
+    }
+}

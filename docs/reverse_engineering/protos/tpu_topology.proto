@@ -2,8 +2,9 @@
 // Copyright 2026 The TensorFlow Authors (Google LLC).
 // Source: https://github.com/tensorflow/tensorflow/blob/a84ca1d776123d822e7e86d86868ddb7b7b81930/tensorflow/core/protobuf/tpu/topology.proto
 // Commit: a84ca1d776123d822e7e86d86868ddb7b7b81930
-// Source: learning/45eac/tpu/runtime/topology/tpu_topology.proto (libtpu.so SHA-256: ef2f7af1f1ca0f27db6a6a3adffdd2b275a3215b121c8f9bc3f6ce842fc7c700)
-// Source: learning/45eac/tpu/runtime/topology/tpu_topology_args.proto (libtpu.so SHA-256: ef2f7af1f1ca0f27db6a6a3adffdd2b275a3215b121c8f9bc3f6ce842fc7c700)
+// Source: learning/45eac/tpu/runtime/topology/tpu_topology.proto (libtpu.so SHA-256: f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077)
+// Source: learning/45eac/tpu/runtime/topology/tpu_topology_args.proto (libtpu.so SHA-256: f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077)
+// Source: learning/45eac/research/pjrt/extensions/topology/tpu_platform_configs.proto (libtpu.so SHA-256: f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077)
 // Source: https://github.com/tensorflow/tensorflow/blob/a84ca1d776123d822e7e86d86868ddb7b7b81930/tensorflow/core/protobuf/tpu/topology.proto
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -127,4 +128,25 @@ message TpuTopologyArgsProto {
     tpu.TpuDimensionsProto chips_per_host_bounds = 1;
     tpu.TpuDimensionsProto host_bounds = 2;
   }
+}
+
+// --- tpu_platform_configs.proto ---
+// Embedded FileDescriptorProto: learning/45eac/research/pjrt/extensions/topology/tpu_platform_configs.proto
+// Package: pjrt.tpu_topology_extension
+message SliceConfig {
+  string name = 1;
+  repeated int32 dimensions = 2;
+  repeated bool wraps = 3;
+  bool twist = 4;
+}
+
+message TpuPlatformConfig {
+  string platform_type_name = 1;
+  repeated SliceConfig slice_configs = 2;
+  int64 num_chips_per_tray = 3;
+  int64 num_trays = 4;
+}
+
+message TpuPlatformConfigs {
+  repeated TpuPlatformConfig platform_configs = 1;
 }

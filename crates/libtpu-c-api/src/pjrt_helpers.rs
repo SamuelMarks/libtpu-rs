@@ -519,7 +519,7 @@ pub(crate) static GLOBAL_PLUGIN_ATTRIBUTES: [crate::pjrt_types::PJRT_NamedValue;
         name: c"xla_tpu_version".as_ptr(),
         name_size: 15,
         value_type_and_pad: 1,
-        value_payload: 50,
+        value_payload: 52,
         value_size: 1,
     },
     crate::pjrt_types::PJRT_NamedValue {

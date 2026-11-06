@@ -400,15 +400,14 @@ unsafe fn handle_phase_compile_run_phase(args: &mut PJRT_PhaseCompile_RunPhase_A
     } else {
         COMPILATION_PHASE_NAMES[0]
     };
-    args.output_status = CompiledProgram::run_compilation_phase(phase_name, input, b"").map_or(
-        COMPILATION_PHASE_NAMES.len(),
-        |v| {
+    args.output_status = CompiledProgram::run_compilation_phase_proto(phase_name, input, b"")
+        .map_or(COMPILATION_PHASE_NAMES.len(), |proto| {
+            let v = proto.encode();
             let len = v.len().max(COMPILATION_PHASE_NAMES.len());
             let (ptr, _) = alloc_phase_compile_buffer(v);
             free_phase_compile_buffer(ptr.cast_mut().cast());
             len
-        },
-    );
+        });
 }
 
 /// Executes a named TPU compilation phase (`PJRT_PhaseCompile_RunPhase`).

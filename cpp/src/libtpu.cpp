@@ -1209,4 +1209,90 @@ PJRT_Device *AsyncTransferManager::device() const noexcept {
   return args.device_out;
 }
 
+TpuExecutableInspector::TpuExecutableInspector(
+    PJRT_Executable *executable) noexcept
+    : executable_(executable) {}
+
+size_t TpuExecutableInspector::target_arguments_size() const noexcept {
+  PJRT_TpuExecutable_ProtoQuery_Args args{
+      sizeof(PJRT_TpuExecutable_ProtoQuery_Args),
+      nullptr,
+      executable_,
+      0,
+      0,
+      nullptr};
+  (void)PJRT_TpuExecutable_GetTargetArguments(&args);
+  PJRT_Metadata_Destroy_Args del_args{sizeof(PJRT_Metadata_Destroy_Args),
+                                      nullptr, args.holder};
+  (void)PJRT_ExecutableMetadata_Destroy(&del_args);
+  return args.serialized_bytes_size;
+}
+
+size_t TpuExecutableInspector::hlo_module_with_config_size() const noexcept {
+  PJRT_TpuExecutable_ProtoQuery_Args args{
+      sizeof(PJRT_TpuExecutable_ProtoQuery_Args),
+      nullptr,
+      executable_,
+      0,
+      0,
+      nullptr};
+  (void)PJRT_TpuExecutable_GetHloModuleWithConfig(&args);
+  PJRT_Metadata_Destroy_Args del_args{sizeof(PJRT_Metadata_Destroy_Args),
+                                      nullptr, args.holder};
+  (void)PJRT_ExecutableMetadata_Destroy(&del_args);
+  return args.serialized_bytes_size;
+}
+
+int64_t TpuExecutableInspector::generated_code_size_bytes() const noexcept {
+  PJRT_TpuExecutable_GetCompiledMemoryStats_Args args{
+      sizeof(PJRT_TpuExecutable_GetCompiledMemoryStats_Args),
+      nullptr,
+      executable_,
+      0,
+      0,
+      0,
+      0,
+      0};
+  (void)PJRT_TpuExecutable_GetCompiledMemoryStats(&args);
+  return args.generated_code_size_in_bytes;
+}
+
+size_t TpuExecutableInspector::set_and_query_compilation_env(
+    size_t field_tag) const noexcept {
+  PJRT_Megascale_Query_Args set_args{sizeof(PJRT_Megascale_Query_Args), nullptr,
+                                     field_tag, 0};
+  (void)PJRT_TpuExecutable_SetTpuCompilationEnv(&set_args);
+  PJRT_Megascale_Data_Args get_args{sizeof(PJRT_Megascale_Data_Args), nullptr,
+                                    field_tag, 0, 0};
+  (void)PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString(&get_args);
+  return set_args.out_value + get_args.out_second;
+}
+
+ShardingsInspector::ShardingsInspector(PJRT_Executable *executable) noexcept
+    : executable_(executable) {}
+
+size_t ShardingsInspector::parameter_sharding_count() const noexcept {
+  PJRT_Shardings_PJRT_Executable_Shardings_Args args{
+      sizeof(PJRT_Shardings_PJRT_Executable_Shardings_Args),
+      nullptr,
+      executable_,
+      0,
+      nullptr,
+      nullptr};
+  (void)PJRT_Shardings_ParameterShardings(&args);
+  return args.num_items;
+}
+
+size_t ShardingsInspector::output_sharding_count() const noexcept {
+  PJRT_Shardings_PJRT_Executable_Shardings_Args args{
+      sizeof(PJRT_Shardings_PJRT_Executable_Shardings_Args),
+      nullptr,
+      executable_,
+      0,
+      nullptr,
+      nullptr};
+  (void)PJRT_Shardings_OutputShardings(&args);
+  return args.num_items;
+}
+
 } // namespace libtpu

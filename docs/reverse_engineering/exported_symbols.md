@@ -1,12 +1,12 @@
-# `libtpu.so` Exported ELF Symbol Specification (`libtpu-0.0.50`)
+# `libtpu.so` Exported ELF Symbol Specification (`libtpu-0.0.52`)
 
 ## 1. ELF Header & Dynamic Linking Profile
-- **Artifact**: `libtpu/libtpu.so` (`630,899,976` bytes, SHA-256 `ef2f7af1f1ca0f27db6a6a3adffdd2b275a3215b121c8f9bc3f6ce842fc7c700`)
-- **Companion SDK Artifact**: `libtpu/sdk.so` (`37,821,432` bytes, SHA-256 `6d65c03e2b584eaa3b546b6b64931c4b153ad5c4e2b404f578ea548c0fb6d2a4`)
+- **Artifact**: `libtpu/libtpu.so` (`467,479,448` bytes, SHA-256 `f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077`)
+- **Companion SDK Artifact**: `libtpu/sdk.so` (`37,925,248` bytes, SHA-256 `630c772352b470e1f32b7459ac3d60790f8d4d5000747390ebdeb743c1f33186`)
 - **Format**: `ELF64` (`e_type = ET_DYN (3)`, `e_machine = EM_X86_64 (62)`)
 - **Calling Convention**: System V AMD64 ABI (`rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9` for the first 6 integer/pointer arguments; `rax` for return value)
 - **Program Headers**: 12
-- **Section Headers**: 51 (including `.dynsym`, `.dynstr`, `.symtab` with 950,706 internal symbols, `.strtab`, `protodesc_cold`, `filewrapper_toc`, `.rodata`)
+- **Section Headers**: 51 (including `.dynsym`, `.dynstr`, `.symtab` with 772,382 internal symbols, `.strtab`, `protodesc_cold`, `filewrapper_toc`, `.rodata`)
 - **`DT_SONAME`**: `None`
 - **`DT_NEEDED`**:
   - `libm.so.6`
@@ -18,13 +18,13 @@
 
 ## 2. Complete Exported Dynamic Function Symbols (`.dynsym`) & C Signatures
 
-`libtpu.so` exports 78 global function symbols (`STT_FUNC`) and 8 linker section boundary markers (`STT_NOTYPE`):
+`libtpu.so` exports 75 global function symbols (`STT_FUNC`) and 8 linker section boundary markers (`STT_NOTYPE`) (with `libtpu-rs` also retaining the 3 legacy `TpuDriver_*` symbols for backward compatibility):
 
 ### 2.1 PJRT & SDK Entrypoints
 | Symbol Name | Virtual Address | C Signature | Description |
 | :--- | :--- | :--- | :--- |
-| `GetPjrtApi` | `0x0b4f9b90` | `const PJRT_Api* GetPjrtApi(void)` | Returns pointer to the 1,144-byte `PJRT_Api` vtable |
-| `GetLibtpuSdkApi` | `0x0d3e07d8` | `const LibtpuSdk_Api* GetLibtpuSdkApi(void)` | Returns pointer to the 144-byte `LibtpuSdk_Api` vtable |
+| `GetPjrtApi` | `0x06250048` | `const PJRT_Api* GetPjrtApi(void)` | Returns pointer to the 1,144-byte `PJRT_Api` vtable |
+| `GetLibtpuSdkApi` | `0x08185038` | `const LibtpuSdk_Api* GetLibtpuSdkApi(void)` | Returns pointer to the 144-byte `LibtpuSdk_Api` vtable |
 
 ### 2.2 Runtime Initialization & TensorFlow / StreamExecutor Hooks
 | Symbol Name | Virtual Address | C Signature | Description |

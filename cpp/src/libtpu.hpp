@@ -1453,6 +1453,88 @@ private:
   PJRT_AsyncHostToDeviceTransferManager *handle_;
 };
 
+/**
+ * @brief Strongly-typed C++20 inspector over `PJRT_TpuExecutable_Extension`
+ * (`ext_type = 17`).
+ */
+class TpuExecutableInspector {
+public:
+  /**
+   * @brief Constructs a `TpuExecutableInspector` over an optional
+   * `PJRT_Executable*`.
+   * @param executable Raw `PJRT_Executable*` handle (defaults to `nullptr`).
+   */
+  explicit TpuExecutableInspector(
+      PJRT_Executable *executable = nullptr) noexcept;
+
+  /**
+   * @brief Queries the serialized `TargetArgumentsProto` byte length via
+   * `PJRT_TpuExecutable_GetTargetArguments`.
+   * @return Serialized `TargetArgumentsProto` size in bytes (`> 0`).
+   */
+  [[nodiscard]] size_t target_arguments_size() const noexcept;
+
+  /**
+   * @brief Queries the serialized `HloModuleProtoWithConfig` byte length via
+   * `PJRT_TpuExecutable_GetHloModuleWithConfig`.
+   * @return Serialized `HloModuleProtoWithConfig` size in bytes (`> 0`).
+   */
+  [[nodiscard]] size_t hlo_module_with_config_size() const noexcept;
+
+  /**
+   * @brief Queries the generated code size in bytes via
+   * `PJRT_TpuExecutable_GetCompiledMemoryStats`.
+   * @return Generated VLIW code size in bytes (`> 0`).
+   */
+  [[nodiscard]] int64_t generated_code_size_bytes() const noexcept;
+
+  /**
+   * @brief Sets and reads back a `TpuCompilationEnvironmentProto` flag via
+   * `PJRT_TpuExecutable_SetTpuCompilationEnv` and
+   * `PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString`.
+   * @param field_tag Protobuf field number (`>= 1`).
+   * @return Current number of compilation environment overrides (`>= 1`).
+   */
+  [[nodiscard]] size_t
+  set_and_query_compilation_env(size_t field_tag) const noexcept;
+
+private:
+  /** @brief Non-owning `PJRT_Executable*` handle. */
+  PJRT_Executable *executable_;
+};
+
+/**
+ * @brief Strongly-typed C++20 inspector over `PJRT_Shardings_Extension`
+ * (`ext_type = 19`).
+ */
+class ShardingsInspector {
+public:
+  /**
+   * @brief Constructs a `ShardingsInspector` over an optional
+   * `PJRT_Executable*`.
+   * @param executable Raw `PJRT_Executable*` handle (defaults to `nullptr`).
+   */
+  explicit ShardingsInspector(PJRT_Executable *executable = nullptr) noexcept;
+
+  /**
+   * @brief Queries the number of parameter `xla.OpSharding` entries via
+   * `PJRT_Shardings_ParameterShardings`.
+   * @return Number of parameter shardings (`>= 1`).
+   */
+  [[nodiscard]] size_t parameter_sharding_count() const noexcept;
+
+  /**
+   * @brief Queries the number of output `xla.OpSharding` entries via
+   * `PJRT_Shardings_OutputShardings`.
+   * @return Number of output shardings (`>= 1`).
+   */
+  [[nodiscard]] size_t output_sharding_count() const noexcept;
+
+private:
+  /** @brief Non-owning `PJRT_Executable*` handle. */
+  PJRT_Executable *executable_;
+};
+
 /** @brief Type alias for `Communicator` (`CollectiveCommunicator`). */
 using CollectiveCommunicator = Communicator;
 
@@ -1464,6 +1546,9 @@ using MegaScaleContext = MegascaleContext;
 
 /** @brief Type alias for `MegascaleContext` (`MultiSliceConfig`). */
 using MultiSliceConfig = MegascaleContext;
+
+/** @brief Type alias for `EmbeddingEngine` (`SparseCoreEngine`). */
+using SparseCoreEngine = EmbeddingEngine;
 
 /**
  * @brief Zero-exception monadic value-or-status container (`Result<T>`) for

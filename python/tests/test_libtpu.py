@@ -6,6 +6,7 @@ import ast
 import ctypes
 import json
 import os
+import struct
 from pathlib import Path
 from unittest import mock
 
@@ -14,7 +15,7 @@ import pytest
 import libtpu
 import libtpu.sdk
 import libtpu.sdk.slice as sdk_slice
-from libtpu.sdk import debug, tpumonitoring, tpuz
+from libtpu.sdk import debug, diagnostics, tpumonitoring, tpuz
 
 
 def test_library_path_and_init_args(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -140,22 +141,40 @@ def test_client_buffer_executable_and_profiler() -> None:
     for dt in libtpu.DataType:
         assert dt.bit_size() >= 0
         assert dt.byte_size_for_elements(4) >= 0
+        assert len(dt.numpy_typestr()) >= 3
 
     bf16_buf = client.buffer_from_bytes(
-        0, libtpu.DataType.BF16, b"\x00\x3f\x00\x40\x40\x40\x80\x40", [2, 2]
+        0, libtpu.DataType.BF16, b"\x80\x3f\x00\x40\x40\x40\x80\x40", [2, 2]
     )
     assert bf16_buf.dtype() == libtpu.DataType.BF16
     assert bf16_buf.shape() == (2, 2)
     assert bf16_buf.byte_size() == 8
-    assert bf16_buf.to_bytes() == b"\x00\x3f\x00\x40\x40\x40\x80\x40"
+    assert bf16_buf.to_bytes() == b"\x80\x3f\x00\x40\x40\x40\x80\x40"
+    assert bf16_buf.to_float_list() == [1.0, 2.0, 3.0, 4.0]
+    assert bf16_buf.__array_interface__["typestr"] == "|V2"
     bf16_buf.close()
+
+    f64_buf = client.buffer_from_bytes(0, libtpu.DataType.F64, struct.pack("<2d", 1.25, 2.5), [2])
+    assert f64_buf.to_float_list() == [1.25, 2.5]
+    assert f64_buf.__array_interface__["typestr"] == "<f8"
+    f64_buf.close()
+
+    f16_buf = client.buffer_from_bytes(0, libtpu.DataType.F16, struct.pack("<2e", 1.5, 2.5), [2])
+    assert f16_buf.to_float_list() == [1.5, 2.5]
+    assert f16_buf.__array_interface__["typestr"] == "<f2"
+    f16_buf.close()
+
+    s16_buf = client.buffer_from_bytes(0, libtpu.DataType.S16, struct.pack("<2h", -10, 20), [2])
+    assert s16_buf.to_int_list() == [-10, 20]
+    assert s16_buf.__array_interface__["typestr"] == "<i2"
+    s16_buf.close()
 
     s4_buf = client.buffer_from_bytes(0, libtpu.DataType.S4, b"\x12\x34", [4])
     assert s4_buf.dtype() == libtpu.DataType.S4
     assert s4_buf.byte_size() == 2
     assert s4_buf.to_bytes() == b"\x12\x34"
     assert bytes(s4_buf.to_memoryview()) == b"\x12\x34"
-    assert s4_buf.__array_interface__["typestr"] == "|u1"
+    assert s4_buf.__array_interface__["typestr"] == "|V1"
     assert b0.__array_interface__["typestr"] == "<f4"
     assert b0.__dlpack_device__() == (14, 0)
     assert b0.__dlpack__(stream=None) is not None
@@ -217,8 +236,12 @@ def test_client_buffer_executable_and_profiler() -> None:
     prof.close()
 
 
-def test_sdk_submodules() -> None:
-    """Verifies `tpumonitoring`, `slice`, `tpuz`, and `debug` submodules."""
+def test_sdk_submodules(tmp_path: Path) -> None:
+    """Verifies `tpumonitoring`, `slice`, `tpuz`, `debug`, and `diagnostics` submodules.
+
+    Args:
+        tmp_path: Temporary directory fixture provided by pytest.
+    """
     metrics = tpumonitoring.list_supported_metrics()
     assert "tpu.runtime.hbm.usage_bytes" in metrics
     assert tpumonitoring.list_metric_names() == metrics
@@ -268,6 +291,313 @@ def test_sdk_submodules() -> None:
     debug.unregister_callback(cb_id2)
     with pytest.raises(libtpu.TpuError):
         debug.unregister_debug_callback(cb_id1)
+
+    # Verify libtpu.sdk.diagnostics offline artifact parsers
+    def _varint(v: int) -> bytes:
+        if v < 0:
+            v += 1 << 64
+        out = bytearray()
+        while True:
+            b = v & 0x7F
+            v >>= 7
+            if v:
+                out.append(b | 0x80)
+            else:
+                out.append(b)
+                break
+        return bytes(out)
+
+    def _tag(fnum: int, wtype: int) -> bytes:
+        return _varint((fnum << 3) | wtype)
+
+    def _ld(fnum: int, payload: bytes) -> bytes:
+        return _tag(fnum, 2) + _varint(len(payload)) + payload
+
+    meta_file = tmp_path / "tpu_compiler_metadata_0.pb"
+    meta_bytes = (
+        _tag(1, 0)
+        + _varint(42)
+        + _tag(2, 0)
+        + _varint(4)
+        + _tag(3, 0)
+        + _varint(2)
+        + _tag(4, 0)
+        + _varint(1)
+        + _tag(5, 0)
+        + _varint(8192)
+        + _tag(6, 0)
+        + _varint(128)
+        + _ld(7, b"resnet50_main")
+        + _ld(8, b"fp_deadbeef")
+        + _tag(9, 1)
+        + (b"\x00" * 8)
+        + _tag(10, 5)
+        + (b"\x00" * 4)
+    )
+    meta_file.write_bytes(meta_bytes)
+    parsed_meta = diagnostics.read_compiler_metadata(meta_file)
+    assert parsed_meta == {
+        "program_id": 42,
+        "replica_count": 4,
+        "num_cores_per_replica": 2,
+        "is_haltless": True,
+        "executable_size": 8192,
+        "optimized_hlo_instruction_count": 128,
+        "module_name": "resnet50_main",
+        "executable_fingerprint": "fp_deadbeef",
+    }
+    riegeli_hdr = bytearray(64)
+    riegeli_hdr[0:8] = b"\x83\xaf\x70\xd1\x0d\x88\x4a\x3f"
+    riegeli_hdr[24:32] = len(meta_bytes).to_bytes(8, "little")
+    riegeli_meta_file = tmp_path / "tpu_compiler_metadata_riegeli.pb"
+    riegeli_meta_file.write_bytes(bytes(riegeli_hdr) + meta_bytes)
+    assert diagnostics.read_compiler_metadata(riegeli_meta_file) == parsed_meta
+
+    long_payload = meta_bytes + (b"\x00" * 40)
+    riegeli_hashed = bytearray(64)
+    riegeli_hashed[0:8] = b"\x83\xaf\x70\xd1\x0d\x88\x4a\x3f"
+    riegeli_hashed[8:16] = b"riegeli_"
+    riegeli_hashed[24:32] = len(meta_bytes).to_bytes(8, "little")
+    hdr_digest = diagnostics.riegeli_highwayhash64(bytes(riegeli_hashed[:48]))
+    pay_digest = diagnostics.riegeli_highwayhash64(meta_bytes)
+    assert diagnostics.riegeli_highwayhash64(long_payload) != 0
+    riegeli_hashed[48:56] = hdr_digest.to_bytes(8, "little")
+    riegeli_hashed[56:64] = pay_digest.to_bytes(8, "little")
+    hashed_file = tmp_path / "tpu_compiler_metadata_hashed.pb"
+    hashed_file.write_bytes(bytes(riegeli_hashed) + meta_bytes)
+    assert diagnostics.read_compiler_metadata(hashed_file) == parsed_meta
+
+    bad_hashed = bytearray(riegeli_hashed)
+    bad_hashed[48] ^= 0xFF
+    bad_hashed_file = tmp_path / "tpu_compiler_metadata_bad_hash.pb"
+    bad_hashed_file.write_bytes(bytes(bad_hashed) + meta_bytes)
+    with pytest.raises(ValueError, match="HighwayHash64"):
+        diagnostics.read_compiler_metadata(bad_hashed_file)
+
+    riegeli_zero_hdr = bytearray(64)
+    riegeli_zero_hdr[0:7] = b"riegeli"
+    riegeli_zero_file = tmp_path / "tpu_compiler_metadata_riegeli_zero.pb"
+    riegeli_zero_file.write_bytes(bytes(riegeli_zero_hdr) + meta_bytes)
+    assert diagnostics.read_compiler_metadata(riegeli_zero_file) == parsed_meta
+    neg_meta_file = tmp_path / "neg_meta.pb"
+    neg_meta_file.write_bytes(_tag(1, 0) + _varint(-5))
+    assert diagnostics.read_compiler_metadata(neg_meta_file)["program_id"] == -5
+
+    with pytest.raises(FileNotFoundError):
+        diagnostics.read_compiler_metadata(tmp_path / "missing_meta.pb")
+    for bad_payload in (
+        b"\x80",
+        b"\x80" * 11,
+        b"\x00",
+        _tag(1, 1) + b"\x00",
+        _tag(1, 2) + _varint(10) + b"abc",
+        _tag(1, 5) + b"\x00",
+        _tag(1, 3),
+    ):
+        bad_file = tmp_path / "bad_meta.pb"
+        bad_file.write_bytes(bad_payload)
+        with pytest.raises(ValueError):
+            diagnostics.read_compiler_metadata(bad_file)
+
+    core_on_chip = _tag(1, 0) + _varint(1) + _tag(2, 0) + _varint(0) + _tag(9, 0) + _varint(0)
+    core_id_pb = (
+        _tag(1, 0)
+        + _varint(0)
+        + _tag(2, 0)
+        + _varint(0)
+        + _ld(3, core_on_chip)
+        + _tag(9, 0)
+        + _varint(0)
+    )
+    seq_full_pb = (
+        _tag(1, 0)
+        + _varint(1)
+        + _tag(2, 0)
+        + _varint(0)
+        + _tag(3, 0)
+        + _varint(0x100)
+        + _tag(4, 0)
+        + _varint(7)
+        + _tag(5, 0)
+        + _varint(9)
+        + _tag(6, 0)
+        + _varint(11)
+        + _tag(7, 0)
+        + _varint(13)
+        + _ld(8, b"loc_0")
+        + _ld(9, b"detail_0")
+        + _tag(10, 0)
+        + _varint(0)
+    )
+    seq_min_pb = _tag(1, 0) + _varint(99) + _tag(2, 0) + _varint(1)
+    queued_pb = (
+        _tag(1, 0) + _varint(1) + _tag(2, 0) + _varint(2) + _ld(3, b"qfp") + _tag(9, 0) + _varint(0)
+    )
+    completed_pb = (
+        _tag(1, 0)
+        + _varint(3)
+        + _tag(2, 0)
+        + _varint(4)
+        + _ld(3, b"comp_prog")
+        + _ld(4, b"cfp")
+        + _tag(9, 0)
+        + _varint(0)
+    )
+    core_summary_full = (
+        _ld(1, core_id_pb)
+        + _ld(2, seq_full_pb)
+        + _ld(2, seq_min_pb)
+        + _tag(3, 0)
+        + _varint(1)
+        + _ld(4, b"pfp")
+        + _tag(5, 0)
+        + _varint(77)
+        + _ld(6, queued_pb)
+        + _ld(7, b"none")
+        + _ld(8, completed_pb)
+        + _tag(9, 0)
+        + _varint(0)
+    )
+    core_summary_min = _ld(1, b"")
+    entry_0 = _ld(1, b"core_0") + _ld(2, core_summary_full) + _tag(9, 0) + _varint(0)
+    entry_1 = _ld(1, b"core_1") + _ld(2, core_summary_min)
+    trigger_pb = (
+        _ld(1, b"WATCHDOG")
+        + _ld(2, b"stalled")
+        + _tag(3, 0)
+        + _varint(5000)
+        + _tag(4, 0)
+        + _varint(0)
+        + _tag(5, 0)
+        + _varint(123456)
+        + _tag(9, 0)
+        + _varint(0)
+    )
+    artifact_meta_pb = (
+        _tag(1, 0)
+        + _varint(100)
+        + _tag(2, 0)
+        + _varint(200)
+        + _ld(3, trigger_pb)
+        + _ld(4, b"tpu-host-0")
+        + _tag(5, 0)
+        + _varint(999)
+        + _tag(6, 0)
+        + _varint(0)
+        + _tag(7, 0)
+        + _varint(1)
+        + _tag(8, 0)
+        + _varint(4)
+        + _tag(9, 0)
+        + _varint(77)
+        + _ld(10, b"0.0.52")
+        + _tag(11, 0)
+        + _varint(0)
+    )
+    stall_file = tmp_path / "tpu_stall_summary_0.pb"
+    stall_file.write_bytes(
+        _ld(1, entry_0) + _ld(1, entry_1) + _ld(2, artifact_meta_pb) + _tag(9, 0) + _varint(0)
+    )
+    stall_dict = diagnostics.read_stall_summaries(stall_file)
+    assert "core_states" in stall_dict
+    assert "artifact_metadata" in stall_dict
+
+    stall_no_meta = tmp_path / "tpu_stall_summary_nometa.pb"
+    artifact_meta_no_launch = _tag(1, 0) + _varint(100)
+    stall_no_meta.write_bytes(_ld(2, artifact_meta_no_launch))
+    no_launch_meta = diagnostics.read_stall_summaries(stall_no_meta)["artifact_metadata"]
+    assert isinstance(no_launch_meta, dict)
+    assert "launch_id" not in no_launch_meta
+    stall_empty = tmp_path / "tpu_stall_summary_empty.pb"
+    stall_empty.write_bytes(b"")
+    assert diagnostics.read_stall_summaries(stall_empty) == {"core_states": {}}
+    with pytest.raises(FileNotFoundError):
+        diagnostics.read_stall_summaries(tmp_path / "missing_stall.pb")
+    bad_stall = tmp_path / "bad_stall.pb"
+    bad_stall.write_bytes(b"\x80")
+    with pytest.raises(ValueError):
+        diagnostics.read_stall_summaries(bad_stall)
+
+    ts_pb = _tag(1, 0) + _varint(1700000000) + _tag(2, 0) + _varint(0)
+    ts_empty_pb = _tag(2, 0) + _varint(0)
+    gen_info_pb = (
+        _ld(1, ts_pb)
+        + _ld(2, b"tpu-node-1")
+        + _ld(3, b"6.6.0")
+        + _ld(4, ts_empty_pb)
+        + _ld(5, b"hang")
+        + _ld(6, ts_pb)
+        + _ld(7, ts_pb)
+        + _tag(9, 0)
+        + _varint(0)
+    )
+    anom_valid_pb = (
+        _tag(1, 0)
+        + _varint(3)
+        + _ld(2, b"desc_err")
+        + _ld(3, b"tag_err")
+        + _ld(4, b"printed_err")
+        + _tag(9, 0)
+        + _varint(0)
+    )
+    anom_ignored_pb = _tag(1, 0) + _varint(0) + _ld(2, b"ignored")
+    cpu_state_pb = _tag(1, 0) + _varint(2) + _tag(2, 0) + _varint(0x2000) + _tag(9, 0) + _varint(0)
+    pc_info_pb = (
+        _tag(1, 0)
+        + _varint(8)
+        + _ld(4, b" > TC0 :: Scalar PC location : tag:pc 0:0x1a2b, fusion.1")
+    )
+    rep_info_pb = _tag(1, 0) + _varint(5) + _ld(2, b"fallback_desc")
+    unk_info_pb = _tag(1, 0) + _varint(0) + _ld(2, b"unk")
+    analyzer_val_pb = (
+        _ld(1, pc_info_pb) + _ld(1, rep_info_pb) + _ld(1, unk_info_pb) + _tag(9, 0) + _varint(0)
+    )
+    analyzer_entry_pb = _ld(1, b"CoreAnalyzer") + _ld(2, analyzer_val_pb) + _tag(9, 0) + _varint(0)
+    pstate_pb = _tag(1, 0) + _varint(0) + _tag(2, 0) + _varint(3)
+    power_pb = _ld(1, pstate_pb) + _tag(9, 0) + _varint(0)
+    results_pb = (
+        _ld(1, gen_info_pb)
+        + _ld(2, anom_valid_pb)
+        + _ld(2, anom_ignored_pb)
+        + _ld(4, cpu_state_pb)
+        + _ld(5, analyzer_entry_pb)
+        + _ld(6, power_pb)
+        + _tag(9, 0)
+        + _varint(0)
+    )
+    cd_file = tmp_path / "tpu_core_dump_0.bin"
+    cd_file.write_bytes(_ld(1, results_pb) + _tag(9, 0) + _varint(0))
+    cd_dict = diagnostics.read_core_dump(cd_file)
+    assert cd_dict["machine_info"] == {
+        "machine_name": "tpu-node-1",
+        "kernel_version": "6.6.0",
+        "reason_for_collection": "hang",
+    }
+    assert cd_dict["hardware"] == {"pstate": [3]}
+    assert cd_dict["core_states"] == [
+        {"core_type": "TC", "core_id": 0, "pc": 0x1A2B, "hlo_name": "fusion.1"}
+    ]
+
+    cd_no_anom = tmp_path / "tpu_core_dump_no_anom.bin"
+    cd_no_anom.write_bytes(_ld(1, b""))
+    cd_no_anom_dict = diagnostics.read_core_dump(cd_no_anom)
+    reports = cd_no_anom_dict["analyzer_reports"]
+    assert isinstance(reports, list)
+    assert any(
+        isinstance(r, dict) and r.get("message") == "No anomalies recorded in core dump."
+        for r in reports
+    )
+
+    with pytest.raises(FileNotFoundError):
+        diagnostics.read_core_dump(tmp_path / "missing_cd.bin")
+    empty_cd = tmp_path / "empty_cd.bin"
+    empty_cd.write_bytes(b"")
+    with pytest.raises(ValueError):
+        diagnostics.read_core_dump(empty_cd)
+    bad_cd = tmp_path / "bad_cd.bin"
+    bad_cd.write_bytes(b"\x80")
+    with pytest.raises(ValueError):
+        diagnostics.read_core_dump(bad_cd)
 
 
 def test_dlopen_abi_symbols_and_docstring_audit() -> None:
@@ -423,8 +753,8 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert len(manifest["libtpu_so"]["sha256"]) == 64
     assert len(manifest["sdk_so"]["sha256"]) == 64
-    assert manifest["libtpu_so"]["exported_functions_count"] == 78
-    assert len(manifest["libtpu_so"]["exported_functions"]) == 78
+    assert manifest["libtpu_so"]["exported_functions_count"] == 75
+    assert len(manifest["libtpu_so"]["exported_functions"]) == 75
     for fn_meta in manifest["libtpu_so"]["exported_functions"]:
         assert hasattr(cdll, fn_meta["name"])
 
@@ -454,8 +784,8 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
                 ext_fn_addrs.append(int(fn_words[i]))
         ext_ptr = int(ext_hdr[2])
     assert ext_types == [29, 28, 26, 25, 20, 19, 18, 17, 16, 14, 9, 12, 11, 7, 6, 8, 1]
-    assert len(ext_fn_addrs) == 130
-    assert len(set(ext_fn_addrs)) == 130
+    assert len(ext_fn_addrs) == 131
+    assert len(set(ext_fn_addrs)) == 131
 
     # Verify direct PJRT_Api C vtable execution
     pjrt_fn_type = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p)
@@ -560,6 +890,29 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     c_del = (ctypes.c_uint64 * 3)(24, 0, raw_pjrt_client)
     assert fn_client_destroy(ctypes.byref(c_del)) is None
 
+    # Verify exact 64-bit integer precision (> 2^53) via libtpu.Client
+    client_s64 = libtpu.Client()
+    s64_a = struct.pack("<2q", 0x7FFFFFFFFFFFFFFE, 42)
+    s64_b = struct.pack("<2q", 1, 58)
+    buf_s64_a = client_s64.buffer_from_bytes(0, libtpu.DataType.S64, s64_a, [2])
+    buf_s64_b = client_s64.buffer_from_bytes(0, libtpu.DataType.S64, s64_b, [2])
+    exec_s64 = client_s64.compile(
+        "module @s64_add {\n"
+        "  func.func @main(%x: tensor<2xi64>, %y: tensor<2xi64>) -> tensor<2xi64> {\n"
+        "    %0 = stablehlo.add %x, %y : tensor<2xi64>\n"
+        "    func.return %0 : tensor<2xi64>\n"
+        "  }\n"
+        "}",
+        fmt="mlir",
+    )
+    out_s64_buf = exec_s64.execute(0, [buf_s64_a, buf_s64_b])
+    assert struct.unpack("<2q", out_s64_buf.to_bytes()) == (0x7FFFFFFFFFFFFFFF, 100)
+    out_s64_buf.close()
+    exec_s64.close()
+    buf_s64_b.close()
+    buf_s64_a.close()
+    client_s64.close()
+
     pjrt_capsule = libtpu.get_pjrt_c_api_capsule()
     sdk_capsule = libtpu.sdk.get_sdk_c_api_capsule()
     assert pjrt_capsule is not None
@@ -624,6 +977,7 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
         Path(sdk_slice.__file__),
         Path(tpuz.__file__),
         Path(debug.__file__),
+        Path(diagnostics.__file__),
     ):
         source = mod_path.read_text(encoding="utf-8")
         tree = ast.parse(source)

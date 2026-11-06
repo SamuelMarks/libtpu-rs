@@ -412,6 +412,29 @@ impl PyTpuRuntime {
         let bc_bytes = libtpu_core::compiler::MlirBytecodeHeader::encode_from_ast_module(&ast_mod);
         self.execute_shaped_tensor(device_id, "mlir", &bc_bytes, shape, inputs)
     }
+
+    /// Compiles a wire-encoded `xla.HloModuleProto` payload (`hlo_proto_bytes`) and executes it
+    /// on `device_id` with `inputs`.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Target logical TPU device ID.
+    /// * `hlo_proto_bytes` - Wire-serialized `xla.HloModuleProto` bytes.
+    /// * `shape` - Input/output tensor [`Shape`].
+    /// * `inputs` - Slice of raw byte slices for each input operand.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`libtpu_core::error::LibTpuError`] if HLO protobuf compilation or execution fails.
+    pub fn compile_and_execute_hlo_proto(
+        &self,
+        device_id: DeviceId,
+        hlo_proto_bytes: &[u8],
+        shape: &Shape,
+        inputs: &[&[u8]],
+    ) -> LibTpuResult<Vec<Vec<u8>>> {
+        self.execute_shaped_tensor(device_id, "hlo", hlo_proto_bytes, shape, inputs)
+    }
 }
 
 /// High-level Rust bridge backing `libtpu.sdk` (`tpumonitoring`, `tpuz`, `slice`, `debug`).
@@ -733,6 +756,11 @@ mod tests {
                 &[&bc_in, &bc_in],
             );
             assert!(bc_res.is_ok());
+            let emb_gen = libtpu_core::driver::TpuCoreEmbeddingEngine::new();
+            let hlo_pb = emb_gen.generate_xla_computation("recv_activations");
+            let hlo_res =
+                rt.compile_and_execute_hlo_proto(DeviceId(0), &hlo_pb, &bc_sh, &[&bc_in, &bc_in]);
+            assert!(hlo_res.is_ok());
             assert!(
                 rt.compile_mlir_bytecode_and_execute(DeviceId(0), "", &bc_sh, &[&bc_in])
                     .is_err()

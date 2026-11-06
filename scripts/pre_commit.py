@@ -10,7 +10,7 @@ Performs:
    Python (`ruff check`, `mypy --strict`), and C/C++ (`doxygen`).
 4. Unit and integration test suite execution across Rust (`cargo test`), Python (`pytest`),
    and C/C++ (`ctest`).
-5. Official Google `libtpu` (`libtpu.so` v0.0.50) binary ABI & Python wheel API compatibility
+5. Official Google `libtpu` (`libtpu.so` v0.0.52) binary ABI & Python wheel API compatibility
    verification (`PJRT_Api` v0.116 1,144-byte vtable, `LibtpuSdk_Api` v0.1 144-byte vtable,
    17-node PJRT extension linked list, 79 exported dynamic C symbols, `#[repr(C)]` struct sizes).
 6. Doc & test coverage calculation and `% doc coverage` / `% test coverage` shield updates
@@ -122,7 +122,7 @@ EXPECTED_PJRT_EXTENSION_CHAIN: tuple[tuple[int, int, int], ...] = (
     (19, 40, 2),
     (18, 248, 28),
     (17, 96, 9),
-    (16, 272, 31),
+    (16, 280, 32),
     (14, 40, 2),
     (9, 64, 5),
     (12, 56, 4),
@@ -160,6 +160,14 @@ EXPECTED_PYTHON_WHEEL_SYMBOLS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "_trigger_debug_callback_for_test",
         ),
     ),
+    (
+        "python/libtpu/sdk/diagnostics.py",
+        (
+            "read_compiler_metadata",
+            "read_stall_summaries",
+            "read_core_dump",
+        ),
+    ),
 )
 
 EXPECTED_REPR_C_STRUCT_SIZES: tuple[tuple[str, int], ...] = (
@@ -189,7 +197,7 @@ EXPECTED_REPR_C_STRUCT_SIZES: tuple[tuple[str, int], ...] = (
     ("PJRT_Shardings_Extension", 40),
     ("PJRT_Megascale_Extension", 248),
     ("PJRT_TpuExecutable_Extension", 96),
-    ("PJRT_TpuTopology_Extension", 272),
+    ("PJRT_TpuTopology_Extension", 280),
     ("PJRT_Callback_Extension", 40),
     ("PJRT_PhaseCompile_Extension", 64),
     ("PJRT_CrossHostTransfers_Extension", 56),
@@ -1238,7 +1246,7 @@ def verify_binary_vtable_abi(cdylib_path: Path) -> list[str]:
 
 
 def hook_abi(repo_root: Path, check_only: bool = False) -> int:
-    """Verifies 100% binary C ABI and Python SDK parity with official Google `libtpu` (`v0.0.50`).
+    """Verifies 100% binary C ABI and Python SDK parity with official Google `libtpu` (`v0.0.52`).
 
     Args:
         repo_root: Path to the workspace root directory.
@@ -1248,7 +1256,7 @@ def hook_abi(repo_root: Path, check_only: bool = False) -> int:
         Zero on success, or non-zero if any ABI compatibility check fails.
     """
     _ = check_only
-    print("==> [abi] Verifying Google libtpu (v0.0.50) C ABI & vtable compatibility...")
+    print("==> [abi] Verifying Google libtpu (v0.0.52) C ABI & vtable compatibility...")
     src_errors = verify_rust_and_c_abi_sources(repo_root)
     if src_errors:
         for err_msg in src_errors:

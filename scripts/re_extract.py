@@ -41,8 +41,8 @@ STB_WEAK = 2
 R_X86_64_RELATIVE = 8
 R_AARCH64_RELATIVE = 1027
 
-OFFICIAL_LIBTPU_SO_SHA256 = "ef2f7af1f1ca0f27db6a6a3adffdd2b275a3215b121c8f9bc3f6ce842fc7c700"
-OFFICIAL_SDK_SO_SHA256 = "6d65c03e2b584eaa3b546b6b64931c4b153ad5c4e2b404f578ea548c0fb6d2a4"
+OFFICIAL_LIBTPU_SO_SHA256 = "f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077"
+OFFICIAL_SDK_SO_SHA256 = "630c772352b470e1f32b7459ac3d60790f8d4d5000747390ebdeb743c1f33186"
 
 
 @dataclass(frozen=True)
@@ -98,7 +98,7 @@ def compute_sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def fetch_pypi_wheel_url(version: str = "0.0.50", platform_tag: str = "x86_64") -> tuple[str, str]:
+def fetch_pypi_wheel_url(version: str = "0.0.52", platform_tag: str = "x86_64") -> tuple[str, str]:
     """Queries the PyPI JSON API for `libtpu` and returns `(wheel_url, sha256_hex)`.
 
     Args:
@@ -419,6 +419,52 @@ def disassemble_x86_64_prologue(code: bytes) -> PrologueInstructionReport:
     return PrologueInstructionReport(expected_struct_size=expected_size, field_offsets=accesses)
 
 
+def verify_prologue_struct_sizes_against_golden(
+    prologues: list[tuple[int, bytes, bool]],
+    golden_layouts: dict[str, object],
+) -> list[dict[str, object]]:
+    """Verifies extracted x86-64/AArch64 prologue `struct_size` constants against golden layouts.
+
+    Args:
+        prologues: List of `(word_index, code_bytes, is_aarch64)` tuples.
+        golden_layouts: Parsed `golden_struct_layouts.json` dictionary.
+
+    Returns:
+        List of verification result dictionaries with `slot_index`, `extracted_struct_size`,
+        `golden_min_struct_size`, and `matches_golden`.
+    """
+    raw_slots = golden_layouts.get("pjrt_slots", [])
+    slot_map: dict[int, int] = {}
+    if isinstance(raw_slots, list):
+        for s in raw_slots:
+            if isinstance(s, dict):
+                w_idx = s.get("word_index")
+                m_sz = s.get("min_struct_size")
+                if isinstance(w_idx, int) and isinstance(m_sz, int):
+                    slot_map[w_idx] = m_sz
+
+    results: list[dict[str, object]] = []
+    for word_idx, code, is_aarch64 in prologues:
+        if word_idx not in slot_map:
+            continue
+        if is_aarch64:
+            arm_rep = analyze_aarch64_prologue(code, 0)
+            extracted = arm_rep.get("expected_struct_size")
+        else:
+            x86_rep = disassemble_x86_64_prologue(code)
+            extracted = x86_rep.expected_struct_size
+        golden_min = slot_map[word_idx]
+        results.append(
+            {
+                "slot_index": word_idx,
+                "extracted_struct_size": extracted,
+                "golden_min_struct_size": golden_min,
+                "matches_golden": extracted == golden_min,
+            }
+        )
+    return results
+
+
 def carve_protodesc_cold(section_bytes: bytes) -> list[dict[str, str]]:
     """Carves embedded `FileDescriptorProto` names and packages from a `protodesc_cold` buffer.
 
@@ -644,10 +690,10 @@ def validate_golden_manifests(repo_root: Path) -> list[str]:
     if libtpu_so.get("tpu_driver_fn_struct_size") != 224:
         errors.append("golden_binary_manifest.json: tpu_driver_fn_struct_size != 224")
     if (
-        libtpu_so.get("exported_functions_count") != 78
-        or len(libtpu_so.get("exported_functions", [])) != 78
+        libtpu_so.get("exported_functions_count") != 75
+        or len(libtpu_so.get("exported_functions", [])) != 75
     ):
-        errors.append("golden_binary_manifest.json: exported_functions != 78")
+        errors.append("golden_binary_manifest.json: exported_functions != 75")
 
     ext_chain = layouts.get("extensions", [])
     if len(ext_chain) != 17:

@@ -51,6 +51,63 @@ mod tests {
         assert_ne!(fp_u64, 0);
         assert_eq!(fp_u64, sha256_fingerprint_u64(b"tpu_executable_payload"));
         assert_ne!(fp_u64, sha256_fingerprint_u64(b"different_payload"));
+
+        let hh_empty = riegeli_highwayhash64(b"");
+        let hh_short = riegeli_highwayhash64(b"short_payload");
+        let hh_long = riegeli_highwayhash64(&[0xAB_u8; 96]);
+        assert_ne!(hh_empty, hh_short);
+        assert_ne!(hh_short, hh_long);
+        let hh_state = HighwayHash64State::new(&RIEGELI_HIGHWAYHASH_KEY);
+        assert_eq!(hh_state.clone(), hh_state);
+        assert_ne!(format!("{hh_state:?}"), "");
+
+        let wrapped = RiegeliRecordCodec::wrap_record(b"riegeli_proto_payload");
+        assert_eq!(
+            RiegeliRecordCodec::unwrap_record_checked(&wrapped).ok(),
+            Some(b"riegeli_proto_payload".as_slice())
+        );
+        assert_eq!(
+            RiegeliRecordCodec::unwrap_record_checked(b"plain_proto").ok(),
+            Some(b"plain_proto".as_slice())
+        );
+        let mut legacy_zero_hash = wrapped.clone();
+        if let Some(hash_slice) = legacy_zero_hash.get_mut(48..64) {
+            for b in hash_slice {
+                *b = 0;
+            }
+        }
+        assert_eq!(
+            RiegeliRecordCodec::unwrap_record_checked(&legacy_zero_hash).ok(),
+            Some(b"riegeli_proto_payload".as_slice())
+        );
+        let mut corrupt_header = wrapped.clone();
+        if let Some(b48) = corrupt_header.get_mut(48) {
+            *b48 ^= 0xFF;
+        }
+        assert!(RiegeliRecordCodec::unwrap_record_checked(&corrupt_header).is_err());
+        let mut corrupt_payload = wrapped;
+        if let Some(b64) = corrupt_payload.get_mut(64) {
+            *b64 ^= 0xFF;
+        }
+        assert!(RiegeliRecordCodec::unwrap_record_checked(&corrupt_payload).is_err());
+
+        let small_recs = vec![b"rec_one".to_vec(), b"rec_two".to_vec()];
+        let small_stream = RiegeliRecordCodec::wrap_records(&small_recs);
+        assert_eq!(
+            RiegeliRecordCodec::unwrap_records(&small_stream).ok(),
+            Some(small_recs)
+        );
+        let large_recs = vec![vec![0x11_u8; 40_000], vec![0x22_u8; 40_000]];
+        let large_stream = RiegeliRecordCodec::wrap_records(&large_recs);
+        assert!(large_stream.len() > RiegeliRecordCodec::BLOCK_BOUNDARY_BYTES);
+        assert_eq!(
+            RiegeliRecordCodec::unwrap_records(&large_stream).ok(),
+            Some(large_recs)
+        );
+        assert!(RiegeliRecordCodec::unwrap_records(b"short").is_err());
+        let mut trunc_stream = RiegeliRecordCodec::wrap_record(b"longer_payload_bytes");
+        trunc_stream.truncate(68);
+        assert!(RiegeliRecordCodec::unwrap_records(&trunc_stream).is_err());
     }
 
     #[test]
@@ -180,6 +237,12 @@ mod tests {
         let mut comp_env2 = TpuCompilationEnvironmentProto::default();
         comp_env2.set_field_from_str("flag_only", "val");
         assert_eq!(comp_env2.get_field_as_string("flag_only"), "val");
+        comp_env2.set_flag_by_name("--xla_tpu_enable_flash_attention", "true");
+        assert_eq!(
+            comp_env2.get_flag_by_name("--xla_tpu_enable_flash_attention"),
+            "true"
+        );
+        assert_ne!(comp_env2.get_flag_by_name("model_version"), "default");
     }
 
     #[test]
@@ -548,7 +611,7 @@ mod tests {
             program_format: String::from("mlir"),
             producer_phase: String::from("hlo_optimization"),
             consumer_phases: vec![String::from("tpu_llo_lowering")],
-            version: String::from("0.0.50"),
+            version: String::from("0.0.52"),
             program_name: String::from("partial_mod"),
         };
         let mut partial_prog_bytes = partial_prog.encode();
@@ -568,7 +631,7 @@ mod tests {
             num_hosts: 1,
             chips_per_host: 4,
             mesh_bounds: vec![2, 2, 1],
-            platform_version: String::from("libtpu-rs 0.0.50"),
+            platform_version: String::from("libtpu-rs 0.0.52"),
             fingerprint: sha256_fingerprint_hex(b"topo"),
         };
         let mut topo_bytes = topo.encode();
@@ -586,7 +649,7 @@ mod tests {
         let pjrt_topo_desc = PjRtTopologyDescriptionProto {
             platform_id: 0x5450_5500,
             platform_name: String::from("tpu"),
-            platform_version: String::from("0.0.50"),
+            platform_version: String::from("0.0.52"),
             is_subslice_topology: true,
             platform_specific_topology: topo.encode(),
         };
@@ -980,7 +1043,7 @@ mod tests {
 
         let r_abi = RuntimeAbiVersionProto {
             platform_id: 0x5450_5500,
-            version_string: String::from("0.0.50"),
+            version_string: String::from("0.0.52"),
             pjrt_api_minor: 56,
         };
         let mut r_abi_bytes = r_abi.encode();
@@ -997,7 +1060,7 @@ mod tests {
 
         let e_abi = ExecutableAbiVersionProto {
             platform_id: 0x5450_5500,
-            compiler_version: String::from("libtpu-rs-xla-0.0.50"),
+            compiler_version: String::from("libtpu-rs-xla-0.0.52"),
             target_generation: 5,
         };
         let mut e_abi_bytes = e_abi.encode();
@@ -1219,12 +1282,45 @@ mod tests {
         );
         assert!(isa_sym.verify_schema_sync().is_ok());
 
+        let prog_rel = ProgramRelocationProto {
+            offset: 12,
+            kind: 0,
+            target_index: 0,
+            addend: 4096,
+        };
+        assert_eq!(
+            ProgramRelocationProto::decode(&prog_rel.encode()).ok(),
+            Some(prog_rel.clone())
+        );
+        let codec = RiegeliRecordCodec;
+        assert_eq!(codec.clone(), RiegeliRecordCodec);
+        assert_ne!(format!("{codec:?}"), "");
+        let wrapped_riegeli = RiegeliRecordCodec::wrap_record(&prog_rel.encode());
+        assert_eq!(
+            wrapped_riegeli.get(..8),
+            Some(RIEGELI_BLOCK_MAGIC.as_slice())
+        );
+        assert_eq!(
+            RiegeliRecordCodec::unwrap_record(&wrapped_riegeli),
+            prog_rel.encode().as_slice()
+        );
+        let non_riegeli_64 = vec![0_u8; 70];
+        assert_eq!(RiegeliRecordCodec::unwrap_record(&non_riegeli_64).len(), 70);
+        assert_eq!(RiegeliRecordCodec::unwrap_record(b"plain_pb"), b"plain_pb");
+
         let isa_prog = IsaProgramProto {
             isa_architecture: String::from("vfc"),
             isa_abi_version: 163,
             core_programs: vec![isa_core],
             symbols: vec![isa_sym],
             fingerprint: 123_456_789,
+            compilation_id: 1,
+            scs_start_bundle: 0,
+            tile_start_bundle: 0,
+            relocations: vec![prog_rel],
+            abi: None,
+            program_name: String::from("test_prog"),
+            oom_during_compilation: false,
         };
         assert_eq!(
             IsaProgramProto::decode(&isa_prog.encode()).ok(),
@@ -1923,6 +2019,39 @@ mod tests {
         );
         assert!(stat_viz.verify_schema_sync().is_ok());
 
+        let slice_cfg = SliceConfigProto {
+            name: String::from("2x2x1"),
+            dimensions: vec![2, 2, 1],
+            wraps: vec![false, false, false],
+            twist: false,
+        };
+        assert_eq!(
+            SliceConfigProto::decode(&slice_cfg.encode()).ok(),
+            Some(slice_cfg.clone())
+        );
+        assert!(slice_cfg.verify_schema_sync().is_ok());
+
+        let plat_cfg = TpuPlatformConfigProto {
+            platform_type_name: String::from("tpuv5e"),
+            slice_configs: vec![slice_cfg],
+            num_chips_per_tray: 4,
+            num_trays: 2,
+        };
+        assert_eq!(
+            TpuPlatformConfigProto::decode(&plat_cfg.encode()).ok(),
+            Some(plat_cfg.clone())
+        );
+        assert!(plat_cfg.verify_schema_sync().is_ok());
+
+        let plat_cfgs = TpuPlatformConfigsProto {
+            platform_configs: vec![plat_cfg],
+        };
+        assert_eq!(
+            TpuPlatformConfigsProto::decode(&plat_cfgs.encode()).ok(),
+            Some(plat_cfgs.clone())
+        );
+        assert!(plat_cfgs.verify_schema_sync().is_ok());
+
         // Test invalid/corrupt wire bytes across all decode methods
         let corrupt = [0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         assert!(TileProto::decode(&corrupt).is_err());
@@ -2038,6 +2167,9 @@ mod tests {
         assert!(FfiExecutionStateProto::decode(&corrupt).is_err());
         assert!(FfiFlatAttributeProto::decode(&corrupt).is_err());
         assert!(FfiFlatAttributesMapProto::decode(&corrupt).is_err());
+        assert!(SliceConfigProto::decode(&corrupt).is_err());
+        assert!(TpuPlatformConfigProto::decode(&corrupt).is_err());
+        assert!(TpuPlatformConfigsProto::decode(&corrupt).is_err());
     }
 
     proptest! {

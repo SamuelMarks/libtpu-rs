@@ -113,7 +113,7 @@ pub unsafe extern "C" fn TpuDriver_AddCallback(
 /// Returns the `TpuDriver` API version string (`TpuDriver_Version`).
 #[unsafe(no_mangle)]
 pub extern "C" fn TpuDriver_Version() -> *const c_char {
-    c"0.0.50".as_ptr()
+    c"0.0.52".as_ptr()
 }
 
 /// Static [`TpuDriverFn`] vtable stored at offset `0x00` of [`TpuDriver`] (`224` bytes, 28 slots).

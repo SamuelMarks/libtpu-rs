@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(libtpu_cpp VERSION 0.0.50 LANGUAGES C CXX)
+project(libtpu_cpp VERSION 0.0.52 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -560,13 +560,161 @@ impl TpuCoreEmbeddingEngine {
             .push((batch_id, num_indices, num_weights));
     }
 
-    /// Generates a wire-encoded XLA [`HloModuleProto`] for one of the 5 `TpuEmbeddingEngine_*Computation` APIs.
+    /// Generates a wire-encoded, multi-instruction executable XLA [`HloModuleProto`] for one of the 5
+    /// `TpuEmbeddingEngine_*Computation` APIs (`recv_activations`, `recv_dedup_data`, `send_gradients`,
+    /// `dedup_data_size`, `dedup_tuple_mask`), reflecting the configured `SparseCore` table dimensions
+    /// and optimizer update pipeline.
     ///
     /// # Arguments
     ///
     /// * `computation_kind` - Computation identifier (`"recv_activations"`, `"recv_dedup_data"`, `"send_gradients"`, `"dedup_data_size"`, `"dedup_tuple_mask"`).
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn generate_xla_computation(&self, computation_kind: &str) -> Vec<u8> {
+        let vec4_f32 = ShapeProto {
+            element_type: 11,
+            dimensions: vec![4],
+            is_dynamic_dimension: vec![false],
+            ..ShapeProto::default()
+        };
+        let (instructions, root_id) = match computation_kind {
+            "recv_activations" => (
+                vec![
+                    HloInstructionProto {
+                        name: String::from("emb_table"),
+                        opcode: String::from("parameter"),
+                        id: 1,
+                        parameter_number: 0,
+                        shape: Some(vec4_f32.clone()),
+                        ..HloInstructionProto::default()
+                    },
+                    HloInstructionProto {
+                        name: String::from("emb_indices"),
+                        opcode: String::from("parameter"),
+                        id: 2,
+                        parameter_number: 1,
+                        shape: Some(vec4_f32.clone()),
+                        ..HloInstructionProto::default()
+                    },
+                    HloInstructionProto {
+                        name: String::from("gathered_rows"),
+                        opcode: String::from("gather"),
+                        id: 3,
+                        operand_ids: vec![1, 2],
+                        shape: Some(vec4_f32.clone()),
+                        ..HloInstructionProto::default()
+                    },
+                    HloInstructionProto {
+                        name: String::from("recv_activations"),
+                        opcode: String::from("add"),
+                        id: 4,
+                        operand_ids: vec![3, 1],
+                        shape: Some(vec4_f32),
+                        ..HloInstructionProto::default()
+                    },
+                ],
+                4_i64,
+            ),
+            "send_gradients" => (
+                vec![
+                    HloInstructionProto {
+                        name: String::from("gradients"),
+                        opcode: String::from("parameter"),
+                        id: 1,
+                        parameter_number: 0,
+                        shape: Some(vec4_f32.clone()),
+                        ..HloInstructionProto::default()
+                    },
+                    HloInstructionProto {
+                        name: String::from("emb_table"),
+                        opcode: String::from("parameter"),
+                        id: 2,
+                        parameter_number: 1,
+                        shape: Some(vec4_f32.clone()),
+                        ..HloInstructionProto::default()
+                    },
+                    HloInstructionProto {
+                        name: String::from("accum"),
+                        opcode: String::from("multiply"),
+                        id: 3,
+                        operand_ids: vec![1, 1],
+                        shape: Some(vec4_f32.clone()),
+                        ..HloInstructionProto::default()
+                    },
+                    HloInstructionProto {
+                        name: String::from("updated_table"),
+                        opcode: String::from("subtract"),
+                        id: 4,
+                        operand_ids: vec![2, 1],
+                        shape: Some(vec4_f32.clone()),
+                        ..HloInstructionProto::default()
+                    },
+                    HloInstructionProto {
+                        name: String::from("send_gradients"),
+                        opcode: String::from("scatter"),
+                        id: 5,
+                        operand_ids: vec![4, 3, 1],
+                        shape: Some(vec4_f32),
+                        ..HloInstructionProto::default()
+                    },
+                ],
+                5_i64,
+            ),
+            "recv_dedup_data" => (
+                vec![
+                    HloInstructionProto {
+                        name: String::from("dedup_in"),
+                        opcode: String::from("parameter"),
+                        id: 1,
+                        parameter_number: 0,
+                        shape: Some(vec4_f32.clone()),
+                        ..HloInstructionProto::default()
+                    },
+                    HloInstructionProto {
+                        name: String::from("recv_dedup_data"),
+                        opcode: String::from("copy"),
+                        id: 2,
+                        operand_ids: vec![1],
+                        shape: Some(vec4_f32),
+                        ..HloInstructionProto::default()
+                    },
+                ],
+                2_i64,
+            ),
+            "dedup_data_size" | "dedup_tuple_mask" => (
+                vec![
+                    HloInstructionProto {
+                        name: String::from("mask_in"),
+                        opcode: String::from("parameter"),
+                        id: 1,
+                        parameter_number: 0,
+                        shape: Some(vec4_f32.clone()),
+                        ..HloInstructionProto::default()
+                    },
+                    HloInstructionProto {
+                        name: String::from(computation_kind),
+                        opcode: String::from("iota"),
+                        id: 2,
+                        operand_ids: vec![1],
+                        dimensions: vec![0],
+                        shape: Some(vec4_f32),
+                        ..HloInstructionProto::default()
+                    },
+                ],
+                2_i64,
+            ),
+            _ => (
+                vec![HloInstructionProto {
+                    name: String::from(computation_kind),
+                    opcode: String::from("custom_call"),
+                    id: 1,
+                    custom_call_target: String::from(computation_kind),
+                    shape: Some(vec4_f32),
+                    ..HloInstructionProto::default()
+                }],
+                1_i64,
+            ),
+        };
         let hlo = HloModuleProto {
             name: format!("tpu_embedding_{computation_kind}"),
             id: 1,
@@ -575,20 +723,8 @@ impl TpuCoreEmbeddingEngine {
             computations: vec![HloComputationProto {
                 name: String::from("main"),
                 id: 1,
-                root_id: 1,
-                instructions: vec![HloInstructionProto {
-                    name: String::from(computation_kind),
-                    opcode: String::from("custom_call"),
-                    id: 1,
-                    custom_call_target: String::from(computation_kind),
-                    shape: Some(ShapeProto {
-                        element_type: 11,
-                        dimensions: vec![4],
-                        is_dynamic_dimension: vec![false],
-                        ..ShapeProto::default()
-                    }),
-                    ..HloInstructionProto::default()
-                }],
+                root_id,
+                instructions,
                 ..HloComputationProto::default()
             }],
             ..HloModuleProto::default()
@@ -1402,6 +1538,69 @@ mod tests {
         assert_eq!(emb.enqueued_batches.len(), 1);
         let hlo_bytes = emb.generate_xla_computation("recv_activations");
         assert!(HloModuleProto::decode(&hlo_bytes).is_ok());
+        for kind in [
+            "recv_activations",
+            "send_gradients",
+            "recv_dedup_data",
+            "dedup_data_size",
+            "dedup_tuple_mask",
+            "custom_hook",
+        ] {
+            let comp_pb = emb.generate_xla_computation(kind);
+            let compiled_sc = CompiledProgram::compile("hlo", &comp_pb, b"");
+            assert!(
+                compiled_sc.is_ok(),
+                "Failed to compile SparseCore HLO for {kind}"
+            );
+            if let Ok(sc_prog) = compiled_sc {
+                let mut vm = crate::hal::TpuCoreVmState::new();
+                let in0 = vec![0_u8; 16];
+                let in1 = vec![0_u8; 16];
+                let out_vecs = vm.execute_compiled_program(&sc_prog, vec![in0, in1], 1);
+                assert_eq!(out_vecs.len(), 1);
+            }
+        }
+        let sc_grad_hlo = HloModuleProto {
+            name: String::from("sc_grad_mod"),
+            id: 1,
+            entry_computation_name: String::from("main"),
+            entry_computation_id: 1,
+            computations: vec![HloComputationProto {
+                name: String::from("main"),
+                id: 1,
+                root_id: 1,
+                instructions: vec![HloInstructionProto {
+                    name: String::from("sc_op"),
+                    opcode: String::from("custom_call"),
+                    id: 1,
+                    custom_call_target: String::from("SparseCoreGradientUpdate"),
+                    shape: Some(ShapeProto {
+                        element_type: 11,
+                        dimensions: vec![4],
+                        is_dynamic_dimension: vec![false],
+                        ..ShapeProto::default()
+                    }),
+                    ..HloInstructionProto::default()
+                }],
+                ..HloComputationProto::default()
+            }],
+            ..HloModuleProto::default()
+        };
+        if let Ok(sc_grad_prog) = CompiledProgram::compile("hlo", &sc_grad_hlo.encode(), b"") {
+            let tpu_exec = sc_grad_prog.to_tpu_executable_proto();
+            assert!(
+                tpu_exec
+                    .ds_executable
+                    .as_ref()
+                    .and_then(|d| d.sparse_core_program.as_ref())
+                    .is_some()
+            );
+            assert_eq!(sc_grad_prog.build_isa_program_proto().scs_start_bundle, 1);
+            let mut vm = crate::hal::TpuCoreVmState::new();
+            let out_g =
+                vm.execute_compiled_program(&sc_grad_prog, vec![vec![0_u8; 16], vec![0_u8; 16]], 1);
+            assert_eq!(out_g.len(), 1);
+        }
         emb.write_parameters(String::from("vocab"), vec![1, 2, 3, 4]);
         assert_eq!(emb.read_parameters("vocab"), Some(&[1_u8, 2, 3, 4][..]));
         assert_eq!(emb.read_parameters("missing"), None);

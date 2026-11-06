@@ -1,4 +1,4 @@
-# Kernel, Hardware, Ioctl & Protobuf Protocol Specification (`libtpu-0.0.50`)
+# Kernel, Hardware, Ioctl & Protobuf Protocol Specification (`libtpu-0.0.52`)
 
 ## 1. Kernel Driver Backends (`asic_sw::driver`)
 `libtpu.so` contains two user-space PCIe device access backends in namespace `asic_sw::driver`:
@@ -61,9 +61,9 @@ Decompression of the Brotli-encoded `asic_sw.tools.RegisterTranslatorData` table
   - `chip_die0_tc_tcs_tc_main_status`: `VWAIT_STATE = 0xA667_F648`, `VWAIT_SYNC_FLAG_STATE = 0xA667_F650`, `VWAIT_COUNTER = 0xA667_F658`
   - `chip_die0_sc_0_scs_sc_main_scs_core_state`: `RUN_STATUS = 0xA7F2_0118`, `PROGRAM_LOCATION = 0xA7F2_01A0`
   - `completion_state_sync_flag_word_offset = 8185`, `hbm_reserved_word_offset = 3,187,408,896`
-- **Runtime ABI (`current_tpu_runtime_abi.binarypb` @ `0x0935dd90`, `975` bytes)**:
-  - `base_abi_version = 163`
-  - `compiler_hash = "00ef0b06b559d6911774f1854abee45cdcb62dc50b6c9535921e52231188d011"` (`deepsea_compiler_hash.txt` @ `0x0935e630`)
+- **Runtime ABI (`current_tpu_runtime_abi.binarypb` @ `0x02a0d2a0`, `972` bytes)**:
+  - `base_abi_version = 165`
+  - `compiler_hash = "04aaaa86d5833da9604b4c12f1d288aeae18f36853d311e8c143611207b66f52"` (`deepsea_compiler_hash.txt` @ `0x02a0db20`)
   - `hardware_abi_versions`: `65537` (`0x10001` for `Jellyfish`/`Dragonfish`/`Pufferfish`/`Viperlite`) and `65539` (`0x10003` for `Viperfish`/`Ghostlite`/`6acc60406`).
 - **BAR2 (`0x0000_0000` ..)**: Direct HBM aperture / VMEM window mapping.
 

@@ -39,11 +39,12 @@ pub use self::disassembler::{
     AArch64ForensicsAnalyzer, AArch64FunctionSpec, CPythonAbi3IntrospectionReport, CallGraphEdge,
     CallGraphReport, ControlFlowGraphReport, DecodedIoctlCallsite, DeepSeaBitfieldPattern,
     DisassembledFunctionSpec, DriverQueuePattern, DwarfCfiFunctionRecord, EhFrameCfiParser,
-    JumpTableDescriptor, PrologueLayoutReport, RdiFieldAccess, RipRelativeStringLiteral,
-    build_interprocedural_call_graph, build_x86_64_cfg, disassemble_function_spec,
-    disassemble_x86_64_prologue, introspect_cpython_abi3_binary, recover_aarch64_jump_table,
-    recover_x86_64_jump_table, scan_x86_64_bitfield_encoders, scan_x86_64_driver_mmio_sequences,
-    scan_x86_64_ioctl_callsites, scan_x86_64_rip_relative_strings,
+    JumpTableDescriptor, PrologueLayoutReport, PrologueStructSizeVerification, RdiFieldAccess,
+    RipRelativeStringLiteral, build_interprocedural_call_graph, build_x86_64_cfg,
+    disassemble_function_spec, disassemble_x86_64_prologue, introspect_cpython_abi3_binary,
+    recover_aarch64_jump_table, recover_x86_64_jump_table, scan_x86_64_bitfield_encoders,
+    scan_x86_64_driver_mmio_sequences, scan_x86_64_ioctl_callsites,
+    scan_x86_64_rip_relative_strings, verify_prologue_struct_sizes_against_golden,
 };
 pub use self::manifest::{
     ArtifactDigestReport, GoldenBinaryManifest, GoldenExportedSymbol, GoldenExtensionNode,

@@ -21,13 +21,20 @@ pub mod syscall;
 /// Architectural `TensorCore` VLIW execution state machine ([`TpuCoreVmState`]).
 pub mod vm;
 
-pub use self::linux::{HalBackend, LinuxDeviceHal, create_default_hal};
+pub use self::eval::{
+    CustomCallHandlerFn, MAX_WHILE_ITERATIONS, invoke_custom_call_handler,
+    register_custom_call_handler, unregister_custom_call_handler,
+};
+pub use self::linux::{
+    HalBackend, HardwareDoorbellRing, LinuxDeviceHal, create_default_hal,
+    discover_pcie_tpu_devices_from_sysfs,
+};
 pub use self::memory::{
     DeviceMemoryStats, HbmRegionAllocator, MappedBarAperture, MmioAperture, VmemRegionAllocator,
 };
 pub use self::pci::{
     DeviceSpec, DiscoveredPciTpuDevice, KernelDriverMode, PciDeviceEnumerator, PciSysfsScanner,
-    TopologySpec,
+    TopologySpec, scan_sysfs_pci_tpu_devices,
 };
 pub use self::registers::{
     BAR0_CSR_DUTY_CYCLE_PERCENT, BAR0_CSR_HBM_DMA_RING_HEAD, BAR0_CSR_HBM_DMA_RING_TAIL,
@@ -2067,11 +2074,29 @@ ENTRY main {
                 TpuOpCode::NegF32 as u16,
                 TpuOpCode::Abs as u16,
                 TpuOpCode::Identity as u16,
+                TpuOpCode::Select as u16,
+                TpuOpCode::Clamp as u16,
+                TpuOpCode::CompareEq as u16,
+                TpuOpCode::CompareLt as u16,
+                TpuOpCode::CompareGt as u16,
+                TpuOpCode::And as u16,
+                TpuOpCode::Or as u16,
+                TpuOpCode::XorBytes as u16,
+                TpuOpCode::Not as u16,
+                TpuOpCode::ShiftLeft as u16,
+                TpuOpCode::ShiftRightLogical as u16,
+                TpuOpCode::ShiftRightArithmetic as u16,
+                TpuOpCode::PopulationCount as u16,
+                TpuOpCode::CountLeadingZeros as u16,
+                TpuOpCode::UniformQuantize as u16,
+                TpuOpCode::UniformDequantize as u16,
+                TpuOpCode::BitcastConvert as u16,
                 999_u16,
             ] {
                 if let Some(b0) = bundles.first().copied() {
                     let mut b_mod = b0;
                     b_mod.vector_slot.opcode = v_op;
+                    b_mod.vector_slot.lane_mask = 0b0101_0101;
                     bundles.push(b_mod);
                 }
             }
@@ -2084,22 +2109,58 @@ ENTRY main {
                 b_div_nonzero.vector_slot.src1_vreg = 1;
                 bundles.push(b_div_nonzero);
             }
-            for x_op in [
-                TpuOpCode::ExpF32 as u8,
-                TpuOpCode::TanhF32 as u8,
-                TpuOpCode::Log as u8,
-                TpuOpCode::Sqrt as u8,
-                TpuOpCode::Rsqrt as u8,
-                TpuOpCode::Sine as u8,
-                TpuOpCode::Cosine as u8,
-                250_u8,
+            for (x_op, p_mode, imm) in [
+                (TpuOpCode::ExpF32 as u8, 0_u8, 0_u16),
+                (TpuOpCode::TanhF32 as u8, 0, 0),
+                (TpuOpCode::Log as u8, 0, 0),
+                (TpuOpCode::Sqrt as u8, 0, 0),
+                (TpuOpCode::Rsqrt as u8, 0, 0),
+                (TpuOpCode::Sine as u8, 0, 0),
+                (TpuOpCode::Cosine as u8, 0, 0),
+                (TpuOpCode::Transpose as u8, 2, 0),
+                (TpuOpCode::Transpose as u8, 0, 0),
+                (TpuOpCode::Reverse as u8, 0, 0),
+                (TpuOpCode::Iota as u8, 0, 4),
+                (TpuOpCode::DynamicSlice as u8, 0, 1),
+                (TpuOpCode::BroadcastInDim as u8, 0, 8),
+                (TpuOpCode::Slice as u8, 1, 3),
+                (TpuOpCode::Slice as u8, 0, 0),
+                (TpuOpCode::Pad as u8, 1, 1),
+                (TpuOpCode::Concatenate as u8, 0, 1),
+                (TpuOpCode::Gather as u8, 0, 1),
+                (TpuOpCode::Scatter as u8, 0, 1),
+                (250_u8, 0, 0),
             ] {
                 if let Some(b0) = bundles.first().copied() {
                     let mut b_mod = b0;
                     b_mod.xunary_slot.opcode = x_op;
+                    b_mod.xunary_slot.perm_mode = p_mode;
+                    b_mod.xunary_slot.imm16 = imm;
                     b_mod.xunary_slot.src_vreg = 0;
                     b_mod.xunary_slot.dst_vreg = 2;
                     bundles.push(b_mod);
+                }
+            }
+            // Test rectangular & batched [2, 2, 2] x [2, 2, 4] -> [2, 2, 4] MXU across BF16, F32, INT8, FP8, S4
+            let rect_lhs = ElementType::F32.pack_from_f64_slice(&[1.5_f64; 4]);
+            let rect_rhs = ElementType::F32.pack_from_f64_slice(&[2.0_f64; 2 * 2 * 4]);
+            vm.vreg_tiles.insert(10, rect_lhs);
+            vm.vreg_tiles.insert(11, rect_rhs);
+            vm.mxu_weights.clear();
+            for p_mode in 0..=4_u8 {
+                if let Some(b0) = bundles.first().copied() {
+                    let mut b_mxu = b0;
+                    b_mxu.matrix_slot.opcode = 1;
+                    b_mxu.matrix_slot.precision_mode = p_mode;
+                    b_mxu.matrix_slot.lhs_vreg = 10;
+                    b_mxu.matrix_slot.rhs_vreg = 11;
+                    b_mxu.matrix_slot.acc_vreg = 12;
+                    b_mxu.matrix_slot.flags = (2 << 8) | 4;
+                    b_mxu.matrix_slot.k_tiles = (2 << 8) | 2;
+                    vm.step_vliw_bundle(&b_mxu);
+                    let out_tile = vm.vreg_tiles.get(&12).cloned().unwrap_or_default();
+                    let unpacked = ElementType::F32.unpack_to_f64_vec(&out_tile);
+                    assert_eq!(unpacked.len(), 2 * 2 * 4);
                 }
             }
             vm.execute_vliw_stream(&bundles);
@@ -2227,5 +2288,659 @@ ENTRY main {
         assert!((tri_3x3.first().copied().unwrap_or(0.0) - 1.0).abs() < 1e-6);
         assert!((tri_3x3.get(3).copied().unwrap_or(0.0) - 1.0).abs() < 1e-6);
         assert!((tri_3x3.get(6).copied().unwrap_or(0.0) - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_exact_integer_alu_and_nd_tensor_semantics() {
+        use crate::compiler::{InstructionAttrs, TpuInstructionBundle};
+        use crate::types::{CollectiveReductionOp, MemoryLayout};
+
+        // 1. Exact 64-bit S64 & U64 arithmetic above 2^53 (where f64 loses precision)
+        let a_s64 = ElementType::S64.pack_from_i64_slice(&[0x7FFF_FFFF_FFFF_FFFE_i64, -10]);
+        let b_s64 = ElementType::S64.pack_from_i64_slice(&[1_i64, 3]);
+        let sum_s64 =
+            SimulatedTpuHal::eval_binary_op(TpuOpCode::AddS32, ElementType::S64, &a_s64, &b_s64);
+        assert_eq!(
+            ElementType::S64.unpack_to_i64_vec(&sum_s64),
+            vec![0x7FFF_FFFF_FFFF_FFFF_i64, -7]
+        );
+        let shift_s64 = SimulatedTpuHal::eval_binary_op(
+            TpuOpCode::ShiftLeft,
+            ElementType::S64,
+            &ElementType::S64.pack_from_i64_slice(&[1_i64, 3_i64]),
+            &ElementType::S64.pack_from_i64_slice(&[48_i64, 40_i64]),
+        );
+        assert_eq!(
+            ElementType::S64.unpack_to_i64_vec(&shift_s64),
+            vec![1_i64 << 48, 3_i64 << 40]
+        );
+        for bin_op in [
+            TpuOpCode::SubF32,
+            TpuOpCode::MulF32,
+            TpuOpCode::DivF32,
+            TpuOpCode::Rem,
+            TpuOpCode::MaxF32,
+            TpuOpCode::MinF32,
+            TpuOpCode::And,
+            TpuOpCode::Or,
+            TpuOpCode::ShiftRightArithmetic,
+            TpuOpCode::ShiftRightLogical,
+            TpuOpCode::CompareEq,
+            TpuOpCode::CompareLt,
+            TpuOpCode::CompareGt,
+        ] {
+            let _ = SimulatedTpuHal::eval_binary_op(bin_op, ElementType::S64, &a_s64, &b_s64);
+            let _ = SimulatedTpuHal::eval_binary_op(bin_op, ElementType::U64, &a_s64, &b_s64);
+            let _ = SimulatedTpuHal::eval_binary_op(bin_op, ElementType::U16, &[4, 0], &[2, 0]);
+        }
+        let zero_s64 = ElementType::S64.pack_from_i64_slice(&[0_i64, 0]);
+        let _ =
+            SimulatedTpuHal::eval_binary_op(TpuOpCode::DivF32, ElementType::S64, &a_s64, &zero_s64);
+        let _ =
+            SimulatedTpuHal::eval_binary_op(TpuOpCode::Rem, ElementType::S64, &a_s64, &zero_s64);
+
+        for un_op in [
+            TpuOpCode::ReplicaId,
+            TpuOpCode::NegF32,
+            TpuOpCode::Abs,
+            TpuOpCode::Sign,
+            TpuOpCode::Not,
+            TpuOpCode::PopulationCount,
+            TpuOpCode::CountLeadingZeros,
+            TpuOpCode::Sort,
+            TpuOpCode::TopK,
+            TpuOpCode::Iota,
+            TpuOpCode::Reverse,
+            TpuOpCode::ReduceMax,
+            TpuOpCode::ReduceMin,
+            TpuOpCode::ReduceSumF32,
+            TpuOpCode::ExpF32,
+        ] {
+            let _ = SimulatedTpuHal::eval_unary_op(un_op, ElementType::S64, &a_s64);
+            let _ = SimulatedTpuHal::eval_unary_op(un_op, ElementType::U64, &a_s64);
+            let _ = SimulatedTpuHal::eval_unary_op(un_op, ElementType::S16, &[1, 0, 2, 0]);
+            let _ = SimulatedTpuHal::eval_unary_op(un_op, ElementType::Pred, &[0, 1]);
+        }
+
+        // Integer Select & Clamp
+        let _ = SimulatedTpuHal::eval_bundle(
+            TpuOpCode::Select,
+            ElementType::S64,
+            &[&zero_s64, &a_s64, &b_s64],
+        );
+        let _ = SimulatedTpuHal::eval_bundle(
+            TpuOpCode::Clamp,
+            ElementType::S64,
+            &[&b_s64, &a_s64, &a_s64],
+        );
+        let _ = SimulatedTpuHal::eval_bundle(
+            TpuOpCode::Clamp,
+            ElementType::U64,
+            &[&b_s64, &a_s64, &a_s64],
+        );
+
+        // 2. BitcastConvert & integer Convert
+        let f32_bytes = 1.0_f32.to_le_bytes();
+        let bitcast_bundle = TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::BitcastConvert,
+            operand_slots: vec![0],
+            output_slot: 1,
+            sync_flag_id: 1,
+            attrs: InstructionAttrs {
+                input_shapes: vec![Shape {
+                    element_type: ElementType::F32,
+                    dims: vec![1],
+                    dynamic_dims: vec![false],
+                    layout: MemoryLayout::default_tpu_tiled(1),
+                }],
+                output_shape: Some(Shape {
+                    element_type: ElementType::S32,
+                    dims: vec![1],
+                    dynamic_dims: vec![false],
+                    layout: MemoryLayout::default_tpu_tiled(1),
+                }),
+                ..InstructionAttrs::default()
+            },
+        };
+        let bc_out = SimulatedTpuHal::eval_bundle_with_attrs(
+            &bitcast_bundle,
+            ElementType::S32,
+            &[&f32_bytes],
+        );
+        assert_eq!(bc_out, 0x3F80_0000_u32.to_le_bytes());
+
+        let int_conv_bundle = TpuInstructionBundle {
+            opcode: TpuOpCode::Convert,
+            attrs: InstructionAttrs {
+                input_shapes: vec![Shape {
+                    element_type: ElementType::S64,
+                    dims: vec![2],
+                    dynamic_dims: vec![false],
+                    layout: MemoryLayout::default_tpu_tiled(1),
+                }],
+                output_shape: Some(Shape {
+                    element_type: ElementType::S32,
+                    dims: vec![2],
+                    dynamic_dims: vec![false],
+                    layout: MemoryLayout::default_tpu_tiled(1),
+                }),
+                ..InstructionAttrs::default()
+            },
+            ..bitcast_bundle
+        };
+        let conv_int_out = SimulatedTpuHal::eval_bundle_with_attrs(
+            &int_conv_bundle,
+            ElementType::S32,
+            &[&ElementType::S64.pack_from_i64_slice(&[42, -7])],
+        );
+        assert_eq!(
+            ElementType::S32.unpack_to_i64_vec(&conv_int_out),
+            vec![42, -7]
+        );
+
+        // 3. N-D Concatenate, DynamicSlice, DynamicUpdateSlice
+        let sh_2x2 = Shape {
+            element_type: ElementType::F32,
+            dims: vec![2, 2],
+            dynamic_dims: vec![false, false],
+            layout: MemoryLayout::default_tpu_tiled(2),
+        };
+        let sh_2x4 = Shape {
+            element_type: ElementType::F32,
+            dims: vec![2, 4],
+            dynamic_dims: vec![false, false],
+            layout: MemoryLayout::default_tpu_tiled(2),
+        };
+        let sh_1x1 = Shape {
+            element_type: ElementType::F32,
+            dims: vec![1, 1],
+            dynamic_dims: vec![false, false],
+            layout: MemoryLayout::default_tpu_tiled(2),
+        };
+        let m0 = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
+        let m1 = ElementType::F32.pack_from_f64_slice(&[5.0, 6.0, 7.0, 8.0]);
+        let cat_nd = SimulatedTpuHal::eval_concatenate_nd(
+            ElementType::F32,
+            ElementType::F32,
+            &[&m0, &m1],
+            &InstructionAttrs {
+                concat_dim: 1,
+                input_shapes: vec![sh_2x2.clone(), sh_2x2.clone()],
+                output_shape: Some(sh_2x4),
+                ..InstructionAttrs::default()
+            },
+        );
+        assert_eq!(
+            ElementType::F32.unpack_to_f64_vec(&cat_nd),
+            vec![1.0, 2.0, 5.0, 6.0, 3.0, 4.0, 7.0, 8.0]
+        );
+
+        let idx_1 = ElementType::S32.pack_from_i64_slice(&[1]);
+        let dyn_slice_out = SimulatedTpuHal::eval_dynamic_slice_nd(
+            ElementType::F32,
+            ElementType::F32,
+            &[&m0, &idx_1, &idx_1],
+            &InstructionAttrs {
+                input_shapes: vec![
+                    sh_2x2.clone(),
+                    Shape {
+                        element_type: ElementType::S32,
+                        dims: vec![1],
+                        dynamic_dims: vec![false],
+                        layout: MemoryLayout::default_tpu_tiled(1),
+                    },
+                    Shape {
+                        element_type: ElementType::S32,
+                        dims: vec![1],
+                        dynamic_dims: vec![false],
+                        layout: MemoryLayout::default_tpu_tiled(1),
+                    },
+                ],
+                output_shape: Some(sh_1x1.clone()),
+                ..InstructionAttrs::default()
+            },
+        );
+        assert_eq!(
+            ElementType::F32.unpack_to_f64_vec(&dyn_slice_out),
+            vec![4.0]
+        );
+
+        let upd_val = ElementType::F32.pack_from_f64_slice(&[99.0]);
+        let dyn_update_out = SimulatedTpuHal::eval_dynamic_update_slice_nd(
+            ElementType::F32,
+            ElementType::F32,
+            &[&m0, &upd_val, &idx_1, &idx_1],
+            &InstructionAttrs {
+                input_shapes: vec![sh_2x2.clone(), sh_1x1],
+                output_shape: Some(sh_2x2.clone()),
+                ..InstructionAttrs::default()
+            },
+        );
+        assert_eq!(
+            ElementType::F32.unpack_to_f64_vec(&dyn_update_out),
+            vec![1.0, 2.0, 3.0, 99.0]
+        );
+
+        // 4. N-D Convolution & ReduceWindow & Gather & Scatter
+        let activation_sh = Shape {
+            element_type: ElementType::F32,
+            dims: vec![1, 3, 1],
+            dynamic_dims: vec![false; 3],
+            layout: MemoryLayout::default_tpu_tiled(3),
+        };
+        let kernel_sh = Shape {
+            element_type: ElementType::F32,
+            dims: vec![2, 1, 1],
+            dynamic_dims: vec![false; 3],
+            layout: MemoryLayout::default_tpu_tiled(3),
+        };
+        let conv_nd = SimulatedTpuHal::eval_convolution_nd(
+            ElementType::F32,
+            &[1.0, 2.0, 3.0],
+            &[1.0, 1.0],
+            &InstructionAttrs {
+                input_shapes: vec![activation_sh, kernel_sh],
+                window_strides: vec![1],
+                pad_edge_low: vec![0],
+                pad_edge_high: vec![0],
+                lhs_dilation: vec![1],
+                rhs_dilation: vec![1],
+                feature_group_count: 1,
+                batch_group_count: 1,
+                ..InstructionAttrs::default()
+            },
+        );
+        assert_eq!(ElementType::F32.unpack_to_f64_vec(&conv_nd), vec![3.0, 5.0]);
+
+        for red_kind in [
+            CollectiveReductionOp::Sum,
+            CollectiveReductionOp::Max,
+            CollectiveReductionOp::Min,
+            CollectiveReductionOp::Product,
+        ] {
+            let rw_nd = SimulatedTpuHal::eval_reduce_window_nd(
+                ElementType::F32,
+                &[1.0, 2.0, 3.0, 4.0],
+                None,
+                &InstructionAttrs {
+                    input_shapes: vec![sh_2x2.clone()],
+                    window_dims: vec![2, 2],
+                    window_strides: vec![1, 1],
+                    pad_edge_low: vec![0, 0],
+                    pad_edge_high: vec![0, 0],
+                    reduce_op_kind: red_kind,
+                    ..InstructionAttrs::default()
+                },
+            );
+            assert_eq!(ElementType::F32.unpack_to_f64_vec(&rw_nd).len(), 1);
+        }
+
+        let gat_nd = SimulatedTpuHal::eval_gather_nd(
+            ElementType::F32,
+            ElementType::F32,
+            &[&m0, &idx_1],
+            &InstructionAttrs {
+                input_shapes: vec![
+                    sh_2x2.clone(),
+                    Shape {
+                        element_type: ElementType::S32,
+                        dims: vec![1],
+                        dynamic_dims: vec![false],
+                        layout: MemoryLayout::default_tpu_tiled(1),
+                    },
+                ],
+                gather_slice_sizes: vec![1, 2],
+                ..InstructionAttrs::default()
+            },
+        );
+        assert_eq!(ElementType::F32.unpack_to_f64_vec(&gat_nd), vec![3.0, 4.0]);
+        let rw_bundle_out = SimulatedTpuHal::eval_bundle_with_attrs(
+            &TpuInstructionBundle {
+                pc_offset: 0,
+                opcode: TpuOpCode::ReduceWindow,
+                operand_slots: vec![0, 1],
+                output_slot: 2,
+                sync_flag_id: 1,
+                attrs: InstructionAttrs {
+                    window_dims: vec![1, 1],
+                    window_strides: vec![1, 1],
+                    ..InstructionAttrs::default()
+                },
+            },
+            ElementType::F32,
+            &[&m0, &idx_1],
+        );
+        assert_eq!(rw_bundle_out.len(), 16);
+
+        let row_upd = ElementType::F32.pack_from_f64_slice(&[10.0, 20.0]);
+        for red_kind in [
+            CollectiveReductionOp::Sum,
+            CollectiveReductionOp::Max,
+            CollectiveReductionOp::Min,
+            CollectiveReductionOp::Product,
+        ] {
+            let scat_nd = SimulatedTpuHal::eval_scatter_nd(
+                ElementType::F32,
+                ElementType::F32,
+                &[&m0, &idx_1, &row_upd],
+                &InstructionAttrs {
+                    input_shapes: vec![
+                        sh_2x2.clone(),
+                        Shape {
+                            element_type: ElementType::S32,
+                            dims: vec![1],
+                            dynamic_dims: vec![false],
+                            layout: MemoryLayout::default_tpu_tiled(1),
+                        },
+                        Shape {
+                            element_type: ElementType::F32,
+                            dims: vec![1, 2],
+                            dynamic_dims: vec![false, false],
+                            layout: MemoryLayout::default_tpu_tiled(2),
+                        },
+                    ],
+                    scatter_update_window_dims: vec![1],
+                    reduce_op_kind: red_kind,
+                    ..InstructionAttrs::default()
+                },
+            );
+            assert_eq!(scat_nd.len(), 16);
+        }
+
+        let scat_overwrite = SimulatedTpuHal::eval_scatter_nd(
+            ElementType::F32,
+            ElementType::F32,
+            &[&m0, &idx_1, &row_upd],
+            &InstructionAttrs {
+                input_shapes: vec![sh_2x2],
+                ..InstructionAttrs::default()
+            },
+        );
+        assert_eq!(scat_overwrite.len(), 16);
+
+        // 5. Iterative While loop & multi-branch Conditional & CustomCall registry / linalg
+        let while_bundle = TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::While,
+            operand_slots: vec![0],
+            output_slot: 1,
+            sync_flag_id: 1,
+            attrs: InstructionAttrs {
+                sub_computations: vec![
+                    vec![TpuInstructionBundle {
+                        pc_offset: 0,
+                        opcode: TpuOpCode::Not,
+                        operand_slots: vec![0],
+                        output_slot: 0,
+                        sync_flag_id: 1,
+                        attrs: InstructionAttrs::default(),
+                    }],
+                    vec![TpuInstructionBundle {
+                        pc_offset: 0,
+                        opcode: TpuOpCode::Abs,
+                        operand_slots: vec![0],
+                        output_slot: 0,
+                        sync_flag_id: 1,
+                        attrs: InstructionAttrs::default(),
+                    }],
+                ],
+                ..InstructionAttrs::default()
+            },
+        };
+        let w_out = SimulatedTpuHal::eval_bundle_with_attrs(
+            &while_bundle,
+            ElementType::F32,
+            &[&[0, 0, 0, 0]],
+        );
+        assert_eq!(w_out.len(), 4);
+        let w_break_out = SimulatedTpuHal::eval_bundle_with_attrs(
+            &while_bundle,
+            ElementType::F32,
+            &[&[0, 0, 128, 63]],
+        );
+        assert_eq!(w_break_out.len(), 4);
+
+        let case_bundle = TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::Conditional,
+            operand_slots: vec![0, 1, 2, 3],
+            output_slot: 4,
+            sync_flag_id: 1,
+            attrs: InstructionAttrs {
+                input_shapes: vec![Shape {
+                    element_type: ElementType::S32,
+                    dims: vec![1],
+                    dynamic_dims: vec![false],
+                    layout: MemoryLayout::default_tpu_tiled(1),
+                }],
+                sub_computations: vec![vec![], vec![], vec![]],
+                ..InstructionAttrs::default()
+            },
+        };
+        let _ = SimulatedTpuHal::eval_bundle_with_attrs(
+            &case_bundle,
+            ElementType::F32,
+            &[&idx_1, &m0, &m1, &m0],
+        );
+
+        register_custom_call_handler("custom_double", |inputs, _attrs| {
+            let b = inputs.first().copied().unwrap_or(&[]);
+            let vals: Vec<f64> = ElementType::F32
+                .unpack_to_f64_vec(b)
+                .into_iter()
+                .map(|x| x * 2.0)
+                .collect();
+            Ok(ElementType::F32.pack_from_f64_slice(&vals))
+        });
+        let cc_bundle = TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::CustomCall,
+            operand_slots: vec![0],
+            output_slot: 1,
+            sync_flag_id: 1,
+            attrs: InstructionAttrs {
+                custom_call_target: String::from("custom_double"),
+                ..InstructionAttrs::default()
+            },
+        };
+        let cc_out = SimulatedTpuHal::eval_bundle_with_attrs(&cc_bundle, ElementType::F32, &[&m0]);
+        assert_eq!(
+            ElementType::F32.unpack_to_f64_vec(&cc_out),
+            vec![2.0, 4.0, 6.0, 8.0]
+        );
+        assert!(unregister_custom_call_handler("custom_double"));
+        assert!(!unregister_custom_call_handler("custom_double"));
+
+        for linalg_target in ["Qr", "Eigh", "Lu"] {
+            let l_out = SimulatedTpuHal::eval_bundle_with_attrs(
+                &TpuInstructionBundle {
+                    opcode: TpuOpCode::CustomCall,
+                    attrs: InstructionAttrs {
+                        custom_call_target: String::from(linalg_target),
+                        ..InstructionAttrs::default()
+                    },
+                    ..cc_bundle.clone()
+                },
+                ElementType::F32,
+                &[&m0],
+            );
+            assert_eq!(l_out.len(), m0.len());
+        }
+
+        // Bitwidth-aware CountLeadingZeros, PopulationCount, shifts, and S64 Clamp/Select
+        let s8_in = ElementType::S8.pack_from_i64_slice(&[1, 0]);
+        let s8_clz = ElementType::S8.unpack_to_i64_vec(&SimulatedTpuHal::eval_unary_op(
+            TpuOpCode::CountLeadingZeros,
+            ElementType::S8,
+            &s8_in,
+        ));
+        assert_eq!(s8_clz, vec![7, 8]);
+        let s16_in = ElementType::S16.pack_from_i64_slice(&[1, 255]);
+        let s16_clz = ElementType::S16.unpack_to_i64_vec(&SimulatedTpuHal::eval_unary_op(
+            TpuOpCode::CountLeadingZeros,
+            ElementType::S16,
+            &s16_in,
+        ));
+        assert_eq!(s16_clz, vec![15, 8]);
+        let s16_pop = ElementType::S16.unpack_to_i64_vec(&SimulatedTpuHal::eval_unary_op(
+            TpuOpCode::PopulationCount,
+            ElementType::S16,
+            &s16_in,
+        ));
+        assert_eq!(s16_pop, vec![1, 8]);
+        let s16_sh = ElementType::S16.pack_from_i64_slice(&[4, 4]);
+        let s16_shl = ElementType::S16.unpack_to_i64_vec(&SimulatedTpuHal::eval_binary_op(
+            TpuOpCode::ShiftLeft,
+            ElementType::S16,
+            &s16_in,
+            &s16_sh,
+        ));
+        assert_eq!(s16_shl, vec![16, 4080]);
+        let s16_lshr = ElementType::S16.unpack_to_i64_vec(&SimulatedTpuHal::eval_binary_op(
+            TpuOpCode::ShiftRightLogical,
+            ElementType::S16,
+            &s16_in,
+            &s16_sh,
+        ));
+        assert_eq!(s16_lshr, vec![0, 15]);
+
+        let s64_c = ElementType::S64.pack_from_i64_slice(&[1, 0]);
+        let s64_t = ElementType::S64.pack_from_i64_slice(&[0x7FFF_FFFF_FFFF_FFFE, 10]);
+        let s64_f = ElementType::S64.pack_from_i64_slice(&[20, 0x7FFF_FFFF_FFFF_FFFD]);
+        let selected_s64 = ElementType::S64.unpack_to_i64_vec(&SimulatedTpuHal::eval_bundle(
+            TpuOpCode::Select,
+            ElementType::S64,
+            &[&s64_c, &s64_t, &s64_f],
+        ));
+        assert_eq!(
+            selected_s64,
+            vec![0x7FFF_FFFF_FFFF_FFFE, 0x7FFF_FFFF_FFFF_FFFD]
+        );
+        let s64_clamped = ElementType::S64.unpack_to_i64_vec(&SimulatedTpuHal::eval_bundle(
+            TpuOpCode::Clamp,
+            ElementType::S64,
+            &[&s64_c, &s64_t, &s64_f],
+        ));
+        assert_eq!(s64_clamped, vec![20, 10]);
+
+        // Sysfs PCIe scanner & resource BAR parser
+        assert_eq!(
+            PciDeviceEnumerator::parse_sysfs_resource_bar_size(
+                "0x00000000fe000000 0x00000000fe0fffff 0x00040200\n0x0 0x0 0x0\n0x0000001000000000 0x00000010ffffffff 0x0014220c\n",
+                0
+            ),
+            Some(0x0010_0000)
+        );
+        assert_eq!(
+            PciDeviceEnumerator::parse_sysfs_resource_bar_size("0x0 0x0 0x0\n", 0),
+            None
+        );
+        assert!(
+            scan_sysfs_pci_tpu_devices(std::path::Path::new("/nonexistent/sysfs/path")).is_err()
+        );
+        let tmp_sysfs =
+            std::env::temp_dir().join(format!("libtpu_pci_bdf_test_{}", std::process::id()));
+        let bdf_dir = tmp_sysfs.join("0000:00:04.0");
+        let _ = std::fs::create_dir_all(&bdf_dir);
+        let _ = std::fs::write(bdf_dir.join("vendor"), "0x1ae0\n");
+        let _ = std::fs::write(bdf_dir.join("device"), "0x006f\n");
+        let _ = std::fs::write(
+            bdf_dir.join("resource"),
+            "0x00000000fe000000 0x00000000fe0fffff 0x00040200\n0x0 0x0 0x0\n0x0000001000000000 0x00000010ffffffff 0x0014220c\n",
+        );
+        let bdfs = scan_sysfs_pci_tpu_devices(&tmp_sysfs);
+        assert!(bdfs.is_ok());
+        assert_eq!(bdfs.unwrap_or_default().len(), 1);
+        let disc = discover_pcie_tpu_devices_from_sysfs(&tmp_sysfs);
+        assert_eq!(disc.len(), 1);
+        let _ = std::fs::remove_dir_all(&tmp_sysfs);
+
+        let db_ring = HardwareDoorbellRing::default();
+        assert_eq!(db_ring.capacity, 64);
+        let mut small_ring = HardwareDoorbellRing::new(1);
+        assert_eq!(
+            small_ring.enqueue_and_ring_doorbell(HbmDmaRingDescriptor::default()),
+            1
+        );
+        assert_eq!(
+            small_ring.enqueue_and_ring_doorbell(HbmDmaRingDescriptor::default()),
+            2
+        );
+        assert_eq!(small_ring.process_completions_and_signal_eventfd(), 1);
+        assert_eq!(small_ring.process_completions_and_signal_eventfd(), 0);
+        assert_eq!(small_ring.clone(), small_ring);
+        assert_ne!(format!("{small_ring:?}"), "");
+
+        let mut vm_st = TpuCoreVmState::new();
+        vm_st.vreg_words[0] = 0x1234_5678;
+        assert_eq!(vm_st.inspect_vreg_2d_lanes(0)[0][0], 0x1234_5678);
+        vm_st
+            .vreg_tiles
+            .insert(1, vec![0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]);
+        let v1_lanes = vm_st.inspect_vreg_2d_lanes(1);
+        assert_eq!(v1_lanes[0][0], 1);
+        assert_eq!(v1_lanes[0][1], 2);
+        assert_eq!(vm_st.inspect_gmr_tile(0), [0.0; 4]);
+
+        let sort_keys = ElementType::F32.pack_from_f64_slice(&[3.0, 1.0, 4.0, 2.0]);
+        let sort_vals = ElementType::F32.pack_from_f64_slice(&[30.0, 10.0, 40.0, 20.0]);
+        let mut sort_attrs = InstructionAttrs {
+            input_shapes: vec![Shape {
+                element_type: ElementType::F32,
+                dims: vec![2, 2],
+                dynamic_dims: vec![false, false],
+                layout: MemoryLayout::default_tpu_tiled(2),
+            }],
+            reduce_dims: vec![1],
+            comparison_direction: String::from("GT"),
+            tuple_index: 1,
+            ..InstructionAttrs::default()
+        };
+        let sorted_v = SimulatedTpuHal::eval_sort_nd(
+            ElementType::F32,
+            ElementType::F32,
+            &[&sort_keys, &sort_vals],
+            &sort_attrs,
+        );
+        assert_eq!(
+            ElementType::F32.unpack_to_f64_vec(&sorted_v),
+            vec![30.0, 10.0, 40.0, 20.0]
+        );
+        sort_attrs.comparison_direction = String::from("LT");
+        sort_attrs.tuple_index = 0;
+        let sorted_k = SimulatedTpuHal::eval_sort_nd(
+            ElementType::F32,
+            ElementType::F32,
+            &[&sort_keys, &sort_vals],
+            &sort_attrs,
+        );
+        assert_eq!(
+            ElementType::F32.unpack_to_f64_vec(&sorted_k),
+            vec![1.0, 3.0, 2.0, 4.0]
+        );
+
+        let sas_op = ElementType::F32.pack_from_f64_slice(&[4.0, 1.0, 2.0, 8.0]);
+        let sas_src = ElementType::F32.pack_from_f64_slice(&[5.0, 7.0]);
+        let sas_init = ElementType::F32.pack_from_f64_slice(&[0.0]);
+        for red_kind in [
+            CollectiveReductionOp::Min,
+            CollectiveReductionOp::Max,
+            CollectiveReductionOp::Product,
+            CollectiveReductionOp::Sum,
+        ] {
+            let sas_out = SimulatedTpuHal::eval_select_and_scatter_nd(
+                ElementType::F32,
+                &[&sas_op, &sas_src, &sas_init],
+                &InstructionAttrs {
+                    reduce_op_kind: red_kind,
+                    window_dims: vec![2],
+                    window_strides: vec![2],
+                    ..InstructionAttrs::default()
+                },
+            );
+            assert_eq!(sas_out.len(), sas_op.len());
+        }
     }
 }

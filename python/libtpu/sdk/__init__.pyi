@@ -7,6 +7,9 @@ from libtpu.sdk import (
     debug as debug,
 )
 from libtpu.sdk import (
+    diagnostics as diagnostics,
+)
+from libtpu.sdk import (
     slice as sdk_slice,
 )
 from libtpu.sdk import (
@@ -42,6 +45,7 @@ __all__ = [
     "LibtpuSdkMetric",
     "SdkClient",
     "debug",
+    "diagnostics",
     "get_chip_coordinates",
     "get_core_state_summary",
     "get_metric",

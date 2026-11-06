@@ -81,6 +81,10 @@ class DataType(enum.IntEnum):
         """
         ...
 
+    def numpy_typestr(self) -> str:
+        """Returns the canonical NumPy `__array_interface__` `typestr` for this `DataType`."""
+        ...
+
 def get_library_path() -> str:
     """Returns the filesystem path to the compiled `libtpu` shared library."""
     ...

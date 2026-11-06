@@ -1,6 +1,6 @@
 # `libtpu-rs` Architecture Guide
 
-This document provides an exhaustive architectural reference for **`libtpu-rs`**, a pure-Rust, zero-external-C++-dependency, ABI-compatible re-implementation of Google Cloud's `libtpu.so` (`v0.0.50`, `PJRT_Api` v0.116) and `libtpu/sdk/sdk.so` (`LibtpuSdk_Api` v0.1), paired with C11 headers, a zero-exception C++20 RAII SDK, and a drop-in Python wheel package (`libtpu` + `libtpu.sdk`).
+This document provides an exhaustive architectural reference for **`libtpu-rs`**, a pure-Rust, zero-external-C++-dependency, ABI-compatible re-implementation of Google Cloud's `libtpu.so` (`v0.0.52`, `PJRT_Api` v0.116) and `libtpu/sdk/sdk.so` (`LibtpuSdk_Api` v0.1), paired with C11 headers, a zero-exception C++20 RAII SDK, and a drop-in Python wheel package (`libtpu` + `libtpu.sdk`).
 
 ---
 
@@ -58,7 +58,7 @@ Google Cloud's proprietary `libtpu.so` is a monolithic ~631 MB shared library li
 
 `libtpu-rs` re-implements the complete surface area of `libtpu.so` and `libtpu/sdk/sdk.so` in safe, idiomatic Rust with the following architectural invariants:
 
-1. **100% Binary ABI Compatibility**: Every exported C symbol, vtable offset, struct size, alignment padding byte, and extension type discriminant matches the reverse-engineered `libtpu-0.0.50` binary (`PJRT_Api` v0.116 = `1,144` bytes; `LibtpuSdk_Api` v0.1 = `144` bytes; `TpuDriverFn` = `224` bytes), verified via compile-time `const _: () = assert!(...)` assertions.
+1. **100% Binary ABI Compatibility**: Every exported C symbol, vtable offset, struct size, alignment padding byte, and extension type discriminant matches the reverse-engineered `libtpu-0.0.52` binary (`PJRT_Api` v0.116 = `1,144` bytes; `LibtpuSdk_Api` v0.1 = `144` bytes; `TpuDriverFn` = `224` bytes), verified via compile-time `const _: () = assert!(...)` assertions.
 2. **Pure-Rust, Zero External C/C++ Runtime Dependencies**: No closed-source blobs or external C++ libraries (such as `libprotobuf`, LLVM, or Abseil) are linked. Instead, `libtpu-core` uses a curated set of pure-Rust crates:
    - **Protobuf & Schema Reflection**: `prost`, `prost-reflect`, `prost-types`, and build-time `protox` / `prost-build` (compiling the 64 carved `.proto` schemas into a static `FileDescriptorSet`).
    - **Parsing & CLI**: `winnow` (combinator parsing for HLO/StableHLO and mesh bounds) and `lexopt` (`LIBTPU_INIT_ARGS` CLI flag parsing).
@@ -217,7 +217,7 @@ libtpu-rs/
 │       ├── test_libtpu.py             # End-to-end Python PJRT, profiler & SDK tests
 │       └── test_pre_commit.py         # Unit tests for the pre-commit & forensics pipelines
 ├── docs/
-│   └── reverse_engineering/           # Binary analysis specifications of official libtpu-0.0.50
+│   └── reverse_engineering/           # Binary analysis specifications of official libtpu-0.0.52
 │       ├── exported_symbols.md        # All 78 exported libtpu.so ELF symbols & C signatures
 │       ├── pjrt_abi_layout.md         # Exact byte offsets of PJRT_Api, extensions & LibtpuSdk_Api
 │       ├── kernel_hardware_protocol.md# Gasket/VFIO ioctls, BAR0 MMIO CSRs & Protobuf wire schemas
@@ -471,7 +471,7 @@ The Protobuf layer is organized into 8 domain submodules:
 
 ### 4.5 Clean-Room ELF64/Mach-O Binary Forensics (`elf.rs` & `elf/*`)
 
-`crates/libtpu-core/src/elf/` implements the clean-room binary analysis and verification toolkit used to inspect `libtpu.so` (`v0.0.50`) and `sdk.so` and validate `libtpu-rs` against the golden manifests in `docs/reverse_engineering/`:
+`crates/libtpu-core/src/elf/` implements the clean-room binary analysis and verification toolkit used to inspect `libtpu.so` (`v0.0.52`) and `sdk.so` and validate `libtpu-rs` against the golden manifests in `docs/reverse_engineering/`:
 
 - **`symbols.rs`**: Parses ELF64 and Mach-O symbol tables via `goblin` and `object`, unwinds `.eh_frame` DWARF Call Frame Information (CFI) FDE ranges via `gimli`, demangles Itanium C++ symbols via `cpp_demangle`, and reconstructs C++ RTTI inheritance hierarchies (`_ZTI*` / `_ZTV*`).
 - **`relocations.rs`**: Resolves `R_X86_64_RELATIVE` and `R_X86_64_64` dynamic relocations in `.rela.dyn` to reconstruct the 138-slot `PJRT_Api` vtable, the 17-node `PJRT_Extension_Base` linked list, the 17-slot `LibtpuSdk_Api` vtable, and the 28-slot `TpuDriverFn` table.
@@ -726,7 +726,7 @@ To allow 100% test coverage of `LinuxDeviceHal` (including `EBADF` and kernel `i
 
 ## 8. Layer 5: C ABI & Binary Layout (`libtpu-c-api`)
 
-`crates/libtpu-c-api` compiles to a dynamic shared library (`cdylib`: `libtpu.dylib` / `libtpu.so` / `tpu.dll`), a static archive (`staticlib`), and a Rust library (`rlib`). It exports all **325 ELF symbols** from `libtpu-0.0.50` plus `GetLibtpuSdkApi`, `PyInit_sdk`, and ergonomic `libtpu_rs_*` entrypoints.
+`crates/libtpu-c-api` compiles to a dynamic shared library (`cdylib`: `libtpu.dylib` / `libtpu.so` / `tpu.dll`), a static archive (`staticlib`), and a Rust library (`rlib`). It exports all **325 ELF symbols** from `libtpu-0.0.52` plus `GetLibtpuSdkApi`, `PyInit_sdk`, and ergonomic `libtpu_rs_*` entrypoints.
 
 ### 8.1 `PJRT_Api` v0.116 Vtable (`1,144` Bytes, 138 Slots)
 

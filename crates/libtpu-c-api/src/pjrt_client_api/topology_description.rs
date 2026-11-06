@@ -145,7 +145,7 @@ unsafe fn handle_topology_platform_version(
     args: &mut crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `topology` is null or a valid `PJRT_TopologyDescription*`.
-    let (ptr, len) = unsafe { args.topology.as_ref() }.map_or((c"0.0.50".as_ptr(), 6), |t| {
+    let (ptr, len) = unsafe { args.topology.as_ref() }.map_or((c"0.0.52".as_ptr(), 6), |t| {
         (
             t.inner.spec.platform_version.as_ptr().cast::<c_char>(),
             t.inner.spec.platform_version.len(),
@@ -236,7 +236,7 @@ unsafe fn handle_topology_serialize(
     let topo_bytes = unsafe { args.topology.as_ref() }.map_or_else(
         || {
             libtpu_core::proto::TpuTopologyArgsProto {
-                platform_version: String::from("0.0.50"),
+                platform_version: String::from("0.0.52"),
                 mesh_bounds: vec![2, 2, 1],
                 chips_per_host: 4,
                 num_hosts: 1,

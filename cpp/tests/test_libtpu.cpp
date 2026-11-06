@@ -396,6 +396,10 @@ int main() {
       static_cast<int32_t>(libtpu::ErrorCode::Internal), nullptr}));
   libtpu::CollectiveCommunicator coll_comm;
   libtpu::MultiSliceConfig ms_cfg;
+  libtpu::SparseCoreEngine sc_eng;
+  if (sc_eng.raw_state() == nullptr) {
+    return 280;
+  }
   const float emb_init[4] = {1.5F, 2.5F, 3.5F, 4.5F};
   float emb_read[4] = {0.0F, 0.0F, 0.0F, 0.0F};
   const std::string part_cfg = emb_engine.partition_parameters("table_0", 7);
@@ -425,6 +429,17 @@ int main() {
   libtpu::Buffer atm_buf;
   const int64_t nd_dims[2] = {2, 2};
   float nd_out[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+  const int64_t s64_in0[2] = {0x7FFFFFFFFFFFFFFELL, 100LL};
+  const int64_t s64_in1[2] = {1LL, 25LL};
+  int64_t s64_out[2] = {0LL, 0LL};
+  const int64_t s64_dims[1] = {2};
+  const char *s64_mlir = "module @add_s64 {\n"
+                         "  func.func @main(%a: tensor<2xi64>, %b: "
+                         "tensor<2xi64>) -> tensor<2xi64> {\n"
+                         "    %0 = stablehlo.add %a, %b : tensor<2xi64>\n"
+                         "    func.return %0 : tensor<2xi64>\n"
+                         "  }\n"
+                         "}";
   if (atm.buffer_size(0) == 0 || atm.device() == nullptr ||
       !atm.transfer_data(0, host_f0, 0, sizeof(host_f0), true).is_ok() ||
       !atm.retrieve_buffer(0, &atm_buf).is_ok() || atm_buf.raw() == nullptr ||
@@ -436,8 +451,28 @@ int main() {
                reinterpret_cast<const uint8_t *>(host_f1), sizeof(host_f0),
                reinterpret_cast<uint8_t *>(nd_out))
            .is_ok() ||
-      nd_out[0] != 11.0F || nd_out[3] != 44.0F) {
+      nd_out[0] != 11.0F || nd_out[3] != 44.0F ||
+      !client
+           .compile_and_execute_nd(
+               0, "mlir", reinterpret_cast<const uint8_t *>(s64_mlir),
+               std::strlen(s64_mlir), libtpu::DataType::S64, s64_dims, 1,
+               reinterpret_cast<const uint8_t *>(s64_in0),
+               reinterpret_cast<const uint8_t *>(s64_in1), sizeof(s64_in0),
+               reinterpret_cast<uint8_t *>(s64_out))
+           .is_ok() ||
+      s64_out[0] != 0x7FFFFFFFFFFFFFFFLL || s64_out[1] != 125LL) {
     return 30;
+  }
+
+  libtpu::TpuExecutableInspector exec_insp(nullptr);
+  libtpu::ShardingsInspector shard_insp(nullptr);
+  if (exec_insp.target_arguments_size() == 0 ||
+      exec_insp.hlo_module_with_config_size() == 0 ||
+      exec_insp.generated_code_size_bytes() <= 0 ||
+      exec_insp.set_and_query_compilation_env(1) == 0 ||
+      shard_insp.parameter_sharding_count() == 0 ||
+      shard_insp.output_sharding_count() == 0) {
+    return 31;
   }
 
   return 0;

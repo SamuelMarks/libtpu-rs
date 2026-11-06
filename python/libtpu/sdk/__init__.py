@@ -1,4 +1,4 @@
-"""`libtpu.sdk` subpackage providing `tpumonitoring`, `slice`, `tpuz`, and `debug` APIs.
+"""`libtpu.sdk` subpackage providing TPU telemetry, slice, tpuz, debug, and diagnostics APIs.
 
 Replicates the exact submodule hierarchy of `libtpu/sdk.so` (`PyInit_sdk`) from
 the official Google Cloud TPU `libtpu` wheel.
@@ -12,6 +12,9 @@ from libtpu import (
 )
 from libtpu.sdk import (
     debug as debug,
+)
+from libtpu.sdk import (
+    diagnostics as diagnostics,
 )
 from libtpu.sdk import (
     tpumonitoring as tpumonitoring,
@@ -46,6 +49,7 @@ __all__: list[str] = [
     "LibtpuSdkMetric",
     "SdkClient",
     "debug",
+    "diagnostics",
     "get_chip_coordinates",
     "get_core_state_summary",
     "get_metric",

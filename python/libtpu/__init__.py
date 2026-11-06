@@ -15,7 +15,7 @@ import struct
 from collections.abc import Sequence
 from pathlib import Path
 
-__version__: str = "0.0.50"
+__version__: str = "0.0.52"
 
 
 class TpuError(RuntimeError):
@@ -84,6 +84,39 @@ _DATA_TYPE_BIT_SIZES: dict[int, int] = {
 }
 
 
+_DATA_TYPE_NUMPY_TYPESTRS: dict[int, str] = {
+    0: "|V0",
+    1: "|b1",
+    2: "|i1",
+    3: "<i2",
+    4: "<i4",
+    5: "<i8",
+    6: "|u1",
+    7: "<u2",
+    8: "<u4",
+    9: "<u8",
+    10: "<f2",
+    11: "<f4",
+    12: "<f8",
+    13: "|V2",
+    14: "<c8",
+    15: "<c16",
+    16: "|V1",
+    17: "|V1",
+    18: "|V1",
+    19: "|V1",
+    20: "|V1",
+    21: "|V1",
+    22: "|V1",
+    23: "|V0",
+    24: "|V1",
+    25: "|V1",
+    26: "|V1",
+    27: "|V1",
+    28: "|V0",
+}
+
+
 class DataType(enum.IntEnum):
     """Enumeration of all 29 PJRT tensor element types (`PJRT_Buffer_Type`)."""
 
@@ -136,6 +169,14 @@ class DataType(enum.IntEnum):
         """
         total_bits = num_elements * self.bit_size()
         return (total_bits + 7) // 8
+
+    def numpy_typestr(self) -> str:
+        """Returns the canonical NumPy `__array_interface__` `typestr` for this `DataType`.
+
+        Returns:
+            NumPy `typestr` string (e.g., `"<f4"`, `"<i8"`, `"|b1"`, `"|V2"` for `BF16`).
+        """
+        return _DATA_TYPE_NUMPY_TYPESTRS[int(self.value)]
 
 
 def get_library_path() -> str:
@@ -835,19 +876,40 @@ class TpuBuffer:
         """Reads the buffer from device HBM and unpacks it as a list of `float`.
 
         Returns:
-            List of 32-bit floating-point values read from the TPU buffer.
+            List of floating-point values read from the TPU buffer (`F16`, `BF16`, `F32`, `F64`).
         """
         raw_bytes = self.to_bytes()
-        return list(struct.unpack(f"<{self._num_elements}f", raw_bytes))
+        dt = self.dtype()
+        if dt == DataType.F64:
+            return [float(x) for x in struct.unpack(f"<{self._num_elements}d", raw_bytes)]
+        if dt == DataType.F16:
+            return [float(x) for x in struct.unpack(f"<{self._num_elements}e", raw_bytes)]
+        if dt == DataType.BF16:
+            u16s = struct.unpack(f"<{self._num_elements}H", raw_bytes)
+            return [float(struct.unpack("<f", (w << 16).to_bytes(4, "little"))[0]) for w in u16s]
+        return [float(x) for x in struct.unpack(f"<{self._num_elements}f", raw_bytes)]
 
     def to_int_list(self) -> list[int]:
         """Reads the buffer from device HBM and unpacks it as a list of `int`.
 
         Returns:
-            List of 32-bit signed integer values read from the TPU buffer.
+            List of integer values read from the TPU buffer (`PRED`, `S8..S64`, `U8..U64`).
         """
         raw_bytes = self.to_bytes()
-        return list(struct.unpack(f"<{self._num_elements}i", raw_bytes))
+        dt = self.dtype()
+        fmt_map: dict[DataType, str] = {
+            DataType.PRED: "B",
+            DataType.S8: "b",
+            DataType.U8: "B",
+            DataType.S16: "h",
+            DataType.U16: "H",
+            DataType.S32: "i",
+            DataType.U32: "I",
+            DataType.S64: "q",
+            DataType.U64: "Q",
+        }
+        code = fmt_map.get(dt, "i")
+        return [int(x) for x in struct.unpack(f"<{self._num_elements}{code}", raw_bytes)]
 
     def to_memoryview(self) -> memoryview:
         """Returns a read-only `memoryview` over the buffer bytes read from HBM.
@@ -868,7 +930,7 @@ class TpuBuffer:
         return {
             "version": 3,
             "shape": self.shape(),
-            "typestr": "<f4" if self.dtype() == DataType.F32 else "|u1",
+            "typestr": self.dtype().numpy_typestr(),
             "data": raw_bytes,
             "readonly": True,
         }

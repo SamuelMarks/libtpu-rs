@@ -90,7 +90,11 @@ unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(),
 
     // SAFETY: `args.kv_put_callback` is null or a valid `PJRT_KeyValuePutCallback` pointer.
     unsafe {
-        notify_kv_put_topology_ready(args.kv_put_callback, args.kv_put_user_arg);
+        notify_kv_put_topology_ready(
+            args.kv_put_callback,
+            args.kv_put_user_arg,
+            &inner.build_local_topology_proto().encode(),
+        );
     }
 
     let client_box = Box::new(PJRT_Client {
@@ -112,12 +116,14 @@ unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(),
     Ok(())
 }
 
-/// Invokes an optional `PJRT_KeyValuePutCallback` to publish `"tpu_topology_ready"` = `"1"`.
+/// Invokes an optional `PJRT_KeyValuePutCallback` to publish `"tpu_topology_ready"` = `"1"`
+/// and `"local_topology_proto"` = `local_topo_bytes`.
 ///
 /// # Arguments
 ///
 /// * `kv_put_callback` - Optional C callback pointer.
 /// * `kv_put_user_arg` - User argument pointer passed to `kv_put_callback`.
+/// * `local_topo_bytes` - Serialized `LocalTopologyProto` wire bytes for this host.
 ///
 /// # Safety
 ///
@@ -125,6 +131,7 @@ unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(),
 unsafe fn notify_kv_put_topology_ready(
     kv_put_callback: *const std::ffi::c_void,
     kv_put_user_arg: *mut std::ffi::c_void,
+    local_topo_bytes: &[u8],
 ) {
     /// C callback type for `PJRT_KeyValuePutCallback`.
     type KvPutCallbackFn = unsafe extern "C" fn(
@@ -139,22 +146,25 @@ unsafe fn notify_kv_put_topology_ready(
     }
     // SAFETY: `kv_put_callback` is a valid C function pointer supplied by the caller.
     let kv_put: KvPutCallbackFn = unsafe { std::mem::transmute(kv_put_callback) };
-    let key = b"tpu_topology_ready";
-    let val = b"1";
-    // SAFETY: Invoking caller's KV put callback with static byte slices and `kv_put_user_arg`.
-    let kv_err = unsafe {
-        kv_put(
-            key.as_ptr().cast::<std::ffi::c_char>(),
-            key.len(),
-            val.as_ptr().cast::<std::ffi::c_char>(),
-            val.len(),
-            kv_put_user_arg,
-        )
-    };
-    if !kv_err.is_null() {
-        // SAFETY: `kv_err` is a heap-allocated `PJRT_Error` returned by the callback.
-        unsafe {
-            drop(Box::from_raw(kv_err));
+    for (key, val) in [
+        (&b"tpu_topology_ready"[..], &b"1"[..]),
+        (&b"local_topology_proto"[..], local_topo_bytes),
+    ] {
+        // SAFETY: Invoking caller's KV put callback with valid byte slices and `kv_put_user_arg`.
+        let kv_err = unsafe {
+            kv_put(
+                key.as_ptr().cast::<std::ffi::c_char>(),
+                key.len(),
+                val.as_ptr().cast::<std::ffi::c_char>(),
+                val.len(),
+                kv_put_user_arg,
+            )
+        };
+        if !kv_err.is_null() {
+            // SAFETY: `kv_err` is a heap-allocated `PJRT_Error` returned by the callback.
+            unsafe {
+                drop(Box::from_raw(kv_err));
+            }
         }
     }
 }

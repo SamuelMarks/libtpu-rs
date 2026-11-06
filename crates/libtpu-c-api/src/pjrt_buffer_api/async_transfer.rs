@@ -388,9 +388,8 @@ unsafe fn handle_async_transfer_manager_transfer_literal(
     if let Some(tm) = unsafe { args.transfer_manager.as_ref() } {
         let idx = usize::try_from(args.buffer_index.max(0)).unwrap_or(0);
         if !args.data.is_null() {
-            let elem_bytes = ElementType::from_raw(args.shape_element_type)
-                .unwrap_or(ElementType::F32)
-                .byte_size();
+            let elem_ty =
+                ElementType::from_raw(args.shape_element_type).unwrap_or(ElementType::F32);
             let num_elems: usize = if !args.shape_dims.is_null() {
                 // SAFETY: `args.shape_dims` has `args.shape_num_dims` elements.
                 unsafe { std::slice::from_raw_parts(args.shape_dims, args.shape_num_dims) }
@@ -400,7 +399,8 @@ unsafe fn handle_async_transfer_manager_transfer_literal(
             } else {
                 1
             };
-            let byte_len = elem_bytes.saturating_mul(num_elems);
+            let total_bits = num_elems.saturating_mul(elem_ty.bit_size());
+            let byte_len = total_bits.div_ceil(8).max(1);
             // SAFETY: `args.data` points to at least `byte_len` host bytes.
             let literal_slice =
                 unsafe { std::slice::from_raw_parts(args.data.cast::<u8>(), byte_len) };
