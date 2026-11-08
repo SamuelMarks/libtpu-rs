@@ -196,6 +196,9 @@ unsafe fn handle_multislice_config_serialize(args: &mut PJRT_MultiSlice_Config_S
         slice_id: i32::try_from(cfg.megascale_slice_id).unwrap_or(0),
         num_devices_per_slice: i32::try_from(cfg.chips_per_host()).unwrap_or(4),
         coordinator_address: String::from("127.0.0.1:8080"),
+        slice_devices: Vec::new(),
+        endpoint_addresses: None,
+        dcn_topology: None,
     }
     .encode();
     let (ptr, len, holder) = box_serialized_artifact(encoded);
@@ -678,8 +681,8 @@ pub unsafe extern "C" fn PJRT_Megascale_Barrier(
     }
 }
 
-/// Strongly-typed state-recording handler for [`PJRT_Megascale_Handle_Args`] lifecycle/control slots
-/// (`LogError`, `FinalizeSlice`, `WaitForBarrier`, `AbortCollectives`, `Reserved`).
+/// Strongly-typed handler for [`PJRT_Megascale_LogError`], recording a [`libtpu_core::proto::MegaScaleRuntimeErrorProto`]
+/// event and incrementing the registered error-handler counter.
 ///
 /// # Arguments
 ///
@@ -688,8 +691,9 @@ pub unsafe extern "C" fn PJRT_Megascale_Barrier(
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
-pub(super) unsafe fn handle_megascale_noop(args: &mut PJRT_Megascale_Handle_Args) {
+unsafe fn handle_megascale_log_error(args: &mut PJRT_Megascale_Handle_Args) {
     let mut st = extension_state().lock();
+    st.megascale_error_handlers = st.megascale_error_handlers.saturating_add(1);
     st.megascale_barriers = st.megascale_barriers.saturating_add(1);
     args.handle = ptr::null_mut();
 }
@@ -709,7 +713,10 @@ pub unsafe extern "C" fn PJRT_Megascale_LogError(
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(raw_args, handle_megascale_noop)
+        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(
+            raw_args,
+            handle_megascale_log_error,
+        )
     }
 }
 
@@ -837,6 +844,21 @@ pub unsafe extern "C" fn PJRT_Megascale_InitializeSlice(
     }
 }
 
+/// Strongly-typed handler for [`PJRT_Megascale_FinalizeSlice`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
+unsafe fn handle_megascale_finalize_slice(args: &mut PJRT_Megascale_Handle_Args) {
+    let mut st = extension_state().lock();
+    st.megascale_barriers = st.megascale_barriers.saturating_add(1);
+    args.handle = ptr::null_mut();
+}
+
 /// Finalizes a Megascale slice (`PJRT_Megascale_FinalizeSlice`).
 ///
 /// # Arguments
@@ -852,7 +874,10 @@ pub unsafe extern "C" fn PJRT_Megascale_FinalizeSlice(
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(raw_args, handle_megascale_noop)
+        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(
+            raw_args,
+            handle_megascale_finalize_slice,
+        )
     }
 }
 
@@ -945,6 +970,9 @@ unsafe fn handle_megascale_collect_metrics(args: &mut PJRT_Megascale_Data_Args) 
             completed_barriers: u64::try_from(st.megascale_barriers).unwrap_or(0),
             collective_ops_count: u64::try_from(st.collective_ops_executed).unwrap_or(0),
             active_contexts: i32::try_from(st.megascale_contexts).unwrap_or(0),
+            bytes_transferred: u64::try_from(st.collective_ops_executed)
+                .unwrap_or(0)
+                .saturating_mul(64),
         }
         .encode()
     };
@@ -1084,6 +1112,21 @@ pub unsafe extern "C" fn PJRT_Megascale_SetTransportType(
     }
 }
 
+/// Strongly-typed handler for [`PJRT_Megascale_WaitForBarrier`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
+unsafe fn handle_megascale_wait_for_barrier(args: &mut PJRT_Megascale_Handle_Args) {
+    let mut st = extension_state().lock();
+    st.megascale_barriers = st.megascale_barriers.saturating_add(1);
+    args.handle = ptr::null_mut();
+}
+
 /// Waits for a Megascale barrier (`PJRT_Megascale_WaitForBarrier`).
 ///
 /// # Arguments
@@ -1099,8 +1142,26 @@ pub unsafe extern "C" fn PJRT_Megascale_WaitForBarrier(
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(raw_args, handle_megascale_noop)
+        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(
+            raw_args,
+            handle_megascale_wait_for_barrier,
+        )
     }
+}
+
+/// Strongly-typed handler for [`PJRT_Megascale_AbortCollectives`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
+unsafe fn handle_megascale_abort_collectives(args: &mut PJRT_Megascale_Handle_Args) {
+    let mut st = extension_state().lock();
+    st.megascale_barriers = st.megascale_barriers.saturating_add(1);
+    args.handle = ptr::null_mut();
 }
 
 /// Aborts in-flight Megascale collectives (`PJRT_Megascale_AbortCollectives`).
@@ -1118,6 +1179,9 @@ pub unsafe extern "C" fn PJRT_Megascale_AbortCollectives(
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(raw_args, handle_megascale_noop)
+        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(
+            raw_args,
+            handle_megascale_abort_collectives,
+        )
     }
 }

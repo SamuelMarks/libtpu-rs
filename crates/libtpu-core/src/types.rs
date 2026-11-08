@@ -20,19 +20,21 @@ pub mod shape;
 
 pub use self::address::{
     Alignment, AlignmentBytes, BarIndex, BarOffset, BdfAddress, BitWidth, BundlePc, ByteSize,
-    CmemAddress, CmemOffset, CsrAddress, DeviceAddress, DimensionIndex, DimensionSize, DmaBufFd,
-    EventFdHandle, FileDescriptor, GranuleSize, HbmAddress, HbmOffset, HostVirtualAddress,
-    ImemAddress, ImemBundleIndex, InterruptVector, IoctlCommand, IommuGroupId, IovaAddr,
-    IovaAddress, LaneCount, MmioOffset, PageTableIndex, PciBdfAddress, PciBdfSlot, PciDeviceId,
-    PciRevisionId, PciVendorId, SmOffset, SmemAddress, SmemOffset, SpmemAddress, StructSize,
-    SublaneCount, VmOffset, VmemAddress, VmemOffset,
+    CmemAddress, CmemByteOffset, CmemOffset, CsrAddress, DeviceAddress, DimensionIndex,
+    DimensionSize, DmaBufFd, EventFdHandle, FileDescriptor, GranuleSize, HbmAddress, HbmByteOffset,
+    HbmOffset, HostVirtualAddress, ImemAddress, ImemBundleIndex, ImemBundlePc, InterruptVector,
+    IoctlCommand, IommuGroupId, IovaAddr, IovaAddress, LaneCount, MmioOffset, PageTableIndex,
+    PciBdfAddress, PciBdfSlot, PciDeviceId, PciRevisionId, PciVendorId, SmOffset, SmemAddress,
+    SmemByteOffset, SmemOffset, SpmemAddress, StructSize, SublaneCount, SublaneMask, VmOffset,
+    VmemAddress, VmemByteOffset, VmemOffset,
 };
 pub use self::element::{Bf16Scalar, ElementType, F16Scalar};
 pub use self::enums::{
-    BufferState, CollectiveOpKind, CollectiveReductionOp, CompilationPhase, DmaDirection,
-    EmbeddingEnginePhase, ExecutableState, HostBufferSemantics, HostCommandOpcode,
-    IciRoutingStrategy, MegascaleTransportType, MemoryKind, MemoryLayoutType, MemorySpaceKind,
-    PjrtExtensionType, PjrtValueType, ProfilerState, ReductionKind, RoutingStrategy, TilingKind,
+    BufferState, CollectiveOpKind, CollectiveReductionOp, CompilationPhase, CoordinationMethodId,
+    CoordinationOpcode, DmaDirection, DmaOpcode, EmbeddingEnginePhase, ExecutableState,
+    HostBufferSemantics, HostCommandOpcode, IciRoutingStrategy, MegascaleTransportType, MemoryKind,
+    MemoryLayoutType, MemorySpaceColor, MemorySpaceKind, MxuPrecisionMode, PjrtExtensionType,
+    PjrtValueType, ProfilerState, ReductionKind, RoutingStrategy, ScalarAluOpcode, TilingKind,
     TilingSpec,
 };
 pub use self::hardware::{
@@ -42,11 +44,12 @@ pub use self::hardware::{
 pub use self::ids::{
     AbiVersionNumber, BarrierId, BlockId, BufferId, CallbackId, ChannelId, ChipId, CommunicatorId,
     CompilerId, ContextId, ContinuationId, CoreId, CoreIndex, DeviceId, EventId, ExecutableId,
-    GlobalChipId, HostId, IncarnationId, LaunchId, LocalHardwareId, MatmulAccIndex, MemorySpaceId,
-    OrdinalSeed, OverlayId, PartitionId, PregId, PregIndex, ProcessIndex, RegionId, ReplicaId,
-    RequestId, RunId, SemaphoreId, SflagId, SliceId, SparseCoreId, SregId, SregIndex, SsaValueId,
-    StreamId, SyncFlagId, SyncFlagValue, TraceMeContextId, TransferManagerId, TransformId,
-    VmaskBits, VmaskIndex, VmregIndex, VregId, VregIndex, WindowId,
+    GlobalChipId, GmrAccumId, GmrIndex, HostId, IncarnationId, LaunchId, LocalHardwareId,
+    LogicalSlotId, MatmulAccIndex, MemorySpaceId, OrdinalSeed, OverlayId, PartitionId,
+    PhysicalPregId, PhysicalSregId, PhysicalVregId, PregId, PregIndex, ProcessIndex, RegionId,
+    ReplicaId, RequestId, RunId, SemaphoreId, SflagId, SliceId, SparseCoreId, SregId, SregIndex,
+    SsaValueId, StreamId, SyncFlagId, SyncFlagIndex, SyncFlagValue, TraceMeContextId,
+    TransferManagerId, TransformId, VmaskBits, VmaskIndex, VmregIndex, VregId, VregIndex, WindowId,
 };
 pub use self::shape::{
     Allocated, DimVec, DynamicDimVec, MemoryLayout, Shape, TensorShape, TypedDeviceBuffer,

@@ -444,10 +444,18 @@ impl TpuHal for SimulatedTpuHal {
         self.mmio.set_csr(BAR0_CSR_SYNC_FLAG_BASE, next_sync);
         self.mmio.record_execution_telemetry(vm_cycles);
         let reg_map = ChipRegisterMap::for_generation(self.topology.generation);
+        let imem_len = u64::try_from(program.instruction_bundles.len() * 64).unwrap_or(64);
+        self.mmio
+            .set_csr(reg_map.tc0_program_location_csr, imem_len);
         self.mmio.set_csr(reg_map.tc0_pc_csr, u64::from(vm_pc));
         self.mmio.set_csr(reg_map.tc0_run_status_csr, 2);
         self.mmio
             .set_csr(reg_map.tc0_vwait_sync_flag_state_csr, next_sync);
+        // Megacore dual-TensorCore (TC0 + TC1) synchronization
+        self.mmio
+            .set_csr(reg_map.tc1_program_location_csr(), imem_len);
+        self.mmio.set_csr(reg_map.tc1_pc_csr(), u64::from(vm_pc));
+        self.mmio.set_csr(reg_map.tc1_run_status_csr(), 2);
         self.mmio.set_csr(reg_map.sc0_run_status_csr, 2);
         drop(guard);
         Ok(())

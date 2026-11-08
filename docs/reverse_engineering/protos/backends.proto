@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: xla/autotuning/backends.proto
+
+syntax = "proto3";
+
+package xla.autotuner;
+
+enum Backend {
+  BACKEND_UNSPECIFIED = 0;
+  CPU = 1;
+  GPU = 2;
+  TPU = 3;
+}

@@ -13,7 +13,9 @@ use super::parser::{
 };
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::proto::{
-    HloComputationProto, HloInstructionProto, HloModuleProto, LayoutProto, ShapeProto,
+    ConvolutionDimensionNumbers, DotDimensionNumbers, HloComputationProto, HloInstructionProto,
+    HloModuleProto, LayoutProto, PaddingConfig, PaddingConfigDimension, ReplicaGroup, ShapeProto,
+    Window, WindowDimension,
 };
 use crate::types::{ElementType, MemoryLayout, Shape};
 use std::collections::BTreeMap;
@@ -832,6 +834,119 @@ pub fn hlo_ast_to_proto(ast: &AstModule) -> HloModuleProto {
                 .filter_map(|&d| i64::try_from(d).ok())
                 .collect();
 
+            let window = inst.window.as_ref().map(|w| {
+                let rank = w
+                    .size
+                    .len()
+                    .max(w.stride.len())
+                    .max(w.pad_low.len())
+                    .max(w.pad_high.len());
+                let mut dims = Vec::with_capacity(rank);
+                for idx in 0..rank {
+                    dims.push(WindowDimension {
+                        size: i64::try_from(w.size.get(idx).copied().unwrap_or(1)).unwrap_or(1),
+                        stride: i64::try_from(w.stride.get(idx).copied().unwrap_or(1)).unwrap_or(1),
+                        padding_low: i64::try_from(w.pad_low.get(idx).copied().unwrap_or(0))
+                            .unwrap_or(0),
+                        padding_high: i64::try_from(w.pad_high.get(idx).copied().unwrap_or(0))
+                            .unwrap_or(0),
+                        window_dilation: i64::try_from(w.rhs_dilate.get(idx).copied().unwrap_or(1))
+                            .unwrap_or(1),
+                        base_dilation: i64::try_from(w.lhs_dilate.get(idx).copied().unwrap_or(1))
+                            .unwrap_or(1),
+                        window_reversal: false,
+                    });
+                }
+                Window { dimensions: dims }
+            });
+
+            let convolution_dimension_numbers =
+                inst.conv_dim_labels
+                    .as_ref()
+                    .map(|c| ConvolutionDimensionNumbers {
+                        input_batch_dimension: i64::try_from(c.input_batch_dimension).unwrap_or(0),
+                        input_feature_dimension: i64::try_from(c.input_feature_dimension)
+                            .unwrap_or(0),
+                        input_spatial_dimensions: c
+                            .input_spatial_dimensions
+                            .iter()
+                            .filter_map(|&d| i64::try_from(d).ok())
+                            .collect(),
+                        kernel_input_feature_dimension: i64::try_from(
+                            c.kernel_input_feature_dimension,
+                        )
+                        .unwrap_or(0),
+                        kernel_output_feature_dimension: i64::try_from(
+                            c.kernel_output_feature_dimension,
+                        )
+                        .unwrap_or(0),
+                        kernel_spatial_dimensions: c
+                            .kernel_spatial_dimensions
+                            .iter()
+                            .filter_map(|&d| i64::try_from(d).ok())
+                            .collect(),
+                        output_batch_dimension: i64::try_from(c.output_batch_dimension)
+                            .unwrap_or(0),
+                        output_feature_dimension: i64::try_from(c.output_feature_dimension)
+                            .unwrap_or(0),
+                        output_spatial_dimensions: c
+                            .output_spatial_dimensions
+                            .iter()
+                            .filter_map(|&d| i64::try_from(d).ok())
+                            .collect(),
+                    });
+
+            let dot_dims_count = inst.dot_dims.lhs_contracting_dimensions.len()
+                + inst.dot_dims.rhs_contracting_dimensions.len()
+                + inst.dot_dims.lhs_batching_dimensions.len()
+                + inst.dot_dims.rhs_batching_dimensions.len();
+            let dot_dimension_numbers = (dot_dims_count > 0).then(|| DotDimensionNumbers {
+                lhs_contracting_dimensions: inst
+                    .dot_dims
+                    .lhs_contracting_dimensions
+                    .iter()
+                    .filter_map(|&d| i64::try_from(d).ok())
+                    .collect(),
+                rhs_contracting_dimensions: inst
+                    .dot_dims
+                    .rhs_contracting_dimensions
+                    .iter()
+                    .filter_map(|&d| i64::try_from(d).ok())
+                    .collect(),
+                lhs_batch_dimensions: inst
+                    .dot_dims
+                    .lhs_batching_dimensions
+                    .iter()
+                    .filter_map(|&d| i64::try_from(d).ok())
+                    .collect(),
+                rhs_batch_dimensions: inst
+                    .dot_dims
+                    .rhs_batching_dimensions
+                    .iter()
+                    .filter_map(|&d| i64::try_from(d).ok())
+                    .collect(),
+            });
+
+            let padding_config = (!inst.padding_config.is_empty()).then(|| PaddingConfig {
+                dimensions: inst
+                    .padding_config
+                    .iter()
+                    .map(|&(lo, hi, interior)| PaddingConfigDimension {
+                        edge_padding_low: i64::try_from(lo).unwrap_or(0),
+                        edge_padding_high: i64::try_from(hi).unwrap_or(0),
+                        interior_padding: i64::try_from(interior).unwrap_or(0),
+                    })
+                    .collect(),
+            });
+
+            let replica_groups: Vec<ReplicaGroup> = inst
+                .replica_groups
+                .iter()
+                .map(|rg| ReplicaGroup {
+                    replica_ids: rg.iter().filter_map(|&r| i64::try_from(r).ok()).collect(),
+                })
+                .collect();
+
             instructions.push(HloInstructionProto {
                 name: inst.name.clone(),
                 opcode: inst.opcode.clone(),
@@ -839,6 +954,18 @@ pub fn hlo_ast_to_proto(ast: &AstModule) -> HloModuleProto {
                 operand_ids,
                 called_computation_ids,
                 dimensions,
+                window,
+                convolution_dimension_numbers,
+                dot_dimension_numbers,
+                padding_config,
+                replica_groups,
+                channel_id: inst.channel_id.unwrap_or(0),
+                backend_config: inst
+                    .backend_config
+                    .as_deref()
+                    .unwrap_or_default()
+                    .as_bytes()
+                    .to_vec(),
                 id,
                 parameter_number: inst
                     .parameter_index
@@ -969,6 +1096,126 @@ pub fn hlo_proto_to_ast(proto: &HloModuleProto) -> AstModule {
                 &extra_attrs,
                 &[],
             );
+            let window = inst.window.as_ref().map(|w| HloWindowSpec {
+                size: w
+                    .dimensions
+                    .iter()
+                    .map(|d| usize::try_from(d.size.max(1)).unwrap_or(1))
+                    .collect(),
+                stride: w
+                    .dimensions
+                    .iter()
+                    .map(|d| usize::try_from(d.stride.max(1)).unwrap_or(1))
+                    .collect(),
+                pad_low: w
+                    .dimensions
+                    .iter()
+                    .map(|d| usize::try_from(d.padding_low.max(0)).unwrap_or(0))
+                    .collect(),
+                pad_high: w
+                    .dimensions
+                    .iter()
+                    .map(|d| usize::try_from(d.padding_high.max(0)).unwrap_or(0))
+                    .collect(),
+                lhs_dilate: w
+                    .dimensions
+                    .iter()
+                    .map(|d| usize::try_from(d.base_dilation.max(1)).unwrap_or(1))
+                    .collect(),
+                rhs_dilate: w
+                    .dimensions
+                    .iter()
+                    .map(|d| usize::try_from(d.window_dilation.max(1)).unwrap_or(1))
+                    .collect(),
+            });
+            let conv_dim_labels =
+                inst.convolution_dimension_numbers
+                    .as_ref()
+                    .map(|c| ConvDimensionNumbersAttr {
+                        input_batch_dimension: usize::try_from(c.input_batch_dimension.max(0))
+                            .unwrap_or(0),
+                        input_feature_dimension: usize::try_from(c.input_feature_dimension.max(0))
+                            .unwrap_or(0),
+                        input_spatial_dimensions: c
+                            .input_spatial_dimensions
+                            .iter()
+                            .filter_map(|&d| usize::try_from(d).ok())
+                            .collect(),
+                        kernel_input_feature_dimension: usize::try_from(
+                            c.kernel_input_feature_dimension.max(0),
+                        )
+                        .unwrap_or(0),
+                        kernel_output_feature_dimension: usize::try_from(
+                            c.kernel_output_feature_dimension.max(0),
+                        )
+                        .unwrap_or(0),
+                        kernel_spatial_dimensions: c
+                            .kernel_spatial_dimensions
+                            .iter()
+                            .filter_map(|&d| usize::try_from(d).ok())
+                            .collect(),
+                        output_batch_dimension: usize::try_from(c.output_batch_dimension.max(0))
+                            .unwrap_or(0),
+                        output_feature_dimension: usize::try_from(
+                            c.output_feature_dimension.max(0),
+                        )
+                        .unwrap_or(0),
+                        output_spatial_dimensions: c
+                            .output_spatial_dimensions
+                            .iter()
+                            .filter_map(|&d| usize::try_from(d).ok())
+                            .collect(),
+                    });
+            let dot_dims = inst.dot_dimension_numbers.as_ref().map_or_else(
+                DotDimensionNumbersAttr::default,
+                |d| DotDimensionNumbersAttr {
+                    lhs_batching_dimensions: d
+                        .lhs_batch_dimensions
+                        .iter()
+                        .filter_map(|&x| usize::try_from(x).ok())
+                        .collect(),
+                    rhs_batching_dimensions: d
+                        .rhs_batch_dimensions
+                        .iter()
+                        .filter_map(|&x| usize::try_from(x).ok())
+                        .collect(),
+                    lhs_contracting_dimensions: d
+                        .lhs_contracting_dimensions
+                        .iter()
+                        .filter_map(|&x| usize::try_from(x).ok())
+                        .collect(),
+                    rhs_contracting_dimensions: d
+                        .rhs_contracting_dimensions
+                        .iter()
+                        .filter_map(|&x| usize::try_from(x).ok())
+                        .collect(),
+                },
+            );
+            let padding_config = inst.padding_config.as_ref().map_or_else(Vec::new, |p| {
+                p.dimensions
+                    .iter()
+                    .map(|d| {
+                        (
+                            usize::try_from(d.edge_padding_low.max(0)).unwrap_or(0),
+                            usize::try_from(d.edge_padding_high.max(0)).unwrap_or(0),
+                            usize::try_from(d.interior_padding.max(0)).unwrap_or(0),
+                        )
+                    })
+                    .collect()
+            });
+            let replica_groups: Vec<Vec<usize>> = inst
+                .replica_groups
+                .iter()
+                .map(|rg| {
+                    rg.replica_ids
+                        .iter()
+                        .filter_map(|&r| usize::try_from(r).ok())
+                        .collect()
+                })
+                .collect();
+            let backend_config = (!inst.backend_config.is_empty())
+                .then(|| String::from_utf8_lossy(&inst.backend_config).into_owned());
+            let channel_id = (inst.channel_id > 0).then_some(inst.channel_id);
             instructions.push(HloInstructionAst {
                 name: inst.name.clone(),
                 is_root,
@@ -979,18 +1226,18 @@ pub fn hlo_proto_to_ast(proto: &HloModuleProto) -> AstModule {
                 parameter_index,
                 tuple_index,
                 called_computations,
-                window: None,
-                conv_dim_labels: None,
-                dot_dims: DotDimensionNumbersAttr::default(),
+                window,
+                conv_dim_labels,
+                dot_dims,
                 dimensions,
                 slice_bounds: Vec::new(),
-                padding_config: Vec::new(),
+                padding_config,
                 sharding: None,
                 custom_call_target: (!inst.custom_call_target.is_empty())
                     .then(|| inst.custom_call_target.clone()),
-                backend_config: None,
-                channel_id: None,
-                replica_groups: Vec::new(),
+                backend_config,
+                channel_id,
+                replica_groups,
                 control_predecessors: Vec::new(),
                 extra_attrs,
                 span: TokenSpan::default(),
@@ -1795,6 +2042,9 @@ fn lower_hlo_computations(ast: &AstModule) -> ParsedHloModule {
                                 }
                                 "or" => {
                                     opcode = TpuOpCode::Or;
+                                }
+                                "xor" => {
+                                    opcode = TpuOpCode::XorBytes;
                                 }
                                 _ => {}
                             }

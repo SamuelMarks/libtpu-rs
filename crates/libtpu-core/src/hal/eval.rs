@@ -19,6 +19,152 @@ pub const MAX_WHILE_ITERATIONS: usize = 1024;
 pub type CustomCallHandlerFn =
     dyn Fn(&[&[u8]], &InstructionAttrs) -> LibTpuResult<Vec<u8>> + Send + Sync;
 
+/// Multi-replica / multi-partition SPMD collective rendezvous engine (`SpmdCollectiveRendezvousEngine`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SpmdCollectiveRendezvousEngine;
+
+impl SpmdCollectiveRendezvousEngine {
+    /// Evaluates a multi-replica collective operation (`AllReduce`, `AllGather`, `ReduceScatter`,
+    /// `AllToAll`, `CollectivePermute`, `ReplicaId`, `PartitionId`) across `replica_inputs`,
+    /// honoring `attrs.replica_groups` and `attrs.source_target_pairs` when specified.
+    ///
+    /// # Arguments
+    ///
+    /// * `opcode` - Collective [`TpuOpCode`].
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `replica_inputs` - Input byte buffer for each replica (`0..num_replicas`).
+    /// * `attrs` - [`InstructionAttrs`] containing `reduce_op_kind`, `replica_groups`, and `source_target_pairs`.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn execute_rendezvous(
+        opcode: TpuOpCode,
+        elem_type: ElementType,
+        replica_inputs: &[Vec<u8>],
+        attrs: &InstructionAttrs,
+    ) -> Vec<Vec<u8>> {
+        let num_replicas = replica_inputs.len();
+        if num_replicas == 0 {
+            return Vec::new();
+        }
+        let unpacked: Vec<Vec<f64>> = replica_inputs
+            .iter()
+            .map(|b| elem_type.unpack_to_f64_vec(b))
+            .collect();
+        let elem_count = unpacked.first().map_or(0, Vec::len);
+
+        if opcode == TpuOpCode::CollectivePermute && !attrs.source_target_pairs.is_empty() {
+            let mut results = vec![vec![0.0_f64; elem_count]; num_replicas];
+            for &(src, dst) in &attrs.source_target_pairs {
+                if src < num_replicas
+                    && let Some(dst_slot) = results.get_mut(dst)
+                {
+                    *dst_slot = unpacked.get(src).cloned().unwrap_or_default();
+                }
+            }
+            return results
+                .into_iter()
+                .map(|v| elem_type.pack_from_f64_slice(&v))
+                .collect();
+        }
+
+        let groups: Vec<Vec<usize>> = if attrs.replica_groups.is_empty() {
+            vec![(0..num_replicas).collect()]
+        } else {
+            attrs.replica_groups.clone()
+        };
+
+        let mut results: Vec<Vec<f64>> = unpacked.clone();
+        for group in &groups {
+            let valid_members: Vec<usize> = group
+                .iter()
+                .copied()
+                .filter(|&r| r < num_replicas)
+                .collect();
+            if valid_members.is_empty() {
+                continue;
+            }
+            let init_val = match attrs.reduce_op_kind {
+                CollectiveReductionOp::Max => f64::NEG_INFINITY,
+                CollectiveReductionOp::Min => f64::INFINITY,
+                CollectiveReductionOp::Product => 1.0,
+                CollectiveReductionOp::Sum => 0.0,
+            };
+            let mut reduced = vec![init_val; elem_count];
+            let mut gathered = Vec::with_capacity(elem_count * valid_members.len());
+            for &rep_id in &valid_members {
+                let empty_slice: &[f64] = &[];
+                let r_vec = unpacked.get(rep_id).map_or(empty_slice, Vec::as_slice);
+                gathered.extend_from_slice(r_vec);
+                for (dst, &val) in reduced.iter_mut().zip(r_vec.iter()) {
+                    *dst = match attrs.reduce_op_kind {
+                        CollectiveReductionOp::Max => dst.max(val),
+                        CollectiveReductionOp::Min => dst.min(val),
+                        CollectiveReductionOp::Product => *dst * val,
+                        CollectiveReductionOp::Sum => *dst + val,
+                    };
+                }
+            }
+            let g_len = valid_members.len();
+            let chunk_len = (elem_count / g_len.max(1)).max(1);
+            for (pos_in_group, &rep_id) in valid_members.iter().enumerate() {
+                let out_vec = match opcode {
+                    TpuOpCode::AllGather => gathered.clone(),
+                    TpuOpCode::ReduceScatter => {
+                        let start = (pos_in_group * chunk_len).min(reduced.len());
+                        let end = (start + chunk_len).min(reduced.len());
+                        reduced.get(start..end).unwrap_or(&[]).to_vec()
+                    }
+                    TpuOpCode::CollectivePermute => {
+                        let prev_member = valid_members
+                            .get((pos_in_group + g_len - 1) % g_len)
+                            .copied()
+                            .unwrap_or(rep_id);
+                        unpacked.get(prev_member).cloned().unwrap_or_default()
+                    }
+                    TpuOpCode::AllToAll => {
+                        let mut a2a = Vec::with_capacity(elem_count);
+                        for &src_member in &valid_members {
+                            let empty_slice: &[f64] = &[];
+                            let src_vec =
+                                unpacked.get(src_member).map_or(empty_slice, Vec::as_slice);
+                            let start = (pos_in_group * chunk_len).min(src_vec.len());
+                            let end = (start + chunk_len).min(src_vec.len());
+                            a2a.extend_from_slice(src_vec.get(start..end).unwrap_or(&[]));
+                        }
+                        a2a
+                    }
+                    _ => reduced.clone(),
+                };
+                results
+                    .get_mut(rep_id)
+                    .into_iter()
+                    .for_each(|slot| slot.clone_from(&out_vec));
+            }
+        }
+        results
+            .into_iter()
+            .map(|v| elem_type.pack_from_f64_slice(&v))
+            .collect()
+    }
+
+    /// Evaluates `ReplicaId` or `PartitionId` for a device at `coordinate_index`.
+    ///
+    /// # Arguments
+    ///
+    /// * `elem_type` - Output scalar [`ElementType`] (`U32` or `S32`).
+    /// * `coordinate_index` - Zero-based replica or partition coordinate index.
+    #[must_use]
+    pub fn eval_device_coordinate_id(elem_type: ElementType, coordinate_index: usize) -> Vec<u8> {
+        let idx_i64 = i64::try_from(coordinate_index).unwrap_or(0);
+        if elem_type.is_integer() {
+            elem_type.pack_from_i64_slice(&[idx_i64])
+        } else {
+            #[allow(clippy::cast_precision_loss)]
+            elem_type.pack_from_f64_slice(&[idx_i64 as f64])
+        }
+    }
+}
+
 /// Returns the process-global custom-call handler registry map.
 fn custom_call_registry() -> &'static Mutex<BTreeMap<String, Arc<CustomCallHandlerFn>>> {
     static REGISTRY: OnceLock<Mutex<BTreeMap<String, Arc<CustomCallHandlerFn>>>> = OnceLock::new();
@@ -499,12 +645,12 @@ impl SimulatedTpuHal {
         clippy::cast_sign_loss,
         clippy::cast_possible_wrap
     )]
-    fn eval_integer_unary_op(
+    pub(super) fn eval_integer_unary_op(
         opcode: TpuOpCode,
         elem_type: ElementType,
         input_bytes: &[u8],
     ) -> Vec<u8> {
-        let vals = elem_type.unpack_to_i64_vec(input_bytes);
+        let vals = elem_type.unpack_to_i128_vec(input_bytes);
         let bit_width = u32::try_from(elem_type.bit_size())
             .unwrap_or(64)
             .clamp(1, 64);
@@ -513,32 +659,116 @@ impl SimulatedTpuHal {
         } else {
             (1_u64 << bit_width) - 1
         };
-        let mapped: Vec<i64> = match opcode {
+        let mapped: Vec<i128> = match opcode {
             TpuOpCode::NegF32 => vals.iter().map(|&v| v.wrapping_neg()).collect(),
             TpuOpCode::Abs => vals.iter().map(|&v| v.wrapping_abs()).collect(),
             TpuOpCode::Sign => vals.iter().map(|&v| v.signum()).collect(),
-            TpuOpCode::Not => vals.iter().map(|&v| !v).collect(),
+            TpuOpCode::Not => vals
+                .iter()
+                .map(|&v| {
+                    if elem_type == ElementType::Pred {
+                        i128::from(v == 0)
+                    } else {
+                        !v
+                    }
+                })
+                .collect(),
             TpuOpCode::PopulationCount => vals
                 .iter()
-                .map(|&v| i64::from(((v as u64) & bit_mask).count_ones()))
+                .map(|&v| i128::from(((v as u64) & bit_mask).count_ones()))
                 .collect(),
             TpuOpCode::CountLeadingZeros => vals
                 .iter()
                 .map(|&v| {
-                    i64::from(
+                    i128::from(
                         ((v as u64) & bit_mask)
                             .leading_zeros()
                             .saturating_sub(64 - bit_width),
                     )
                 })
                 .collect(),
+            TpuOpCode::Sort => {
+                let mut sorted = vals;
+                sorted.sort_unstable();
+                sorted
+            }
+            TpuOpCode::TopK => {
+                let mut desc = vals;
+                desc.sort_unstable_by(|a, b| b.cmp(a));
+                desc
+            }
+            TpuOpCode::Reverse => vals.iter().copied().rev().collect(),
+            TpuOpCode::Iota => (0..vals.len()).map(|i| i as i128).collect(),
+            TpuOpCode::ReduceMax => {
+                let mx = vals.iter().copied().max().unwrap_or(0);
+                vec![mx; vals.len()]
+            }
+            TpuOpCode::ReduceMin => {
+                let mn = vals.iter().copied().min().unwrap_or(0);
+                vec![mn; vals.len()]
+            }
             TpuOpCode::ReduceSumF32 => {
-                let sum = vals.iter().copied().fold(0_i64, i64::wrapping_add);
+                let sum = vals.iter().copied().fold(0_i128, i128::wrapping_add);
                 vec![sum; vals.len()]
             }
             _ => return Vec::new(),
         };
-        elem_type.pack_from_i64_slice(&mapped)
+        elem_type.pack_from_i128_slice(&mapped)
+    }
+
+    /// Evaluates a unary operation across `input_bytes` for complex [`ElementType`]s (`C64` and `C128`).
+    ///
+    /// # Arguments
+    ///
+    /// * `opcode` - Unary [`TpuOpCode`].
+    /// * `elem_type` - Complex [`ElementType`] (`C64` or `C128`).
+    /// * `input_bytes` - Source HBM byte buffer.
+    fn eval_complex_unary_op(
+        opcode: TpuOpCode,
+        elem_type: ElementType,
+        input_bytes: &[u8],
+    ) -> Vec<u8> {
+        let pairs = elem_type.unpack_to_complex_vec(input_bytes);
+        let mapped: Vec<(f64, f64)> = match opcode {
+            TpuOpCode::NegF32 => pairs.iter().map(|&(re, im)| (-re, -im)).collect(),
+            TpuOpCode::Abs => pairs.iter().map(|&(re, im)| (re.hypot(im), 0.0)).collect(),
+            TpuOpCode::ExpF32 => pairs
+                .iter()
+                .map(|&(re, im)| {
+                    let r = re.exp();
+                    (r * im.cos(), r * im.sin())
+                })
+                .collect(),
+            TpuOpCode::Log => pairs
+                .iter()
+                .map(|&(re, im)| (re.hypot(im).max(1e-24).ln(), im.atan2(re)))
+                .collect(),
+            TpuOpCode::Sqrt => pairs
+                .iter()
+                .map(|&(re, im)| {
+                    let r = re.hypot(im).sqrt();
+                    let theta = 0.5 * im.atan2(re);
+                    (r * theta.cos(), r * theta.sin())
+                })
+                .collect(),
+            TpuOpCode::Sine => pairs
+                .iter()
+                .map(|&(re, im)| (re.sin() * im.cosh(), re.cos() * im.sinh()))
+                .collect(),
+            TpuOpCode::Cosine => pairs
+                .iter()
+                .map(|&(re, im)| (re.cos() * im.cosh(), -re.sin() * im.sinh()))
+                .collect(),
+            TpuOpCode::TanhF32 => pairs
+                .iter()
+                .map(|&(re, im)| {
+                    let denom = ((2.0 * re).cosh() + (2.0 * im).cos()).max(1e-24);
+                    ((2.0 * re).sinh() / denom, (2.0 * im).sin() / denom)
+                })
+                .collect(),
+            _ => return Vec::new(),
+        };
+        elem_type.pack_from_complex_slice(&mapped)
     }
 
     /// Evaluates a single unary operation across `input_bytes`.
@@ -592,6 +822,12 @@ impl SimulatedTpuHal {
             let int_out = Self::eval_integer_unary_op(opcode, elem_type, input_bytes);
             if !int_out.is_empty() {
                 return int_out;
+            }
+        }
+        if matches!(elem_type, ElementType::C64 | ElementType::C128) {
+            let complex_out = Self::eval_complex_unary_op(opcode, elem_type, input_bytes);
+            if !complex_out.is_empty() {
+                return complex_out;
             }
         }
         let vals = elem_type.unpack_to_f64_vec(input_bytes);
@@ -1120,14 +1356,25 @@ impl SimulatedTpuHal {
                 c1.first().copied().unwrap_or(0.0),
                 c1.get(1).copied().unwrap_or(0.0),
             );
-            let res = if opcode == TpuOpCode::DivF32 {
-                let denom = b.norm_sqr().max(1e-24);
-                num_complex::Complex64::new(
-                    a.im.mul_add(b.im, a.re * b.re) / denom,
-                    a.re.mul_add(-b.im, a.im * b.re) / denom,
-                )
-            } else {
-                a * b
+            let res = match opcode {
+                TpuOpCode::AddF32 | TpuOpCode::AddS32 => a + b,
+                TpuOpCode::SubF32 => a - b,
+                TpuOpCode::DivF32 => {
+                    let denom = b.norm_sqr().max(1e-24);
+                    num_complex::Complex64::new(
+                        a.im.mul_add(b.im, a.re * b.re) / denom,
+                        a.re.mul_add(-b.im, a.im * b.re) / denom,
+                    )
+                }
+                TpuOpCode::Pow => {
+                    let ln_r = a.re.hypot(a.im).max(1e-24).ln();
+                    let theta = a.im.atan2(a.re);
+                    let exp_re = b.re.mul_add(ln_r, -b.im * theta);
+                    let exp_im = b.re.mul_add(theta, b.im * ln_r);
+                    let mag = exp_re.exp();
+                    num_complex::Complex64::new(mag * exp_im.cos(), mag * exp_im.sin())
+                }
+                _ => a * b,
             };
             out_complex.push(res.re);
             out_complex.push(res.im);
@@ -1155,9 +1402,31 @@ impl SimulatedTpuHal {
         b0: &[u8],
         b1: &[u8],
     ) -> Vec<u8> {
-        let v0 = elem_type.unpack_to_i64_vec(b0);
-        let v1 = elem_type.unpack_to_i64_vec(b1);
-        let is_unsigned = elem_type.is_unsigned_integer();
+        let v0 = elem_type.unpack_to_i128_vec(b0);
+        let v1 = elem_type.unpack_to_i128_vec(b1);
+        if opcode == TpuOpCode::Concatenate {
+            let mut joined = Vec::with_capacity(v0.len() + v1.len());
+            joined.extend_from_slice(&v0);
+            joined.extend_from_slice(&v1);
+            return elem_type.pack_from_i128_slice(&joined);
+        }
+        if opcode == TpuOpCode::Gather {
+            let gathered: Vec<i128> = v1
+                .iter()
+                .map(|&idx| {
+                    let pos = (idx.max(0) as usize) % v0.len().max(1);
+                    v0.get(pos).copied().unwrap_or(0)
+                })
+                .collect();
+            return elem_type.pack_from_i128_slice(&gathered);
+        }
+        if opcode == TpuOpCode::DynamicSlice {
+            let start = (v1.first().copied().unwrap_or(0).max(0) as usize) % v0.len().max(1);
+            let rotated: Vec<i128> = (0..v0.len())
+                .map(|i| v0.get((start + i) % v0.len().max(1)).copied().unwrap_or(0))
+                .collect();
+            return elem_type.pack_from_i128_slice(&rotated);
+        }
         let bit_width = u32::try_from(elem_type.bit_size())
             .unwrap_or(64)
             .clamp(1, 64);
@@ -1167,17 +1436,16 @@ impl SimulatedTpuHal {
         } else {
             (1_u64 << bit_width) - 1
         };
-        let out_vals: Vec<i64> = v0
+        let out_vals: Vec<i128> = v0
             .iter()
             .zip(v1.iter())
             .map(|(&x, &y)| match opcode {
                 TpuOpCode::AddF32 | TpuOpCode::AddS32 => x.wrapping_add(y),
                 TpuOpCode::SubF32 => x.wrapping_sub(y),
+                TpuOpCode::Pow => x.wrapping_pow(y.max(0) as u32),
                 TpuOpCode::DivF32 => {
                     if y == 0 {
                         -1
-                    } else if is_unsigned {
-                        ((x as u64) / (y as u64)) as i64
                     } else {
                         x.wrapping_div(y)
                     }
@@ -1185,52 +1453,28 @@ impl SimulatedTpuHal {
                 TpuOpCode::Rem => {
                     if y == 0 {
                         x
-                    } else if is_unsigned {
-                        ((x as u64) % (y as u64)) as i64
                     } else {
                         x.wrapping_rem(y)
                     }
                 }
-                TpuOpCode::MaxF32 => {
-                    if is_unsigned {
-                        (x as u64).max(y as u64) as i64
-                    } else {
-                        x.max(y)
-                    }
-                }
-                TpuOpCode::MinF32 => {
-                    if is_unsigned {
-                        (x as u64).min(y as u64) as i64
-                    } else {
-                        x.min(y)
-                    }
-                }
+                TpuOpCode::MaxF32 => x.max(y),
+                TpuOpCode::MinF32 => x.min(y),
                 TpuOpCode::And => x & y,
                 TpuOpCode::Or => x | y,
                 TpuOpCode::ShiftLeft => x.wrapping_shl((y.max(0) as u32) & shift_mask),
-                TpuOpCode::ShiftRightArithmetic => x.wrapping_shr((y.max(0) as u32) & shift_mask),
+                TpuOpCode::ShiftRightArithmetic => {
+                    i128::from((x as i64).wrapping_shr((y.max(0) as u32) & shift_mask))
+                }
                 TpuOpCode::ShiftRightLogical => {
-                    (((x as u64) & bit_mask).wrapping_shr((y.max(0) as u32) & shift_mask)) as i64
+                    i128::from(((x as u64) & bit_mask).wrapping_shr((y.max(0) as u32) & shift_mask))
                 }
-                TpuOpCode::CompareEq => i64::from(x == y),
-                TpuOpCode::CompareLt => {
-                    if is_unsigned {
-                        i64::from((x as u64) < (y as u64))
-                    } else {
-                        i64::from(x < y)
-                    }
-                }
-                TpuOpCode::CompareGt => {
-                    if is_unsigned {
-                        i64::from((x as u64) > (y as u64))
-                    } else {
-                        i64::from(x > y)
-                    }
-                }
+                TpuOpCode::CompareEq => i128::from(x == y),
+                TpuOpCode::CompareLt => i128::from(x < y),
+                TpuOpCode::CompareGt => i128::from(x > y),
                 _ => x.wrapping_mul(y),
             })
             .collect();
-        elem_type.pack_from_i64_slice(&out_vals)
+        elem_type.pack_from_i128_slice(&out_vals)
     }
 
     /// Evaluates a binary operation across `b0` and `b1`.
@@ -1269,7 +1513,15 @@ impl SimulatedTpuHal {
         let v0 = elem_type.unpack_to_f64_vec(b0);
         let v1 = elem_type.unpack_to_f64_vec(b1);
         if matches!(elem_type, ElementType::C64 | ElementType::C128)
-            && matches!(opcode, TpuOpCode::MulF32 | TpuOpCode::DivF32)
+            && matches!(
+                opcode,
+                TpuOpCode::AddF32
+                    | TpuOpCode::AddS32
+                    | TpuOpCode::SubF32
+                    | TpuOpCode::MulF32
+                    | TpuOpCode::DivF32
+                    | TpuOpCode::Pow
+            )
         {
             return Self::eval_complex_binary_op(opcode, elem_type, &v0, &v1);
         }
@@ -2034,14 +2286,13 @@ impl SimulatedTpuHal {
             }
             TpuOpCode::Convert => {
                 if u8::from(in_elem_type.is_integer()) & u8::from(out_elem_type.is_integer()) != 0 {
-                    let ints = in_elem_type.unpack_to_i64_vec(b0);
-                    return out_elem_type.pack_from_i64_slice(&ints);
+                    let ints = in_elem_type.unpack_to_i128_vec(b0);
+                    return out_elem_type.pack_from_i128_slice(&ints);
                 }
                 let vals = in_elem_type.unpack_to_f64_vec(b0);
                 return out_elem_type.pack_from_f64_slice(&vals);
             }
             TpuOpCode::Transpose => {
-                let vals = in_elem_type.unpack_to_f64_vec(b0);
                 let in_sh = bundle.attrs.input_shapes.first().cloned().unwrap_or(Shape {
                     element_type: in_elem_type,
                     dims: vec![2, 2],
@@ -2054,8 +2305,10 @@ impl SimulatedTpuHal {
                     (0..in_sh.rank()).rev().collect()
                 };
                 let out_sh = in_sh.transpose(&perm).unwrap_or(in_sh.clone());
-                let count = out_sh.element_count().min(vals.len());
-                let mut out_vals = Vec::with_capacity(count);
+                let vals_i128 = in_elem_type.unpack_to_i128_vec(b0);
+                let vals_f64 = in_elem_type.unpack_to_f64_vec(b0);
+                let count = out_sh.element_count().min(vals_f64.len());
+                let mut src_indices = Vec::with_capacity(count);
                 for dst_idx in 0..count {
                     let dst_coords = out_sh.linear_to_coords(dst_idx);
                     let mut src_coords = vec![0_usize; in_sh.rank()];
@@ -2063,12 +2316,23 @@ impl SimulatedTpuHal {
                         let dst_axis = perm.iter().position(|&p| p == src_axis).unwrap_or(src_axis);
                         *slot = dst_coords.get(dst_axis).copied().unwrap_or(0);
                     }
-                    let src_idx = in_sh.coords_to_linear(&src_coords).unwrap_or(0);
-                    out_vals.push(vals.get(src_idx).copied().unwrap_or(0.0));
+                    src_indices.push(in_sh.coords_to_linear(&src_coords).unwrap_or(0));
                 }
+                if out_elem_type.is_integer() {
+                    let out_ints: Vec<i128> = src_indices
+                        .iter()
+                        .map(|&si| vals_i128.get(si).copied().unwrap_or(0))
+                        .collect();
+                    return out_elem_type.pack_from_i128_slice(&out_ints);
+                }
+                let out_vals: Vec<f64> = src_indices
+                    .iter()
+                    .map(|&si| vals_f64.get(si).copied().unwrap_or(0.0))
+                    .collect();
                 return out_elem_type.pack_from_f64_slice(&out_vals);
             }
             TpuOpCode::BroadcastInDim => {
+                let vals_i128 = in_elem_type.unpack_to_i128_vec(b0);
                 let vals = in_elem_type.unpack_to_f64_vec(b0);
                 let out_sh = bundle.attrs.output_shape.clone().unwrap_or(Shape {
                     element_type: out_elem_type,
@@ -2083,7 +2347,7 @@ impl SimulatedTpuHal {
                     .cloned()
                     .unwrap_or(out_sh.clone());
                 let out_count = out_sh.element_count();
-                let mut out_vals = Vec::with_capacity(out_count);
+                let mut src_indices = Vec::with_capacity(out_count);
                 for dst_idx in 0..out_count {
                     let dst_coords = out_sh.linear_to_coords(dst_idx);
                     let mut src_coords = vec![0_usize; in_sh.rank()];
@@ -2101,12 +2365,23 @@ impl SimulatedTpuHal {
                         let dc = dst_coords.get(dst_axis).copied().unwrap_or(0);
                         *slot = dc % src_ext;
                     }
-                    let src_idx = in_sh.coords_to_linear(&src_coords).unwrap_or(0);
-                    out_vals.push(vals.get(src_idx).copied().unwrap_or(0.0));
+                    src_indices.push(in_sh.coords_to_linear(&src_coords).unwrap_or(0));
                 }
+                if out_elem_type.is_integer() {
+                    let out_ints: Vec<i128> = src_indices
+                        .iter()
+                        .map(|&si| vals_i128.get(si).copied().unwrap_or(0))
+                        .collect();
+                    return out_elem_type.pack_from_i128_slice(&out_ints);
+                }
+                let out_vals: Vec<f64> = src_indices
+                    .iter()
+                    .map(|&si| vals.get(si).copied().unwrap_or(0.0))
+                    .collect();
                 return out_elem_type.pack_from_f64_slice(&out_vals);
             }
             TpuOpCode::Slice => {
+                let vals_i128 = in_elem_type.unpack_to_i128_vec(b0);
                 let vals = in_elem_type.unpack_to_f64_vec(b0);
                 let in_sh = bundle.attrs.input_shapes.first().cloned().unwrap_or(Shape {
                     element_type: in_elem_type,
@@ -2115,7 +2390,7 @@ impl SimulatedTpuHal {
                     layout: MemoryLayout::default_tpu_tiled(1),
                 });
                 if !bundle.attrs.slice_starts.is_empty() {
-                    let mut out_vals = Vec::new();
+                    let mut kept_indices = Vec::new();
                     let in_count = in_sh.element_count().min(vals.len());
                     for idx in 0..in_count {
                         let coords = in_sh.linear_to_coords(idx);
@@ -2141,9 +2416,20 @@ impl SimulatedTpuHal {
                             }
                         }
                         if keep {
-                            out_vals.push(vals.get(idx).copied().unwrap_or(0.0));
+                            kept_indices.push(idx);
                         }
                     }
+                    if out_elem_type.is_integer() {
+                        let out_ints: Vec<i128> = kept_indices
+                            .iter()
+                            .map(|&idx| vals_i128.get(idx).copied().unwrap_or(0))
+                            .collect();
+                        return out_elem_type.pack_from_i128_slice(&out_ints);
+                    }
+                    let out_vals: Vec<f64> = kept_indices
+                        .iter()
+                        .map(|&idx| vals.get(idx).copied().unwrap_or(0.0))
+                        .collect();
                     return out_elem_type.pack_from_f64_slice(&out_vals);
                 }
                 return b0.to_vec();
@@ -2242,6 +2528,15 @@ impl SimulatedTpuHal {
                     }
                     return cur;
                 }
+                for sub_prog in &bundle.attrs.sub_computations {
+                    for sub_b in sub_prog {
+                        cur = Self::eval_bundle_with_attrs(sub_b, out_elem_type, &[&cur]);
+                    }
+                }
+                return cur;
+            }
+            TpuOpCode::Call => {
+                let mut cur = b0.to_vec();
                 for sub_prog in &bundle.attrs.sub_computations {
                     for sub_b in sub_prog {
                         cur = Self::eval_bundle_with_attrs(sub_b, out_elem_type, &[&cur]);

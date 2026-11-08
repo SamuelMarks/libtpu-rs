@@ -43,6 +43,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: proto-sync
+        name: verify 1:1 bidirectional Rust <-> .proto schema parity
+        entry: python3 scripts/pre_commit.py proto-sync
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: cargo-test
         name: cargo test, pytest & ctest
         entry: python3 scripts/pre_commit.py test

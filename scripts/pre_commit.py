@@ -1162,6 +1162,205 @@ def verify_rust_and_c_abi_sources(repo_root: Path) -> list[str]:
     return errors
 
 
+def parse_proto_messages(proto_dir: Path) -> dict[str, dict[int, str]]:
+    """Parses `.proto` files in `proto_dir` into `full_message_name -> {tag: field_name}`.
+
+    Args:
+        proto_dir: Directory containing `.proto` schema files.
+
+    Returns:
+        Dictionary mapping fully-qualified message names to `{field_tag: field_name}` dicts.
+    """
+    messages: dict[str, dict[int, str]] = {}
+    for proto_file in sorted(proto_dir.glob("*.proto")):
+        pkg = ""
+        scope_stack: list[tuple[str, str]] = []
+        for raw_line in proto_file.read_text(encoding="utf-8").splitlines():
+            line = raw_line.split("//", 1)[0].strip()
+            if not line:
+                continue
+            pkg_m = re.match(r"^package\s+([A-Za-z0-9_.]+)\s*;", line)
+            if pkg_m:
+                pkg = pkg_m.group(1)
+                continue
+            block_m = re.match(r"^(message|enum|oneof)\s+([A-Za-z0-9_]+)\s*\{", line)
+            if block_m:
+                kind, bname = block_m.groups()
+                scope_stack.append((kind, bname))
+                if kind == "message":
+                    msg_chain = ".".join(n for k, n in scope_stack if k == "message")
+                    full_name = f"{pkg}.{msg_chain}" if pkg else msg_chain
+                    messages.setdefault(full_name, {})
+            elif (
+                scope_stack
+                and any(k == "message" for k, _ in scope_stack)
+                and scope_stack[-1][0] != "enum"
+            ):
+                field_m = re.match(
+                    r"^(?:optional\s+|repeated\s+)?(?:map<[^>]+>|[A-Za-z0-9_.]+)"
+                    r"\s+([A-Za-z0-9_]+)\s*=\s*([0-9]+)",
+                    line,
+                )
+                if field_m:
+                    fname, ftag = field_m.groups()
+                    msg_chain = ".".join(n for k, n in scope_stack if k == "message")
+                    full_name = f"{pkg}.{msg_chain}" if pkg else msg_chain
+                    messages.setdefault(full_name, {})[int(ftag)] = fname
+            for _ in range(line.count("}")):
+                if scope_stack:
+                    scope_stack.pop()
+    return messages
+
+
+def parse_rust_proto_structs(
+    proto_rs_dir: Path,
+) -> tuple[dict[str, tuple[str, dict[int, str]]], list[str]]:
+    """Parses Rust `prost::Message` structs in `proto_rs_dir` and `impl_proto_schema_message!`.
+
+    Args:
+        proto_rs_dir: Directory containing `crates/libtpu-core/src/proto/*.rs` files.
+
+    Returns:
+        Tuple of `(mapped_structs, unregistered_struct_names)` where `mapped_structs` maps
+        `full_proto_name -> (rust_struct_name, {tag: field_name})`.
+    """
+    mapped_structs: dict[str, tuple[str, dict[int, str]]] = {}
+    unregistered: list[str] = []
+    for rs_file in sorted(proto_rs_dir.glob("*.rs")):
+        text = rs_file.read_text(encoding="utf-8")
+        mappings = dict(
+            re.findall(
+                r'impl_proto_schema_message!\(\s*([A-Za-z0-9_]+)\s*,\s*"([^"]+)"\s*\)',
+                text,
+            )
+        )
+        for m in re.finditer(
+            r"#\[derive\([^\]]*Message[^\]]*\)\]\s*pub struct ([A-Za-z0-9_]+)\s*\{([^}]*)\}",
+            text,
+            re.S,
+        ):
+            sname, body = m.groups()
+            if sname not in mappings:
+                unregistered.append(sname)
+                continue
+            tags: dict[int, str] = {}
+            for fm in re.finditer(r"#\[prost\(([^\]]+)\)\]\s*pub (?:r#)?([A-Za-z0-9_]+):", body):
+                attr, fname = fm.groups()
+                tm = re.search(r'tag\s*=\s*"([0-9]+)"', attr)
+                if tm:
+                    tags[int(tm.group(1))] = fname
+                else:
+                    om = re.search(r'tags\s*=\s*"([^"]+)"', attr)
+                    if om:
+                        for raw_t in om.group(1).split(","):
+                            t_str = raw_t.strip()
+                            if t_str.isdigit():
+                                tags[int(t_str)] = fname
+            mapped_structs[mappings[sname]] = (sname, tags)
+    return mapped_structs, unregistered
+
+
+def verify_rust_to_proto_1to1(repo_root: Path) -> list[str]:
+    """Verifies 1:1 Rust -> `.proto` correspondence across all `prost::Message` structs.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+
+    Returns:
+        List of diagnostic error strings (empty when 100% synchronized).
+    """
+    errors: list[str] = []
+    proto_dir = repo_root / "docs" / "reverse_engineering" / "protos"
+    proto_rs_dir = repo_root / "crates" / "libtpu-core" / "src" / "proto"
+    if not proto_dir.exists() or not proto_rs_dir.exists():
+        errors.append("Missing docs/reverse_engineering/protos or crates/libtpu-core/src/proto")
+        return errors
+
+    proto_messages = parse_proto_messages(proto_dir)
+    rust_structs, unregistered = parse_rust_proto_structs(proto_rs_dir)
+    if unregistered:
+        errors.append(f"Unregistered prost::Message struct(s): {unregistered}")
+
+    for proto_full, (sname, rtags) in sorted(rust_structs.items()):
+        if proto_full not in proto_messages:
+            errors.append(f"Rust struct {sname} targets missing .proto message '{proto_full}'")
+            continue
+        pfields = proto_messages[proto_full]
+        extra_tags = sorted(set(rtags.keys()) - set(pfields.keys()))
+        if extra_tags:
+            errors.append(
+                f"Rust struct {sname} ({proto_full}) has extra field tags {extra_tags} "
+                "not in .proto"
+            )
+    return errors
+
+
+def verify_proto_to_rust_1to1(repo_root: Path) -> list[str]:
+    """Verifies 1:1 `.proto` -> Rust correspondence and build-script codegen hygiene.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+
+    Returns:
+        List of diagnostic error strings (empty when 100% synchronized).
+    """
+    errors: list[str] = []
+    proto_dir = repo_root / "docs" / "reverse_engineering" / "protos"
+    proto_rs_dir = repo_root / "crates" / "libtpu-core" / "src" / "proto"
+    if not proto_dir.exists() or not proto_rs_dir.exists():
+        errors.append("Missing docs/reverse_engineering/protos or crates/libtpu-core/src/proto")
+        return errors
+
+    proto_messages = parse_proto_messages(proto_dir)
+    rust_structs, _ = parse_rust_proto_structs(proto_rs_dir)
+    unmapped_protos = sorted(set(proto_messages.keys()) - set(rust_structs.keys()))
+    if unmapped_protos:
+        errors.append(
+            f".proto message(s) missing corresponding Rust struct: {unmapped_protos[:10]}"
+        )
+    for proto_full, (sname, rtags) in sorted(rust_structs.items()):
+        if proto_full in proto_messages:
+            pfields = proto_messages[proto_full]
+            missing_tags = sorted(set(pfields.keys()) - set(rtags.keys()))
+            if missing_tags:
+                errors.append(
+                    f".proto message '{proto_full}' has field tags {missing_tags} "
+                    f"omitted from Rust struct {sname}"
+                )
+
+    build_rs = repo_root / "crates" / "libtpu-core" / "build.rs"
+    proto_root_rs = repo_root / "crates" / "libtpu-core" / "src" / "proto.rs"
+    if build_rs.exists() and "SYNTHETIC_DEPENDENCY_PROTOS" in build_rs.read_text(encoding="utf-8"):
+        errors.append("Forbidden inline SYNTHETIC_DEPENDENCY_PROTOS found in build.rs")
+    if proto_root_rs.exists() and 'env!("OUT_DIR")' not in proto_root_rs.read_text(
+        encoding="utf-8"
+    ):
+        errors.append("prost-build output in OUT_DIR is not included in proto.rs")
+
+    return errors
+
+
+def hook_proto_sync(repo_root: Path, check_only: bool = False) -> int:
+    """Verifies 1:1 bidirectional Rust <-> `.proto` schema parity across the repository.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+        check_only: Unused flag kept for uniform stage handler signature.
+
+    Returns:
+        Zero on success, or non-zero if any Rust <-> `.proto` discrepancy is detected.
+    """
+    _ = check_only
+    print("==> [proto-sync] Verifying 1:1 bidirectional Rust <-> .proto schema parity...")
+    errors = verify_rust_to_proto_1to1(repo_root) + verify_proto_to_rust_1to1(repo_root)
+    if errors:
+        for err_msg in errors:
+            print(f"Proto-Sync Error: {err_msg}", file=sys.stderr)
+        return 1
+    print("==> [proto-sync] Verified 100% 1:1 Rust <-> .proto field, tag, and schema parity.")
+    return 0
+
+
 def verify_binary_vtable_abi(cdylib_path: Path) -> list[str]:
     """Loads `cdylib_path` via `ctypes.CDLL` and verifies `libtpu.so` binary ABI invariants.
 
@@ -1328,7 +1527,15 @@ def hook_all(repo_root: Path, check_only: bool = False) -> int:
     print("========================================================")
     print(" Running libtpu-rs Pre-commit Hook Pipeline (Python)")
     print("========================================================")
-    for stage_fn in (hook_fmt, hook_build, hook_clippy, hook_abi, hook_test, hook_shields):
+    for stage_fn in (
+        hook_fmt,
+        hook_build,
+        hook_clippy,
+        hook_abi,
+        hook_proto_sync,
+        hook_test,
+        hook_shields,
+    ):
         rc = stage_fn(repo_root, check_only=check_only)
         if rc != 0:
             return rc
@@ -1362,6 +1569,7 @@ def main(argv: list[str] | None = None) -> int:
             "clippy",
             "lint",
             "abi",
+            "proto-sync",
             "test",
             "shields",
             "all",
@@ -1394,6 +1602,8 @@ def main(argv: list[str] | None = None) -> int:
             return hook_clippy(repo_root, check_only=check_only)
         if stage == "abi":
             return hook_abi(repo_root, check_only=check_only)
+        if stage == "proto-sync":
+            return hook_proto_sync(repo_root, check_only=check_only)
         if stage == "test":
             return hook_test(repo_root, check_only=check_only)
         if stage == "shields":

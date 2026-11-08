@@ -918,7 +918,10 @@ impl CompiledProgram {
         let mut next_slot: usize = 0;
         let mut pc: u32 = 0;
 
-        for comp in &proto.computations {
+        let comp_by_id: std::collections::BTreeMap<i64, &crate::proto::HloComputationProto> =
+            proto.computations.iter().map(|c| (c.id, c)).collect();
+
+        for comp in proto.computations.iter().rev().take(1) {
             for inst in &comp.instructions {
                 if let Some(shape) = &inst.shape {
                     if shape.element_type != 0 {
@@ -940,8 +943,7 @@ impl CompiledProgram {
                     slot_shapes.push(inst_shape.clone());
                     param_shapes.push(inst_shape);
                 } else {
-                    let (op, et, _, _) = Self::parse_opcode_mnemonic(&inst.opcode);
-                    root_op = op;
+                    let (mut op, et, _, _) = Self::parse_opcode_mnemonic(&inst.opcode);
                     elem_type = et;
                     let op_slots: Vec<usize> = if inst.operand_ids.is_empty() {
                         (0..op.arity()).collect()
@@ -952,6 +954,81 @@ impl CompiledProgram {
                             .map(|(idx, id)| id_to_slot.get(id).copied().unwrap_or(idx))
                             .collect()
                     };
+
+                    let mut reduce_op_kind = crate::types::CollectiveReductionOp::Sum;
+                    let mut sub_computations = Vec::new();
+                    for &cid in &inst.called_computation_ids {
+                        if let Some(&sub_comp) = comp_by_id.get(&cid) {
+                            let mut sub_id_to_slot = std::collections::BTreeMap::new();
+                            let mut sub_bundles = Vec::new();
+                            for sub_inst in &sub_comp.instructions {
+                                if sub_inst.opcode == "parameter" {
+                                    let p_idx = usize::try_from(sub_inst.parameter_number.max(0))
+                                        .unwrap_or(0);
+                                    let mapped = op_slots.get(p_idx).copied().unwrap_or(0);
+                                    sub_id_to_slot.insert(sub_inst.id, mapped);
+                                } else {
+                                    match sub_inst.opcode.as_str() {
+                                        "maximum" => {
+                                            reduce_op_kind =
+                                                crate::types::CollectiveReductionOp::Max;
+                                            op = TpuOpCode::ReduceMax;
+                                        }
+                                        "minimum" => {
+                                            reduce_op_kind =
+                                                crate::types::CollectiveReductionOp::Min;
+                                            op = TpuOpCode::ReduceMin;
+                                        }
+                                        "multiply" => {
+                                            reduce_op_kind =
+                                                crate::types::CollectiveReductionOp::Product;
+                                        }
+                                        "and" => {
+                                            op = TpuOpCode::And;
+                                        }
+                                        "or" => {
+                                            op = TpuOpCode::Or;
+                                        }
+                                        "xor" => {
+                                            op = TpuOpCode::XorBytes;
+                                        }
+                                        _ => {}
+                                    }
+                                    let (sub_op, _, _, _) =
+                                        Self::parse_opcode_mnemonic(&sub_inst.opcode);
+                                    let sub_op_slots: Vec<usize> = sub_inst
+                                        .operand_ids
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, id)| sub_id_to_slot.get(id).copied().unwrap_or(i))
+                                        .collect();
+                                    let sub_out_slot = next_slot;
+                                    next_slot += 1;
+                                    slot_shapes.push(inst_shape.clone());
+                                    sub_id_to_slot.insert(sub_inst.id, sub_out_slot);
+                                    let sub_pc = u32::try_from(sub_bundles.len()).unwrap_or(0);
+                                    sub_bundles.push(TpuInstructionBundle {
+                                        pc_offset: sub_pc,
+                                        opcode: sub_op,
+                                        operand_slots: sub_op_slots,
+                                        output_slot: sub_out_slot,
+                                        sync_flag_id: sub_pc + 1,
+                                        attrs: InstructionAttrs {
+                                            input_shapes: vec![inst_shape.clone()],
+                                            output_shape: Some(inst_shape.clone()),
+                                            ..InstructionAttrs::default()
+                                        },
+                                    });
+                                    if matches!(inst.opcode.as_str(), "fusion" | "call") {
+                                        op = sub_op;
+                                    }
+                                }
+                            }
+                            sub_computations.push(sub_bundles);
+                        }
+                    }
+
+                    root_op = op;
                     let in_shapes: Vec<Shape> = op_slots
                         .iter()
                         .filter_map(|&s| slot_shapes.get(s).cloned())
@@ -965,6 +1042,14 @@ impl CompiledProgram {
                         .iter()
                         .filter_map(|&d| usize::try_from(d).ok())
                         .collect();
+                    let mut replica_groups = Vec::new();
+                    for rg in &inst.replica_groups {
+                        let mut grp = Vec::new();
+                        for &r in &rg.replica_ids {
+                            grp.push(usize::try_from(r.max(0)).unwrap_or(0));
+                        }
+                        replica_groups.push(grp);
+                    }
                     bundles.push(TpuInstructionBundle {
                         pc_offset: pc,
                         opcode: op,
@@ -978,6 +1063,9 @@ impl CompiledProgram {
                             reduce_dims: inst_dims.clone(),
                             permutation: inst_dims.clone(),
                             broadcast_dims: inst_dims,
+                            reduce_op_kind,
+                            replica_groups,
+                            sub_computations,
                             ..InstructionAttrs::default()
                         },
                     });
@@ -1723,6 +1811,15 @@ impl CompiledProgram {
                 TpuOpCode::ReduceSumF32,
                 ElementType::F32,
                 1,
+                &[4],
+            ),
+            ("reduce", TpuOpCode::ReduceSumF32, ElementType::F32, 1, &[4]),
+            ("while", TpuOpCode::While, ElementType::F32, 1, &[4]),
+            (
+                "conditional",
+                TpuOpCode::Conditional,
+                ElementType::F32,
+                2,
                 &[4],
             ),
             (

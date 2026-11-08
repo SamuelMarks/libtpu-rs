@@ -425,6 +425,10 @@ pub struct InstructionAttrs {
     pub feature_group_count: usize,
     /// Number of batch groups in `convolution` (`batch_group_count`, default `1`).
     pub batch_group_count: usize,
+    /// Replica group participant IDs for collective operations (`AllReduce`, `AllGather`, `ReduceScatter`, `AllToAll`).
+    pub replica_groups: Vec<Vec<usize>>,
+    /// Source-to-target replica pairs `(src, dst)` for `CollectivePermute`.
+    pub source_target_pairs: Vec<(usize, usize)>,
 }
 
 /// Lowered VLIW hardware instruction bundle targeting a TPU `TensorCore`.

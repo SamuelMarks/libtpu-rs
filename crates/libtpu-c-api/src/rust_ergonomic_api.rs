@@ -1,6 +1,7 @@
 //! Ergonomic `libtpu_rs_*` C/C++/Python FFI helper entrypoints.
 
 use super::*;
+use libtpu_core::proto::ProtoSchemaMessage;
 
 // ============================================================================
 // Clean C / C++20 FFI Entrypoints (`libtpu_rs_*`)
@@ -698,6 +699,511 @@ pub unsafe extern "C" fn libtpu_rs_executable_flops(
     unsafe { (*executable).inner.executable.program.cost_analysis.flops }
 }
 
+/// Creates a new in-memory [`libtpu_core::distributed::DistributedCoordinator`] handle (`libtpu_rs_coordinator_create`).
+#[unsafe(no_mangle)]
+pub extern "C" fn libtpu_rs_coordinator_create() -> *mut std::ffi::c_void {
+    let coord = Box::new(libtpu_core::distributed::DistributedCoordinator::new());
+    Box::into_raw(coord).cast::<std::ffi::c_void>()
+}
+
+/// Destroys a coordinator handle created by [`libtpu_rs_coordinator_create`] (`libtpu_rs_coordinator_destroy`).
+///
+/// # Arguments
+///
+/// * `coordinator` - Coordinator handle pointer (may be null).
+///
+/// # Safety
+///
+/// `coordinator` must be null or a pointer returned by [`libtpu_rs_coordinator_create`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_coordinator_destroy(coordinator: *mut std::ffi::c_void) {
+    if !coordinator.is_null() {
+        // SAFETY: `coordinator` was allocated via `Box::into_raw` in `libtpu_rs_coordinator_create`.
+        unsafe {
+            drop(Box::from_raw(
+                coordinator.cast::<libtpu_core::distributed::DistributedCoordinator>(),
+            ));
+        }
+    }
+}
+
+/// Inserts a key-value entry into a coordinator handle (`libtpu_rs_coordinator_put_kv`).
+///
+/// # Arguments
+///
+/// * `coordinator` - Coordinator handle pointer.
+/// * `key` - Null-terminated UTF-8 key string.
+/// * `val` - Value byte buffer pointer.
+/// * `val_len` - Byte length of `val`.
+///
+/// # Safety
+///
+/// `coordinator`, `key`, and `val` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_coordinator_put_kv(
+    coordinator: *mut std::ffi::c_void,
+    key: *const c_char,
+    val: *const u8,
+    val_len: usize,
+) -> LibTpuCStatus {
+    if coordinator.is_null() || key.is_null() || (val.is_null() && val_len > 0) {
+        return c_status_err(&LibTpuError::NullPointer {
+            parameter: "libtpu_rs_coordinator_put_kv",
+        });
+    }
+    // SAFETY: `coordinator`, `key`, and `val` are non-null.
+    unsafe {
+        let coord = &*coordinator.cast::<libtpu_core::distributed::DistributedCoordinator>();
+        let key_str = CStr::from_ptr(key).to_string_lossy();
+        let val_vec = if val_len == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(val, val_len).to_vec()
+        };
+        coord.put_key_value(&key_str, val_vec);
+        c_status_ok()
+    }
+}
+
+/// Looks up a key-value entry from a coordinator handle (`libtpu_rs_coordinator_get_kv`).
+///
+/// Returns the byte length of the value, or `0` if `coordinator`/`key` is null or the key is missing.
+///
+/// # Arguments
+///
+/// * `coordinator` - Coordinator handle pointer.
+/// * `key` - Null-terminated UTF-8 key string.
+/// * `out_buf` - Optional destination byte buffer.
+/// * `buf_len` - Capacity of `out_buf` in bytes.
+///
+/// # Safety
+///
+/// `coordinator`, `key`, and `out_buf` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_coordinator_get_kv(
+    coordinator: *const std::ffi::c_void,
+    key: *const c_char,
+    out_buf: *mut u8,
+    buf_len: usize,
+) -> usize {
+    if coordinator.is_null() || key.is_null() {
+        return 0;
+    }
+    // SAFETY: `coordinator` and `key` are non-null.
+    let val_opt = unsafe {
+        let coord = &*coordinator.cast::<libtpu_core::distributed::DistributedCoordinator>();
+        let key_str = CStr::from_ptr(key).to_string_lossy();
+        coord.try_get_key_value(&key_str)
+    };
+    let Some(bytes) = val_opt else {
+        return 0;
+    };
+    if !out_buf.is_null() && buf_len > 0 {
+        let copy_len = bytes.len().min(buf_len);
+        // SAFETY: `out_buf` is valid for `copy_len` bytes.
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, copy_len);
+        }
+    }
+    bytes.len()
+}
+
+/// Helper to copy a UTF-8 string into an optional caller buffer `(out_buf, buf_len)` and return the full byte length.
+///
+/// # Arguments
+///
+/// * `s` - Source UTF-8 string slice.
+/// * `out_buf` - Optional destination character buffer.
+/// * `buf_len` - Capacity of `out_buf` in bytes (including null terminator).
+unsafe fn copy_str_to_c_buf(s: &str, out_buf: *mut c_char, buf_len: usize) -> usize {
+    let bytes = s.as_bytes();
+    if (u8::from(!out_buf.is_null()) & u8::from(buf_len > 0)) != 0 {
+        let copy_len = bytes.len().min(buf_len.saturating_sub(1));
+        // SAFETY: `out_buf` has at least `copy_len + 1` bytes capacity.
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out_buf, copy_len);
+            *out_buf.add(copy_len) = 0;
+        }
+    }
+    bytes.len()
+}
+
+/// Disassembles a [`PJRT_LoadedExecutable`] into a multi-line `DeepSea` LLO assembly listing (`libtpu_rs_disassemble_executable_llo`).
+///
+/// # Arguments
+///
+/// * `executable` - Pointer to [`PJRT_LoadedExecutable`].
+/// * `out_buf` - Optional destination character buffer.
+/// * `buf_len` - Capacity of `out_buf` in bytes (including null terminator).
+///
+/// # Safety
+///
+/// `executable` and `out_buf` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_disassemble_executable_llo(
+    executable: *const PJRT_LoadedExecutable,
+    out_buf: *mut c_char,
+    buf_len: usize,
+) -> usize {
+    if executable.is_null() {
+        return 0;
+    }
+    // SAFETY: `executable` is non-null.
+    let prog = unsafe { &(*executable).inner.executable.program };
+    let vliw_bundles: Vec<_> = prog
+        .instruction_bundles
+        .iter()
+        .map(libtpu_core::compiler::TpuInstructionBundle::encode_architectural_bundle)
+        .collect();
+    let listing = libtpu_core::compiler::format_llo_assembly(&vliw_bundles);
+    // SAFETY: Delegated to `copy_str_to_c_buf` with caller's `out_buf` and `buf_len`.
+    unsafe { copy_str_to_c_buf(&listing, out_buf, buf_len) }
+}
+
+/// Registers an `OpenXLA` Typed FFI v0.2 [`crate::extensions::XLA_FFI_Handler`] callback
+/// (`libtpu_rs_register_ffi_handler`).
+///
+/// # Arguments
+///
+/// * `target_name` - Null-terminated UTF-8 custom-call target name (`"my_ffi_op"`).
+/// * `handler` - Function pointer matching `XLA_FFI_Error* (*)(XLA_FFI_CallFrame*)`.
+///
+/// # Safety
+///
+/// `target_name` must be null or a valid null-terminated C string, and `handler` must be a valid
+/// function pointer safe to invoke from execution threads.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_register_ffi_handler(
+    target_name: *const c_char,
+    handler: Option<crate::extensions::XLA_FFI_Handler>,
+) -> LibTpuCStatus {
+    if target_name.is_null() {
+        return c_status_err(&LibTpuError::NullPointer {
+            parameter: "target_name",
+        });
+    }
+    let Some(fn_ptr) = handler else {
+        return c_status_err(&LibTpuError::NullPointer {
+            parameter: "handler",
+        });
+    };
+    // SAFETY: `target_name` is non-null.
+    let name_str = unsafe { CStr::from_ptr(target_name).to_string_lossy().into_owned() };
+    let fn_addr = fn_ptr as usize;
+    libtpu_core::hal::register_custom_call_handler(&name_str, move |inputs, attrs| {
+        let default_shape = libtpu_core::types::Shape {
+            element_type: ElementType::F32,
+            dims: vec![4],
+            dynamic_dims: vec![false],
+            layout: libtpu_core::types::MemoryLayout::default_tpu_tiled(1),
+        };
+        let out_shape = attrs.output_shape.as_ref().unwrap_or(&default_shape);
+        let out_len = out_shape.unpadded_byte_size().0.max(4);
+        let mut out_bytes = inputs.first().copied().unwrap_or(&[]).to_vec();
+        out_bytes.resize(out_len, 0);
+
+        let mut in_buf_descs = Vec::with_capacity(inputs.len());
+        let mut in_buf_ptrs = Vec::with_capacity(inputs.len());
+        let in_dims: Vec<i64> = out_shape.dims.clone();
+        for &inp in inputs {
+            in_buf_descs.push(crate::extensions::XLA_FFI_Buffer {
+                struct_size: size_of::<crate::extensions::XLA_FFI_Buffer>(),
+                extension_start: ptr::null_mut(),
+                dtype: out_shape.element_type.as_raw(),
+                rank: i32::try_from(in_dims.len()).unwrap_or(1),
+                data: inp.as_ptr().cast_mut().cast(),
+                dims: in_dims.as_ptr(),
+            });
+        }
+        for desc in &in_buf_descs {
+            in_buf_ptrs.push(ptr::from_ref(desc));
+        }
+
+        let mut out_buf_desc = crate::extensions::XLA_FFI_Buffer {
+            struct_size: size_of::<crate::extensions::XLA_FFI_Buffer>(),
+            extension_start: ptr::null_mut(),
+            dtype: out_shape.element_type.as_raw(),
+            rank: i32::try_from(in_dims.len()).unwrap_or(1),
+            data: out_bytes.as_mut_ptr().cast(),
+            dims: in_dims.as_ptr(),
+        };
+        let mut out_buf_ptr = ptr::addr_of_mut!(out_buf_desc);
+
+        let mut frame = crate::extensions::XLA_FFI_CallFrame {
+            struct_size: size_of::<crate::extensions::XLA_FFI_CallFrame>(),
+            extension_start: ptr::null_mut(),
+            api: ptr::null(),
+            ctx: ptr::null_mut(),
+            stage: 3,
+            num_args: u32::try_from(in_buf_ptrs.len()).unwrap_or(0),
+            args: in_buf_ptrs.as_ptr(),
+            num_rets: 1,
+            rets: ptr::addr_of_mut!(out_buf_ptr),
+        };
+        // SAFETY: Reconstructing validated `XLA_FFI_Handler` function pointer and invoking with stack `frame`.
+        let cb: crate::extensions::XLA_FFI_Handler = unsafe { std::mem::transmute(fn_addr) };
+        // SAFETY: `frame` is a valid `XLA_FFI_CallFrame`.
+        let err_ptr = unsafe { cb(ptr::addr_of_mut!(frame)) };
+        if !err_ptr.is_null() {
+            // SAFETY: `err_ptr` is a heap-allocated `PJRT_Error`.
+            let boxed = unsafe { Box::from_raw(err_ptr) };
+            return Err(boxed.error);
+        }
+        Ok(out_bytes)
+    });
+    c_status_ok()
+}
+
+/// Formats a human-readable physical register allocation and `VMEM` spill summary for `executable`
+/// (`libtpu_rs_inspect_register_allocation`).
+///
+/// # Arguments
+///
+/// * `executable` - Pointer to [`PJRT_LoadedExecutable`].
+/// * `out_buf` - Optional destination character buffer.
+/// * `buf_len` - Capacity of `out_buf` in bytes (including null terminator).
+///
+/// # Safety
+///
+/// `executable` and `out_buf` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_inspect_register_allocation(
+    executable: *const PJRT_LoadedExecutable,
+    out_buf: *mut c_char,
+    buf_len: usize,
+) -> usize {
+    if executable.is_null() {
+        return 0;
+    }
+    // SAFETY: `executable` is non-null.
+    let prog = unsafe { &(*executable).inner.executable.program };
+    let tpu_gen = libtpu_core::config::global_init_config().generation;
+    let report = prog.allocate_physical_registers(tpu_gen);
+    let summary = format!(
+        "generation={:?} num_vregs={} allocated_slots={} spills={} spill_vmem_bytes={}",
+        report.config.generation,
+        report.config.num_vregs,
+        report.slot_to_vreg.len(),
+        report.spill_actions.len(),
+        report.total_spill_vmem_bytes
+    );
+    // SAFETY: Delegated to `copy_str_to_c_buf`.
+    unsafe { copy_str_to_c_buf(&summary, out_buf, buf_len) }
+}
+
+/// Formats a canonical hardware chip configuration summary for the active TPU generation
+/// (`libtpu_rs_query_chip_config_summary`).
+///
+/// # Arguments
+///
+/// * `out_buf` - Optional destination character buffer.
+/// * `buf_len` - Capacity of `out_buf` in bytes (including null terminator).
+///
+/// # Safety
+///
+/// `out_buf` must be null or a valid mutable pointer of at least `buf_len` bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_query_chip_config_summary(
+    out_buf: *mut c_char,
+    buf_len: usize,
+) -> usize {
+    let tpu_gen = libtpu_core::config::global_init_config().generation;
+    let cfg = libtpu_core::proto::TpuChipConfigProto::from_generation(tpu_gen);
+    let parts = libtpu_core::proto::TpuChipPartsProto::from_generation(tpu_gen);
+    let isa = libtpu_core::elf::IsaBitfieldSpecTable::for_generation(tpu_gen);
+    let summary = format!(
+        "generation={} hbm_bytes={} vmem_bytes={} smem_bytes={} cmem_bytes={} tensor_cores={} sparse_cores={} mxu_dim={} isa_bits={}",
+        cfg.chip_name,
+        cfg.hbm_capacity_bytes,
+        cfg.vmem_capacity_bytes,
+        cfg.smem_capacity_bytes,
+        parts.cmem_capacity_bytes,
+        cfg.tensor_cores_per_chip,
+        cfg.sparse_cores_per_chip,
+        parts.mxu_dimension,
+        isa.bundle_width_bits
+    );
+    // SAFETY: Delegated to `copy_str_to_c_buf`.
+    unsafe { copy_str_to_c_buf(&summary, out_buf, buf_len) }
+}
+
+/// Computes the shortest 3D Torus optical ICI hop count between `(src_x, src_y, src_z)` and
+/// `(dst_x, dst_y, dst_z)` (`libtpu_rs_compute_ici_route`).
+///
+/// # Arguments
+///
+/// * `src_x` - Source X chip coordinate.
+/// * `src_y` - Source Y chip coordinate.
+/// * `src_z` - Source Z chip coordinate.
+/// * `dst_x` - Destination X chip coordinate.
+/// * `dst_y` - Destination Y chip coordinate.
+/// * `dst_z` - Destination Z chip coordinate.
+/// * `wrap_around` - Non-zero (`1`) to enable twisted-torus wrap-around links, `0` otherwise.
+#[unsafe(no_mangle)]
+pub extern "C" fn libtpu_rs_compute_ici_route(
+    src_x: u32,
+    src_y: u32,
+    src_z: u32,
+    dst_x: u32,
+    dst_y: u32,
+    dst_z: u32,
+    wrap_around: i32,
+) -> u32 {
+    let bounds = libtpu_core::types::ChipCoordinates::new(
+        src_x.max(dst_x).saturating_add(1).max(4),
+        src_y.max(dst_y).saturating_add(1).max(4),
+        src_z.max(dst_z).saturating_add(1).max(4),
+    );
+    let router = libtpu_core::distributed::IciTorusRouter::new(bounds, wrap_around != 0);
+    let src = libtpu_core::types::ChipCoordinates::new(src_x, src_y, src_z);
+    let dst = libtpu_core::types::ChipCoordinates::new(dst_x, dst_y, dst_z);
+    router.compute_shortest_hop_count(src, dst).unwrap_or(0)
+}
+
+/// Decodes a raw or Riegeli-framed `asic_sw.CoreDump` payload into canonical JSON (`libtpu_rs_read_core_dump`).
+///
+/// # Arguments
+///
+/// * `raw_bytes` - Pointer to raw or Riegeli-framed `CoreDump` bytes.
+/// * `raw_len` - Length of `raw_bytes` in bytes.
+/// * `out_buf` - Optional destination character buffer.
+/// * `buf_len` - Capacity of `out_buf` in bytes.
+///
+/// # Safety
+///
+/// `raw_bytes` and `out_buf` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_read_core_dump(
+    raw_bytes: *const u8,
+    raw_len: usize,
+    out_buf: *mut c_char,
+    buf_len: usize,
+) -> usize {
+    if raw_bytes.is_null() {
+        return 0;
+    }
+    // SAFETY: `raw_bytes` is non-null for `raw_len` bytes.
+    let slice = unsafe { std::slice::from_raw_parts(raw_bytes, raw_len) };
+    let Ok(unwrapped) = libtpu_core::proto::decode_riegeli_record_container(slice) else {
+        return 0;
+    };
+    let Ok(msg) = libtpu_core::proto::CoreDumpProto::decode(&unwrapped) else {
+        return 0;
+    };
+    let json = msg.to_proto_json().unwrap_or_default();
+    // SAFETY: Delegated to `copy_str_to_c_buf`.
+    unsafe { copy_str_to_c_buf(&json, out_buf, buf_len) }
+}
+
+/// Decodes a raw or Riegeli-framed `AllCoreStateSummaries` payload into canonical JSON (`libtpu_rs_read_stall_summaries`).
+///
+/// # Arguments
+///
+/// * `raw_bytes` - Pointer to raw or Riegeli-framed `AllCoreStateSummaries` bytes.
+/// * `raw_len` - Length of `raw_bytes` in bytes.
+/// * `out_buf` - Optional destination character buffer.
+/// * `buf_len` - Capacity of `out_buf` in bytes.
+///
+/// # Safety
+///
+/// `raw_bytes` and `out_buf` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_read_stall_summaries(
+    raw_bytes: *const u8,
+    raw_len: usize,
+    out_buf: *mut c_char,
+    buf_len: usize,
+) -> usize {
+    if raw_bytes.is_null() {
+        return 0;
+    }
+    // SAFETY: `raw_bytes` is non-null for `raw_len` bytes.
+    let slice = unsafe { std::slice::from_raw_parts(raw_bytes, raw_len) };
+    let Ok(unwrapped) = libtpu_core::proto::decode_riegeli_record_container(slice) else {
+        return 0;
+    };
+    let Ok(msg) = libtpu_core::proto::AllCoreStateSummariesProto::decode(&unwrapped) else {
+        return 0;
+    };
+    let json = msg.to_proto_json().unwrap_or_default();
+    // SAFETY: Delegated to `copy_str_to_c_buf`.
+    unsafe { copy_str_to_c_buf(&json, out_buf, buf_len) }
+}
+
+/// Decodes a raw or Riegeli-framed `CompilerMetadata` payload into canonical JSON (`libtpu_rs_read_compiler_metadata`).
+///
+/// # Arguments
+///
+/// * `raw_bytes` - Pointer to raw or Riegeli-framed `CompilerMetadata` bytes.
+/// * `raw_len` - Length of `raw_bytes` in bytes.
+/// * `out_buf` - Optional destination character buffer.
+/// * `buf_len` - Capacity of `out_buf` in bytes.
+///
+/// # Safety
+///
+/// `raw_bytes` and `out_buf` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_read_compiler_metadata(
+    raw_bytes: *const u8,
+    raw_len: usize,
+    out_buf: *mut c_char,
+    buf_len: usize,
+) -> usize {
+    if raw_bytes.is_null() {
+        return 0;
+    }
+    // SAFETY: `raw_bytes` is non-null for `raw_len` bytes.
+    let slice = unsafe { std::slice::from_raw_parts(raw_bytes, raw_len) };
+    let Ok(unwrapped) = libtpu_core::proto::decode_riegeli_record_container(slice) else {
+        return 0;
+    };
+    let Ok(msg) = libtpu_core::proto::CompilerMetadataProto::decode(&unwrapped) else {
+        return 0;
+    };
+    let json = msg.to_proto_json().unwrap_or_default();
+    // SAFETY: Delegated to `copy_str_to_c_buf`.
+    unsafe { copy_str_to_c_buf(&json, out_buf, buf_len) }
+}
+
+/// Emits a canonical `proto3` `.proto` schema string for `full_message_name` (`libtpu_rs_emit_proto_schema`).
+///
+/// Returns the full UTF-8 byte length of the emitted schema, or `0` if `full_message_name` is null or unknown.
+///
+/// # Arguments
+///
+/// * `full_message_name` - Null-terminated fully-qualified protobuf message name (`"xla.TileProto"`).
+/// * `out_buf` - Optional destination character buffer.
+/// * `buf_len` - Capacity of `out_buf` in bytes (including null terminator).
+///
+/// # Safety
+///
+/// `full_message_name` and `out_buf` must be null or valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn libtpu_rs_emit_proto_schema(
+    full_message_name: *const c_char,
+    out_buf: *mut c_char,
+    buf_len: usize,
+) -> usize {
+    if full_message_name.is_null() {
+        return 0;
+    }
+    // SAFETY: `full_message_name` is non-null.
+    let name_str = unsafe { CStr::from_ptr(full_message_name).to_string_lossy() };
+    let Ok(schema) = libtpu_core::proto::emit_proto_message_schema(&name_str) else {
+        return 0;
+    };
+    let bytes = schema.as_bytes();
+    if !out_buf.is_null() && buf_len > 0 {
+        let copy_len = bytes.len().min(buf_len.saturating_sub(1));
+        // SAFETY: `out_buf` has at least `copy_len + 1` bytes.
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr().cast::<c_char>(), out_buf, copy_len);
+            *out_buf.add(copy_len) = 0;
+        }
+    }
+    bytes.len()
+}
+
 /// Compiles and executes an N-dimensional program (`libtpu_rs_compile_and_execute_nd`) over two
 /// typed host input buffers (`in0_data`, `in1_data`) of shape `dims[0..num_dims]` and `element_type`.
 ///
@@ -815,6 +1321,51 @@ mod tests {
                 *user_arg.cast::<usize>() += 1;
             }
         }
+    }
+
+    /// Test `OpenXLA` Typed FFI v0.2 handler doubling each `f32` element.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - Pointer to [`crate::extensions::XLA_FFI_CallFrame`].
+    unsafe extern "C" fn test_xla_ffi_ok_handler(
+        frame: *mut crate::extensions::XLA_FFI_CallFrame,
+    ) -> *mut crate::pjrt_types::PJRT_Error {
+        if !frame.is_null() {
+            // SAFETY: `frame` is non-null and initialized by `libtpu_rs_register_ffi_handler`.
+            unsafe {
+                let f = &*frame;
+                if f.num_args > 0 && !f.args.is_null() && f.num_rets > 0 && !f.rets.is_null() {
+                    let in_b = &*(*f.args);
+                    let out_b = &mut *(*f.rets);
+                    if !in_b.data.is_null() && !out_b.data.is_null() {
+                        let in_f32 = in_b.data.cast::<f32>();
+                        let out_f32 = out_b.data.cast::<f32>();
+                        for i in 0..4 {
+                            *out_f32.add(i) = (*in_f32.add(i)) * 2.0;
+                        }
+                    }
+                }
+            }
+        }
+        ptr::null_mut()
+    }
+
+    /// Test `OpenXLA` Typed FFI v0.2 handler returning a non-null [`crate::pjrt_types::PJRT_Error`].
+    ///
+    /// # Arguments
+    ///
+    /// * `_frame` - Pointer to [`crate::extensions::XLA_FFI_CallFrame`].
+    unsafe extern "C" fn test_xla_ffi_err_handler(
+        _frame: *mut crate::extensions::XLA_FFI_CallFrame,
+    ) -> *mut crate::pjrt_types::PJRT_Error {
+        Box::into_raw(Box::new(crate::pjrt_types::PJRT_Error {
+            error: LibTpuError::InvalidArgument {
+                parameter: "frame",
+                reason: String::from("synthetic FFI error"),
+            },
+            c_message: std::ffi::CString::new("err").unwrap_or_default(),
+        }))
     }
 
     #[test]
@@ -1164,6 +1715,108 @@ mod tests {
             );
             assert_eq!(libtpu_rs_executable_flops(ptr::null()), 0.0);
             assert!(libtpu_rs_executable_flops(exec) > 0.0);
+
+            assert_eq!(
+                libtpu_rs_disassemble_executable_llo(ptr::null(), ptr::null_mut(), 0),
+                0
+            );
+            let llo_len = libtpu_rs_disassemble_executable_llo(exec, ptr::null_mut(), 0);
+            assert!(llo_len > 0);
+            let mut llo_buf = vec![0 as c_char; llo_len + 1];
+            assert_eq!(
+                libtpu_rs_disassemble_executable_llo(exec, llo_buf.as_mut_ptr(), llo_buf.len()),
+                llo_len
+            );
+
+            let cd_bytes = libtpu_core::proto::encode_riegeli_record_container(
+                &libtpu_core::proto::CoreDumpProto::default().encode(),
+            );
+            let ss_bytes = libtpu_core::proto::encode_riegeli_record_container(
+                &libtpu_core::proto::AllCoreStateSummariesProto::default().encode(),
+            );
+            let cm_bytes = libtpu_core::proto::encode_riegeli_record_container(
+                &libtpu_core::proto::CompilerMetadataProto::default().encode(),
+            );
+            let mut bad_riegeli = cd_bytes.clone();
+            if let Some(b) = bad_riegeli.get_mut(48) {
+                *b ^= 0xFF;
+            }
+            let mut diag_buf = [0 as c_char; 512];
+            assert_eq!(
+                libtpu_rs_read_core_dump(ptr::null(), 0, ptr::null_mut(), 0),
+                0
+            );
+            assert_eq!(
+                libtpu_rs_read_core_dump(
+                    bad_riegeli.as_ptr(),
+                    bad_riegeli.len(),
+                    ptr::null_mut(),
+                    0
+                ),
+                0
+            );
+            assert_eq!(
+                libtpu_rs_read_core_dump(b"\xff\xff\xff".as_ptr(), 3, ptr::null_mut(), 0),
+                0
+            );
+            assert!(
+                libtpu_rs_read_core_dump(
+                    cd_bytes.as_ptr(),
+                    cd_bytes.len(),
+                    diag_buf.as_mut_ptr(),
+                    diag_buf.len()
+                ) > 0
+            );
+            assert_eq!(
+                libtpu_rs_read_stall_summaries(ptr::null(), 0, ptr::null_mut(), 0),
+                0
+            );
+            assert_eq!(
+                libtpu_rs_read_stall_summaries(
+                    bad_riegeli.as_ptr(),
+                    bad_riegeli.len(),
+                    ptr::null_mut(),
+                    0
+                ),
+                0
+            );
+            assert_eq!(
+                libtpu_rs_read_stall_summaries(b"\xff\xff\xff".as_ptr(), 3, ptr::null_mut(), 0),
+                0
+            );
+            assert!(
+                libtpu_rs_read_stall_summaries(
+                    ss_bytes.as_ptr(),
+                    ss_bytes.len(),
+                    diag_buf.as_mut_ptr(),
+                    diag_buf.len()
+                ) > 0
+            );
+            assert_eq!(
+                libtpu_rs_read_compiler_metadata(ptr::null(), 0, ptr::null_mut(), 0),
+                0
+            );
+            assert_eq!(
+                libtpu_rs_read_compiler_metadata(
+                    bad_riegeli.as_ptr(),
+                    bad_riegeli.len(),
+                    ptr::null_mut(),
+                    0
+                ),
+                0
+            );
+            assert_eq!(
+                libtpu_rs_read_compiler_metadata(b"\xff\xff\xff".as_ptr(), 3, ptr::null_mut(), 0),
+                0
+            );
+            assert!(
+                libtpu_rs_read_compiler_metadata(
+                    cm_bytes.as_ptr(),
+                    cm_bytes.len(),
+                    diag_buf.as_mut_ptr(),
+                    diag_buf.len()
+                ) > 0
+            );
 
             (*out_buf).inner.delete().ok();
             libtpu_rs_status_free(libtpu_rs_buffer_to_host(out_buf, host_out.as_mut_ptr(), 16));
@@ -1703,6 +2356,17 @@ mod tests {
                 ptr::null_mut(),
             ));
 
+            let reg_len = libtpu_rs_inspect_register_allocation(exec, ptr::null_mut(), 0);
+            assert!(reg_len > 0);
+            let mut reg_buf = vec![0_i8; reg_len + 1];
+            assert_eq!(
+                libtpu_rs_inspect_register_allocation(
+                    exec,
+                    reg_buf.as_mut_ptr().cast(),
+                    reg_buf.len()
+                ),
+                reg_len
+            );
             libtpu_rs_buffer_destroy(out_buf);
             libtpu_rs_buffer_destroy(b0);
             libtpu_rs_buffer_destroy(b1);
@@ -1711,6 +2375,157 @@ mod tests {
             libtpu_rs_executable_destroy(ptr::null_mut());
             libtpu_rs_client_destroy(rs_client);
             libtpu_rs_client_destroy(ptr::null_mut());
+
+            assert_eq!(
+                libtpu_rs_emit_proto_schema(ptr::null(), ptr::null_mut(), 0),
+                0
+            );
+            assert_eq!(
+                libtpu_rs_emit_proto_schema(c"nonexistent.Msg".as_ptr(), ptr::null_mut(), 0),
+                0
+            );
+            let schema_len =
+                libtpu_rs_emit_proto_schema(c"xla.TileProto".as_ptr(), ptr::null_mut(), 0);
+            assert!(schema_len > 0);
+            let mut schema_buf = vec![0_i8; schema_len + 1];
+            assert_eq!(
+                libtpu_rs_emit_proto_schema(
+                    c"xla.TileProto".as_ptr(),
+                    schema_buf.as_mut_ptr().cast(),
+                    0
+                ),
+                schema_len
+            );
+            assert_eq!(
+                libtpu_rs_emit_proto_schema(
+                    c"xla.TileProto".as_ptr(),
+                    schema_buf.as_mut_ptr().cast(),
+                    schema_buf.len()
+                ),
+                schema_len
+            );
+
+            let coord_h = libtpu_rs_coordinator_create();
+            assert!(!coord_h.is_null());
+            libtpu_rs_status_free(libtpu_rs_coordinator_put_kv(
+                ptr::null_mut(),
+                c"k".as_ptr(),
+                b"v".as_ptr(),
+                1,
+            ));
+            libtpu_rs_status_free(libtpu_rs_coordinator_put_kv(
+                coord_h,
+                ptr::null(),
+                b"v".as_ptr(),
+                1,
+            ));
+            libtpu_rs_status_free(libtpu_rs_coordinator_put_kv(
+                coord_h,
+                c"k".as_ptr(),
+                ptr::null(),
+                1,
+            ));
+            assert_eq!(
+                libtpu_rs_coordinator_put_kv(coord_h, c"empty".as_ptr(), ptr::null(), 0).code,
+                0
+            );
+            assert_eq!(
+                libtpu_rs_coordinator_put_kv(coord_h, c"k".as_ptr(), b"val123".as_ptr(), 6).code,
+                0
+            );
+            assert_eq!(
+                libtpu_rs_coordinator_get_kv(ptr::null(), c"k".as_ptr(), ptr::null_mut(), 0),
+                0
+            );
+            assert_eq!(
+                libtpu_rs_coordinator_get_kv(coord_h, ptr::null(), ptr::null_mut(), 0),
+                0
+            );
+            assert_eq!(
+                libtpu_rs_coordinator_get_kv(coord_h, c"missing".as_ptr(), ptr::null_mut(), 0),
+                0
+            );
+            assert_eq!(
+                libtpu_rs_coordinator_get_kv(coord_h, c"k".as_ptr(), ptr::null_mut(), 0),
+                6
+            );
+            let mut kv_out = [0_u8; 6];
+            assert_eq!(
+                libtpu_rs_coordinator_get_kv(coord_h, c"k".as_ptr(), kv_out.as_mut_ptr(), 0),
+                6
+            );
+            assert_eq!(
+                libtpu_rs_coordinator_get_kv(coord_h, c"k".as_ptr(), kv_out.as_mut_ptr(), 6),
+                6
+            );
+            assert_eq!(&kv_out, b"val123");
+            libtpu_rs_coordinator_destroy(coord_h);
+            libtpu_rs_coordinator_destroy(ptr::null_mut());
+
+            // Test libtpu_rs_register_ffi_handler & libtpu_rs_inspect_register_allocation
+            assert_eq!(
+                libtpu_rs_inspect_register_allocation(ptr::null(), ptr::null_mut(), 0),
+                0
+            );
+            libtpu_rs_status_free(libtpu_rs_register_ffi_handler(
+                ptr::null(),
+                Some(test_xla_ffi_ok_handler),
+            ));
+            libtpu_rs_status_free(libtpu_rs_register_ffi_handler(c"ffi_null".as_ptr(), None));
+            assert_eq!(
+                libtpu_rs_register_ffi_handler(
+                    c"rs_ffi_double".as_ptr(),
+                    Some(test_xla_ffi_ok_handler),
+                )
+                .code,
+                0
+            );
+            let ffi_in = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
+            let ffi_attrs = libtpu_core::compiler::InstructionAttrs {
+                output_shape: Some(libtpu_core::types::Shape {
+                    element_type: ElementType::F32,
+                    dims: vec![4],
+                    dynamic_dims: vec![false],
+                    layout: libtpu_core::types::MemoryLayout::default_tpu_tiled(1),
+                }),
+                ..libtpu_core::compiler::InstructionAttrs::default()
+            };
+            let ffi_res = libtpu_core::hal::invoke_custom_call_handler(
+                "rs_ffi_double",
+                &[&ffi_in],
+                &ffi_attrs,
+            );
+            assert_eq!(
+                ffi_res
+                    .and_then(Result::ok)
+                    .map(|b| ElementType::F32.unpack_to_f64_vec(&b)),
+                Some(vec![2.0, 4.0, 6.0, 8.0])
+            );
+            let _ = libtpu_core::hal::unregister_custom_call_handler("rs_ffi_double");
+
+            assert_eq!(
+                libtpu_rs_register_ffi_handler(
+                    c"rs_ffi_fail".as_ptr(),
+                    Some(test_xla_ffi_err_handler),
+                )
+                .code,
+                0
+            );
+            assert!(
+                libtpu_core::hal::invoke_custom_call_handler("rs_ffi_fail", &[&ffi_in], &ffi_attrs)
+                    .is_some_and(|r| r.is_err())
+            );
+            let _ = libtpu_core::hal::unregister_custom_call_handler("rs_ffi_fail");
+
+            let chip_len = libtpu_rs_query_chip_config_summary(ptr::null_mut(), 0);
+            assert!(chip_len > 0);
+            let mut chip_buf = vec![0_i8; chip_len + 1];
+            assert_eq!(
+                libtpu_rs_query_chip_config_summary(chip_buf.as_mut_ptr(), chip_buf.len()),
+                chip_len
+            );
+            assert_eq!(libtpu_rs_compute_ici_route(0, 0, 0, 3, 0, 0, 1), 1);
+            assert_eq!(libtpu_rs_compute_ici_route(0, 0, 0, 3, 0, 0, 0), 3);
         }
     }
 }

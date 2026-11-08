@@ -33,3 +33,11 @@ message MsaSortOrderOverrides {
   bool prioritize_larger_tensors = 1;
   bool prioritize_longer_live_ranges = 2;
 }
+
+message MemorySpaceAssignmentOptions {
+  ExpandedScopedAlternateMemoryMode expanded_scoped_alternate_memory_mode = 1;
+  MsaTensorOverrides tensor_overrides = 2;
+  MemoryBoundLoopOptimizerOptions memory_bound_loop_optimizer_options = 3;
+  PreferredPrefetchOverrides preferred_prefetch_overrides = 4;
+  MsaSortOrderOverrides sort_order_overrides = 5;
+}

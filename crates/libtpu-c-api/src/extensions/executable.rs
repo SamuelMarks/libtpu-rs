@@ -1,7 +1,6 @@
 //! PJRT ABI Version, Shardings, and TPU Executable extension entrypoints.
 
 use super::args::*;
-use super::megascale::handle_megascale_noop;
 use super::{alloc_extension_bytes, dispatch_typed_extension_args, extension_state};
 use crate::pjrt_helpers::box_serialized_artifact;
 use crate::pjrt_types::{PJRT_AbiVersion_Holder, PJRT_Error};
@@ -598,6 +597,21 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_GetHloModuleWithConfig(
     }
 }
 
+/// Strongly-typed handler for [`PJRT_TpuExecutable_Reserved`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_Handle_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
+unsafe fn handle_tpu_executable_reserved(args: &mut PJRT_Megascale_Handle_Args) {
+    let mut st = extension_state().lock();
+    st.tpu_compilation_env_overrides = st.tpu_compilation_env_overrides.saturating_add(1);
+    args.handle = ptr::null_mut();
+}
+
 /// Reserved slot 3 of `PJRT_TpuExecutable_Extension` (`PJRT_TpuExecutable_Reserved`).
 ///
 /// # Arguments
@@ -613,7 +627,10 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_Reserved(
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(raw_args, handle_megascale_noop)
+        dispatch_typed_extension_args::<PJRT_Megascale_Handle_Args>(
+            raw_args,
+            handle_tpu_executable_reserved,
+        )
     }
 }
 

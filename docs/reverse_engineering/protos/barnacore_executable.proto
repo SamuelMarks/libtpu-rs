@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package xla.barnacore;
+
+message SparseCoreDmaDescriptorProto {
+  uint32 descriptor_id = 1;
+  uint64 hbm_base_offset = 2;
+  uint32 spmem_offset = 3;
+  uint32 transfer_bytes = 4;
+  uint32 sync_flag_id = 5;
+  bool is_scatter_write = 6;
+}
+
+message BarnaCoreChannelConfigProto {
+  uint32 channel_id = 1;
+  uint32 sparse_core_index = 2;
+  uint32 max_unique_ids_per_partition = 3;
+  uint32 max_ids_per_partition = 4;
+  string table_name = 5;
+}
+
+message SparseCoreProgramProto {
+  uint32 sparse_core_id = 1;
+  bytes instruction_stream = 2;
+  uint32 spmem_scratchpad_bytes = 3;
+  repeated SparseCoreDmaDescriptorProto dma_descriptors = 4;
+  int32 optimizer_opcode = 5;
+}
+
+message BarnaCoreExecutableProto {
+  string executable_name = 1;
+  uint32 sparse_core_version = 2;
+  repeated BarnaCoreChannelConfigProto channels = 3;
+  repeated SparseCoreProgramProto programs = 4;
+  uint64 table_hbm_total_bytes = 5;
+}

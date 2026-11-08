@@ -208,6 +208,23 @@ class TpuExecutable:
         """
         ...
 
+    def execute_sharded(
+        self,
+        per_device_inputs: Sequence[Sequence[TpuBuffer]],
+        num_outputs: int = 1,
+    ) -> list[list[TpuBuffer]]:
+        """Executes the compiled SPMD program across multiple addressable devices.
+
+        Args:
+            per_device_inputs: Sequence of per-device input `TpuBuffer` sequences.
+            num_outputs: Number of output buffers produced per device.
+        """
+        ...
+
+    def cost_analysis(self) -> dict[str, float]:
+        """Returns the dictionary of cost analysis metrics via `PJRT_Executable_GetCostAnalysis`."""
+        ...
+
     def serialize(self) -> bytes:
         """Serializes the compiled `PJRT_Executable` into a portable binary byte payload."""
         ...
@@ -222,6 +239,14 @@ class TpuExecutable:
 
     def optimized_program_bytes(self) -> bytes:
         """Returns the optimized HLO/MLIR program bytes from `PJRT_Executable_OptimizedProgram`."""
+        ...
+
+    def disassemble_vliw(self) -> str:
+        """Disassembles this executable into a multi-line `DeepSea` LLO VLIW assembly listing."""
+        ...
+
+    def inspect_register_allocation(self) -> str:
+        """Returns the physical register allocation and `VMEM` spill summary for this executable."""
         ...
 
     def close(self) -> None:
@@ -656,4 +681,30 @@ def get_pjrt_c_api_capsule() -> object:
 
 def get_sdk_c_api_capsule() -> object:
     """Returns a `PyCapsule` (`"libtpu.sdk._C_API"`) wrapping `GetLibtpuSdkApi()`."""
+    ...
+
+def query_chip_config_summary() -> str:
+    """Queries the hardware chip configuration summary for the active TPU generation."""
+    ...
+
+def compute_ici_route(
+    src_x: int,
+    src_y: int,
+    src_z: int,
+    dst_x: int,
+    dst_y: int,
+    dst_z: int,
+    wrap_around: bool = True,
+) -> int:
+    """Computes the shortest 3D Torus optical ICI hop count between two chip coordinates.
+
+    Args:
+        src_x: Source X chip coordinate.
+        src_y: Source Y chip coordinate.
+        src_z: Source Z chip coordinate.
+        dst_x: Destination X chip coordinate.
+        dst_y: Destination Y chip coordinate.
+        dst_z: Destination Z chip coordinate.
+        wrap_around: Whether twisted-torus wrap-around links are enabled.
+    """
     ...

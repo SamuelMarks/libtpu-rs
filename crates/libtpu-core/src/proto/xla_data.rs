@@ -586,3 +586,32 @@ pub struct StatisticsViz {
 }
 
 impl_proto_schema_message!(StatisticsViz, "xla.StatisticsViz");
+
+/// Wire-compatible `xla.TriangularSolveOptions` (`xla/xla_data.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TriangularSolveOptions {
+    /// Solve `op(a) * x = b` (`true`) or `x * op(a) = b` (`false`, field `1`).
+    #[prost(bool, tag = "1")]
+    pub left_side: bool,
+    /// Use lower (`true`) or upper (`false`) triangle of `a` (field `2`).
+    #[prost(bool, tag = "2")]
+    pub lower: bool,
+    /// Assume unit diagonal elements on `a` (field `3`).
+    #[prost(bool, tag = "3")]
+    pub unit_diagonal: bool,
+    /// Transpose mode for `a` (`0` = Invalid, `1` = `NoTranspose`, `2` = `Transpose`, `3` = `Adjoint`, field `4`).
+    #[prost(int32, tag = "4")]
+    pub transpose_a: i32,
+}
+
+impl_proto_schema_message!(TriangularSolveOptions, "xla.TriangularSolveOptions");
+
+/// Wire-compatible `xla.CholeskyOptions` (`xla/xla_data.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct CholeskyOptions {
+    /// Compute lower (`L * L^T`, `true`) or upper (`U^T * U`, `false`) Cholesky factor (field `1`).
+    #[prost(bool, tag = "1")]
+    pub lower: bool,
+}
+
+impl_proto_schema_message!(CholeskyOptions, "xla.CholeskyOptions");

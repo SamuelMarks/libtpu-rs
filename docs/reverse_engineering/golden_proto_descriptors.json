@@ -3,7 +3,7 @@
   "section_vaddr": "0x14ba4740",
   "section_size_bytes": 2970280,
   "topologically_closed": true,
-  "proto_files_count": 59,
+  "proto_files_count": 84,
   "descriptors": [
     {
       "name": "autotune_results.proto",
@@ -14,6 +14,57 @@
     {
       "name": "autotuning.proto",
       "package": "xla",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "backends.proto",
+      "package": "xla.autotuner",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "cuda_compute_capability.proto",
+      "package": "stream_executor",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "dnn.proto",
+      "package": "stream_executor.dnn",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "gpu_topology.proto",
+      "package": "xla",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "oneapi_compute_capability.proto",
+      "package": "stream_executor",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "tensor.proto",
+      "package": "tensorflow",
+      "syntax": "proto3",
+      "imports": [
+        "tensor_shape.proto",
+        "types.proto"
+      ]
+    },
+    {
+      "name": "tensor_shape.proto",
+      "package": "tensorflow",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "types.proto",
+      "package": "tensorflow",
       "syntax": "proto3",
       "imports": []
     },
@@ -443,6 +494,78 @@
     {
       "name": "xplane.proto",
       "package": "tensorflow.profiler",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "coredump.proto",
+      "package": "asic_sw",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "stall_summaries.proto",
+      "package": "libtpu.sdk.tpu_telemetry",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "compiler_metadata.proto",
+      "package": "platforms_deepsea.jellyfish.xdb",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "mosaic_tpu.proto",
+      "package": "mlir.tpu",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "hlo_profile_printer_data.proto",
+      "package": "xla",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "jellyfish_executable.proto",
+      "package": "xla.jellyfish",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "barnacore_executable.proto",
+      "package": "xla.barnacore",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "tpu_fingerprint.proto",
+      "package": "tpu",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "xla_ffi.proto",
+      "package": "xla.ffi",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "power_telemetry.proto",
+      "package": "tpu.telemetry",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "register_translator.proto",
+      "package": "tpu",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "tpu_chip_config.proto",
+      "package": "tpu",
       "syntax": "proto3",
       "imports": []
     }

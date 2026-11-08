@@ -373,10 +373,15 @@ pub struct PJRT_AsyncHostToDeviceTransferManager {
     pub memory_ptr: *mut PJRT_Memory,
 }
 
-/// Heap-allocated serialized artifact holder backing `PJRT_SerializedExecutable`,
-/// `PJRT_SerializedTopology`, `PJRT_SerializedDeviceAssignment`, and `PJRT_SerializedCompileOptions`.
+/// Heap-allocated serialized artifact and executable metadata holder.
+///
+/// Backs `PJRT_SerializedExecutable`, `PJRT_SerializedTopology`, `PJRT_SerializedDeviceAssignment`,
+/// `PJRT_SerializedCompileOptions`, and `PJRT_ExecutableMetadata_Extension`.
+#[repr(C)]
 #[derive(Debug)]
 pub struct PjrtSerializedArtifact {
+    /// C-compatible 16-byte `PJRT_ExecutableMetadata` header (`serialized_metadata`, `serialized_metadata_size`).
+    pub raw: crate::extensions::PJRT_ExecutableMetadata,
     /// Owned serialized wire bytes.
     pub bytes: Vec<u8>,
 }
@@ -415,15 +420,8 @@ pub struct PJRT_MemoryDescription {
     pub kind_id: i32,
 }
 
-/// Heap-allocated executable metadata handle for `PJRT_ExecutableMetadata_Extension`.
-#[repr(C)]
-#[derive(Debug)]
-pub struct PJRT_ExecutableMetadata_Handle {
-    /// C-compatible 16-byte `PJRT_ExecutableMetadata` header (`serialized_metadata`, `serialized_metadata_size`).
-    pub raw: crate::extensions::PJRT_ExecutableMetadata,
-    /// Owned serialized `PjRtExecutableMetadataProto` wire bytes.
-    pub serialized_bytes: Vec<u8>,
-}
+/// Type alias for a heap-allocated executable metadata handle (`PJRT_ExecutableMetadata_Extension`).
+pub type PJRT_ExecutableMetadata_Handle = PjrtSerializedArtifact;
 
 /// Heap-allocated raw buffer alias handle for `PJRT_RawBuffer_Extension` (`PJRT_RawBuffer`).
 #[repr(C)]

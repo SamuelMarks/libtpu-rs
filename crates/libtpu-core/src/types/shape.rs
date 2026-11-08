@@ -443,6 +443,20 @@ impl Shape {
                     *dst_b = src_b;
                 }
             }
+        } else if self.dims.len() >= 2 {
+            let elems_per_byte = 8 / bits.max(1);
+            let mask = (1_u8 << bits) - 1;
+            let perm = self.tile_permutation_indices();
+            for (tiled_idx, &src_idx) in perm.iter().enumerate() {
+                let src_byte_idx = src_idx / elems_per_byte;
+                let src_shift = (src_idx % elems_per_byte) * bits;
+                let val = (src_padded.get(src_byte_idx).copied().unwrap_or(0) >> src_shift) & mask;
+                let dst_byte_idx = tiled_idx / elems_per_byte;
+                let dst_shift = (tiled_idx % elems_per_byte) * bits;
+                for dst_b in out.iter_mut().skip(dst_byte_idx).take(1) {
+                    *dst_b = (*dst_b & !(mask << dst_shift)) | (val << dst_shift);
+                }
+            }
         } else {
             for (dst_b, &src_b) in out.iter_mut().zip(src_padded.iter()) {
                 *dst_b = src_b;
@@ -487,6 +501,20 @@ impl Shape {
                     .zip(tiled_bytes.iter().skip(src_off).take(elem_bytes))
                 {
                     *dst_b = src_b;
+                }
+            }
+        } else if self.dims.len() >= 2 {
+            let elems_per_byte = 8 / bits.max(1);
+            let mask = (1_u8 << bits) - 1;
+            let perm = self.tile_permutation_indices();
+            for (tiled_idx, &dst_idx) in perm.iter().enumerate() {
+                let src_byte_idx = tiled_idx / elems_per_byte;
+                let src_shift = (tiled_idx % elems_per_byte) * bits;
+                let val = (tiled_bytes.get(src_byte_idx).copied().unwrap_or(0) >> src_shift) & mask;
+                let dst_byte_idx = dst_idx / elems_per_byte;
+                let dst_shift = (dst_idx % elems_per_byte) * bits;
+                for dst_b in out.iter_mut().skip(dst_byte_idx).take(1) {
+                    *dst_b = (*dst_b & !(mask << dst_shift)) | (val << dst_shift);
                 }
             }
         } else {
@@ -659,6 +687,26 @@ impl Shape {
     /// Returns [`LibTpuError::InvalidArgument`] if `tiled_bytes` is shorter than `self.unpadded_byte_size()`.
     pub fn unpack_from_tpu_tiles(&self, tiled_bytes: &[u8]) -> LibTpuResult<Vec<u8>> {
         self.delinearize_from_tpu_tiles(tiled_bytes)
+    }
+
+    /// Packs logical N-dimensional tensor bytes into physical TPU `[8, 128, k]` tiled bytes (`pack_to_tpu_tiled_bytes`).
+    ///
+    /// # Arguments
+    ///
+    /// * `host_bytes` - Unpadded row-major host tensor bytes.
+    #[must_use]
+    pub fn pack_to_tpu_tiled_bytes(&self, host_bytes: &[u8]) -> Vec<u8> {
+        self.linear_to_tpu_tiled_bytes(host_bytes)
+    }
+
+    /// Unpacks physical TPU `[8, 128, k]` tiled bytes back into unpadded row-major tensor bytes (`unpack_from_tpu_tiled_bytes`).
+    ///
+    /// # Arguments
+    ///
+    /// * `tiled_bytes` - Physical TPU tiled byte buffer.
+    #[must_use]
+    pub fn unpack_from_tpu_tiled_bytes(&self, tiled_bytes: &[u8]) -> Vec<u8> {
+        self.tpu_tiled_bytes_to_linear(tiled_bytes)
     }
 }
 
@@ -859,6 +907,7 @@ mod tests {
             (ElementType::Bf16, vec![2, 3], (2, 4, 128)),
             (ElementType::U8, vec![2, 3], (4, 4, 128)),
             (ElementType::S4, vec![2, 4], (8, 4, 128)),
+            (ElementType::S2, vec![2, 4], (8, 4, 128)),
             (ElementType::F32, vec![16, 256], (1, 8, 128)),
             (ElementType::Bf16, vec![2, 16, 256], (2, 4, 128)),
         ] {
@@ -879,8 +928,8 @@ mod tests {
                 if let Ok(tb) = sh.linearize_bytes(&raw) {
                     assert_eq!(sh.delinearize_bytes(&tb).ok(), Some(raw.clone()));
                 }
-                let swizzled = sh.linear_to_tpu_tiled_bytes(&raw);
-                assert_eq!(sh.tpu_tiled_bytes_to_linear(&swizzled), raw);
+                let swizzled = sh.pack_to_tpu_tiled_bytes(&raw);
+                assert_eq!(sh.unpack_from_tpu_tiled_bytes(&swizzled), raw);
                 let short_unswizzled = sh.tpu_tiled_bytes_to_linear(&[]);
                 assert_eq!(short_unswizzled.len(), sh.unpadded_byte_size().0);
             }

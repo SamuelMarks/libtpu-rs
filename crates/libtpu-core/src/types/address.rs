@@ -94,6 +94,44 @@ pub struct BundlePc(pub u32);
 /// Zero-based index of a 64-byte VLIW bundle in Instruction Memory (`ImemBundleIndex`).
 pub type ImemBundleIndex = BundlePc;
 
+/// Type alias for [`BundlePc`] representing a 64-byte bundle program counter index (`ImemBundlePc`).
+pub type ImemBundlePc = BundlePc;
+
+/// 64-bit Vector Memory (`VMEM`) byte offset (`VmemByteOffset`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#x}")]
+pub struct VmemByteOffset(pub u64);
+
+/// 64-bit Scalar Memory (`SMEM`) byte offset (`SmemByteOffset`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#x}")]
+pub struct SmemByteOffset(pub u64);
+
+/// 64-bit Collective Memory (`CMEM`) byte offset (`CmemByteOffset`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#x}")]
+pub struct CmemByteOffset(pub u64);
+
+/// Type alias for [`DeviceAddress`] representing an HBM byte offset (`HbmByteOffset`).
+pub type HbmByteOffset = DeviceAddress;
+
+/// 8-bit or 16-bit sublane execution mask (`SublaneMask`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#04x}")]
+pub struct SublaneMask(pub u8);
+
 /// Scalar or vector element bit width (`BitWidth`, e.g., `2`, `4`, `8`, `16`, `32`, `64`, `128`).
 #[repr(transparent)]
 #[derive(
@@ -486,5 +524,27 @@ mod tests {
 
         let hbm_addr: HbmAddress = DeviceAddress::from(0x1000_u64);
         assert_eq!(u64::from(hbm_addr), 0x1000);
+
+        let vbo = VmemByteOffset::from(0x800_u64) + VmemByteOffset(16) - VmemByteOffset(16);
+        assert_eq!(u64::from(vbo), 0x800);
+        assert_eq!(vbo.to_string(), "0x800");
+
+        let sbo = SmemByteOffset::from(0x100_u64) + SmemByteOffset(8) - SmemByteOffset(8);
+        assert_eq!(u64::from(sbo), 0x100);
+        assert_eq!(sbo.to_string(), "0x100");
+
+        let cbo = CmemByteOffset::from(0x2000_u64) + CmemByteOffset(32) - CmemByteOffset(32);
+        assert_eq!(u64::from(cbo), 0x2000);
+        assert_eq!(cbo.to_string(), "0x2000");
+
+        let hbo: HbmByteOffset = DeviceAddress::from(0x4000_u64);
+        assert_eq!(u64::from(hbo), 0x4000);
+
+        let ipc: ImemBundlePc = BundlePc::from(7_u32);
+        assert_eq!(u32::from(ipc), 7);
+
+        let smask = SublaneMask::from(0xFF_u8) + SublaneMask(0) - SublaneMask(0);
+        assert_eq!(u8::from(smask), 0xFF);
+        assert_eq!(smask.to_string(), "0xff");
     }
 }

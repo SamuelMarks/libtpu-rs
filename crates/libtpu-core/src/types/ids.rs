@@ -302,6 +302,9 @@ pub struct SregIndex(pub u8);
 /// Type alias for [`SregIndex`] (`SregId`, `0..32`).
 pub type SregId = SregIndex;
 
+/// Type alias for [`SregIndex`] representing a physical scalar register ID (`PhysicalSregId`).
+pub type PhysicalSregId = SregIndex;
+
 /// `TensorCore` Vector Register index (`VregIndex`, `0..64`).
 #[repr(transparent)]
 #[derive(
@@ -312,6 +315,9 @@ pub struct VregIndex(pub u8);
 
 /// Type alias for [`VregIndex`] (`VregId`, `0..64`).
 pub type VregId = VregIndex;
+
+/// Type alias for [`VregIndex`] representing a physical vector register ID (`PhysicalVregId`).
+pub type PhysicalVregId = VregIndex;
 
 /// `TensorCore` Scalar Predicate Register index (`PregIndex`, `0..16`).
 #[repr(transparent)]
@@ -335,6 +341,9 @@ pub struct VmregIndex(pub u8);
 /// Type alias for [`VmregIndex`] (`VmaskIndex`, `0..8`).
 pub type VmaskIndex = VmregIndex;
 
+/// Type alias for [`VmaskIndex`] representing a physical predicate register ID (`PhysicalPregId`).
+pub type PhysicalPregId = VmaskIndex;
+
 /// `TensorCore` Matrix Multiply Unit (MXU) accumulator register index (`MatmulAccIndex`, `0..4`).
 #[repr(transparent)]
 #[derive(
@@ -342,6 +351,23 @@ pub type VmaskIndex = VmregIndex;
 )]
 #[display("acc{_0}")]
 pub struct MatmulAccIndex(pub u8);
+
+/// Type alias for [`MatmulAccIndex`] (`GmrIndex`, `0..4`).
+pub type GmrIndex = MatmulAccIndex;
+
+/// Type alias for [`MatmulAccIndex`] representing a physical MXU accumulator register ID (`GmrAccumId`).
+pub type GmrAccumId = MatmulAccIndex;
+
+/// Logical SSA register slot index in `CompiledProgram` (`LogicalSlotId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("slot#{_0}")]
+pub struct LogicalSlotId(pub usize);
+
+/// Hardware `SyncFlag` synchronization counter register index (`SyncFlagIndex`, `0..4096`).
+pub type SyncFlagIndex = SyncFlagId;
 
 /// `TensorCore` 8-bit Vector Mask register bitmask (`VmaskBits`).
 #[repr(transparent)]
@@ -572,5 +598,15 @@ mod tests {
         let region_ident = RegionId::from(2_u32) + RegionId(1) - RegionId(1);
         assert_eq!(u32::from(region_ident), 2);
         assert_eq!(region_ident.to_string(), "region#2");
+
+        let slot_id = LogicalSlotId::from(5_usize) + LogicalSlotId(1) - LogicalSlotId(1);
+        assert_eq!(usize::from(slot_id), 5);
+        assert_eq!(slot_id.to_string(), "slot#5");
+        let pv: PhysicalVregId = VregIndex(3);
+        let ps: PhysicalSregId = SregIndex(2);
+        let pp: PhysicalPregId = VmregIndex(1);
+        let gm: GmrAccumId = MatmulAccIndex(0);
+        let sf: SyncFlagIndex = SyncFlagId(7);
+        assert_eq!((pv.0, ps.0, pp.0, gm.0, sf.0), (3, 2, 1, 0, 7));
     }
 }

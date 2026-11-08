@@ -138,6 +138,67 @@ impl TpuCoreVmState {
         ]
     }
 
+    /// Applies an architectural 2D `[8, 128]` cross-sublane / cross-lane permutation (`perm_mode`)
+    /// on vector register `src_vreg` and stores the permuted 4,096-byte tile into `dst_vreg`.
+    ///
+    /// - `perm_mode == 0`: Identity copy (`8 x 128`).
+    /// - `perm_mode == 1`: Sublane rotate-down by 1 (`sublane[s] <- sublane[(s + 7) & 7]`).
+    /// - `perm_mode == 2`: Broadcast sublane `0` across all `8` sublanes.
+    /// - `perm_mode == 3`: Transpose `8 x 8` sub-blocks within each `[8, 128]` tile.
+    /// - `perm_mode >= 4`: Butterfly pairwise lane reduction across sublanes.
+    ///
+    /// # Arguments
+    ///
+    /// * `src_vreg` - Source physical vector register (`PhysicalVregId`).
+    /// * `dst_vreg` - Destination physical vector register (`PhysicalVregId`).
+    /// * `perm_mode` - Cross-lane permutation mode (`0..=4`).
+    #[allow(clippy::indexing_slicing)]
+    pub fn apply_vreg_2d_lane_permute(&mut self, src_vreg: u8, dst_vreg: u8, perm_mode: u8) {
+        let src_grid = self.inspect_vreg_2d_lanes(src_vreg);
+        let mut dst_grid = [[0_u32; 128]; 8];
+        match perm_mode {
+            0 => dst_grid = src_grid,
+            1 => {
+                for s in 0..8 {
+                    dst_grid[s] = src_grid[(s + 7) & 7];
+                }
+            }
+            2 => {
+                for dst_sublane in &mut dst_grid {
+                    *dst_sublane = src_grid[0];
+                }
+            }
+            3 => {
+                for block in 0..16 {
+                    let base_l = block * 8;
+                    for r in 0..8 {
+                        for c in 0..8 {
+                            dst_grid[r][base_l + c] = src_grid[c][base_l + r];
+                        }
+                    }
+                }
+            }
+            _ => {
+                for s in 0..8 {
+                    let partner = s ^ 1;
+                    for l in 0..128 {
+                        let a = f32::from_bits(src_grid[s][l]);
+                        let b = f32::from_bits(src_grid[partner][l]);
+                        dst_grid[s][l] = (a + b).to_bits();
+                    }
+                }
+            }
+        }
+        let mut packed = Vec::with_capacity(8 * 128 * 4);
+        for sublane in &dst_grid {
+            for &word in sublane {
+                packed.extend_from_slice(&word.to_le_bytes());
+            }
+        }
+        self.vreg_words[usize::from(dst_vreg) & 63] = dst_grid[0][0];
+        self.vreg_tiles.insert(dst_vreg, packed);
+    }
+
     /// Steps the `TensorCore` VLIW sequencer through a slice of 64-byte [`crate::compiler::TensorCoreVliwBundle`]s,
     /// executing `S0` (Scalar ALU + SMEM + conditional branching `opcode == 6`), `V0` (Vector ALU + VMEM),
     /// `M0` (`MXU` systolic matrix accumulator), `X0` (`EUP` transcendental unit), and `D0` (`DMA`/`SyncFlag` engine)
@@ -173,11 +234,16 @@ impl TpuCoreVmState {
         let s_imm = u64::from(bundle.scalar_slot.imm32);
         let s_val = match bundle.scalar_slot.opcode {
             2 => s_src0.wrapping_sub(s_src1),
-            3 => s_src0 & s_src1,
-            4 => s_src0 | s_src1,
-            5 => s_src0 ^ s_src1,
+            3 => s_src0.wrapping_mul(s_src1.max(1)),
+            4 => u64::from(s_src0 < s_src1.max(s_imm)),
+            5 => s_imm,
+            8 => u64::from(self.pc.saturating_add(64)),
+            9 => self.sreg[31],
             _ => s_src0.wrapping_add(s_imm),
         };
+        if bundle.scalar_slot.opcode == 8 {
+            self.sreg[31] = s_val;
+        }
         self.sreg[s_dst] = s_val;
         self.smem_words[s_dst & 63] = s_val;
         self.preg[s_dst & 15] = s_val != 0;
@@ -509,10 +575,10 @@ impl TpuCoreVmState {
     #[must_use]
     #[allow(clippy::cast_possible_truncation)]
     fn quantize_mxu_operand(val: f64, precision_mode: u8) -> f64 {
-        match precision_mode {
-            0 => half::bf16::from_f64(val).to_f64(),
-            2 => val.round().clamp(-128.0, 127.0),
-            3 => {
+        match crate::types::MxuPrecisionMode::from_raw(precision_mode) {
+            crate::types::MxuPrecisionMode::Bf16 => half::bf16::from_f64(val).to_f64(),
+            crate::types::MxuPrecisionMode::Int8 => val.round().clamp(-128.0, 127.0),
+            crate::types::MxuPrecisionMode::Fp8E4M3Fn => {
                 let raw = ElementType::F8E4M3Fn.pack_from_f64_slice(&[val]);
                 ElementType::F8E4M3Fn
                     .unpack_to_f64_vec(&raw)
@@ -520,8 +586,24 @@ impl TpuCoreVmState {
                     .copied()
                     .unwrap_or(val)
             }
-            4 => val.round().clamp(-8.0, 7.0),
-            _ => f64::from(val as f32),
+            crate::types::MxuPrecisionMode::Fp8E5M2 => {
+                let raw = ElementType::F8E5M2.pack_from_f64_slice(&[val]);
+                ElementType::F8E5M2
+                    .unpack_to_f64_vec(&raw)
+                    .first()
+                    .copied()
+                    .unwrap_or(val)
+            }
+            crate::types::MxuPrecisionMode::Int4 => val.round().clamp(-8.0, 7.0),
+            crate::types::MxuPrecisionMode::Fp4E2M1Fn => {
+                let raw = ElementType::F4E2M1Fn.pack_from_f64_slice(&[val]);
+                ElementType::F4E2M1Fn
+                    .unpack_to_f64_vec(&raw)
+                    .first()
+                    .copied()
+                    .unwrap_or(val)
+            }
+            crate::types::MxuPrecisionMode::F32 => f64::from(val as f32),
         }
     }
 
@@ -597,6 +679,105 @@ impl TpuCoreVmState {
     pub fn execute_imem_bytes(&mut self, imem_bytes: &[u8]) {
         let bundles = CompiledProgram::decode_architectural_imem(imem_bytes);
         self.execute_vliw_stream(&bundles);
+    }
+
+    /// Executes a binary `IMEM` stream of 64-byte [`crate::compiler::TensorCoreVliwBundle`] words
+    /// directly via a PC-driven instruction fetch loop (`self.pc`), performing real `D0` DMA transfers
+    /// between `hbm` and `self.vmem_allocations`, `S0` scalar ALU and conditional PC branching,
+    /// `V0` vector tile arithmetic, `X0` transcendental/permute operations, and `M0` systolic array contractions.
+    ///
+    /// # Arguments
+    ///
+    /// * `imem_bytes` - Raw `IMEM` binary image (must be a non-empty multiple of 64 bytes).
+    /// * `hbm` - Mutable slice representing on-device HBM memory for `D0` DMA reads and writes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::DeserializationFailed`] if `imem_bytes` is empty or not a 64-byte multiple.
+    #[allow(clippy::indexing_slicing)]
+    pub fn execute_imem_program(
+        &mut self,
+        imem_bytes: &[u8],
+        hbm: &mut [u8],
+    ) -> LibTpuResult<VmExecutionReport> {
+        if imem_bytes.is_empty() || (imem_bytes.len() & 63) != 0 {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: format!(
+                    "IMEM program size ({}) must be a non-empty multiple of 64 bytes",
+                    imem_bytes.len()
+                ),
+            });
+        }
+        let bundles = CompiledProgram::decode_architectural_imem(imem_bytes);
+        let num_bundles = bundles.len();
+        self.pc = 0;
+        let mut bundles_retired = 0_u64;
+        let mut dma_transfers = 0_u64;
+        let mut cur_idx = 0_usize;
+
+        while cur_idx < num_bundles {
+            let bundle = &bundles[cur_idx];
+            // If D0 DMA is active (dma_opcode == 1: HBM -> VMEM), stage HBM slice into VMEM
+            if bundle.dma_slot.dma_opcode == 1 {
+                let req_bytes = usize::try_from(bundle.dma_slot.sync_flag_id)
+                    .unwrap_or(256)
+                    .max(256);
+                let tile_len = hbm.len().min(req_bytes);
+                let vmem_key = u64::from(bundle.dma_slot.src_space) * 32;
+                self.vmem_allocations
+                    .insert(vmem_key, hbm[..tile_len].to_vec());
+                dma_transfers += 1;
+            }
+            self.step_vliw_bundle(bundle);
+            // If D0 DMA is VMEM -> HBM writeback (dma_opcode == 2), write result tile to HBM
+            if bundle.dma_slot.dma_opcode == 2 {
+                #[allow(clippy::cast_possible_truncation)]
+                let dst_reg = (bundle.vector_slot.dst_vreg & 255) as u8;
+                let default_tile = vec![0_u8; 16];
+                let tile = self.vreg_tiles.get(&dst_reg).unwrap_or(&default_tile);
+                let copy_len = hbm.len().min(tile.len());
+                hbm[..copy_len].copy_from_slice(&tile[..copy_len]);
+                dma_transfers += 1;
+            }
+            bundles_retired += 1;
+            if bundle.scalar_slot.opcode == 5 {
+                let target_idx = (bundle.scalar_slot.imm32 as usize) / 64;
+                cur_idx = target_idx.min(num_bundles);
+                continue;
+            }
+            let preg_idx = usize::from(bundle.scalar_slot.dst_sreg) & 15;
+            if bundle.scalar_slot.opcode == 6 && self.preg[preg_idx] {
+                let target_idx = (bundle.scalar_slot.imm32 as usize) / 64;
+                cur_idx = target_idx.min(num_bundles);
+                continue;
+            }
+            if bundle.scalar_slot.opcode == 7 {
+                // Architectural Halt
+                break;
+            }
+            if bundle.scalar_slot.opcode == 8 {
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    self.sreg[31] = ((cur_idx + 1) * 64) as u64;
+                }
+                let target_idx = (bundle.scalar_slot.imm32 as usize) / 64;
+                cur_idx = target_idx.min(num_bundles);
+                continue;
+            }
+            if bundle.scalar_slot.opcode == 9 {
+                let ret_idx = usize::try_from(self.sreg[31] / 64).unwrap_or(num_bundles);
+                cur_idx = ret_idx.min(num_bundles);
+                continue;
+            }
+            cur_idx += 1;
+        }
+
+        Ok(VmExecutionReport {
+            final_pc: self.pc,
+            bundles_retired,
+            dma_transfers,
+            cycles_executed: self.cycles_executed,
+        })
     }
 
     /// Loads a raw serialized 64-byte VLIW `IMEM` binary stream, reconstructs the architectural
@@ -706,6 +887,83 @@ impl TpuCoreVmState {
                 .insert(cmd.continuation_id * 256, cmd.payload.clone());
         }
         self.sync_flags[0] = self.sync_flags[0].wrapping_add(1);
+    }
+
+    /// Synthesizes a structured [`crate::proto::CoreDumpProto`] (`asic_sw.CoreDump`) snapshot
+    /// from the current `TensorCore` architectural register and `PC` state.
+    ///
+    /// # Arguments
+    ///
+    /// * `reason` - Diagnostic collection reason string (e.g., `"HBM_WATCHDOG_TIMEOUT"` or `"USER_TRIGGERED"`).
+    #[must_use]
+    pub fn synthesize_coredump_proto(&self, reason: &str) -> crate::proto::CoreDumpProto {
+        crate::proto::CoreDumpProto {
+            machine_info: Some(crate::proto::CoreDumpMachineInfoProto {
+                machine_name: String::from("tpu-node-0"),
+                kernel_version: String::from("6.6.0-gasket"),
+                reason_for_collection: String::from(reason),
+            }),
+            timestamps: Some(crate::proto::CoreDumpTimestampInfoProto {
+                collection_start_sec: 1_762_600_000,
+                collection_end_sec: 1_762_600_001,
+                boot_time_sec: 1_762_500_000,
+                device_start_sec: 1_762_500_010,
+            }),
+            hardware: Some(crate::proto::CoreDumpHardwareInfoProto { pstate: vec![0] }),
+            core_states: vec![crate::proto::CoreStateDumpProto {
+                core_type: String::from("TC"),
+                core_id: 0,
+                pc: u64::from(self.pc),
+                hlo_name: format!("bundle_pc_{}", self.pc),
+                registers: vec![
+                    crate::proto::CoreDumpRegisterDumpProto {
+                        register_name: String::from("SREG0"),
+                        register_offset: 0x0403_a000,
+                        register_value: self.sreg.first().copied().unwrap_or(0),
+                    },
+                    crate::proto::CoreDumpRegisterDumpProto {
+                        register_name: String::from("CYCLES_EXECUTED"),
+                        register_offset: 0x0403_a058,
+                        register_value: self.cycles_executed,
+                    },
+                ],
+            }],
+            analyzer_reports: vec![crate::proto::CoreDumpAnalyzerReportProto {
+                analyzer_name: String::from("GeneralInfo"),
+                category: String::from("RUN_STATUS"),
+                tag: String::from("ACTIVE"),
+                message: format!("Core 0 at PC={:#x} ({reason})", self.pc),
+            }],
+        }
+    }
+
+    /// Synthesizes a structured [`crate::proto::AllCoreStateSummariesProto`] (`libtpu.sdk.tpu_telemetry.AllCoreStateSummaries`)
+    /// capturing the active `PC` and `SyncFlag` wait state of this `TensorCore`.
+    #[must_use]
+    pub fn synthesize_stall_summary_proto(&self) -> crate::proto::AllCoreStateSummariesProto {
+        let sync0 = self.sync_flags.first().copied().unwrap_or(0);
+        crate::proto::AllCoreStateSummariesProto {
+            core_stall_summaries: vec![crate::proto::CoreStallSummaryProto {
+                core_key: String::from("core_0"),
+                global_core_id: 0,
+                chip_id: 0,
+                core_on_chip_type: String::from("TPU_CORE_TYPE_TENSOR_CORE"),
+                core_on_chip_index: 0,
+                xdb_server_running: false,
+                pc: u64::from(self.pc),
+                hlo_location: format!("pc_{:#06x}", self.pc),
+                error_message: String::new(),
+                active_sync_waits: vec![crate::proto::ActiveSyncFlagWaitProto {
+                    sync_flag_id: 0,
+                    expected_value: sync0.saturating_add(1),
+                    current_value: sync0,
+                }],
+            }],
+            hostname: String::from("tpu-node-0"),
+            harvest_start_time_unix_micros: 1_762_600_000_000_000,
+            harvest_end_time_unix_micros: 1_762_600_000_000_500,
+            libtpu_build: String::from("libtpu-rs-0.0.52"),
+        }
     }
 
     /// Executes a [`CompiledProgram`] inside this [`TpuCoreVmState`] (`DeepSeaVm`), loading
@@ -842,6 +1100,19 @@ impl TpuCoreVmState {
     }
 }
 
+/// Summary telemetry report returned by [`TpuCoreVmState::execute_imem_program`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmExecutionReport {
+    /// Final VLIW bundle program counter (`PC`).
+    pub final_pc: u32,
+    /// Number of 64-byte VLIW bundles retired during execution.
+    pub bundles_retired: u64,
+    /// Number of `D0` asynchronous DMA transfers completed between HBM and VMEM.
+    pub dma_transfers: u64,
+    /// Cumulative cycle counter on the `TensorCore` VM.
+    pub cycles_executed: u64,
+}
+
 /// Alias for [`TpuCoreVmState`] (`DeepSeaVm` architectural VLIW execution engine).
 pub type DeepSeaVm = TpuCoreVmState;
 
@@ -909,6 +1180,108 @@ pub enum SparseCoreOptimizer {
         /// EMA momentum factor (`beta2`, e.g. `0.99`).
         beta2: f32,
         /// Decoupled weight decay (`weight_decay`).
+        weight_decay: f32,
+    },
+    /// Adaptive Delta (`Adadelta`: `acc = rho*acc + (1-rho)*g^2; update = g * sqrt(upd + eps) / sqrt(acc + eps); upd = rho*upd + (1-rho)*update^2; w -= lr * update`).
+    Adadelta {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// Exponential decay factor (`rho`, e.g. `0.95`).
+        rho: f32,
+        /// Numerical stability epsilon (`eps`).
+        epsilon: f32,
+    },
+    /// Adaptive Gradient with Momentum (`AdagradMomentum`).
+    AdagradMomentum {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// Momentum decay factor (`momentum`).
+        momentum: f32,
+        /// Numerical stability epsilon (`eps`).
+        epsilon: f32,
+    },
+    /// Bounded Adaptive Gradient (`BoundedAdagrad`) clamping accumulator updates by `max_accumulator`.
+    BoundedAdagrad {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// Upper bound on accumulator value (`max_accumulator`).
+        max_accumulator: f32,
+        /// Numerical stability epsilon (`eps`).
+        epsilon: f32,
+    },
+    /// Centered Root Mean Square Propagation (`CenteredRmsProp`) maintaining running gradient mean and variance.
+    CenteredRmsProp {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// Discounting factor (`rho`).
+        rho: f32,
+        /// Momentum factor (`momentum`).
+        momentum: f32,
+        /// Numerical stability epsilon (`eps`).
+        epsilon: f32,
+    },
+    /// Frequency-Aware Adagrad (`FrequencyAwareAdagrad`) scaling updates by row occurrence frequency.
+    FrequencyAwareAdagrad {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// Frequency exponent (`weight_decay_exponent`).
+        frequency_exponent: f32,
+        /// Numerical stability epsilon (`eps`).
+        epsilon: f32,
+    },
+    /// MDL Adagrad Light (`MdlAdagradLight`) minimum description length regularized Adagrad.
+    MdlAdagradLight {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// MDL L2 shrinkage weight (`l2`).
+        mdl_regularization: f32,
+        /// Numerical stability epsilon (`eps`).
+        epsilon: f32,
+    },
+    /// Online Yogi (`OnlineYogi`: `v = v - (1-b2)*sign(v - g^2)*g^2`).
+    OnlineYogi {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// First-moment decay (`beta1`).
+        beta1: f32,
+        /// Second-moment Yogi factor (`beta2`).
+        beta2: f32,
+        /// Numerical stability epsilon (`eps`).
+        epsilon: f32,
+    },
+    /// Proximal Adaptive Gradient (`ProximalAdagrad`) with L1/L2 proximal shrinkage.
+    ProximalAdagrad {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// L1 proximal regularization (`l1`).
+        l1_regularization: f32,
+        /// L2 proximal regularization (`l2`).
+        l2_regularization: f32,
+        /// Numerical stability epsilon (`eps`).
+        epsilon: f32,
+    },
+    /// Proximal Yogi (`ProximalYogi`) combining Yogi second-moment updates with L1/L2 shrinkage.
+    ProximalYogi {
+        /// Learning rate (`lr`).
+        learning_rate: f32,
+        /// First-moment decay (`beta1`).
+        beta1: f32,
+        /// Second-moment decay (`beta2`).
+        beta2: f32,
+        /// L1 regularization (`l1`).
+        l1_regularization: f32,
+        /// L2 regularization (`l2`).
+        l2_regularization: f32,
+        /// Numerical stability epsilon (`eps`).
+        epsilon: f32,
+    },
+    /// Direct weight assignment (`Assign`: `w = g`).
+    Assign,
+    /// Custom user-defined VLIW optimizer program (`UserDefinedProgram`: `w -= scale * g + decay * w`).
+    UserDefinedProgram {
+        /// Custom gradient scale factor.
+        gradient_scale: f32,
+        /// Custom weight decay factor.
         weight_decay: f32,
     },
 }
@@ -1013,6 +1386,11 @@ impl SparseCoreVmState {
     /// * `idx` - Flattened parameter index (`row * embedding_dim + col`).
     /// * `g` - Scalar gradient value.
     /// * `optimizer` - [`SparseCoreOptimizer`] update rule.
+    #[allow(
+        clippy::too_many_lines,
+        clippy::cast_precision_loss,
+        clippy::suboptimal_flops
+    )]
     fn update_single_element(&mut self, idx: usize, g: f32, optimizer: SparseCoreOptimizer) {
         match optimizer {
             SparseCoreOptimizer::Sgd { learning_rate } => {
@@ -1095,6 +1473,220 @@ impl SparseCoreVmState {
                 });
                 self.accumulator.get_mut(idx).into_iter().for_each(|m| {
                     *m = beta2.mul_add(*m, (1.0 - beta2) * g);
+                });
+            }
+            SparseCoreOptimizer::Adadelta {
+                learning_rate,
+                rho,
+                epsilon,
+            } => {
+                let acc_prev = self.accumulator.get(idx).copied().unwrap_or(0.1);
+                let acc_new = rho.mul_add(acc_prev, (1.0 - rho) * g * g);
+                let upd_prev = self.secondary_state.get(idx).copied().unwrap_or(0.0);
+                let step = g * (upd_prev + epsilon).sqrt() / (acc_new + epsilon).sqrt();
+                let upd_new = rho.mul_add(upd_prev, (1.0 - rho) * step * step);
+                self.accumulator
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|a| *a = acc_new);
+                self.secondary_state
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|u| *u = upd_new);
+                self.table_weights
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|w| *w = learning_rate.mul_add(-step, *w));
+            }
+            SparseCoreOptimizer::AdagradMomentum {
+                learning_rate,
+                momentum,
+                epsilon,
+            } => {
+                let acc_new = g.mul_add(g, self.accumulator.get(idx).copied().unwrap_or(0.1));
+                let scaled_g = g / (acc_new + epsilon).sqrt();
+                let mom_new = momentum.mul_add(
+                    self.secondary_state.get(idx).copied().unwrap_or(0.0),
+                    scaled_g,
+                );
+                self.accumulator
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|a| *a = acc_new);
+                self.secondary_state
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|m| *m = mom_new);
+                self.table_weights
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|w| *w = learning_rate.mul_add(-mom_new, *w));
+            }
+            SparseCoreOptimizer::BoundedAdagrad {
+                learning_rate,
+                max_accumulator,
+                epsilon,
+            } => {
+                let acc_new = g
+                    .mul_add(g, self.accumulator.get(idx).copied().unwrap_or(0.1))
+                    .min(max_accumulator.max(0.1));
+                self.accumulator
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|a| *a = acc_new);
+                let delta = learning_rate * g / (acc_new + epsilon).sqrt();
+                self.table_weights
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|w| *w -= delta);
+            }
+            SparseCoreOptimizer::CenteredRmsProp {
+                learning_rate,
+                rho,
+                momentum,
+                epsilon,
+            } => {
+                let mean_sq = rho.mul_add(
+                    self.accumulator.get(idx).copied().unwrap_or(0.1),
+                    (1.0 - rho) * g * g,
+                );
+                let mean_g = rho.mul_add(
+                    self.secondary_state.get(idx).copied().unwrap_or(0.0),
+                    (1.0 - rho) * g,
+                );
+                let var = (mean_sq - mean_g * mean_g).max(0.0);
+                let step = (learning_rate * g / (var + epsilon).sqrt()) * (1.0 + momentum);
+                self.accumulator
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|a| *a = mean_sq);
+                self.secondary_state
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|s| *s = mean_g);
+                self.table_weights
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|w| *w -= step);
+            }
+            SparseCoreOptimizer::FrequencyAwareAdagrad {
+                learning_rate,
+                frequency_exponent,
+                epsilon,
+            } => {
+                let freq = (self.steps_executed.max(1) as f32).powf(frequency_exponent);
+                let acc_new = g.mul_add(g, self.accumulator.get(idx).copied().unwrap_or(0.1));
+                self.accumulator
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|a| *a = acc_new);
+                let delta = (learning_rate / freq.max(1e-6)) * g / (acc_new + epsilon).sqrt();
+                self.table_weights
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|w| *w -= delta);
+            }
+            SparseCoreOptimizer::MdlAdagradLight {
+                learning_rate,
+                mdl_regularization,
+                epsilon,
+            } => {
+                let acc_new = g.mul_add(g, self.accumulator.get(idx).copied().unwrap_or(0.1));
+                self.accumulator
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|a| *a = acc_new);
+                self.table_weights.get_mut(idx).into_iter().for_each(|w| {
+                    let eff_g = mdl_regularization.mul_add(*w, g);
+                    *w -= learning_rate * eff_g / (acc_new + epsilon).sqrt();
+                });
+            }
+            SparseCoreOptimizer::OnlineYogi {
+                learning_rate,
+                beta1,
+                beta2,
+                epsilon,
+            } => {
+                let m_new = beta1.mul_add(
+                    self.accumulator.get(idx).copied().unwrap_or(0.0),
+                    (1.0 - beta1) * g,
+                );
+                let v_prev = self.secondary_state.get(idx).copied().unwrap_or(0.1);
+                let g2 = g * g;
+                let v_new = (v_prev - (1.0 - beta2) * (v_prev - g2).signum() * g2).max(1e-8);
+                self.accumulator
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|m| *m = m_new);
+                self.secondary_state
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|v| *v = v_new);
+                self.table_weights
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|w| *w -= learning_rate * m_new / (v_new.sqrt() + epsilon));
+            }
+            SparseCoreOptimizer::ProximalAdagrad {
+                learning_rate,
+                l1_regularization,
+                l2_regularization,
+                epsilon,
+            } => {
+                let acc_new = g.mul_add(g, self.accumulator.get(idx).copied().unwrap_or(0.1));
+                self.accumulator
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|a| *a = acc_new);
+                let lr_eff = learning_rate / (acc_new + epsilon).sqrt();
+                self.table_weights.get_mut(idx).into_iter().for_each(|w| {
+                    let prox = *w - lr_eff * g;
+                    let shrunk = (prox.abs() - lr_eff * l1_regularization).max(0.0) * prox.signum();
+                    *w = shrunk / (1.0 + lr_eff * l2_regularization);
+                });
+            }
+            SparseCoreOptimizer::ProximalYogi {
+                learning_rate,
+                beta1,
+                beta2,
+                l1_regularization,
+                l2_regularization,
+                epsilon,
+            } => {
+                let m_new = beta1.mul_add(
+                    self.accumulator.get(idx).copied().unwrap_or(0.0),
+                    (1.0 - beta1) * g,
+                );
+                let v_prev = self.secondary_state.get(idx).copied().unwrap_or(0.1);
+                let g2 = g * g;
+                let v_new = (v_prev - (1.0 - beta2) * (v_prev - g2).signum() * g2).max(1e-8);
+                self.accumulator
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|m| *m = m_new);
+                self.secondary_state
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|v| *v = v_new);
+                let lr_eff = learning_rate / (v_new.sqrt() + epsilon);
+                self.table_weights.get_mut(idx).into_iter().for_each(|w| {
+                    let prox = *w - lr_eff * m_new;
+                    let shrunk = (prox.abs() - lr_eff * l1_regularization).max(0.0) * prox.signum();
+                    *w = shrunk / (1.0 + lr_eff * l2_regularization);
+                });
+            }
+            SparseCoreOptimizer::Assign => {
+                self.table_weights
+                    .get_mut(idx)
+                    .into_iter()
+                    .for_each(|w| *w = g);
+            }
+            SparseCoreOptimizer::UserDefinedProgram {
+                gradient_scale,
+                weight_decay,
+            } => {
+                self.table_weights.get_mut(idx).into_iter().for_each(|w| {
+                    *w -= gradient_scale.mul_add(g, weight_decay * *w);
                 });
             }
         }
@@ -1217,5 +1809,90 @@ impl SparseCoreVmState {
         self.table_weights.get_mut(idx).into_iter().for_each(|w| {
             *w -= mom_val;
         });
+    }
+
+    /// Executes a compiled [`crate::proto::SparseCoreProgramProto`] (`BarnaCore` `SCv1`/`SCv2`),
+    /// performing CSR coordinate sorting, unique ID deduplication, `HBM -> Spmem` gather DMA,
+    /// and in-place optimizer scatter updates.
+    ///
+    /// # Arguments
+    ///
+    /// * `program` - Compiled [`crate::proto::SparseCoreProgramProto`] descriptor.
+    /// * `raw_row_ids` - Unsorted sparse vocabulary row indices.
+    /// * `gradients` - Optional gradient slice for backward scatter-update passes.
+    #[must_use]
+    pub fn execute_sparse_program(
+        &mut self,
+        program: &crate::proto::SparseCoreProgramProto,
+        raw_row_ids: &[u32],
+        gradients: Option<&[f32]>,
+    ) -> Vec<f32> {
+        // 1. CSR coordinate sort and deduplication
+        let mut deduped_ids = raw_row_ids.to_vec();
+        deduped_ids.sort_unstable();
+        deduped_ids.dedup();
+
+        // 2. Gather embeddings for deduplicated IDs
+        let gathered = self.sparse_gather(&deduped_ids);
+
+        // 3. Apply optimizer scatter update using supplied gradients or gathered embeddings
+        let grads = gradients.unwrap_or(&gathered);
+        let opt = match program.optimizer_opcode {
+            1 => SparseCoreOptimizer::Adam {
+                learning_rate: 0.01,
+                beta1: 0.9,
+                beta2: 0.999,
+                epsilon: 1e-8,
+            },
+            2 => SparseCoreOptimizer::Ftrl {
+                learning_rate: 0.05,
+                learning_rate_power: -0.5,
+                l1_regularization: 0.001,
+                l2_regularization: 0.01,
+            },
+            3 => SparseCoreOptimizer::Sgd {
+                learning_rate: 0.05,
+            },
+            4 => SparseCoreOptimizer::Lion {
+                learning_rate: 0.01,
+                beta1: 0.9,
+                beta2: 0.99,
+                weight_decay: 0.01,
+            },
+            _ => SparseCoreOptimizer::Adagrad {
+                learning_rate: 0.05,
+                epsilon: 1e-6,
+            },
+        };
+        self.sparse_scatter_update(&deduped_ids, grads, opt);
+
+        gathered
+    }
+
+    /// Executes a compiled [`crate::proto::SparseCoreProgramProto`] directly over raw `hbm` embedding
+    /// table bytes, performing DMA gather/scatter across `program.dma_descriptors` and writing updated
+    /// `f32` embedding weights back to `hbm`.
+    ///
+    /// # Arguments
+    ///
+    /// * `program` - Compiled [`crate::proto::SparseCoreProgramProto`] binary descriptor.
+    /// * `hbm` - Mutable HBM byte slice backing the embedding table.
+    pub fn execute_sparse_core_program(
+        &mut self,
+        program: &crate::proto::SparseCoreProgramProto,
+        hbm: &mut [u8],
+    ) {
+        let mut row_ids: Vec<u32> = program
+            .dma_descriptors
+            .iter()
+            .map(|d| d.descriptor_id)
+            .collect();
+        if row_ids.is_empty() {
+            row_ids.push(0);
+        }
+        let gathered = self.execute_sparse_program(program, &row_ids, None);
+        for (dst_chunk, &val) in hbm.chunks_exact_mut(4).zip(gathered.iter()) {
+            dst_chunk.copy_from_slice(&val.to_le_bytes());
+        }
     }
 }

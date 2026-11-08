@@ -625,6 +625,18 @@ pub enum LibTpuError {
         reason: String,
     },
 
+    /// Bidirectional `.proto` and Rust struct schema equivalence verification failed.
+    #[display("Protobuf schema drift in {message_type} (field '{field_name}'): {reason}")]
+    #[from(ignore)]
+    ProtoSchemaDriftError {
+        /// Fully-qualified protobuf message name (`package.MessageName`).
+        message_type: &'static str,
+        /// Field name or identifier where drift was detected.
+        field_name: String,
+        /// Detailed schema mismatch description.
+        reason: String,
+    },
+
     /// Parsing of an XLA `HloModuleProto` or textual HLO module failed.
     #[display("HLO parse error at {line}:{column}: {reason}")]
     #[from(ignore)]
@@ -715,6 +727,14 @@ pub enum LibTpuError {
     #[from(ignore)]
     DeserializationFailed {
         /// Explanation of the deserialization error.
+        reason: String,
+    },
+
+    /// Executable binary or VLIW instruction bundle bitstream failed format or CRC/parity verification (`InvalidExecutableFormat`).
+    #[display("Invalid executable format: {reason}")]
+    #[from(ignore)]
+    InvalidExecutableFormat {
+        /// Detailed reason why the executable or bundle bitstream is invalid.
         reason: String,
     },
 
@@ -1462,6 +1482,7 @@ impl LibTpuError {
             | Self::ShapeInferenceError { .. }
             | Self::InvalidOpcode { .. }
             | Self::InvalidReductionOp { .. }
+            | Self::InvalidExecutableFormat { .. }
             | Self::JsonSerializationError { .. }
             | Self::JsonSerializationFailed(_) => PjrtErrorCode::InvalidArgument,
             Self::UnsupportedApiVersion { .. } | Self::UnimplementedOperation { .. } => {
@@ -1502,6 +1523,7 @@ impl LibTpuError {
             Self::DevicePoisoned { .. }
             | Self::HardwareFault { .. }
             | Self::ProtobufEncodeError { .. }
+            | Self::ProtoSchemaDriftError { .. }
             | Self::ProstEncodeFailed(_)
             | Self::CompilationFailed { .. }
             | Self::PhaseCompilationFailed { .. }
@@ -1694,6 +1716,17 @@ impl LibTpuError {
                 out.push(ErrorPayload::new(
                     String::from("type.googleapis.com/xla.TpuDmaErrorPayload"),
                     format!("address={address:#x},align={required_alignment}").into_bytes(),
+                ));
+            }
+            Self::ProtoSchemaDriftError {
+                message_type,
+                field_name,
+                reason,
+            } => {
+                out.push(ErrorPayload::new(
+                    String::from("type.googleapis.com/xla.ProtoSchemaDriftPayload"),
+                    format!("message={message_type},field={field_name},reason={reason}")
+                        .into_bytes(),
                 ));
             }
             _ => {}
@@ -2295,6 +2328,14 @@ mod tests {
                 PjrtErrorCode::Internal,
             ),
             (
+                LibTpuError::ProtoSchemaDriftError {
+                    message_type: "xla.TileProto",
+                    field_name: String::from("dimensions"),
+                    reason: String::from("tag mismatch"),
+                },
+                PjrtErrorCode::Internal,
+            ),
+            (
                 LibTpuError::HloParseError {
                     line: 1,
                     column: 5,
@@ -2352,6 +2393,12 @@ mod tests {
                     reason: String::from("bad magic"),
                 },
                 PjrtErrorCode::Internal,
+            ),
+            (
+                LibTpuError::InvalidExecutableFormat {
+                    reason: String::from("CRC mismatch"),
+                },
+                PjrtErrorCode::InvalidArgument,
             ),
             (
                 LibTpuError::ExecutionFailed {

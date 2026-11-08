@@ -397,6 +397,29 @@ public:
                                size_t num_outputs) const noexcept;
 
   /**
+   * @brief Executes this SPMD program across `num_devices` addressable devices
+   * simultaneously via `PJRT_LoadedExecutable_Execute`.
+   * @param arg_lists Per-device input `const PJRT_Buffer* const*` arrays of
+   * length `num_devices`.
+   * @param num_devices Number of participating devices (`>= 1`).
+   * @param num_args Number of input buffers per device.
+   * @param output_lists Per-device output `PJRT_Buffer** const*` arrays of
+   * length `num_devices`.
+   * @return `Status` indicating multi-device execution success or failure.
+   */
+  [[nodiscard]] Status
+  execute_sharded(const PJRT_Buffer *const *const *arg_lists,
+                  size_t num_devices, size_t num_args,
+                  PJRT_Buffer **const *output_lists) const noexcept;
+
+  /**
+   * @brief Returns the number of cost-analysis properties exposed by
+   * `PJRT_Executable_GetCostAnalysis`.
+   * @return Number of `PJRT_NamedValue` cost analysis properties (`>= 3`).
+   */
+  [[nodiscard]] size_t cost_analysis_property_count() const noexcept;
+
+  /**
    * @brief Serializes this executable into `out_bytes` (or queries byte length
    * when `out_bytes == nullptr`).
    * @param out_bytes Optional destination byte array.
@@ -1549,6 +1572,168 @@ using MultiSliceConfig = MegascaleContext;
 
 /** @brief Type alias for `EmbeddingEngine` (`SparseCoreEngine`). */
 using SparseCoreEngine = EmbeddingEngine;
+
+/**
+ * @brief Strongly-typed C++20 move-only RAII wrapper over
+ * `DistributedCoordinator` (`libtpu_rs_coordinator_*`).
+ */
+class Coordinator {
+public:
+  /**
+   * @brief Creates a new in-memory `Coordinator` via
+   * `libtpu_rs_coordinator_create`.
+   */
+  Coordinator() noexcept;
+
+  /**
+   * @brief Destroys the underlying coordinator handle via
+   * `libtpu_rs_coordinator_destroy`.
+   */
+  ~Coordinator() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other coordinator.
+   */
+  Coordinator(const Coordinator &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other coordinator.
+   * @return Reference to this coordinator.
+   */
+  Coordinator &operator=(const Coordinator &other) = delete;
+
+  /**
+   * @brief Move constructor transferring ownership of the coordinator handle.
+   * @param other Rvalue coordinator to move from.
+   */
+  Coordinator(Coordinator &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring ownership of the coordinator
+   * handle.
+   * @param other Rvalue coordinator to move from.
+   * @return Reference to this coordinator.
+   */
+  Coordinator &operator=(Coordinator &&other) noexcept;
+
+  /**
+   * @brief Inserts a key-value entry into this coordinator via
+   * `libtpu_rs_coordinator_put_kv`.
+   * @param key Null-terminated UTF-8 key string.
+   * @param value UTF-8 value string.
+   * @return `Status` indicating completion status.
+   */
+  [[nodiscard]] Status put_key_value(const char *key,
+                                     const std::string &value) noexcept;
+
+  /**
+   * @brief Looks up a key-value entry from this coordinator via
+   * `libtpu_rs_coordinator_get_kv`.
+   * @param key Null-terminated UTF-8 key string.
+   * @return Value string (or `""` if not found).
+   */
+  [[nodiscard]] std::string get_key_value(const char *key) const noexcept;
+
+private:
+  /** @brief Owned coordinator handle pointer. */
+  void *handle_;
+};
+
+/**
+ * @brief Emits a canonical `proto3` `.proto` schema definition string from the
+ * compiled Rust protobuf descriptor for `full_message_name`.
+ * @param full_message_name Null-terminated fully-qualified protobuf message
+ * name (e.g., `"xla.TileProto"`).
+ * @return Canonical `.proto` schema text, or `""` if `full_message_name` is
+ * unknown.
+ */
+[[nodiscard]] std::string
+emit_proto_schema(const char *full_message_name) noexcept;
+
+/**
+ * @brief Disassembles a `LoadedExecutable` into a multi-line `DeepSea` LLO
+ * assembly listing (`libtpu_rs_disassemble_executable_llo`).
+ * @param executable Reference to a `LoadedExecutable`.
+ * @return Multi-line `DeepSea` LLO assembly string (or `""` if uninitialized).
+ */
+[[nodiscard]] std::string
+disassemble_executable_llo(const LoadedExecutable &executable) noexcept;
+
+/**
+ * @brief Decodes a raw or Riegeli-framed `asic_sw.CoreDump` payload into
+ * canonical JSON (`libtpu_rs_read_core_dump`).
+ * @param raw_bytes Pointer to raw or Riegeli-framed `CoreDump` bytes.
+ * @param raw_len Byte length of `raw_bytes`.
+ * @return Canonical JSON string (or `""` on invalid input).
+ */
+[[nodiscard]] std::string read_core_dump_json(const uint8_t *raw_bytes,
+                                              size_t raw_len) noexcept;
+
+/**
+ * @brief Decodes a raw or Riegeli-framed `AllCoreStateSummaries` payload into
+ * canonical JSON (`libtpu_rs_read_stall_summaries`).
+ * @param raw_bytes Pointer to raw or Riegeli-framed `AllCoreStateSummaries`
+ * bytes.
+ * @param raw_len Byte length of `raw_bytes`.
+ * @return Canonical JSON string (or `""` on invalid input).
+ */
+[[nodiscard]] std::string read_stall_summaries_json(const uint8_t *raw_bytes,
+                                                    size_t raw_len) noexcept;
+
+/**
+ * @brief Decodes a raw or Riegeli-framed `CompilerMetadata` payload into
+ * canonical JSON (`libtpu_rs_read_compiler_metadata`).
+ * @param raw_bytes Pointer to raw or Riegeli-framed `CompilerMetadata` bytes.
+ * @param raw_len Byte length of `raw_bytes`.
+ * @return Canonical JSON string (or `""` on invalid input).
+ */
+[[nodiscard]] std::string read_compiler_metadata_json(const uint8_t *raw_bytes,
+                                                      size_t raw_len) noexcept;
+
+/**
+ * @brief Registers an OpenXLA Typed FFI v0.2 `XLA_FFI_Handler` callback under
+ * `target_name` (`libtpu_rs_register_ffi_handler`).
+ * @param target_name Null-terminated UTF-8 custom-call target name.
+ * @param handler Function pointer matching `XLA_FFI_Handler`.
+ * @return `Status` indicating registration success or failure.
+ */
+[[nodiscard]] Status register_ffi_handler(const char *target_name,
+                                          XLA_FFI_Handler handler) noexcept;
+
+/**
+ * @brief Formats a human-readable physical register allocation and `VMEM` spill
+ * summary for `executable` (`libtpu_rs_inspect_register_allocation`).
+ * @param executable Reference to a `LoadedExecutable`.
+ * @return Register allocation summary string (or `""` if uninitialized).
+ */
+[[nodiscard]] std::string
+inspect_register_allocation(const LoadedExecutable &executable) noexcept;
+
+/**
+ * @brief Formats a canonical hardware chip configuration summary for the active
+ * TPU generation (`libtpu_rs_query_chip_config_summary`).
+ * @return Hardware chip configuration summary string.
+ */
+[[nodiscard]] std::string query_chip_config_summary() noexcept;
+
+/**
+ * @brief Computes the shortest 3D Torus optical ICI hop count between two chip
+ * coordinates (`libtpu_rs_compute_ici_route`).
+ * @param src_x Source X chip coordinate.
+ * @param src_y Source Y chip coordinate.
+ * @param src_z Source Z chip coordinate.
+ * @param dst_x Destination X chip coordinate.
+ * @param dst_y Destination Y chip coordinate.
+ * @param dst_z Destination Z chip coordinate.
+ * @param wrap_around Whether twisted-torus wrap-around links are enabled.
+ * @return Shortest hop count along the 3D Torus mesh.
+ */
+[[nodiscard]] uint32_t compute_ici_route(uint32_t src_x, uint32_t src_y,
+                                         uint32_t src_z, uint32_t dst_x,
+                                         uint32_t dst_y, uint32_t dst_z,
+                                         bool wrap_around = true) noexcept;
 
 /**
  * @brief Zero-exception monadic value-or-status container (`Result<T>`) for

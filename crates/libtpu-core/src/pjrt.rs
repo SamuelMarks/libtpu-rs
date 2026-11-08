@@ -1458,6 +1458,7 @@ impl PjrtCoreClient {
                     to_string: dev.description.to_string_val.clone(),
                     debug_string: dev.description.debug_string.clone(),
                     fabric_uuid: format!("tpu_slice/{}", spec.process_index.0),
+                    shared_memory_per_block_optin: 0,
                     numa_node: 0,
                     device_memory_bytes_limit: hbm_limit,
                 }

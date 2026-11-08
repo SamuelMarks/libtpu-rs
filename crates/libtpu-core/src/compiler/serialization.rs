@@ -353,6 +353,7 @@ impl CompiledProgram {
                 required_compiler_hash: String::from(
                     "04aaaa86d5833da9604b4c12f1d288aeae18f36853d311e8c143611207b66f52",
                 ),
+                options: None,
             }),
             program_name: self.name.clone(),
             oom_during_compilation: false,
@@ -464,6 +465,7 @@ impl CompiledProgram {
                 required_compiler_hash: String::from(
                     "04aaaa86d5833da9604b4c12f1d288aeae18f36853d311e8c143611207b66f52",
                 ),
+                options: None,
             }),
             oom_during_compilation: false,
         }
@@ -539,12 +541,16 @@ impl CompiledProgram {
         attrs.insert(
             String::from("module_name"),
             crate::proto::FfiFlatAttributeProto {
+                scalar: None,
+                array: None,
                 str: self.name.as_bytes().to_vec(),
             },
         );
         attrs.insert(
             String::from("fingerprint"),
             crate::proto::FfiFlatAttributeProto {
+                scalar: None,
+                array: None,
                 str: self.fingerprint.as_bytes().to_vec(),
             },
         );
@@ -611,6 +617,107 @@ impl CompiledProgram {
             target_arguments: Some(target_args),
             legacy_executable: Some(self.to_executable_proto()),
             source_uri: format!("embed://{}", self.name),
+        }
+    }
+
+    /// Synthesizes a wire-compatible [`crate::proto::CompilerMetadataProto`] (`platforms_deepsea.jellyfish.xdb.CompilerMetadata`)
+    /// containing `.text.imem` / `.bss.vmem` section allocations, LLO symbol table entries, and
+    /// 1:1 `HloToLloMapping` ranges for every compiled VLIW bundle.
+    #[must_use]
+    pub fn build_compiler_metadata_proto(&self) -> crate::proto::CompilerMetadataProto {
+        let imem_bytes = u64::try_from(self.instruction_bundles.len() * 64)
+            .unwrap_or(64)
+            .max(64);
+        let vmem_bytes =
+            u64::try_from(self.memory_stats.temp_size_in_bytes.max(256)).unwrap_or(256);
+        let hlo_to_llo_mappings: Vec<crate::proto::HloToLloMappingProto> = self
+            .instruction_bundles
+            .iter()
+            .enumerate()
+            .map(|(idx, b)| {
+                let b_idx = u32::try_from(idx).unwrap_or(0);
+                crate::proto::HloToLloMappingProto {
+                    hlo_op_name: format!("{:?}_{b_idx}", b.opcode),
+                    start_bundle_index: b_idx,
+                    end_bundle_index: b_idx + 1,
+                }
+            })
+            .collect();
+        crate::proto::CompilerMetadataProto {
+            program_id: 1,
+            replica_count: i32::try_from(self.num_replicas).unwrap_or(1),
+            num_cores_per_replica: i32::try_from(self.num_partitions).unwrap_or(1),
+            is_haltless: false,
+            executable_size: i64::try_from(imem_bytes).unwrap_or(256),
+            optimized_hlo_instruction_count: i64::try_from(self.instruction_bundles.len())
+                .unwrap_or(1),
+            module_name: self.name.clone(),
+            executable_fingerprint: self.fingerprint.clone(),
+            section_allocations: vec![
+                crate::proto::CompilerSectionAllocationProto {
+                    section_name: String::from(".text.imem"),
+                    base_offset: 0,
+                    byte_size: imem_bytes,
+                    memory_space: 1,
+                },
+                crate::proto::CompilerSectionAllocationProto {
+                    section_name: String::from(".bss.vmem"),
+                    base_offset: 0,
+                    byte_size: vmem_bytes,
+                    memory_space: 1,
+                },
+            ],
+            symbol_table: vec![crate::proto::CompilerSymbolTableEntryProto {
+                symbol_name: format!("entry_{}", self.name),
+                imem_offset_bytes: 0,
+                byte_size: imem_bytes,
+            }],
+            hlo_to_llo_mappings,
+        }
+    }
+
+    /// Synthesizes a wire-compatible [`crate::proto::BarnaCoreExecutableProto`] (`xla.barnacore.BarnaCoreExecutableProto`)
+    /// containing compiled [`crate::proto::SparseCoreProgramProto`] and [`crate::proto::SparseCoreDmaDescriptorProto`]
+    /// streams for `SparseCore` (`SCv1` / `SCv2`) embedding gather and scatter-update operations.
+    #[must_use]
+    pub fn build_barnacore_executable_proto(&self) -> crate::proto::BarnaCoreExecutableProto {
+        let tpu_gen = crate::config::global_init_config().generation;
+        let sc_version = match tpu_gen {
+            crate::types::TpuGeneration::V6e | crate::types::TpuGeneration::V7x => 2,
+            _ => 1,
+        };
+        let dma_descriptors: Vec<crate::proto::SparseCoreDmaDescriptorProto> = self
+            .instruction_bundles
+            .iter()
+            .enumerate()
+            .map(|(idx, b)| crate::proto::SparseCoreDmaDescriptorProto {
+                descriptor_id: u32::try_from(idx).unwrap_or(0),
+                hbm_base_offset: u64::try_from(idx * 4096).unwrap_or(0),
+                spmem_offset: u32::try_from(idx * 256).unwrap_or(0),
+                transfer_bytes: 256,
+                sync_flag_id: b.sync_flag_id.max(1),
+                is_scatter_write: b.opcode == TpuOpCode::Scatter,
+            })
+            .collect();
+        let sc_imem = self.encode_architectural_imem();
+        crate::proto::BarnaCoreExecutableProto {
+            executable_name: format!("{}_barnacore", self.name),
+            sparse_core_version: sc_version,
+            channels: vec![crate::proto::BarnaCoreChannelConfigProto {
+                channel_id: 0,
+                sparse_core_index: 0,
+                max_unique_ids_per_partition: 2048,
+                max_ids_per_partition: 4096,
+                table_name: format!("{}_table0", self.name),
+            }],
+            programs: vec![crate::proto::SparseCoreProgramProto {
+                sparse_core_id: 0,
+                instruction_stream: sc_imem,
+                spmem_scratchpad_bytes: 1024 * 16,
+                dma_descriptors,
+                optimizer_opcode: 0,
+            }],
+            table_hbm_total_bytes: 1024 * 64 * 4,
         }
     }
 

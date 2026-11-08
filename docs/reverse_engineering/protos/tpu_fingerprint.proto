@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package tpu;
+
+message HloModuleFingerprintProto {
+  string module_name = 1;
+  uint64 structural_hash = 2;
+  uint64 sharding_hash = 3;
+  uint64 layout_hash = 4;
+}
+
+message TpuCompilerEnvironmentFingerprintProto {
+  int32 tpu_version = 1;
+  string compiler_abi_hash = 2;
+  uint64 flags_digest = 3;
+  bool megacore_enabled = 4;
+}
+
+message TpuCompilationFingerprintProto {
+  string hex_sha256 = 1;
+  HloModuleFingerprintProto hlo_fingerprint = 2;
+  TpuCompilerEnvironmentFingerprintProto env_fingerprint = 3;
+  uint64 topology_fingerprint = 4;
+}

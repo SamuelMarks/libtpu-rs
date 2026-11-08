@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: xla/service/gpu_topology.proto
+
+syntax = "proto3";
+
+package xla;
+
+message GpuTopologyProto {
+  int32 num_partitions = 1;
+  int32 num_hosts_per_partition = 2;
+  int32 num_devices_per_host = 3;
+}

@@ -111,6 +111,45 @@ pub unsafe extern "C" fn py_sdk_get_abi_header(
         .cast::<std::ffi::c_void>()
 }
 
+/// Native `CPython` `METH_NOARGS` callback returning a non-null C-string pointer for the SDK version
+/// (`_get_sdk_version`).
+///
+/// # Arguments
+///
+/// * `_self_obj` - Module object pointer (`PyObject*`).
+/// * `_args` - Unused argument pointer (`NULL` for `METH_NOARGS`).
+///
+/// # Safety
+///
+/// Returns a static `'static` C-string pointer cast to `*mut c_void`.
+#[unsafe(no_mangle)]
+pub const unsafe extern "C" fn py_sdk_get_version(
+    _self_obj: *mut std::ffi::c_void,
+    _args: *mut std::ffi::c_void,
+) -> *mut std::ffi::c_void {
+    c"0.0.52".as_ptr().cast_mut().cast::<std::ffi::c_void>()
+}
+
+/// Native `CPython` `METH_NOARGS` callback returning the default chip count (`4`) encoded as a pointer-sized integer
+/// (`_get_chip_count`).
+///
+/// # Arguments
+///
+/// * `_self_obj` - Module object pointer (`PyObject*`).
+/// * `_args` - Unused argument pointer (`NULL` for `METH_NOARGS`).
+///
+/// # Safety
+///
+/// Safe to invoke from C/Rust tests.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn py_sdk_get_chip_count(
+    _self_obj: *mut std::ffi::c_void,
+    _args: *mut std::ffi::c_void,
+) -> *mut std::ffi::c_void {
+    let count = LibtpuSdkCoreClient::new().chip_coordinates.len();
+    std::ptr::without_provenance_mut(count)
+}
+
 /// Native `CPython` `Py_mod_exec` multi-phase initialization slot callback (`py_sdk_mod_exec`).
 ///
 /// # Arguments
@@ -126,13 +165,27 @@ pub const unsafe extern "C" fn py_sdk_mod_exec(module_obj: *mut std::ffi::c_void
 }
 
 /// Static `PyMethodDef` table exported by [`PySdkAbiHeader`].
-pub static PY_SDK_METHOD_TABLE: [CPythonMethodDef; 2] = [
+pub static PY_SDK_METHOD_TABLE: [CPythonMethodDef; 4] = [
     CPythonMethodDef {
         ml_name: c"_get_sdk_abi_header".as_ptr(),
         ml_meth: Some(py_sdk_get_abi_header),
         ml_flags: METH_NOARGS,
         pad: 0,
         ml_doc: c"Returns the static PySdkAbiHeader descriptor pointer.".as_ptr(),
+    },
+    CPythonMethodDef {
+        ml_name: c"_get_sdk_version".as_ptr(),
+        ml_meth: Some(py_sdk_get_version),
+        ml_flags: METH_NOARGS,
+        pad: 0,
+        ml_doc: c"Returns the libtpu.sdk version C-string pointer.".as_ptr(),
+    },
+    CPythonMethodDef {
+        ml_name: c"_get_chip_count".as_ptr(),
+        ml_meth: Some(py_sdk_get_chip_count),
+        ml_flags: METH_NOARGS,
+        pad: 0,
+        ml_doc: c"Returns the discovered TPU chip count.".as_ptr(),
     },
     CPythonMethodDef {
         ml_name: std::ptr::null(),
@@ -651,10 +704,14 @@ mod tests {
             ""
         );
         assert_eq!(PY_SDK_SLOT_TABLE[0].slot, PY_MOD_EXEC_SLOT);
-        // SAFETY: Testing `py_sdk_get_abi_header` and `py_sdk_mod_exec` with null and non-null pointers.
+        // SAFETY: Testing `py_sdk_get_abi_header`, `py_sdk_get_version`, `py_sdk_get_chip_count`, and `py_sdk_mod_exec` with null and non-null pointers.
         unsafe {
             let hdr_ptr = py_sdk_get_abi_header(std::ptr::null_mut(), std::ptr::null_mut());
             assert!(!hdr_ptr.is_null());
+            let ver_ptr = py_sdk_get_version(std::ptr::null_mut(), std::ptr::null_mut());
+            assert!(!ver_ptr.is_null());
+            let chip_cnt_ptr = py_sdk_get_chip_count(std::ptr::null_mut(), std::ptr::null_mut());
+            assert_eq!(chip_cnt_ptr.addr(), 4);
             let mut dummy_mod: i32 = 1;
             let self_ptr = std::ptr::from_mut(&mut dummy_mod).cast::<std::ffi::c_void>();
             assert_eq!(

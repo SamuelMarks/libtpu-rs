@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: xla/stream_executor/cuda/cuda_compute_capability.proto
+
+syntax = "proto3";
+
+package stream_executor;
+
+message CudaComputeCapabilityProto {
+  enum FeatureExtension {
+    NONE = 0;
+    ACCELERATED_FEATURES = 1;
+    FAMILY_SPECIFIC_FEATURES = 2;
+  }
+
+  int32 major = 1;
+  int32 minor = 2;
+  FeatureExtension feature_extension = 3;
+}

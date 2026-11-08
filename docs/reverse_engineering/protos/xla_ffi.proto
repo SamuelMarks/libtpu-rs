@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package xla.ffi;
+
+message XlaFfiHandlerRegistrationProto {
+  string target_name = 1;
+  string platform_name = 2;
+  uint32 api_major_version = 3;
+  uint32 api_minor_version = 4;
+  uint32 traits_mask = 5;
+}
+
+message XlaFfiCallFrameMetadataProto {
+  string custom_call_target = 1;
+  uint32 num_args = 2;
+  uint32 num_rets = 3;
+  int32 execution_stage = 4;
+  int32 device_ordinal = 5;
+  bytes serialized_attributes = 6;
+}

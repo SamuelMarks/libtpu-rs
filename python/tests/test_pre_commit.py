@@ -499,6 +499,7 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
         patch.object(pc, "hook_build", return_value=0),
         patch.object(pc, "hook_clippy", return_value=0),
         patch.object(pc, "hook_abi", return_value=0),
+        patch.object(pc, "hook_proto_sync", return_value=0),
         patch.object(pc, "hook_test", return_value=0),
         patch.object(pc, "hook_shields", return_value=0),
     ):
@@ -518,6 +519,7 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
         patch.object(pc, "hook_build", return_value=0),
         patch.object(pc, "hook_clippy", return_value=0),
         patch.object(pc, "hook_abi", return_value=0),
+        patch.object(pc, "hook_proto_sync", return_value=0),
         patch.object(pc, "hook_test", return_value=0),
         patch.object(pc, "hook_shields", return_value=0),
         patch.object(pc, "hook_all", return_value=0),
@@ -530,6 +532,7 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
         assert pc.main(["clippy"]) == 0
         assert pc.main(["lint"]) == 0
         assert pc.main(["abi"]) == 0
+        assert pc.main(["proto-sync"]) == 0
         assert pc.main(["test"]) == 0
         assert pc.main(["shields"]) == 0
         assert pc.main(["all"]) == 0
@@ -680,6 +683,79 @@ def test_abi_compatibility_hook(tmp_path: Path) -> None:
     ):
         errs = pc.verify_binary_vtable_abi(fake_lib)
         assert any("TpuDriverFn null slots" in e for e in errs)
+
+    # Test hook_proto_sync and 1:1 Rust <-> .proto verifiers on real repo and failure cases
+    assert pc.verify_rust_to_proto_1to1(real_root) == []
+    assert pc.verify_proto_to_rust_1to1(real_root) == []
+    assert pc.hook_proto_sync(real_root, check_only=True) == 0
+
+    assert pc.verify_rust_to_proto_1to1(tmp_path) == [
+        "Missing docs/reverse_engineering/protos or crates/libtpu-core/src/proto"
+    ]
+    assert pc.verify_proto_to_rust_1to1(tmp_path) == [
+        "Missing docs/reverse_engineering/protos or crates/libtpu-core/src/proto"
+    ]
+    assert pc.hook_proto_sync(tmp_path) == 1
+
+    p_dir = tmp_path / "docs" / "reverse_engineering" / "protos"
+    r_dir = tmp_path / "crates" / "libtpu-core" / "src" / "proto"
+    p_dir.mkdir(parents=True, exist_ok=True)
+    r_dir.mkdir(parents=True, exist_ok=True)
+    (p_dir / "sample.proto").write_text(
+        'syntax = "proto3";\n'
+        "message NoPkgMsg {\n"
+        "  int32 a = 1;\n"
+        "  int32 b = 2;\n"
+        "}\n"
+        "package demo;\n"
+        "message EmptyMsg {}\n"
+        "enum DemoEnum { ZERO = 0; }\n"
+        "message DemoMsg {\n"
+        "  int32 x = 1;\n"
+        "  int32 omitted_in_rust = 2;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (r_dir / "sample.rs").write_text(
+        "#[derive(Clone, Message)]\n"
+        "pub struct UnregisteredProto {\n"
+        '    #[prost(int32, tag = "1")]\n'
+        "    pub x: i32,\n"
+        "}\n"
+        "#[derive(Clone, Message)]\n"
+        "pub struct MissingTargetProto {\n"
+        '    #[prost(int32, tag = "1")]\n'
+        "    pub x: i32,\n"
+        "}\n"
+        'impl_proto_schema_message!(MissingTargetProto, "demo.NonExistent");\n'
+        "#[derive(Clone, Message)]\n"
+        "pub struct DemoMsgProto {\n"
+        '    #[prost(int32, tag = "1")]\n'
+        "    pub x: i32,\n"
+        '    #[prost(int32, tag = "99")]\n'
+        "    pub extra: i32,\n"
+        '    #[prost(oneof = "DemoOneof", tags = "50, bad")]\n'
+        "    pub oneof_field: Option<i32>,\n"
+        "    #[prost(skip)]\n"
+        "    pub skipped: i32,\n"
+        "}\n"
+        'impl_proto_schema_message!(DemoMsgProto, "demo.DemoMsg");\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "crates" / "libtpu-core" / "build.rs").write_text(
+        "const SYNTHETIC_DEPENDENCY_PROTOS: usize = 0;\n", encoding="utf-8"
+    )
+    (tmp_path / "crates" / "libtpu-core" / "src" / "proto.rs").write_text(
+        "// no out_dir\n", encoding="utf-8"
+    )
+    r2p_errs = pc.verify_rust_to_proto_1to1(tmp_path)
+    p2r_errs = pc.verify_proto_to_rust_1to1(tmp_path)
+    assert any("Unregistered prost::Message struct(s)" in e for e in r2p_errs)
+    assert any("targets missing .proto message" in e for e in r2p_errs)
+    assert any("has extra field tags [50, 99]" in e for e in r2p_errs)
+    assert any("omitted from Rust struct DemoMsgProto" in e for e in p2r_errs)
+    assert any("Forbidden inline SYNTHETIC_DEPENDENCY_PROTOS" in e for e in p2r_errs)
+    assert any("prost-build output in OUT_DIR is not included" in e for e in p2r_errs)
 
 
 def test_github_actions_workflows_present_and_complete() -> None:

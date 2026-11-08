@@ -894,7 +894,39 @@ def read_core_dump(path: str | os.PathLike[str]) -> dict[str, object]:
     }
 
 
+def emit_proto_schema(full_message_name: str) -> str:
+    """Emits a canonical `proto3` `.proto` schema string from the compiled Rust protobuf descriptor.
+
+    Args:
+        full_message_name: Fully-qualified protobuf message name (e.g., `"xla.TileProto"`).
+
+    Returns:
+        Canonical `proto3` `.proto` schema string.
+
+    Raises:
+        ValueError: If `full_message_name` is empty or not registered in `libtpu-rs`.
+    """
+    import ctypes
+
+    from libtpu import _load_cdll
+
+    if not full_message_name:
+        raise ValueError("full_message_name must not be empty")
+    cdll = _load_cdll()
+    fn = cdll.libtpu_rs_emit_proto_schema
+    fn.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t]
+    fn.restype = ctypes.c_size_t
+    c_name = full_message_name.encode("utf-8")
+    length = int(fn(c_name, None, 0))
+    if length == 0:
+        raise ValueError(f"Unknown protobuf message schema: {full_message_name}")
+    buf = ctypes.create_string_buffer(length + 1)
+    fn(c_name, buf, length + 1)
+    return buf.value.decode("utf-8")
+
+
 __all__: list[str] = [
+    "emit_proto_schema",
     "read_compiler_metadata",
     "read_core_dump",
     "read_stall_summaries",

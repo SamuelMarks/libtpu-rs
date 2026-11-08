@@ -437,6 +437,27 @@ impl ChipRegisterMap {
         access: CsrAccessPermission::ReadWrite,
     }];
 
+    /// Returns the BAR0 MMIO byte offset of `TensorCore` 1 `tcs_core_state.RUN_STATUS` (`tc_1.tcs_core_state.RUN_STATUS`).
+    #[must_use]
+    pub const fn tc1_run_status_csr(&self) -> u64 {
+        let tc0_base = self.tc0_run_status_csr & !0xFFF_u64;
+        tc0_base.wrapping_add(0x0010_0018)
+    }
+
+    /// Returns the BAR0 MMIO byte offset of `TensorCore` 1 `tcs_core_state.PC` (`tc_1.tcs_core_state.PC`).
+    #[must_use]
+    pub const fn tc1_pc_csr(&self) -> u64 {
+        let tc0_base = self.tc0_run_status_csr & !0xFFF_u64;
+        tc0_base.wrapping_add(0x0010_0058)
+    }
+
+    /// Returns the BAR0 MMIO byte offset of `TensorCore` 1 `tcs_core_state.PROGRAM_LOCATION` (`tc_1.tcs_core_state.PROGRAM_LOCATION`).
+    #[must_use]
+    pub const fn tc1_program_location_csr(&self) -> u64 {
+        let tc0_base = self.tc0_run_status_csr & !0xFFF_u64;
+        tc0_base.wrapping_add(0x0010_00A0)
+    }
+
     /// Returns the `TensorCore` 0 and 1 [`CsrRegisterDescriptor`] list for this chip generation.
     #[allow(clippy::too_many_lines)]
     fn tensor_core_csr_descriptors(&self) -> Vec<CsrRegisterDescriptor> {

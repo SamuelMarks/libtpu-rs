@@ -27,7 +27,699 @@ pub struct OptionOverrideProto {
 
 impl_proto_schema_message!(OptionOverrideProto, "xla.OptionOverrideProto");
 
+/// Wire-compatible `xla.CompilationEnvironmentsProto` (`xla/xla.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct CompilationEnvironmentsProto {
+    /// Serialized compilation environment payloads (field `1`).
+    #[prost(bytes = "vec", repeated, tag = "1")]
+    pub environments: Vec<Vec<u8>>,
+}
+
+impl_proto_schema_message!(
+    CompilationEnvironmentsProto,
+    "xla.CompilationEnvironmentsProto"
+);
+
+/// Wire-compatible `xla.DebugOptions` (`xla/xla.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct DebugOptionsProto {
+    /// Directory path to dump HLO / LLO artifacts (field `1`).
+    #[prost(string, tag = "1")]
+    pub xla_dump_to: String,
+    /// Whether to dump HLO modules as text (field `2`).
+    #[prost(bool, tag = "2")]
+    pub xla_dump_hlo_as_text: bool,
+    /// Whether to dump HLO modules as protobuf (field `3`).
+    #[prost(bool, tag = "3")]
+    pub xla_dump_hlo_as_proto: bool,
+    /// Backend optimization level (field `31`).
+    #[prost(int32, tag = "31")]
+    pub xla_backend_optimization_level: i32,
+}
+
+impl_proto_schema_message!(DebugOptionsProto, "xla.DebugOptions");
+
+/// Wire-compatible `xla.GpuTopologyProto` (`xla/service/gpu_topology.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct GpuTopologyProto {
+    /// Number of partitions (field `1`).
+    #[prost(int32, tag = "1")]
+    pub num_partitions: i32,
+    /// Number of hosts per partition (field `2`).
+    #[prost(int32, tag = "2")]
+    pub num_hosts_per_partition: i32,
+    /// Number of devices per host (field `3`).
+    #[prost(int32, tag = "3")]
+    pub num_devices_per_host: i32,
+}
+
+impl_proto_schema_message!(GpuTopologyProto, "xla.GpuTopologyProto");
+
+/// Wire-compatible `stream_executor.CudaComputeCapabilityProto` (`cuda_compute_capability.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct CudaComputeCapabilityProto {
+    /// CUDA major compute capability (field `1`).
+    #[prost(int32, tag = "1")]
+    pub major: i32,
+    /// CUDA minor compute capability (field `2`).
+    #[prost(int32, tag = "2")]
+    pub minor: i32,
+    /// Feature extension enum (`0` = None, `1` = `AcceleratedFeatures`, `2` = `FamilySpecificFeatures`, field `3`).
+    #[prost(int32, tag = "3")]
+    pub feature_extension: i32,
+}
+
+impl_proto_schema_message!(
+    CudaComputeCapabilityProto,
+    "stream_executor.CudaComputeCapabilityProto"
+);
+
+/// Wire-compatible `stream_executor.OneAPIComputeCapabilityProto` (`oneapi_compute_capability.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct OneApiComputeCapabilityProto {
+    /// Intel `oneAPI` generation identifier (field `1`).
+    #[prost(int32, tag = "1")]
+    pub generation: i32,
+}
+
+impl_proto_schema_message!(
+    OneApiComputeCapabilityProto,
+    "stream_executor.OneAPIComputeCapabilityProto"
+);
+
+/// Wire-compatible `stream_executor.DnnVersionInfoProto` (`device_description.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct DnnVersionInfoProto {
+    /// Major version number (field `1`).
+    #[prost(int32, tag = "1")]
+    pub major: i32,
+    /// Minor version number (field `2`).
+    #[prost(int32, tag = "2")]
+    pub minor: i32,
+    /// Patch version number (field `3`).
+    #[prost(int32, tag = "3")]
+    pub patch: i32,
+}
+
+impl_proto_schema_message!(DnnVersionInfoProto, "stream_executor.DnnVersionInfoProto");
+
+/// Wire-compatible `stream_executor.GpuDeviceInfoProto` (`device_description.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct GpuDeviceInfoProto {
+    /// Maximum threads per block (field `1`).
+    #[prost(int32, tag = "1")]
+    pub threads_per_block_limit: i32,
+    /// Threads per warp (field `2`).
+    #[prost(int32, tag = "2")]
+    pub threads_per_warp: i32,
+    /// Shared memory per block in bytes (field `3`).
+    #[prost(int32, tag = "3")]
+    pub shared_memory_per_block: i32,
+    /// Shared memory per core in bytes (field `4`).
+    #[prost(int32, tag = "4")]
+    pub shared_memory_per_core: i32,
+    /// Maximum threads per core (field `5`).
+    #[prost(int32, tag = "5")]
+    pub threads_per_core_limit: i32,
+    /// Streaming multiprocessor / core count (field `6`).
+    #[prost(int32, tag = "6")]
+    pub core_count: i32,
+    /// FPUs per core (field `7`).
+    #[prost(int64, tag = "7")]
+    pub fpus_per_core: i64,
+    /// Block dimension X limit (field `8`).
+    #[prost(int32, tag = "8")]
+    pub block_dim_limit_x: i32,
+    /// Block dimension Y limit (field `9`).
+    #[prost(int32, tag = "9")]
+    pub block_dim_limit_y: i32,
+    /// Block dimension Z limit (field `10`).
+    #[prost(int32, tag = "10")]
+    pub block_dim_limit_z: i32,
+    /// Memory bandwidth in bytes/sec (field `11`).
+    #[prost(int64, tag = "11")]
+    pub memory_bandwidth: i64,
+    /// L2 cache size in bytes (field `12`).
+    #[prost(int64, tag = "12")]
+    pub l2_cache_size: i64,
+    /// Clock rate in GHz (field `13`).
+    #[prost(float, tag = "13")]
+    pub clock_rate_ghz: f32,
+    /// Device memory size in bytes (field `14`).
+    #[prost(int64, tag = "14")]
+    pub device_memory_size: i64,
+    /// Opt-in shared memory per block in bytes (field `15`).
+    #[prost(int32, tag = "15")]
+    pub shared_memory_per_block_optin: i32,
+    /// CUDA compute capability (field `16`).
+    #[prost(message, optional, tag = "16")]
+    pub cuda_compute_capability: Option<CudaComputeCapabilityProto>,
+    /// `oneAPI` compute capability (field `20`).
+    #[prost(message, optional, tag = "20")]
+    pub oneapi_compute_capability: Option<OneApiComputeCapabilityProto>,
+}
+
+impl_proto_schema_message!(GpuDeviceInfoProto, "stream_executor.GpuDeviceInfoProto");
+
+/// Wire-compatible `stream_executor.RuntimeAbiVersionProto` (`runtime_abi_version.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct StreamExecutorRuntimeAbiVersionProto {
+    /// Platform name (field `1`).
+    #[prost(string, tag = "1")]
+    pub platform_name: String,
+    /// Platform-specific serialized version bytes (field `2`).
+    #[prost(bytes = "vec", tag = "2")]
+    pub platform_specific_version: Vec<u8>,
+}
+
+impl_proto_schema_message!(
+    StreamExecutorRuntimeAbiVersionProto,
+    "stream_executor.RuntimeAbiVersionProto"
+);
+
+/// Wire-compatible `stream_executor.ExecutableAbiVersionProto.CudaPlatformVersion` (`executable_abi_version.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct CudaPlatformVersionProto {
+    /// CUDA toolkit version bytes (field `1`).
+    #[prost(bytes = "vec", tag = "1")]
+    pub cuda_toolkit_version: Vec<u8>,
+    /// cuDNN version bytes (field `2`).
+    #[prost(bytes = "vec", tag = "2")]
+    pub cudnn_version: Vec<u8>,
+    /// CUB version bytes (field `3`).
+    #[prost(bytes = "vec", tag = "3")]
+    pub cub_version: Vec<u8>,
+}
+
+impl_proto_schema_message!(
+    CudaPlatformVersionProto,
+    "stream_executor.ExecutableAbiVersionProto.CudaPlatformVersion"
+);
+
+/// Wire-compatible `stream_executor.ExecutableAbiVersionProto` (`executable_abi_version.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct StreamExecutorExecutableAbiVersionProto {
+    /// Platform name (field `1`).
+    #[prost(string, tag = "1")]
+    pub platform_name: String,
+    /// CUDA platform version payload (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub cuda_platform_version: Option<CudaPlatformVersionProto>,
+}
+
+impl_proto_schema_message!(
+    StreamExecutorExecutableAbiVersionProto,
+    "stream_executor.ExecutableAbiVersionProto"
+);
+
+/// Wire-compatible `stream_executor.dnn.AlgorithmProto` (`dnn.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct DnnAlgorithmProto {
+    /// Algorithm ID (field `1`).
+    #[prost(int64, tag = "1")]
+    pub algo_id: i64,
+    /// Math type flag (field `2`).
+    #[prost(bool, tag = "2")]
+    pub math_type: bool,
+    /// Workspace size in bytes (field `5`).
+    #[prost(uint64, tag = "5")]
+    pub workspace_size: u64,
+}
+
+impl_proto_schema_message!(DnnAlgorithmProto, "stream_executor.dnn.AlgorithmProto");
+
+/// Wire-compatible `stream_executor.dnn.AlgorithmConfigProto` (`dnn.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct DnnAlgorithmConfigProto {
+    /// Primary algorithm (field `1`).
+    #[prost(message, optional, tag = "1")]
+    pub algorithm: Option<DnnAlgorithmProto>,
+    /// Fallback algorithm without scratch memory (field `2`).
+    #[prost(message, optional, tag = "2")]
+    pub algorithm_no_scratch: Option<DnnAlgorithmProto>,
+    /// Scratch size in bytes (field `3`).
+    #[prost(int64, tag = "3")]
+    pub scratch_size: i64,
+}
+
+impl_proto_schema_message!(
+    DnnAlgorithmConfigProto,
+    "stream_executor.dnn.AlgorithmConfigProto"
+);
+
+/// Wire-compatible `stream_executor.dnn.ConvolutionDescriptorProto` (`dnn.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct DnnConvolutionDescriptorProto {
+    /// Spatial paddings (field `1`).
+    #[prost(int64, repeated, packed = "true", tag = "1")]
+    pub paddings: Vec<i64>,
+    /// Spatial strides (field `2`).
+    #[prost(int64, repeated, packed = "true", tag = "2")]
+    pub strides: Vec<i64>,
+    /// Spatial dilations (field `3`).
+    #[prost(int64, repeated, packed = "true", tag = "3")]
+    pub dilations: Vec<i64>,
+    /// Convolution group count (field `6`).
+    #[prost(int32, tag = "6")]
+    pub group_count: i32,
+}
+
+impl_proto_schema_message!(
+    DnnConvolutionDescriptorProto,
+    "stream_executor.dnn.ConvolutionDescriptorProto"
+);
+
+/// Wire-compatible `stream_executor.dnn.TensorDescriptorProto` (`dnn.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct DnnTensorDescriptorProto {
+    /// Tensor dimensions (field `1`).
+    #[prost(int64, repeated, packed = "true", tag = "1")]
+    pub dimensions: Vec<i64>,
+    /// Data type enum (field `2`).
+    #[prost(int32, tag = "2")]
+    pub data_type: i32,
+}
+
+impl_proto_schema_message!(
+    DnnTensorDescriptorProto,
+    "stream_executor.dnn.TensorDescriptorProto"
+);
+
+/// Wire-compatible `xla.CudnnVersion` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct CudnnVersionProto {
+    /// Major version (field `4`).
+    #[prost(int32, tag = "4")]
+    pub major_version: i32,
+    /// Minor version (field `5`).
+    #[prost(int32, tag = "5")]
+    pub minor_version: i32,
+    /// Patch version (field `6`).
+    #[prost(int32, tag = "6")]
+    pub patch_version: i32,
+}
+
+impl_proto_schema_message!(CudnnVersionProto, "xla.CudnnVersion");
+
+/// Wire-compatible `xla.ComputeCapability` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ComputeCapabilityProto {
+    /// Major compute capability version (field `3`).
+    #[prost(int32, tag = "3")]
+    pub major_version: i32,
+    /// Minor compute capability version (field `4`).
+    #[prost(int32, tag = "4")]
+    pub minor_version: i32,
+}
+
+impl_proto_schema_message!(ComputeCapabilityProto, "xla.ComputeCapability");
+
+/// Wire-compatible `xla.AutotuneResult.ConvKey` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuneConvKeyProto {
+    /// Convolution algorithm ID (field `1`).
+    #[prost(int64, tag = "1")]
+    pub algorithm: i64,
+    /// Whether `TensorCore` ops are enabled (field `2`).
+    #[prost(bool, tag = "2")]
+    pub tensor_ops_enabled: bool,
+}
+
+impl_proto_schema_message!(AutotuneConvKeyProto, "xla.AutotuneResult.ConvKey");
+
+/// Wire-compatible `xla.AutotuneResult.GemmKey` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuneGemmKeyProto {
+    /// GEMM algorithm ID (field `1`).
+    #[prost(int64, tag = "1")]
+    pub algorithm: i64,
+    /// Autotune workspace size in bytes (field `2`).
+    #[prost(int64, tag = "2")]
+    pub autotune_workspace_size: i64,
+}
+
+impl_proto_schema_message!(AutotuneGemmKeyProto, "xla.AutotuneResult.GemmKey");
+
+/// Wire-compatible `xla.AutotuneResult.CudaConvPlanKey` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuneCudaConvPlanKeyProto {
+    /// Execution plan identifier (field `1`).
+    #[prost(string, tag = "1")]
+    pub exec_plan_id: String,
+}
+
+impl_proto_schema_message!(
+    AutotuneCudaConvPlanKeyProto,
+    "xla.AutotuneResult.CudaConvPlanKey"
+);
+
+/// Wire-compatible `xla.AutotuneResult.TritonGemmKey` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuneTritonGemmKeyProto {
+    /// Block size M (field `1`).
+    #[prost(int64, tag = "1")]
+    pub block_m: i64,
+    /// Block size N (field `2`).
+    #[prost(int64, tag = "2")]
+    pub block_n: i64,
+    /// Block size K (field `3`).
+    #[prost(int64, tag = "3")]
+    pub block_k: i64,
+    /// Split-K factor (field `4`).
+    #[prost(int64, tag = "4")]
+    pub split_k: i64,
+    /// Pipeline stages count (field `5`).
+    #[prost(int64, tag = "5")]
+    pub num_stages: i64,
+    /// Warps count (field `6`).
+    #[prost(int64, tag = "6")]
+    pub num_warps: i64,
+    /// CTAs per cluster count (field `7`).
+    #[prost(int64, tag = "7")]
+    pub num_ctas: i64,
+    /// Whether TMA is allowed (field `8`).
+    #[prost(bool, tag = "8")]
+    pub is_tma_allowed: bool,
+    /// Whether warp specialization is allowed (field `9`).
+    #[prost(bool, tag = "9")]
+    pub is_warp_specialization_allowed: bool,
+    /// Waves per execution unit (field `10`).
+    #[prost(int64, tag = "10")]
+    pub waves_per_eu: i64,
+    /// L2 tile grouping size (field `11`).
+    #[prost(int64, tag = "11")]
+    pub group_size: i64,
+    /// AMD MFMA MN instruction size (field `12`).
+    #[prost(int64, tag = "12")]
+    pub mfma_size: i64,
+}
+
+impl_proto_schema_message!(
+    AutotuneTritonGemmKeyProto,
+    "xla.AutotuneResult.TritonGemmKey"
+);
+
+/// Wire-compatible `xla.AutotuneResult.CustomKernelFusionKey` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuneCustomKernelFusionKeyProto {
+    /// Custom kernel index (field `1`).
+    #[prost(int64, tag = "1")]
+    pub kernel_index: i64,
+}
+
+impl_proto_schema_message!(
+    AutotuneCustomKernelFusionKeyProto,
+    "xla.AutotuneResult.CustomKernelFusionKey"
+);
+
+/// Wire-compatible `xla.AutotuneResult.BackendConfigKey` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuneBackendConfigKeyProto {
+    /// Backend config name (field `1`).
+    #[prost(string, tag = "1")]
+    pub name: String,
+    /// Opaque backend config payload (field `2`).
+    #[prost(message, optional, tag = "2")]
+    pub config: Option<prost_types::Any>,
+}
+
+impl_proto_schema_message!(
+    AutotuneBackendConfigKeyProto,
+    "xla.AutotuneResult.BackendConfigKey"
+);
+
+/// Wire-compatible `xla.AutotuneResult.FailureResult` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuneFailureResultProto {
+    /// Failure kind enum (`FailureKind`, field `1`).
+    #[prost(int32, tag = "1")]
+    pub kind: i32,
+    /// Failure diagnostic message (field `2`).
+    #[prost(string, tag = "2")]
+    pub msg: String,
+    /// Reference conv key (field `11`).
+    #[prost(message, optional, tag = "11")]
+    pub reference_conv: Option<AutotuneConvKeyProto>,
+    /// Reference GEMM key (field `12`).
+    #[prost(message, optional, tag = "12")]
+    pub reference_gemm: Option<AutotuneGemmKeyProto>,
+    /// Corrupted buffer address (field `13`).
+    #[prost(int64, tag = "13")]
+    pub buffer_address: i64,
+    /// Reference CUDA conv plan key (field `14`).
+    #[prost(message, optional, tag = "14")]
+    pub reference_cuda_conv_plan: Option<AutotuneCudaConvPlanKeyProto>,
+    /// Reference DNN algorithm (field `15`).
+    #[prost(message, optional, tag = "15")]
+    pub reference_algorithm: Option<DnnAlgorithmProto>,
+}
+
+impl_proto_schema_message!(
+    AutotuneFailureResultProto,
+    "xla.AutotuneResult.FailureResult"
+);
+
+/// Wire-compatible `xla.AutotuneResult` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuneResultProto {
+    /// Conv key (field `5`).
+    #[prost(message, optional, tag = "5")]
+    pub conv: Option<AutotuneConvKeyProto>,
+    /// GEMM key (field `6`).
+    #[prost(message, optional, tag = "6")]
+    pub gemm: Option<AutotuneGemmKeyProto>,
+    /// Failure details if autotuning failed (field `7`).
+    #[prost(message, optional, tag = "7")]
+    pub failure: Option<AutotuneFailureResultProto>,
+    /// Scratch memory bytes required (field `8`).
+    #[prost(int64, tag = "8")]
+    pub scratch_bytes: i64,
+    /// Measured execution runtime (field `9`).
+    #[prost(message, optional, tag = "9")]
+    pub run_time: Option<prost_types::Duration>,
+    /// CUDA conv plan key (field `15`).
+    #[prost(message, optional, tag = "15")]
+    pub cuda_conv_plan: Option<AutotuneCudaConvPlanKeyProto>,
+    /// DNN algorithm key (field `16`).
+    #[prost(message, optional, tag = "16")]
+    pub algorithm: Option<DnnAlgorithmProto>,
+    /// Triton GEMM key (field `17`).
+    #[prost(message, optional, tag = "17")]
+    pub triton: Option<AutotuneTritonGemmKeyProto>,
+    /// Custom kernel fusion key (field `18`).
+    #[prost(message, optional, tag = "18")]
+    pub custom_kernel_fusion: Option<AutotuneCustomKernelFusionKeyProto>,
+    /// Other backend config key (field `19`).
+    #[prost(message, optional, tag = "19")]
+    pub other: Option<AutotuneBackendConfigKeyProto>,
+}
+
+impl_proto_schema_message!(AutotuneResultProto, "xla.AutotuneResult");
+
+/// Wire-compatible `xla.TritonGemmConfigsProto` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TritonGemmConfigsProto {
+    /// Triton GEMM configurations (field `1`).
+    #[prost(message, repeated, tag = "1")]
+    pub config: Vec<AutotuneTritonGemmKeyProto>,
+}
+
+impl_proto_schema_message!(TritonGemmConfigsProto, "xla.TritonGemmConfigsProto");
+
+/// Wire-compatible `xla.AutotuningLog` (`autotuning.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuningLogProto {
+    /// Autotuned HLO instruction packed as `google.protobuf.Any` (field `1`).
+    #[prost(message, optional, tag = "1")]
+    pub instr: Option<prost_types::Any>,
+    /// Candidate autotune results (field `2`).
+    #[prost(message, repeated, tag = "2")]
+    pub results: Vec<AutotuneResultProto>,
+    /// cuDNN version (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub cudnn_version: Option<CudnnVersionProto>,
+    /// Compute capability (field `4`).
+    #[prost(message, optional, tag = "4")]
+    pub compute_capability: Option<ComputeCapabilityProto>,
+    /// Device `PCIe` bus ID (field `5`).
+    #[prost(string, tag = "5")]
+    pub device_pci_bus_id: String,
+    /// BLAS library version (field `6`).
+    #[prost(string, tag = "6")]
+    pub blas_version: String,
+    /// Fusion name (field `7`).
+    #[prost(string, tag = "7")]
+    pub fusion_name: String,
+    /// Fusion count (field `8`).
+    #[prost(int64, tag = "8")]
+    pub fusion_count: i64,
+    /// Selected backend name (field `9`).
+    #[prost(string, tag = "9")]
+    pub selected_backend: String,
+}
+
+impl_proto_schema_message!(AutotuningLogProto, "xla.AutotuningLog");
+
+/// Wire-compatible `xla.AutotuneResults.Entry` (`autotune_results.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuneResultsEntryProto {
+    /// Device description string (field `1`).
+    #[prost(string, tag = "1")]
+    pub device: String,
+    /// HLO instruction text (field `2`).
+    #[prost(string, tag = "2")]
+    pub hlo: String,
+    /// Best autotuning result (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub result: Option<AutotuneResultProto>,
+    /// Entry format version (field `4`).
+    #[prost(int32, tag = "4")]
+    pub version: i32,
+}
+
+impl_proto_schema_message!(AutotuneResultsEntryProto, "xla.AutotuneResults.Entry");
+
+/// Wire-compatible `xla.AutotuneResults` (`autotune_results.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuneResultsProto {
+    /// Cache format version (field `1`).
+    #[prost(int32, tag = "1")]
+    pub version: i32,
+    /// Cached autotuning entries (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub results: Vec<AutotuneResultsEntryProto>,
+}
+
+impl_proto_schema_message!(AutotuneResultsProto, "xla.AutotuneResults");
+
+/// Wire-compatible `xla.AutotuningLogs` (`autotune_results.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AutotuningLogsProto {
+    /// Autotuning log records (field `1`).
+    #[prost(message, repeated, tag = "1")]
+    pub logs: Vec<AutotuningLogProto>,
+}
+
+impl_proto_schema_message!(AutotuningLogsProto, "xla.AutotuningLogs");
+
+/// Wire-compatible `stream_executor.GpuTargetConfigProto` (`xla/stream_executor/device_description.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct GpuTargetConfigProto {
+    /// GPU device hardware parameters (field `1`).
+    #[prost(message, optional, tag = "1")]
+    pub gpu_device_info: Option<GpuDeviceInfoProto>,
+    /// Platform name string (field `4`).
+    #[prost(string, tag = "4")]
+    pub platform_name: String,
+    /// DNN library version info (field `5`).
+    #[prost(message, optional, tag = "5")]
+    pub dnn_version_info: Option<DnnVersionInfoProto>,
+    /// Ahead-of-time autotune results (field `6`).
+    #[prost(message, optional, tag = "6")]
+    pub autotune_results: Option<AutotuneResultsProto>,
+    /// Device description string (field `7`).
+    #[prost(string, tag = "7")]
+    pub device_description_str: String,
+    /// Runtime ABI version (field `8`).
+    #[prost(message, optional, tag = "8")]
+    pub runtime_abi_version: Option<StreamExecutorRuntimeAbiVersionProto>,
+}
+
+impl_proto_schema_message!(GpuTargetConfigProto, "stream_executor.GpuTargetConfigProto");
+
+/// Wire-compatible `xla.PjRtDeviceDimensionsProto` (`pjrt_device_dimensions.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct PjRtDeviceDimensionsProto {
+    /// Device mesh dimensions (field `1`).
+    #[prost(int32, repeated, packed = "true", tag = "1")]
+    pub dimensions: Vec<i32>,
+}
+
+impl_proto_schema_message!(PjRtDeviceDimensionsProto, "xla.PjRtDeviceDimensionsProto");
+
+/// Wire-compatible `xla.PjRtValueTypeProto.IntVector` (`pjrt_value_type.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct PjRtValueIntVectorProto {
+    /// 64-bit integer vector elements (field `1`).
+    #[prost(int64, repeated, packed = "true", tag = "1")]
+    pub values: Vec<i64>,
+}
+
+impl_proto_schema_message!(PjRtValueIntVectorProto, "xla.PjRtValueTypeProto.IntVector");
+
+/// Wire-compatible `xla.PjRtValueTypeProto` (`pjrt_value_type.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct PjRtValueTypeProto {
+    /// String value (field `1`).
+    #[prost(string, tag = "1")]
+    pub string_value: String,
+    /// Boolean value (field `2`).
+    #[prost(bool, tag = "2")]
+    pub bool_value: bool,
+    /// Signed 64-bit integer value (field `3`).
+    #[prost(int64, tag = "3")]
+    pub int_value: i64,
+    /// Integer vector value (field `4`).
+    #[prost(message, optional, tag = "4")]
+    pub int_vector: Option<PjRtValueIntVectorProto>,
+    /// 32-bit float value (field `5`).
+    #[prost(float, tag = "5")]
+    pub float_value: f32,
+}
+
+impl_proto_schema_message!(PjRtValueTypeProto, "xla.PjRtValueTypeProto");
+
+/// Wire-compatible `jax.PyHostCallbackProto` (`py_host_callback.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct PyHostCallbackProto {
+    /// Serialized `cloudpickle` Python callable bytes (field `1`).
+    #[prost(bytes = "vec", tag = "1")]
+    pub callable: Vec<u8>,
+}
+
+impl_proto_schema_message!(PyHostCallbackProto, "jax.PyHostCallbackProto");
+
+/// Wire-compatible `jax.DictKeysProto` (`pytree.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct DictKeysProto {
+    /// Interned string IDs for dictionary keys (field `1`).
+    #[prost(uint32, repeated, packed = "true", tag = "1")]
+    pub str_id: Vec<u32>,
+}
+
+impl_proto_schema_message!(DictKeysProto, "jax.DictKeysProto");
+
+/// Wire-compatible `jax.PyTreeNodeDefProto` (`pytree.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct PyTreeNodeDefProto {
+    /// Child node arity (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub arity: u32,
+    /// Node type enum (`PyTreeNodeType`, field `2`).
+    #[prost(int32, tag = "2")]
+    pub r#type: i32,
+    /// Dictionary keys when `type == DICT` (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub dict_keys: Option<DictKeysProto>,
+}
+
+impl_proto_schema_message!(PyTreeNodeDefProto, "jax.PyTreeNodeDefProto");
+
+/// Wire-compatible `jax.PyTreeDefProto` (`pytree.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct PyTreeDefProto {
+    /// Flattened `PyTree` node definitions (field `1`).
+    #[prost(message, repeated, tag = "1")]
+    pub nodes: Vec<PyTreeNodeDefProto>,
+    /// Interned string table for dictionary keys and namedtuples (field `2`).
+    #[prost(string, repeated, tag = "2")]
+    pub interned_strings: Vec<String>,
+}
+
+impl_proto_schema_message!(PyTreeDefProto, "jax.PyTreeDefProto");
+
 /// Wire-compatible `xla.ExecutableBuildOptionsProto` (`xla/pjrt/proto/compile_options.proto`).
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct ExecutableBuildOptionsProto {
     /// Device ordinal (`-1` if unspecified, field `1`).
@@ -36,6 +728,9 @@ pub struct ExecutableBuildOptionsProto {
     /// Result layout (field `2`).
     #[prost(message, optional, tag = "2")]
     pub result_layout: Option<ShapeProto>,
+    /// Debug options (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub debug_options: Option<DebugOptionsProto>,
     /// Number of replicas (field `4`).
     #[prost(int64, tag = "4")]
     pub num_replicas: i64,
@@ -48,12 +743,36 @@ pub struct ExecutableBuildOptionsProto {
     /// Whether auto-SPMD partitioning is enabled (field `7`).
     #[prost(bool, tag = "7")]
     pub use_auto_spmd_partitioning: bool,
+    /// Whether HLO computations should be deduplicated (field `8`).
+    #[prost(bool, tag = "8")]
+    pub deduplicate_hlo: bool,
     /// Static device assignment (field `9`).
     #[prost(message, optional, tag = "9")]
     pub device_assignment: Option<DeviceAssignmentProto>,
+    /// Whether passthrough parameters are aliased (field `10`).
+    #[prost(bool, tag = "10")]
+    pub alias_passthrough_params: bool,
+    /// Whether only the backend compiler should run (field `11`).
+    #[prost(bool, tag = "11")]
+    pub run_backend_only: bool,
     /// Per-output SPMD sharding propagation flags (field `12`).
     #[prost(bool, repeated, packed = "true", tag = "12")]
     pub allow_spmd_sharding_propagation_to_output: Vec<bool>,
+    /// Compilation environments container (field `13`).
+    #[prost(message, optional, tag = "13")]
+    pub comp_envs: Option<CompilationEnvironmentsProto>,
+    /// Feedback-directed optimization profile bytes (field `14`).
+    #[prost(bytes = "vec", tag = "14")]
+    pub fdo_profile: Vec<u8>,
+    /// Device memory size override in bytes (field `15`).
+    #[prost(int64, tag = "15")]
+    pub device_memory_size: i64,
+    /// Auto-SPMD partitioning mesh shape dimensions (field `16`).
+    #[prost(int64, repeated, packed = "true", tag = "16")]
+    pub auto_spmd_partitioning_mesh_shape: Vec<i64>,
+    /// Auto-SPMD partitioning mesh axis IDs (field `17`).
+    #[prost(int64, repeated, packed = "true", tag = "17")]
+    pub auto_spmd_partitioning_mesh_ids: Vec<i64>,
     /// Per-parameter SPMD sharding propagation flags (field `18`).
     #[prost(bool, repeated, packed = "true", tag = "18")]
     pub allow_spmd_sharding_propagation_to_parameters: Vec<bool>,
@@ -66,6 +785,15 @@ pub struct ExecutableBuildOptionsProto {
     /// Total process count in multi-host jobs (field `23`).
     #[prost(int64, tag = "23")]
     pub process_count: i64,
+    /// Optimization effort level enum (`ExecutionOptions.EffortLevel`, field `24`).
+    #[prost(int32, tag = "24")]
+    pub optimization_level: i32,
+    /// Memory fitting effort level enum (`ExecutionOptions.EffortLevel`, field `25`).
+    #[prost(int32, tag = "25")]
+    pub memory_fitting_level: i32,
+    /// Optional GPU/accelerator topology descriptor (field `27`).
+    #[prost(message, optional, tag = "27")]
+    pub gpu_topology: Option<GpuTopologyProto>,
 }
 
 impl_proto_schema_message!(
@@ -97,6 +825,21 @@ pub struct CompileOptionsProto {
     /// Environment option overrides keyed by flag name (field `7`).
     #[prost(btree_map = "string, message", tag = "7")]
     pub env_option_overrides: BTreeMap<String, OptionOverrideProto>,
+    /// Optional target configuration (field `8`).
+    #[prost(message, optional, tag = "8")]
+    pub target_config: Option<GpuTargetConfigProto>,
+    /// Whether in-place MLIR module modification is allowed (field `9`).
+    #[prost(bool, tag = "9")]
+    pub allow_in_place_mlir_modification: bool,
+    /// Matrix unit operand precision (`PrecisionConfig.Precision`, field `10`).
+    #[prost(int32, tag = "10")]
+    pub matrix_unit_operand_precision: i32,
+    /// Optional compiler variant identifier (field `11`).
+    #[prost(string, optional, tag = "11")]
+    pub compiler_variant: Option<String>,
+    /// Output indices with individually defined layouts (field `12`).
+    #[prost(int32, repeated, packed = "true", tag = "12")]
+    pub individually_defined_output_indices: Vec<i32>,
 }
 
 impl_proto_schema_message!(CompileOptionsProto, "xla.CompileOptionsProto");
@@ -121,6 +864,22 @@ impl CompileOptionsProto {
     }
 }
 
+/// Wire-compatible `xla.ExecutableAndOptionsProto` (`xla/pjrt/proto/compile_options.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct ExecutableAndOptionsProto {
+    /// Serialized opaque executable bytes (field `1`).
+    #[prost(bytes = "vec", tag = "1")]
+    pub serialized_executable: Vec<u8>,
+    /// Associated compilation options (field `2`).
+    #[prost(message, optional, tag = "2")]
+    pub compile_options: Option<CompileOptionsProto>,
+    /// Producing PJRT client name (field `3`).
+    #[prost(string, tag = "3")]
+    pub pjrt_client_name: String,
+}
+
+impl_proto_schema_message!(ExecutableAndOptionsProto, "xla.ExecutableAndOptionsProto");
+
 /// Execution mode enum (`xla.ExecutionModeProto`) for [`ExecuteOptionsProto`].
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, FromPrimitive, IntoPrimitive)]
@@ -137,6 +896,7 @@ pub enum ExecutionModeProto {
 }
 
 /// Wire-compatible `xla.ExecuteOptionsProto` (`xla/pjrt/proto/execute_options.proto`).
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct ExecuteOptionsProto {
     /// Whether arguments are passed as a single tuple (field `1`).
@@ -157,9 +917,15 @@ pub struct ExecuteOptionsProto {
     /// Input parameter indices that must not be donated (field `7`).
     #[prost(int32, repeated, packed = "true", tag = "7")]
     pub non_donatable_input_indices: Vec<i32>,
+    /// Whether host callbacks use major-to-minor data layout (field `8`).
+    #[prost(bool, tag = "8")]
+    pub use_major_to_minor_data_layout_for_callbacks: bool,
     /// PRNG execution seed (field `9`).
     #[prost(int64, tag = "9")]
     pub seed: i64,
+    /// Whether output buffers should be allocated from an arena (field `10`).
+    #[prost(bool, tag = "10")]
+    pub use_output_arena: bool,
 }
 
 impl_proto_schema_message!(ExecuteOptionsProto, "xla.ExecuteOptionsProto");
@@ -359,6 +1125,9 @@ pub struct DistributedDeviceProto {
     /// Fabric UUID (`"slice_uuid/clique_id"`, field `12`).
     #[prost(string, tag = "12")]
     pub fabric_uuid: String,
+    /// Optional shared memory per block in bytes (field `13`).
+    #[prost(int32, tag = "13")]
+    pub shared_memory_per_block_optin: i32,
     /// NUMA node index (`-1` if unpinned, field `14`).
     #[prost(int32, tag = "14")]
     pub numa_node: i32,

@@ -193,7 +193,17 @@ mod tests {
         comp_env.set_field_from_str("2", "1");
         comp_env.set_field_from_str("xla_tpu_scoped_vmem_limit_kib", "32768");
         comp_env.set_field_from_str("custom_flags", "flag_a=10");
+        comp_env.set_field_from_str("5", "true");
+        comp_env.set_field_from_str("6", "true");
+        comp_env.set_field_from_str("7", "true");
+        comp_env.set_field_from_str("8", "true");
         comp_env.set_field_from_str("--xla_tpu_spmd_rng_bit_generator_unsafe", "true");
+        comp_env.set_field_from_str("extra_custom_flag", "123");
+        assert_eq!(comp_env.get_field_as_string("5"), "true");
+        assert_eq!(comp_env.get_field_as_string("6"), "true");
+        assert_eq!(comp_env.get_field_as_string("7"), "true");
+        assert_eq!(comp_env.get_field_as_string("8"), "true");
+        assert_eq!(comp_env.get_field_as_string("extra_custom_flag"), "123");
         assert_eq!(
             comp_env.get_field_as_string("xla_tpu_enable_megacore_fusion"),
             "true"
@@ -477,10 +487,17 @@ mod tests {
         let bopts = ExecutableBuildOptionsProto {
             device_ordinal: 1,
             result_layout: Some(shape.clone()),
+            debug_options: Some(DebugOptionsProto {
+                xla_dump_to: String::from("/tmp/hlo"),
+                xla_dump_hlo_as_text: true,
+                xla_dump_hlo_as_proto: false,
+                xla_backend_optimization_level: 3,
+            }),
             num_replicas: 2,
             num_partitions: 4,
             use_spmd_partitioning: true,
             use_auto_spmd_partitioning: true,
+            deduplicate_hlo: true,
             device_assignment: Some(DeviceAssignmentProto {
                 replica_count: 2,
                 computation_count: 4,
@@ -488,11 +505,27 @@ mod tests {
                     replica_device_ids: vec![0, 1],
                 }],
             }),
+            alias_passthrough_params: false,
+            run_backend_only: false,
             allow_spmd_sharding_propagation_to_output: vec![true, false],
+            comp_envs: Some(CompilationEnvironmentsProto {
+                environments: vec![vec![0x08, 0x01]],
+            }),
+            fdo_profile: vec![0xAA, 0xBB],
+            device_memory_size: 17_179_869_184,
+            auto_spmd_partitioning_mesh_shape: vec![2, 2],
+            auto_spmd_partitioning_mesh_ids: vec![0, 1],
             allow_spmd_sharding_propagation_to_parameters: vec![false, true],
+            use_shardy_partitioner: true,
             process_index: 1,
             process_count: 4,
-            use_shardy_partitioner: true,
+            optimization_level: 3,
+            memory_fitting_level: 2,
+            gpu_topology: Some(GpuTopologyProto {
+                num_partitions: 1,
+                num_hosts_per_partition: 1,
+                num_devices_per_host: 4,
+            }),
         };
         let mut bopts_bytes = bopts.encode();
         assert_eq!(
@@ -500,7 +533,7 @@ mod tests {
             Some(bopts.clone())
         );
         assert!(bopts.verify_schema_sync().is_ok());
-        bopts_bytes.extend_from_slice(&[0xF8, 0x01, 0x01]);
+        bopts_bytes.extend_from_slice(&[0xF8, 0x07, 0x01]);
         assert_eq!(
             ExecutableBuildOptionsProto::decode(&bopts_bytes).ok(),
             Some(bopts.clone())
@@ -519,9 +552,21 @@ mod tests {
             parameter_is_tupled_arguments: true,
             executable_build_options: Some(bopts),
             compile_portable_executable: true,
-            env_option_overrides: env_overrides,
             profile_version: 7,
             serialized_multi_slice_config: vec![1, 2, 3],
+            env_option_overrides: env_overrides,
+            target_config: Some(GpuTargetConfigProto {
+                gpu_device_info: None,
+                platform_name: String::from("tpu"),
+                dnn_version_info: None,
+                autotune_results: None,
+                device_description_str: String::from("Cloud TPU v5e"),
+                runtime_abi_version: None,
+            }),
+            allow_in_place_mlir_modification: true,
+            matrix_unit_operand_precision: 1,
+            compiler_variant: Some(String::from("jellyfish")),
+            individually_defined_output_indices: vec![0],
         };
         let mut copts_bytes = copts.encode();
         assert_eq!(
@@ -546,7 +591,9 @@ mod tests {
             strict_shape_checking: true,
             execution_mode: i32::from(ExecutionModeProto::Asynchronous),
             non_donatable_input_indices: vec![0, 2],
+            use_major_to_minor_data_layout_for_callbacks: true,
             seed: 12345,
+            use_output_arena: false,
         };
         let mut exec_opts_bytes = exec_opts.encode();
         assert_eq!(
@@ -741,6 +788,8 @@ mod tests {
             name: String::from("matmul"),
             display_name: String::from("MatMul_128x128"),
             metadata: String::from("hlo_op=dot.1"),
+            stats: Vec::new(),
+            child_id: vec![3],
         };
         let mut ev_meta_bytes = ev_meta.encode();
         assert_eq!(
@@ -868,6 +917,8 @@ mod tests {
         let spmd_shard = EmbeddingSpmdShardingProto {
             enabled: true,
             num_cores_per_replica: 4,
+            use_manual_partitioning: true,
+            use_shardy_partitioner: true,
         };
         let mut spmd_shard_bytes = spmd_shard.encode();
         assert_eq!(
@@ -907,11 +958,18 @@ mod tests {
 
         let sc_layout = SparseCoreTableLayoutProto {
             table_name: String::from("vocab_0"),
+            stacked_table_name: String::from("stacked_vocab"),
             unsharded_shape: vec![100_000, 128],
             unsharded_padded_shape: vec![100_096, 128],
             num_sparse_cores: 4,
             num_partitions: 2,
             total_rows_per_sparse_core_shard: 25_024,
+            sparse_core_shard_row_offset: 0,
+            sparse_core_shard_rotation: 1,
+            per_sparse_core_batch_size: 16,
+            num_features: 4,
+            fdo_key: String::from("fdo_0"),
+            spanner_fdo_key: String::from("spanner_0"),
         };
         let mut sc_layout_bytes = sc_layout.encode();
         assert_eq!(
@@ -919,7 +977,7 @@ mod tests {
             Some(sc_layout.clone())
         );
         assert!(sc_layout.verify_schema_sync().is_ok());
-        sc_layout_bytes.extend_from_slice(&[0x70, 0x01]);
+        sc_layout_bytes.extend_from_slice(&[0xF8, 0x07, 0x01]);
         assert_eq!(
             SparseCoreTableLayoutProto::decode(&sc_layout_bytes).ok(),
             Some(sc_layout.clone())
@@ -973,10 +1031,16 @@ mod tests {
         );
 
         let compile_meta = TpuCompileMetadataProto {
+            args: Vec::new(),
+            retvals: Vec::new(),
             num_replicas: 4,
             num_cores_per_replica: 1,
             device_assignment: Some(da),
+            padding_map: Vec::new(),
+            session_handle: 0,
+            function_library_fingerprint: String::new(),
             use_spmd_for_xla_partitioning: true,
+            allow_separate_sharding_programs: false,
         };
         let mut compile_meta_bytes = compile_meta.encode();
         assert_eq!(
@@ -995,6 +1059,7 @@ mod tests {
             xla_tpu_enable_async_collective_fusion: true,
             xla_tpu_scoped_vmem_limit_kib: 16384,
             custom_flags: String::from("--xla_tpu_flag=1"),
+            ..TpuCompilationEnvironmentProto::default()
         };
         let mut comp_env_bytes = comp_env.encode();
         assert_eq!(
@@ -1028,6 +1093,7 @@ mod tests {
             status_code: 0,
             status_error_message: String::from("OK"),
             hlo_protos: vec![hlo_with_cfg],
+            error_code: 0,
         };
         let mut comp_res_bytes = comp_res.encode();
         assert_eq!(
@@ -1131,6 +1197,9 @@ mod tests {
             slice_id: 1,
             num_devices_per_slice: 8,
             coordinator_address: String::from("10.0.0.1:8888"),
+            slice_devices: Vec::new(),
+            endpoint_addresses: None,
+            dcn_topology: None,
         };
         let mut ms_cfg_bytes = ms_cfg.encode();
         assert_eq!(
@@ -1165,6 +1234,7 @@ mod tests {
             completed_barriers: 42,
             collective_ops_count: 128,
             active_contexts: 2,
+            bytes_transferred: 8192,
         };
         let mut ms_metrics_bytes = ms_metrics.encode();
         assert_eq!(
@@ -1404,6 +1474,9 @@ mod tests {
             base_abi_version: 163,
             hardware_abi_version: 65_539,
             required_compiler_hash: String::from("abc123"),
+            options: Some(TpuCoreProgramAbiOptionsProto {
+                use_continuations: true,
+            }),
         };
         assert_eq!(
             TpuCoreProgramAbiProto::decode(&core_abi.encode()).ok(),
@@ -1523,6 +1596,7 @@ mod tests {
             to_string: String::from("TpuDevice(id=0)"),
             debug_string: String::from("TPU:0"),
             fabric_uuid: String::from("slice0/clique0"),
+            shared_memory_per_block_optin: 0,
             numa_node: 0,
             device_memory_bytes_limit: 17_179_869_184,
         };
@@ -1597,6 +1671,60 @@ mod tests {
             error_type: 1,
             error_message: String::from("Watchdog timeout"),
             estimated_start_time_ms: 1_700_000_000,
+            runtime_state: Some(RuntimeStateSummaryProto {
+                rapid_eye_info: Some(RapidEyeInfoProto {
+                    telemetry: Some(ExecutorTelemetryProto {
+                        pending_graphs: vec![PendingGraphStateProto {
+                            graph: Some(MegaScaleActionGraphProto {
+                                id: String::from("g0"),
+                                actions: vec![MegaScaleActionProto {
+                                    inputs: vec![MegaScaleActionInputProto { action_index: 0 }],
+                                    index: 1,
+                                }],
+                                hlo_module: String::from("main"),
+                            }),
+                            launch_id: 7,
+                            completed_actions: vec![0],
+                            pending_actions: vec![1],
+                            active_actions: vec![1],
+                        }],
+                    }),
+                    tpu_core_hlos: vec![TpuCoreHloProto {
+                        chip_id: 0,
+                        core_idx: 0,
+                        hlo: String::from("%dot = f32[8,128] dot()"),
+                        executable_fingerprint: String::from("deadbeef"),
+                        pc: Some(64),
+                        tag: Some(1),
+                        hostname: String::from("tpu-host-0"),
+                        hlo_name: String::from("dot"),
+                        module_name: String::from("main"),
+                        launch_id: 7,
+                        tpu_core_type: 1,
+                        computation_name: String::from("entry"),
+                        recent_completions: vec![ProgramRunInfoProto {
+                            run_id: 1,
+                            launch_id: 6,
+                            name: String::from("main"),
+                            fingerprint: String::from("deadbeef"),
+                        }],
+                        active: Some(true),
+                        errors: vec![StatusProto {
+                            code: 4,
+                            message: String::from("deadline exceeded"),
+                            payload: BTreeMap::new(),
+                        }],
+                    }],
+                    is_truncated: false,
+                    num_slices: 2,
+                    num_tasks_per_slice: 1,
+                    slice_id: 0,
+                    task_id: 0,
+                    incarnation_id: 42,
+                    tpu_version: 5,
+                    chip_config_name: String::from("v5litepod"),
+                }),
+            }),
             triggering_launch_id: 7,
             hostname: String::from("tpu-host-0"),
             job_name: String::from("jax_worker"),
@@ -1849,6 +1977,8 @@ mod tests {
         assert!(ffi_state.verify_schema_sync().is_ok());
 
         let ffi_flat_attr = FfiFlatAttributeProto {
+            scalar: None,
+            array: None,
             str: b"attr_val".to_vec(),
         };
         assert_eq!(
@@ -2170,6 +2300,2682 @@ mod tests {
         assert!(SliceConfigProto::decode(&corrupt).is_err());
         assert!(TpuPlatformConfigProto::decode(&corrupt).is_err());
         assert!(TpuPlatformConfigsProto::decode(&corrupt).is_err());
+        assert!(ProgramRelocationProto::decode(&corrupt).is_err());
+        assert!(TpuCoreProgramAbiOptionsProto::decode(&corrupt).is_err());
+        assert!(TpuChipPartsProto::decode(&corrupt).is_err());
+        assert!(TpuRuntimeAbiProto::decode(&corrupt).is_err());
+        assert!(HloSnapshotProto::decode(&corrupt).is_err());
+        assert!(StatusProto::decode(&corrupt).is_err());
+        assert!(MegaScaleActionInputProto::decode(&corrupt).is_err());
+        assert!(MegaScaleActionProto::decode(&corrupt).is_err());
+        assert!(MegaScaleActionGraphProto::decode(&corrupt).is_err());
+        assert!(PendingGraphStateProto::decode(&corrupt).is_err());
+        assert!(ExecutorTelemetryProto::decode(&corrupt).is_err());
+        assert!(ProgramRunInfoProto::decode(&corrupt).is_err());
+        assert!(TpuCoreHloProto::decode(&corrupt).is_err());
+        assert!(RapidEyeInfoProto::decode(&corrupt).is_err());
+        assert!(RuntimeStateSummaryProto::decode(&corrupt).is_err());
+        assert!(CompilationEnvironmentsProto::decode(&corrupt).is_err());
+        assert!(DebugOptionsProto::decode(&corrupt).is_err());
+        assert!(GpuTopologyProto::decode(&corrupt).is_err());
+        assert!(GpuTargetConfigProto::decode(&corrupt).is_err());
+        assert!(ExecutableAndOptionsProto::decode(&corrupt).is_err());
+    }
+
+    /// Generated `prost-build` modules compiled from `docs/reverse_engineering/protos/*.proto` into `$OUT_DIR`.
+    #[allow(
+        dead_code,
+        unreachable_pub,
+        clippy::nursery,
+        clippy::doc_markdown,
+        clippy::doc_lazy_continuation,
+        clippy::doc_overindented_list_items,
+        clippy::empty_line_after_doc_comments,
+        clippy::enum_variant_names,
+        clippy::large_enum_variant,
+        clippy::struct_excessive_bools,
+        clippy::struct_field_names,
+        clippy::trivially_copy_pass_by_ref,
+        clippy::derive_partial_eq_without_eq,
+        clippy::default_trait_access
+    )]
+    mod generated_prost {
+        /// Generated `jax` protobuf package.
+        pub mod jax {
+            include!(concat!(env!("OUT_DIR"), "/jax.rs"));
+        }
+        /// Generated `megascale` protobuf package.
+        pub mod megascale {
+            include!(concat!(env!("OUT_DIR"), "/megascale.rs"));
+        }
+        /// Generated `stream_executor` protobuf package.
+        pub mod stream_executor {
+            include!(concat!(env!("OUT_DIR"), "/stream_executor.rs"));
+            /// Generated `stream_executor.dnn` protobuf package.
+            pub mod dnn {
+                include!(concat!(env!("OUT_DIR"), "/stream_executor.dnn.rs"));
+            }
+        }
+        /// Generated `tensorflow` protobuf package.
+        pub mod tensorflow {
+            include!(concat!(env!("OUT_DIR"), "/tensorflow.rs"));
+            /// Generated `tensorflow.error` protobuf package.
+            pub mod error {
+                include!(concat!(env!("OUT_DIR"), "/tensorflow.error.rs"));
+            }
+            /// Generated `tensorflow.profiler` protobuf package.
+            pub mod profiler {
+                include!(concat!(env!("OUT_DIR"), "/tensorflow.profiler.rs"));
+            }
+            /// Generated `tensorflow.tf2xla` protobuf package.
+            pub mod tf2xla {
+                include!(concat!(env!("OUT_DIR"), "/tensorflow.tf2xla.rs"));
+            }
+            /// Generated `tensorflow.tpu` protobuf package.
+            pub mod tpu {
+                include!(concat!(env!("OUT_DIR"), "/tensorflow.tpu.rs"));
+            }
+        }
+        /// Generated `tpu` protobuf package.
+        pub mod tpu {
+            include!(concat!(env!("OUT_DIR"), "/tpu.rs"));
+        }
+        /// Generated `xla` protobuf package.
+        pub mod xla {
+            include!(concat!(env!("OUT_DIR"), "/xla.rs"));
+            /// Generated `xla.autotuner` protobuf package.
+            pub mod autotuner {
+                include!(concat!(env!("OUT_DIR"), "/xla.autotuner.rs"));
+            }
+            /// Generated `xla.buffer_assignment` protobuf package.
+            pub mod buffer_assignment {
+                include!(concat!(env!("OUT_DIR"), "/xla.buffer_assignment.rs"));
+            }
+            /// Generated `xla.ffi` protobuf package.
+            pub mod ffi {
+                include!(concat!(env!("OUT_DIR"), "/xla.ffi.rs"));
+            }
+            /// Generated `xla.jellyfish` protobuf package.
+            pub mod jellyfish {
+                include!(concat!(env!("OUT_DIR"), "/xla.jellyfish.rs"));
+            }
+            /// Generated `xla.megascale` protobuf package.
+            pub mod megascale {
+                /// Generated `xla.megascale.runtime` protobuf package.
+                pub mod runtime {
+                    include!(concat!(env!("OUT_DIR"), "/xla.megascale.runtime.rs"));
+                    /// Generated `xla.megascale.runtime.external` protobuf package.
+                    pub mod external {
+                        include!(concat!(
+                            env!("OUT_DIR"),
+                            "/xla.megascale.runtime.external.rs"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_all_136_bidirectional_proto_struct_equivalence_and_schema_emission() {
+        use prost::Message as _;
+
+        #[derive(Clone, PartialEq, Eq, prost::Message)]
+        struct IncompleteTileProto {}
+        impl ProtoSchemaMessage for IncompleteTileProto {
+            const PROTO_FULL_NAME: &'static str = "xla.TileProto";
+        }
+
+        // Verify wire compatibility with prost-build generated structs in $OUT_DIR
+        let gen_tile = generated_prost::xla::TileProto {
+            dimensions: vec![8, 128],
+        };
+        let decoded_tile = TileProto::decode(&gen_tile.encode_to_vec());
+        assert_eq!(
+            decoded_tile.ok(),
+            Some(TileProto {
+                dimensions: vec![8, 128]
+            })
+        );
+        let gen_topo = generated_prost::tpu::TpuTopologyArgsProto {
+            version: 6,
+            num_hosts: 1,
+            chips_per_host: 4,
+            mesh_bounds: vec![2, 2, 1],
+            platform_version: String::from("0.0.52"),
+            fingerprint: String::from("abc"),
+        };
+        assert_eq!(
+            TpuTopologyArgsProto::decode(&gen_topo.encode_to_vec())
+                .ok()
+                .map(|t| t.encode()),
+            Some(gen_topo.encode_to_vec())
+        );
+
+        let corrupt = [0x08, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        // Verify 1:1 bidirectional (.proto <-> Rust struct) equivalence across all 317 types
+        assert!(AdadeltaParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AdadeltaParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AdadeltaParametersProto::decode(&AdadeltaParametersProto::default().encode()).ok(),
+            Some(AdadeltaParametersProto::default())
+        );
+        assert!(AdagradMomentumParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AdagradMomentumParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AdagradMomentumParametersProto::decode(
+                &AdagradMomentumParametersProto::default().encode()
+            )
+            .ok(),
+            Some(AdagradMomentumParametersProto::default())
+        );
+        assert!(AdagradParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AdagradParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AdagradParametersProto::decode(&AdagradParametersProto::default().encode()).ok(),
+            Some(AdagradParametersProto::default())
+        );
+        assert!(AdamParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AdamParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AdamParametersProto::decode(&AdamParametersProto::default().encode()).ok(),
+            Some(AdamParametersProto::default())
+        );
+        assert!(AssignParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AssignParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AssignParametersProto::decode(&AssignParametersProto::default().encode()).ok(),
+            Some(AssignParametersProto::default())
+        );
+        assert!(AssignmentAlgorithmForComputationsWithoutOrderingProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AssignmentAlgorithmForComputationsWithoutOrderingProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AssignmentAlgorithmForComputationsWithoutOrderingProto::decode(
+                &AssignmentAlgorithmForComputationsWithoutOrderingProto::default().encode()
+            )
+            .ok(),
+            Some(AssignmentAlgorithmForComputationsWithoutOrderingProto::default())
+        );
+        assert!(AutotuneBackendConfigKeyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuneBackendConfigKeyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuneBackendConfigKeyProto::decode(
+                &AutotuneBackendConfigKeyProto::default().encode()
+            )
+            .ok(),
+            Some(AutotuneBackendConfigKeyProto::default())
+        );
+        assert!(AutotuneConvKeyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuneConvKeyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuneConvKeyProto::decode(&AutotuneConvKeyProto::default().encode()).ok(),
+            Some(AutotuneConvKeyProto::default())
+        );
+        assert!(AutotuneCudaConvPlanKeyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuneCudaConvPlanKeyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuneCudaConvPlanKeyProto::decode(&AutotuneCudaConvPlanKeyProto::default().encode())
+                .ok(),
+            Some(AutotuneCudaConvPlanKeyProto::default())
+        );
+        assert!(AutotuneCustomKernelFusionKeyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuneCustomKernelFusionKeyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuneCustomKernelFusionKeyProto::decode(
+                &AutotuneCustomKernelFusionKeyProto::default().encode()
+            )
+            .ok(),
+            Some(AutotuneCustomKernelFusionKeyProto::default())
+        );
+        assert!(AutotuneFailureResultProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuneFailureResultProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuneFailureResultProto::decode(&AutotuneFailureResultProto::default().encode())
+                .ok(),
+            Some(AutotuneFailureResultProto::default())
+        );
+        assert!(AutotuneGemmKeyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuneGemmKeyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuneGemmKeyProto::decode(&AutotuneGemmKeyProto::default().encode()).ok(),
+            Some(AutotuneGemmKeyProto::default())
+        );
+        assert!(AutotuneResultProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuneResultProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuneResultProto::decode(&AutotuneResultProto::default().encode()).ok(),
+            Some(AutotuneResultProto::default())
+        );
+        assert!(AutotuneResultsEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuneResultsEntryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuneResultsEntryProto::decode(&AutotuneResultsEntryProto::default().encode()).ok(),
+            Some(AutotuneResultsEntryProto::default())
+        );
+        assert!(AutotuneResultsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuneResultsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuneResultsProto::decode(&AutotuneResultsProto::default().encode()).ok(),
+            Some(AutotuneResultsProto::default())
+        );
+        assert!(AutotuneTritonGemmKeyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuneTritonGemmKeyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuneTritonGemmKeyProto::decode(&AutotuneTritonGemmKeyProto::default().encode())
+                .ok(),
+            Some(AutotuneTritonGemmKeyProto::default())
+        );
+        assert!(AutotuningLogProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuningLogProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuningLogProto::decode(&AutotuningLogProto::default().encode()).ok(),
+            Some(AutotuningLogProto::default())
+        );
+        assert!(AutotuningLogsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AutotuningLogsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AutotuningLogsProto::decode(&AutotuningLogsProto::default().encode()).ok(),
+            Some(AutotuningLogsProto::default())
+        );
+        assert!(BarrierErrorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BarrierErrorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            BarrierErrorProto::decode(&BarrierErrorProto::default().encode()).ok(),
+            Some(BarrierErrorProto::default())
+        );
+        assert!(BarrierRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BarrierRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            BarrierRequestProto::decode(&BarrierRequestProto::default().encode()).ok(),
+            Some(BarrierRequestProto::default())
+        );
+        assert!(BarrierResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BarrierResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            BarrierResponseProto::decode(&BarrierResponseProto::default().encode()).ok(),
+            Some(BarrierResponseProto::default())
+        );
+        assert!(BoundedAdagradParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BoundedAdagradParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            BoundedAdagradParametersProto::decode(
+                &BoundedAdagradParametersProto::default().encode()
+            )
+            .ok(),
+            Some(BoundedAdagradParametersProto::default())
+        );
+        assert!(BufferAllocationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BufferAllocationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            BufferAllocationProto::decode(&BufferAllocationProto::default().encode()).ok(),
+            Some(BufferAllocationProto::default())
+        );
+        assert!(BufferAllocationSliceProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BufferAllocationSliceProto::decode(&corrupt).is_err());
+        assert_eq!(
+            BufferAllocationSliceProto::decode(&BufferAllocationSliceProto::default().encode())
+                .ok(),
+            Some(BufferAllocationSliceProto::default())
+        );
+        assert!(BufferAssignmentAlgorithmProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BufferAssignmentAlgorithmProto::decode(&corrupt).is_err());
+        assert_eq!(
+            BufferAssignmentAlgorithmProto::decode(
+                &BufferAssignmentAlgorithmProto::default().encode()
+            )
+            .ok(),
+            Some(BufferAssignmentAlgorithmProto::default())
+        );
+        assert!(BufferAssignmentProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BufferAssignmentProto::decode(&corrupt).is_err());
+        assert_eq!(
+            BufferAssignmentProto::decode(&BufferAssignmentProto::default().encode()).ok(),
+            Some(BufferAssignmentProto::default())
+        );
+        assert!(BufferIsolationConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BufferIsolationConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            BufferIsolationConfigProto::decode(&BufferIsolationConfigProto::default().encode())
+                .ok(),
+            Some(BufferIsolationConfigProto::default())
+        );
+        assert!(CancelBarrierRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CancelBarrierRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CancelBarrierRequestProto::decode(&CancelBarrierRequestProto::default().encode()).ok(),
+            Some(CancelBarrierRequestProto::default())
+        );
+        assert!(CancelBarrierResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CancelBarrierResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CancelBarrierResponseProto::decode(&CancelBarrierResponseProto::default().encode())
+                .ok(),
+            Some(CancelBarrierResponseProto::default())
+        );
+        assert!(CenteredRmsPropParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CenteredRmsPropParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CenteredRmsPropParametersProto::decode(
+                &CenteredRmsPropParametersProto::default().encode()
+            )
+            .ok(),
+            Some(CenteredRmsPropParametersProto::default())
+        );
+        assert!(ChannelHandle::verify_bidirectional_equivalence().is_ok());
+        assert!(ChannelHandle::decode(&corrupt).is_err());
+        assert_eq!(
+            ChannelHandle::decode(&ChannelHandle::default().encode()).ok(),
+            Some(ChannelHandle::default())
+        );
+        assert!(ClippingLimitsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ClippingLimitsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ClippingLimitsProto::decode(&ClippingLimitsProto::default().encode()).ok(),
+            Some(ClippingLimitsProto::default())
+        );
+        assert!(CompilationEnvironmentsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CompilationEnvironmentsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CompilationEnvironmentsProto::decode(&CompilationEnvironmentsProto::default().encode())
+                .ok(),
+            Some(CompilationEnvironmentsProto::default())
+        );
+        assert!(CompilationLogEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CompilationLogEntryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CompilationLogEntryProto::decode(&CompilationLogEntryProto::default().encode()).ok(),
+            Some(CompilationLogEntryProto::default())
+        );
+        assert!(CompilationResultProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CompilationResultProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CompilationResultProto::decode(&CompilationResultProto::default().encode()).ok(),
+            Some(CompilationResultProto::default())
+        );
+        assert!(CompileOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CompileOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CompileOptionsProto::decode(&CompileOptionsProto::default().encode()).ok(),
+            Some(CompileOptionsProto::default())
+        );
+        assert!(CompiledMemoryStatsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CompiledMemoryStatsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CompiledMemoryStatsProto::decode(&CompiledMemoryStatsProto::default().encode()).ok(),
+            Some(CompiledMemoryStatsProto::default())
+        );
+        assert!(CompilerBuildInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CompilerBuildInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CompilerBuildInfoProto::decode(&CompilerBuildInfoProto::default().encode()).ok(),
+            Some(CompilerBuildInfoProto::default())
+        );
+        assert!(CompilerPerfStatsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CompilerPerfStatsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CompilerPerfStatsProto::decode(&CompilerPerfStatsProto::default().encode()).ok(),
+            Some(CompilerPerfStatsProto::default())
+        );
+        assert!(ComputationDeviceProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ComputationDeviceProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ComputationDeviceProto::decode(&ComputationDeviceProto::default().encode()).ok(),
+            Some(ComputationDeviceProto::default())
+        );
+        assert!(ComputeCapabilityProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ComputeCapabilityProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ComputeCapabilityProto::decode(&ComputeCapabilityProto::default().encode()).ok(),
+            Some(ComputeCapabilityProto::default())
+        );
+        assert!(ContinuousProfilingResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ContinuousProfilingResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ContinuousProfilingResponseProto::decode(
+                &ContinuousProfilingResponseProto::default().encode()
+            )
+            .ok(),
+            Some(ContinuousProfilingResponseProto::default())
+        );
+        assert!(ConvolutionDimensionNumbers::verify_bidirectional_equivalence().is_ok());
+        assert!(ConvolutionDimensionNumbers::decode(&corrupt).is_err());
+        assert_eq!(
+            ConvolutionDimensionNumbers::decode(&ConvolutionDimensionNumbers::default().encode())
+                .ok(),
+            Some(ConvolutionDimensionNumbers::default())
+        );
+        assert!(CoordinatedJobProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoordinatedJobProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoordinatedJobProto::decode(&CoordinatedJobProto::default().encode()).ok(),
+            Some(CoordinatedJobProto::default())
+        );
+        assert!(CoordinatedTaskProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoordinatedTaskProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoordinatedTaskProto::decode(&CoordinatedTaskProto::default().encode()).ok(),
+            Some(CoordinatedTaskProto::default())
+        );
+        assert!(CoordinatedTaskStateInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoordinatedTaskStateInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoordinatedTaskStateInfoProto::decode(
+                &CoordinatedTaskStateInfoProto::default().encode()
+            )
+            .ok(),
+            Some(CoordinatedTaskStateInfoProto::default())
+        );
+        assert!(CoordinationDeviceInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoordinationDeviceInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoordinationDeviceInfoProto::decode(&CoordinationDeviceInfoProto::default().encode())
+                .ok(),
+            Some(CoordinationDeviceInfoProto::default())
+        );
+        assert!(CoordinationServiceConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoordinationServiceConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoordinationServiceConfigProto::decode(
+                &CoordinationServiceConfigProto::default().encode()
+            )
+            .ok(),
+            Some(CoordinationServiceConfigProto::default())
+        );
+        assert!(CoordinationServiceErrorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoordinationServiceErrorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoordinationServiceErrorProto::decode(
+                &CoordinationServiceErrorProto::default().encode()
+            )
+            .ok(),
+            Some(CoordinationServiceErrorProto::default())
+        );
+        assert!(CrossProgramPrefetchProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CrossProgramPrefetchProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CrossProgramPrefetchProto::decode(&CrossProgramPrefetchProto::default().encode()).ok(),
+            Some(CrossProgramPrefetchProto::default())
+        );
+        assert!(CudaComputeCapabilityProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CudaComputeCapabilityProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CudaComputeCapabilityProto::decode(&CudaComputeCapabilityProto::default().encode())
+                .ok(),
+            Some(CudaComputeCapabilityProto::default())
+        );
+        assert!(CudaPlatformVersionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CudaPlatformVersionProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CudaPlatformVersionProto::decode(&CudaPlatformVersionProto::default().encode()).ok(),
+            Some(CudaPlatformVersionProto::default())
+        );
+        assert!(CudnnVersionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CudnnVersionProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CudnnVersionProto::decode(&CudnnVersionProto::default().encode()).ok(),
+            Some(CudnnVersionProto::default())
+        );
+        assert!(DcnSliceRangeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DcnSliceRangeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DcnSliceRangeProto::decode(&DcnSliceRangeProto::default().encode()).ok(),
+            Some(DcnSliceRangeProto::default())
+        );
+        assert!(DcnSymmetricTreeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DcnSymmetricTreeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DcnSymmetricTreeProto::decode(&DcnSymmetricTreeProto::default().encode()).ok(),
+            Some(DcnSymmetricTreeProto::default())
+        );
+        assert!(DcnTopologyTreeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DcnTopologyTreeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DcnTopologyTreeProto::decode(&DcnTopologyTreeProto::default().encode()).ok(),
+            Some(DcnTopologyTreeProto::default())
+        );
+        assert!(DcnTreeNodeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DcnTreeNodeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DcnTreeNodeProto::decode(&DcnTreeNodeProto::default().encode()).ok(),
+            Some(DcnTreeNodeProto::default())
+        );
+        assert!(DebugOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DebugOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DebugOptionsProto::decode(&DebugOptionsProto::default().encode()).ok(),
+            Some(DebugOptionsProto::default())
+        );
+        assert!(DeepseaConstantPoolEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DeepseaConstantPoolEntryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DeepseaConstantPoolEntryProto::decode(
+                &DeepseaConstantPoolEntryProto::default().encode()
+            )
+            .ok(),
+            Some(DeepseaConstantPoolEntryProto::default())
+        );
+        assert!(DeepseaExecutableProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DeepseaExecutableProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DeepseaExecutableProto::decode(&DeepseaExecutableProto::default().encode()).ok(),
+            Some(DeepseaExecutableProto::default())
+        );
+        assert!(DeepseaOverlaySectionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DeepseaOverlaySectionProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DeepseaOverlaySectionProto::decode(&DeepseaOverlaySectionProto::default().encode())
+                .ok(),
+            Some(DeepseaOverlaySectionProto::default())
+        );
+        assert!(DeepseaRelocationEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DeepseaRelocationEntryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DeepseaRelocationEntryProto::decode(&DeepseaRelocationEntryProto::default().encode())
+                .ok(),
+            Some(DeepseaRelocationEntryProto::default())
+        );
+        assert!(DeepseaSyncFlagInitProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DeepseaSyncFlagInitProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DeepseaSyncFlagInitProto::decode(&DeepseaSyncFlagInitProto::default().encode()).ok(),
+            Some(DeepseaSyncFlagInitProto::default())
+        );
+        assert!(DeleteKeyValueRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DeleteKeyValueRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DeleteKeyValueRequestProto::decode(&DeleteKeyValueRequestProto::default().encode())
+                .ok(),
+            Some(DeleteKeyValueRequestProto::default())
+        );
+        assert!(DeleteKeyValueResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DeleteKeyValueResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DeleteKeyValueResponseProto::decode(&DeleteKeyValueResponseProto::default().encode())
+                .ok(),
+            Some(DeleteKeyValueResponseProto::default())
+        );
+        assert!(DeviceAssignmentProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DeviceAssignmentProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DeviceAssignmentProto::decode(&DeviceAssignmentProto::default().encode()).ok(),
+            Some(DeviceAssignmentProto::default())
+        );
+        assert!(DeviceHandle::verify_bidirectional_equivalence().is_ok());
+        assert!(DeviceHandle::decode(&corrupt).is_err());
+        assert_eq!(
+            DeviceHandle::decode(&DeviceHandle::default().encode()).ok(),
+            Some(DeviceHandle::default())
+        );
+        assert!(DictKeysProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DictKeysProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DictKeysProto::decode(&DictKeysProto::default().encode()).ok(),
+            Some(DictKeysProto::default())
+        );
+        assert!(DistributedDeviceProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DistributedDeviceProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DistributedDeviceProto::decode(&DistributedDeviceProto::default().encode()).ok(),
+            Some(DistributedDeviceProto::default())
+        );
+        assert!(DnnAlgorithmConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DnnAlgorithmConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DnnAlgorithmConfigProto::decode(&DnnAlgorithmConfigProto::default().encode()).ok(),
+            Some(DnnAlgorithmConfigProto::default())
+        );
+        assert!(DnnAlgorithmProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DnnAlgorithmProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DnnAlgorithmProto::decode(&DnnAlgorithmProto::default().encode()).ok(),
+            Some(DnnAlgorithmProto::default())
+        );
+        assert!(DnnConvolutionDescriptorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DnnConvolutionDescriptorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DnnConvolutionDescriptorProto::decode(
+                &DnnConvolutionDescriptorProto::default().encode()
+            )
+            .ok(),
+            Some(DnnConvolutionDescriptorProto::default())
+        );
+        assert!(DnnTensorDescriptorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DnnTensorDescriptorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DnnTensorDescriptorProto::decode(&DnnTensorDescriptorProto::default().encode()).ok(),
+            Some(DnnTensorDescriptorProto::default())
+        );
+        assert!(DnnVersionInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DnnVersionInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DnnVersionInfoProto::decode(&DnnVersionInfoProto::default().encode()).ok(),
+            Some(DnnVersionInfoProto::default())
+        );
+        assert!(DotDimensionNumbers::verify_bidirectional_equivalence().is_ok());
+        assert!(DotDimensionNumbers::decode(&corrupt).is_err());
+        assert_eq!(
+            DotDimensionNumbers::decode(&DotDimensionNumbers::default().encode()).ok(),
+            Some(DotDimensionNumbers::default())
+        );
+        assert!(EmbeddingFeatureDescriptorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(EmbeddingFeatureDescriptorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            EmbeddingFeatureDescriptorProto::decode(
+                &EmbeddingFeatureDescriptorProto::default().encode()
+            )
+            .ok(),
+            Some(EmbeddingFeatureDescriptorProto::default())
+        );
+        assert!(EmbeddingSpmdShardingProto::verify_bidirectional_equivalence().is_ok());
+        assert!(EmbeddingSpmdShardingProto::decode(&corrupt).is_err());
+        assert_eq!(
+            EmbeddingSpmdShardingProto::decode(&EmbeddingSpmdShardingProto::default().encode())
+                .ok(),
+            Some(EmbeddingSpmdShardingProto::default())
+        );
+        assert!(EmbeddingTableDescriptorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(EmbeddingTableDescriptorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            EmbeddingTableDescriptorProto::decode(
+                &EmbeddingTableDescriptorProto::default().encode()
+            )
+            .ok(),
+            Some(EmbeddingTableDescriptorProto::default())
+        );
+        assert!(EmitterLearnedCostModelOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(EmitterLearnedCostModelOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            EmitterLearnedCostModelOptionsProto::decode(
+                &EmitterLearnedCostModelOptionsProto::default().encode()
+            )
+            .ok(),
+            Some(EmitterLearnedCostModelOptionsProto::default())
+        );
+        assert!(EndpointAddressesProto::verify_bidirectional_equivalence().is_ok());
+        assert!(EndpointAddressesProto::decode(&corrupt).is_err());
+        assert_eq!(
+            EndpointAddressesProto::decode(&EndpointAddressesProto::default().encode()).ok(),
+            Some(EndpointAddressesProto::default())
+        );
+        assert!(ExecutableAbiVersionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ExecutableAbiVersionProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ExecutableAbiVersionProto::decode(&ExecutableAbiVersionProto::default().encode()).ok(),
+            Some(ExecutableAbiVersionProto::default())
+        );
+        assert!(ExecutableAndOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ExecutableAndOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ExecutableAndOptionsProto::decode(&ExecutableAndOptionsProto::default().encode()).ok(),
+            Some(ExecutableAndOptionsProto::default())
+        );
+        assert!(ExecutableBuildOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ExecutableBuildOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ExecutableBuildOptionsProto::decode(&ExecutableBuildOptionsProto::default().encode())
+                .ok(),
+            Some(ExecutableBuildOptionsProto::default())
+        );
+        assert!(ExecuteOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ExecuteOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ExecuteOptionsProto::decode(&ExecuteOptionsProto::default().encode()).ok(),
+            Some(ExecuteOptionsProto::default())
+        );
+        assert!(ExecutionHandle::verify_bidirectional_equivalence().is_ok());
+        assert!(ExecutionHandle::decode(&corrupt).is_err());
+        assert_eq!(
+            ExecutionHandle::decode(&ExecutionHandle::default().encode()).ok(),
+            Some(ExecutionHandle::default())
+        );
+        assert!(ExecutionProfile::verify_bidirectional_equivalence().is_ok());
+        assert!(ExecutionProfile::decode(&corrupt).is_err());
+        assert_eq!(
+            ExecutionProfile::decode(&ExecutionProfile::default().encode()).ok(),
+            Some(ExecutionProfile::default())
+        );
+        assert!(ExecutorTelemetryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ExecutorTelemetryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ExecutorTelemetryProto::decode(&ExecutorTelemetryProto::default().encode()).ok(),
+            Some(ExecutorTelemetryProto::default())
+        );
+        assert!(FfiArrayProto::verify_bidirectional_equivalence().is_ok());
+        assert!(FfiArrayProto::decode(&corrupt).is_err());
+        assert_eq!(
+            FfiArrayProto::decode(&FfiArrayProto::default().encode()).ok(),
+            Some(FfiArrayProto::default())
+        );
+        assert!(FfiExecutionStateProto::verify_bidirectional_equivalence().is_ok());
+        assert!(FfiExecutionStateProto::decode(&corrupt).is_err());
+        assert_eq!(
+            FfiExecutionStateProto::decode(&FfiExecutionStateProto::default().encode()).ok(),
+            Some(FfiExecutionStateProto::default())
+        );
+        assert!(FfiFlatAttributeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(FfiFlatAttributeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            FfiFlatAttributeProto::decode(&FfiFlatAttributeProto::default().encode()).ok(),
+            Some(FfiFlatAttributeProto::default())
+        );
+        assert!(FfiFlatAttributesMapProto::verify_bidirectional_equivalence().is_ok());
+        assert!(FfiFlatAttributesMapProto::decode(&corrupt).is_err());
+        assert_eq!(
+            FfiFlatAttributesMapProto::decode(&FfiFlatAttributesMapProto::default().encode()).ok(),
+            Some(FfiFlatAttributesMapProto::default())
+        );
+        assert!(FfiScalarProto::verify_bidirectional_equivalence().is_ok());
+        assert!(FfiScalarProto::decode(&corrupt).is_err());
+        assert_eq!(
+            FfiScalarProto::decode(&FfiScalarProto::default().encode()).ok(),
+            Some(FfiScalarProto::default())
+        );
+        assert!(FrequencyAwareAdagradParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(FrequencyAwareAdagradParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            FrequencyAwareAdagradParametersProto::decode(
+                &FrequencyAwareAdagradParametersProto::default().encode()
+            )
+            .ok(),
+            Some(FrequencyAwareAdagradParametersProto::default())
+        );
+        assert!(FrequencyEstimatorParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(FrequencyEstimatorParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            FrequencyEstimatorParametersProto::decode(
+                &FrequencyEstimatorParametersProto::default().encode()
+            )
+            .ok(),
+            Some(FrequencyEstimatorParametersProto::default())
+        );
+        assert!(FrontendAttributes::verify_bidirectional_equivalence().is_ok());
+        assert!(FrontendAttributes::decode(&corrupt).is_err());
+        assert_eq!(
+            FrontendAttributes::decode(&FrontendAttributes::default().encode()).ok(),
+            Some(FrontendAttributes::default())
+        );
+        assert!(FtrlParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(FtrlParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            FtrlParametersProto::decode(&FtrlParametersProto::default().encode()).ok(),
+            Some(FtrlParametersProto::default())
+        );
+        assert!(GatherDimensionNumbers::verify_bidirectional_equivalence().is_ok());
+        assert!(GatherDimensionNumbers::decode(&corrupt).is_err());
+        assert_eq!(
+            GatherDimensionNumbers::decode(&GatherDimensionNumbers::default().encode()).ok(),
+            Some(GatherDimensionNumbers::default())
+        );
+        assert!(GetAliveTasksRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GetAliveTasksRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GetAliveTasksRequestProto::decode(&GetAliveTasksRequestProto::default().encode()).ok(),
+            Some(GetAliveTasksRequestProto::default())
+        );
+        assert!(GetAliveTasksResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GetAliveTasksResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GetAliveTasksResponseProto::decode(&GetAliveTasksResponseProto::default().encode())
+                .ok(),
+            Some(GetAliveTasksResponseProto::default())
+        );
+        assert!(GetKeyValueDirRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GetKeyValueDirRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GetKeyValueDirRequestProto::decode(&GetKeyValueDirRequestProto::default().encode())
+                .ok(),
+            Some(GetKeyValueDirRequestProto::default())
+        );
+        assert!(GetKeyValueDirResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GetKeyValueDirResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GetKeyValueDirResponseProto::decode(&GetKeyValueDirResponseProto::default().encode())
+                .ok(),
+            Some(GetKeyValueDirResponseProto::default())
+        );
+        assert!(GetKeyValueRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GetKeyValueRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GetKeyValueRequestProto::decode(&GetKeyValueRequestProto::default().encode()).ok(),
+            Some(GetKeyValueRequestProto::default())
+        );
+        assert!(GetKeyValueResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GetKeyValueResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GetKeyValueResponseProto::decode(&GetKeyValueResponseProto::default().encode()).ok(),
+            Some(GetKeyValueResponseProto::default())
+        );
+        assert!(GetSnapshotRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GetSnapshotRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GetSnapshotRequestProto::decode(&GetSnapshotRequestProto::default().encode()).ok(),
+            Some(GetSnapshotRequestProto::default())
+        );
+        assert!(GetTaskStateRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GetTaskStateRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GetTaskStateRequestProto::decode(&GetTaskStateRequestProto::default().encode()).ok(),
+            Some(GetTaskStateRequestProto::default())
+        );
+        assert!(GetTaskStateResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GetTaskStateResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GetTaskStateResponseProto::decode(&GetTaskStateResponseProto::default().encode()).ok(),
+            Some(GetTaskStateResponseProto::default())
+        );
+        assert!(GlobalDataHandle::verify_bidirectional_equivalence().is_ok());
+        assert!(GlobalDataHandle::decode(&corrupt).is_err());
+        assert_eq!(
+            GlobalDataHandle::decode(&GlobalDataHandle::default().encode()).ok(),
+            Some(GlobalDataHandle::default())
+        );
+        assert!(GlobalTopologyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GlobalTopologyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GlobalTopologyProto::decode(&GlobalTopologyProto::default().encode()).ok(),
+            Some(GlobalTopologyProto::default())
+        );
+        assert!(GpuDeviceInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GpuDeviceInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GpuDeviceInfoProto::decode(&GpuDeviceInfoProto::default().encode()).ok(),
+            Some(GpuDeviceInfoProto::default())
+        );
+        assert!(GpuTargetConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GpuTargetConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GpuTargetConfigProto::decode(&GpuTargetConfigProto::default().encode()).ok(),
+            Some(GpuTargetConfigProto::default())
+        );
+        assert!(GpuTopologyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GpuTopologyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GpuTopologyProto::decode(&GpuTopologyProto::default().encode()).ok(),
+            Some(GpuTopologyProto::default())
+        );
+        assert!(GradientAccumulationStatusProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GradientAccumulationStatusProto::decode(&corrupt).is_err());
+        assert_eq!(
+            GradientAccumulationStatusProto::decode(
+                &GradientAccumulationStatusProto::default().encode()
+            )
+            .ok(),
+            Some(GradientAccumulationStatusProto::default())
+        );
+        assert!(HeartbeatRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HeartbeatRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HeartbeatRequestProto::decode(&HeartbeatRequestProto::default().encode()).ok(),
+            Some(HeartbeatRequestProto::default())
+        );
+        assert!(HeartbeatResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HeartbeatResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HeartbeatResponseProto::decode(&HeartbeatResponseProto::default().encode()).ok(),
+            Some(HeartbeatResponseProto::default())
+        );
+        assert!(HloAliasEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloAliasEntryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloAliasEntryProto::decode(&HloAliasEntryProto::default().encode()).ok(),
+            Some(HloAliasEntryProto::default())
+        );
+        assert!(HloBufferDonorEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloBufferDonorEntryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloBufferDonorEntryProto::decode(&HloBufferDonorEntryProto::default().encode()).ok(),
+            Some(HloBufferDonorEntryProto::default())
+        );
+        assert!(HloBufferDonorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloBufferDonorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloBufferDonorProto::decode(&HloBufferDonorProto::default().encode()).ok(),
+            Some(HloBufferDonorProto::default())
+        );
+        assert!(HloComputationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloComputationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloComputationProto::decode(&HloComputationProto::default().encode()).ok(),
+            Some(HloComputationProto::default())
+        );
+        assert!(HloInputOutputAliasProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloInputOutputAliasProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloInputOutputAliasProto::decode(&HloInputOutputAliasProto::default().encode()).ok(),
+            Some(HloInputOutputAliasProto::default())
+        );
+        assert!(HloInstructionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloInstructionProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloInstructionProto::decode(&HloInstructionProto::default().encode()).ok(),
+            Some(HloInstructionProto::default())
+        );
+        assert!(HloModuleConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloModuleConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloModuleConfigProto::decode(&HloModuleConfigProto::default().encode()).ok(),
+            Some(HloModuleConfigProto::default())
+        );
+        assert!(HloModuleProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloModuleProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloModuleProto::decode(&HloModuleProto::default().encode()).ok(),
+            Some(HloModuleProto::default())
+        );
+        assert!(HloModuleProtoWithConfig::verify_bidirectional_equivalence().is_ok());
+        assert!(HloModuleProtoWithConfig::decode(&corrupt).is_err());
+        assert_eq!(
+            HloModuleProtoWithConfig::decode(&HloModuleProtoWithConfig::default().encode()).ok(),
+            Some(HloModuleProtoWithConfig::default())
+        );
+        assert!(HloSliceDimensionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloSliceDimensionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloSliceDimensionsProto::decode(&HloSliceDimensionsProto::default().encode()).ok(),
+            Some(HloSliceDimensionsProto::default())
+        );
+        assert!(HloSnapshotProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloSnapshotProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloSnapshotProto::decode(&HloSnapshotProto::default().encode()).ok(),
+            Some(HloSnapshotProto::default())
+        );
+        assert!(HostCommandEnvelopeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HostCommandEnvelopeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HostCommandEnvelopeProto::decode(&HostCommandEnvelopeProto::default().encode()).ok(),
+            Some(HostCommandEnvelopeProto::default())
+        );
+        assert!(HostComputeMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HostComputeMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HostComputeMetadataProto::decode(&HostComputeMetadataProto::default().encode()).ok(),
+            Some(HostComputeMetadataProto::default())
+        );
+        assert!(HostNetworkAddressProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HostNetworkAddressProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HostNetworkAddressProto::decode(&HostNetworkAddressProto::default().encode()).ok(),
+            Some(HostNetworkAddressProto::default())
+        );
+        assert!(HostOffloadingExecutableProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HostOffloadingExecutableProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HostOffloadingExecutableProto::decode(
+                &HostOffloadingExecutableProto::default().encode()
+            )
+            .ok(),
+            Some(HostOffloadingExecutableProto::default())
+        );
+        assert!(HostTransferMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HostTransferMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HostTransferMetadataProto::decode(&HostTransferMetadataProto::default().encode()).ok(),
+            Some(HostTransferMetadataProto::default())
+        );
+        assert!(HostTransferTensorMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HostTransferTensorMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HostTransferTensorMetadataProto::decode(
+                &HostTransferTensorMetadataProto::default().encode()
+            )
+            .ok(),
+            Some(HostTransferTensorMetadataProto::default())
+        );
+        assert!(HotIdReplicationConfigurationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HotIdReplicationConfigurationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HotIdReplicationConfigurationProto::decode(
+                &HotIdReplicationConfigurationProto::default().encode()
+            )
+            .ok(),
+            Some(HotIdReplicationConfigurationProto::default())
+        );
+        assert!(IncrementKeyValueRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(IncrementKeyValueRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            IncrementKeyValueRequestProto::decode(
+                &IncrementKeyValueRequestProto::default().encode()
+            )
+            .ok(),
+            Some(IncrementKeyValueRequestProto::default())
+        );
+        assert!(IncrementKeyValueResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(IncrementKeyValueResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            IncrementKeyValueResponseProto::decode(
+                &IncrementKeyValueResponseProto::default().encode()
+            )
+            .ok(),
+            Some(IncrementKeyValueResponseProto::default())
+        );
+        assert!(InsertKeyValueRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(InsertKeyValueRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            InsertKeyValueRequestProto::decode(&InsertKeyValueRequestProto::default().encode())
+                .ok(),
+            Some(InsertKeyValueRequestProto::default())
+        );
+        assert!(InsertKeyValueResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(InsertKeyValueResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            InsertKeyValueResponseProto::decode(&InsertKeyValueResponseProto::default().encode())
+                .ok(),
+            Some(InsertKeyValueResponseProto::default())
+        );
+        assert!(IsaBundleSlotProto::verify_bidirectional_equivalence().is_ok());
+        assert!(IsaBundleSlotProto::decode(&corrupt).is_err());
+        assert_eq!(
+            IsaBundleSlotProto::decode(&IsaBundleSlotProto::default().encode()).ok(),
+            Some(IsaBundleSlotProto::default())
+        );
+        assert!(IsaCoreProgramHeaderProto::verify_bidirectional_equivalence().is_ok());
+        assert!(IsaCoreProgramHeaderProto::decode(&corrupt).is_err());
+        assert_eq!(
+            IsaCoreProgramHeaderProto::decode(&IsaCoreProgramHeaderProto::default().encode()).ok(),
+            Some(IsaCoreProgramHeaderProto::default())
+        );
+        assert!(IsaProgramProto::verify_bidirectional_equivalence().is_ok());
+        assert!(IsaProgramProto::decode(&corrupt).is_err());
+        assert_eq!(
+            IsaProgramProto::decode(&IsaProgramProto::default().encode()).ok(),
+            Some(IsaProgramProto::default())
+        );
+        assert!(IsaSymbolTableEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(IsaSymbolTableEntryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            IsaSymbolTableEntryProto::decode(&IsaSymbolTableEntryProto::default().encode()).ok(),
+            Some(IsaSymbolTableEntryProto::default())
+        );
+        assert!(IsaVliwBundleProto::verify_bidirectional_equivalence().is_ok());
+        assert!(IsaVliwBundleProto::decode(&corrupt).is_err());
+        assert_eq!(
+            IsaVliwBundleProto::decode(&IsaVliwBundleProto::default().encode()).ok(),
+            Some(IsaVliwBundleProto::default())
+        );
+        assert!(JobInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(JobInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            JobInfoProto::decode(&JobInfoProto::default().encode()).ok(),
+            Some(JobInfoProto::default())
+        );
+        assert!(KeyValueEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(KeyValueEntryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            KeyValueEntryProto::decode(&KeyValueEntryProto::default().encode()).ok(),
+            Some(KeyValueEntryProto::default())
+        );
+        assert!(KeyValueMetricProto::verify_bidirectional_equivalence().is_ok());
+        assert!(KeyValueMetricProto::decode(&corrupt).is_err());
+        assert_eq!(
+            KeyValueMetricProto::decode(&KeyValueMetricProto::default().encode()).ok(),
+            Some(KeyValueMetricProto::default())
+        );
+        assert!(LayoutProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LayoutProto::decode(&corrupt).is_err());
+        assert_eq!(
+            LayoutProto::decode(&LayoutProto::default().encode()).ok(),
+            Some(LayoutProto::default())
+        );
+        assert!(LearningRateProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LearningRateProto::decode(&corrupt).is_err());
+        assert_eq!(
+            LearningRateProto::decode(&LearningRateProto::default().encode()).ok(),
+            Some(LearningRateProto::default())
+        );
+        assert!(LionParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LionParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            LionParametersProto::decode(&LionParametersProto::default().encode()).ok(),
+            Some(LionParametersProto::default())
+        );
+        assert!(LiteralProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LiteralProto::decode(&corrupt).is_err());
+        assert_eq!(
+            LiteralProto::decode(&LiteralProto::default().encode()).ok(),
+            Some(LiteralProto::default())
+        );
+        assert!(LocalTopologyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LocalTopologyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            LocalTopologyProto::decode(&LocalTopologyProto::default().encode()).ok(),
+            Some(LocalTopologyProto::default())
+        );
+        assert!(LowDimensionalPackingStatusProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LowDimensionalPackingStatusProto::decode(&corrupt).is_err());
+        assert_eq!(
+            LowDimensionalPackingStatusProto::decode(
+                &LowDimensionalPackingStatusProto::default().encode()
+            )
+            .ok(),
+            Some(LowDimensionalPackingStatusProto::default())
+        );
+        assert!(MdlAdagradLightParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MdlAdagradLightParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MdlAdagradLightParametersProto::decode(
+                &MdlAdagradLightParametersProto::default().encode()
+            )
+            .ok(),
+            Some(MdlAdagradLightParametersProto::default())
+        );
+        assert!(MegaScaleActionGraphProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MegaScaleActionGraphProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MegaScaleActionGraphProto::decode(&MegaScaleActionGraphProto::default().encode()).ok(),
+            Some(MegaScaleActionGraphProto::default())
+        );
+        assert!(MegaScaleActionInputProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MegaScaleActionInputProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MegaScaleActionInputProto::decode(&MegaScaleActionInputProto::default().encode()).ok(),
+            Some(MegaScaleActionInputProto::default())
+        );
+        assert!(MegaScaleActionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MegaScaleActionProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MegaScaleActionProto::decode(&MegaScaleActionProto::default().encode()).ok(),
+            Some(MegaScaleActionProto::default())
+        );
+        assert!(MegaScaleRuntimeErrorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MegaScaleRuntimeErrorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MegaScaleRuntimeErrorProto::decode(&MegaScaleRuntimeErrorProto::default().encode())
+                .ok(),
+            Some(MegaScaleRuntimeErrorProto::default())
+        );
+        assert!(MegascaleDcnTopologyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MegascaleDcnTopologyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MegascaleDcnTopologyProto::decode(&MegascaleDcnTopologyProto::default().encode()).ok(),
+            Some(MegascaleDcnTopologyProto::default())
+        );
+        assert!(MegascaleMultiSliceConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MegascaleMultiSliceConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MegascaleMultiSliceConfigProto::decode(
+                &MegascaleMultiSliceConfigProto::default().encode()
+            )
+            .ok(),
+            Some(MegascaleMultiSliceConfigProto::default())
+        );
+        assert!(MegascaleRuntimeMetricsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MegascaleRuntimeMetricsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MegascaleRuntimeMetricsProto::decode(&MegascaleRuntimeMetricsProto::default().encode())
+                .ok(),
+            Some(MegascaleRuntimeMetricsProto::default())
+        );
+        assert!(MegascaleTransportConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MegascaleTransportConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MegascaleTransportConfigProto::decode(
+                &MegascaleTransportConfigProto::default().encode()
+            )
+            .ok(),
+            Some(MegascaleTransportConfigProto::default())
+        );
+        assert!(MemoryBoundLoopOptimizerOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MemoryBoundLoopOptimizerOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MemoryBoundLoopOptimizerOptionsProto::decode(
+                &MemoryBoundLoopOptimizerOptionsProto::default().encode()
+            )
+            .ok(),
+            Some(MemoryBoundLoopOptimizerOptionsProto::default())
+        );
+        assert!(MemorySchedulerProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MemorySchedulerProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MemorySchedulerProto::decode(&MemorySchedulerProto::default().encode()).ok(),
+            Some(MemorySchedulerProto::default())
+        );
+        assert!(MemorySpaceAssignmentOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MemorySpaceAssignmentOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MemorySpaceAssignmentOptionsProto::decode(
+                &MemorySpaceAssignmentOptionsProto::default().encode()
+            )
+            .ok(),
+            Some(MemorySpaceAssignmentOptionsProto::default())
+        );
+        assert!(MomentumParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MomentumParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MomentumParametersProto::decode(&MomentumParametersProto::default().encode()).ok(),
+            Some(MomentumParametersProto::default())
+        );
+        assert!(MonitorRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MonitorRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MonitorRequestProto::decode(&MonitorRequestProto::default().encode()).ok(),
+            Some(MonitorRequestProto::default())
+        );
+        assert!(MonitorResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MonitorResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MonitorResponseProto::decode(&MonitorResponseProto::default().encode()).ok(),
+            Some(MonitorResponseProto::default())
+        );
+        assert!(MsaSortOrderOverridesProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MsaSortOrderOverridesProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MsaSortOrderOverridesProto::decode(&MsaSortOrderOverridesProto::default().encode())
+                .ok(),
+            Some(MsaSortOrderOverridesProto::default())
+        );
+        assert!(MsaTensorOverridesProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MsaTensorOverridesProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MsaTensorOverridesProto::decode(&MsaTensorOverridesProto::default().encode()).ok(),
+            Some(MsaTensorOverridesProto::default())
+        );
+        assert!(NetworkAddressMappingProto::verify_bidirectional_equivalence().is_ok());
+        assert!(NetworkAddressMappingProto::decode(&corrupt).is_err());
+        assert_eq!(
+            NetworkAddressMappingProto::decode(&NetworkAddressMappingProto::default().encode())
+                .ok(),
+            Some(NetworkAddressMappingProto::default())
+        );
+        assert!(NullableShapedSliceProto::verify_bidirectional_equivalence().is_ok());
+        assert!(NullableShapedSliceProto::decode(&corrupt).is_err());
+        assert_eq!(
+            NullableShapedSliceProto::decode(&NullableShapedSliceProto::default().encode()).ok(),
+            Some(NullableShapedSliceProto::default())
+        );
+        assert!(OneApiComputeCapabilityProto::verify_bidirectional_equivalence().is_ok());
+        assert!(OneApiComputeCapabilityProto::decode(&corrupt).is_err());
+        assert_eq!(
+            OneApiComputeCapabilityProto::decode(&OneApiComputeCapabilityProto::default().encode())
+                .ok(),
+            Some(OneApiComputeCapabilityProto::default())
+        );
+        assert!(OnlineYogiParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(OnlineYogiParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            OnlineYogiParametersProto::decode(&OnlineYogiParametersProto::default().encode()).ok(),
+            Some(OnlineYogiParametersProto::default())
+        );
+        assert!(OpMetadata::verify_bidirectional_equivalence().is_ok());
+        assert!(OpMetadata::decode(&corrupt).is_err());
+        assert_eq!(
+            OpMetadata::decode(&OpMetadata::default().encode()).ok(),
+            Some(OpMetadata::default())
+        );
+        assert!(OpShardingProto::verify_bidirectional_equivalence().is_ok());
+        assert!(OpShardingProto::decode(&corrupt).is_err());
+        assert_eq!(
+            OpShardingProto::decode(&OpShardingProto::default().encode()).ok(),
+            Some(OpShardingProto::default())
+        );
+        assert!(OptimizationParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(OptimizationParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            OptimizationParametersProto::decode(&OptimizationParametersProto::default().encode())
+                .ok(),
+            Some(OptimizationParametersProto::default())
+        );
+        assert!(OptimizerDynamicInputProto::verify_bidirectional_equivalence().is_ok());
+        assert!(OptimizerDynamicInputProto::decode(&corrupt).is_err());
+        assert_eq!(
+            OptimizerDynamicInputProto::decode(&OptimizerDynamicInputProto::default().encode())
+                .ok(),
+            Some(OptimizerDynamicInputProto::default())
+        );
+        assert!(OptionOverrideProto::verify_bidirectional_equivalence().is_ok());
+        assert!(OptionOverrideProto::decode(&corrupt).is_err());
+        assert_eq!(
+            OptionOverrideProto::decode(&OptionOverrideProto::default().encode()).ok(),
+            Some(OptionOverrideProto::default())
+        );
+        assert!(PaddingConfig::verify_bidirectional_equivalence().is_ok());
+        assert!(PaddingConfig::decode(&corrupt).is_err());
+        assert_eq!(
+            PaddingConfig::decode(&PaddingConfig::default().encode()).ok(),
+            Some(PaddingConfig::default())
+        );
+        assert!(PaddingConfigDimension::verify_bidirectional_equivalence().is_ok());
+        assert!(PaddingConfigDimension::decode(&corrupt).is_err());
+        assert_eq!(
+            PaddingConfigDimension::decode(&PaddingConfigDimension::default().encode()).ok(),
+            Some(PaddingConfigDimension::default())
+        );
+        assert!(PaddingMapProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PaddingMapProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PaddingMapProto::decode(&PaddingMapProto::default().encode()).ok(),
+            Some(PaddingMapProto::default())
+        );
+        assert!(ParameterReplicationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ParameterReplicationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ParameterReplicationProto::decode(&ParameterReplicationProto::default().encode()).ok(),
+            Some(ParameterReplicationProto::default())
+        );
+        assert!(PassMetricsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PassMetricsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PassMetricsProto::decode(&PassMetricsProto::default().encode()).ok(),
+            Some(PassMetricsProto::default())
+        );
+        assert!(PendingGraphStateProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PendingGraphStateProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PendingGraphStateProto::decode(&PendingGraphStateProto::default().encode()).ok(),
+            Some(PendingGraphStateProto::default())
+        );
+        assert!(PerTpuStepDetailsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PerTpuStepDetailsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PerTpuStepDetailsProto::decode(&PerTpuStepDetailsProto::default().encode()).ok(),
+            Some(PerTpuStepDetailsProto::default())
+        );
+        assert!(PjRtDeviceDimensionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PjRtDeviceDimensionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PjRtDeviceDimensionsProto::decode(&PjRtDeviceDimensionsProto::default().encode()).ok(),
+            Some(PjRtDeviceDimensionsProto::default())
+        );
+        assert!(PjRtExecutableMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PjRtExecutableMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PjRtExecutableMetadataProto::decode(&PjRtExecutableMetadataProto::default().encode())
+                .ok(),
+            Some(PjRtExecutableMetadataProto::default())
+        );
+        assert!(PjRtPartialProgramProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PjRtPartialProgramProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PjRtPartialProgramProto::decode(&PjRtPartialProgramProto::default().encode()).ok(),
+            Some(PjRtPartialProgramProto::default())
+        );
+        assert!(PjRtTopologyDescriptionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PjRtTopologyDescriptionProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PjRtTopologyDescriptionProto::decode(&PjRtTopologyDescriptionProto::default().encode())
+                .ok(),
+            Some(PjRtTopologyDescriptionProto::default())
+        );
+        assert!(PjRtValueIntVectorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PjRtValueIntVectorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PjRtValueIntVectorProto::decode(&PjRtValueIntVectorProto::default().encode()).ok(),
+            Some(PjRtValueIntVectorProto::default())
+        );
+        assert!(PjRtValueTypeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PjRtValueTypeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PjRtValueTypeProto::decode(&PjRtValueTypeProto::default().encode()).ok(),
+            Some(PjRtValueTypeProto::default())
+        );
+        assert!(PollForErrorRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PollForErrorRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PollForErrorRequestProto::decode(&PollForErrorRequestProto::default().encode()).ok(),
+            Some(PollForErrorRequestProto::default())
+        );
+        assert!(PollForErrorResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PollForErrorResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PollForErrorResponseProto::decode(&PollForErrorResponseProto::default().encode()).ok(),
+            Some(PollForErrorResponseProto::default())
+        );
+        assert!(PrecisionConfig::verify_bidirectional_equivalence().is_ok());
+        assert!(PrecisionConfig::decode(&corrupt).is_err());
+        assert_eq!(
+            PrecisionConfig::decode(&PrecisionConfig::default().encode()).ok(),
+            Some(PrecisionConfig::default())
+        );
+        assert!(PreferredPrefetchOverridesProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PreferredPrefetchOverridesProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PreferredPrefetchOverridesProto::decode(
+                &PreferredPrefetchOverridesProto::default().encode()
+            )
+            .ok(),
+            Some(PreferredPrefetchOverridesProto::default())
+        );
+        assert!(ProfileAdvancedConfigValueProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProfileAdvancedConfigValueProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProfileAdvancedConfigValueProto::decode(
+                &ProfileAdvancedConfigValueProto::default().encode()
+            )
+            .ok(),
+            Some(ProfileAdvancedConfigValueProto::default())
+        );
+        assert!(ProfileOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProfileOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProfileOptionsProto::decode(&ProfileOptionsProto::default().encode()).ok(),
+            Some(ProfileOptionsProto::default())
+        );
+        assert!(ProfileRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProfileRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProfileRequestProto::decode(&ProfileRequestProto::default().encode()).ok(),
+            Some(ProfileRequestProto::default())
+        );
+        assert!(ProfileResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProfileResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProfileResponseProto::decode(&ProfileResponseProto::default().encode()).ok(),
+            Some(ProfileResponseProto::default())
+        );
+        assert!(ProfileToolDataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProfileToolDataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProfileToolDataProto::decode(&ProfileToolDataProto::default().encode()).ok(),
+            Some(ProfileToolDataProto::default())
+        );
+        assert!(ProfileTraceOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProfileTraceOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProfileTraceOptionsProto::decode(&ProfileTraceOptionsProto::default().encode()).ok(),
+            Some(ProfileTraceOptionsProto::default())
+        );
+        assert!(ProfilerServiceMonitorResultProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProfilerServiceMonitorResultProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProfilerServiceMonitorResultProto::decode(
+                &ProfilerServiceMonitorResultProto::default().encode()
+            )
+            .ok(),
+            Some(ProfilerServiceMonitorResultProto::default())
+        );
+        assert!(ProfilerTopologyLocationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProfilerTopologyLocationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProfilerTopologyLocationProto::decode(
+                &ProfilerTopologyLocationProto::default().encode()
+            )
+            .ok(),
+            Some(ProfilerTopologyLocationProto::default())
+        );
+        assert!(ProfilerTopologyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProfilerTopologyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProfilerTopologyProto::decode(&ProfilerTopologyProto::default().encode()).ok(),
+            Some(ProfilerTopologyProto::default())
+        );
+        assert!(ProgramMemoryMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProgramMemoryMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProgramMemoryMetadataProto::decode(&ProgramMemoryMetadataProto::default().encode())
+                .ok(),
+            Some(ProgramMemoryMetadataProto::default())
+        );
+        assert!(ProgramRelocationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProgramRelocationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProgramRelocationProto::decode(&ProgramRelocationProto::default().encode()).ok(),
+            Some(ProgramRelocationProto::default())
+        );
+        assert!(ProgramRunInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProgramRunInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProgramRunInfoProto::decode(&ProgramRunInfoProto::default().encode()).ok(),
+            Some(ProgramRunInfoProto::default())
+        );
+        assert!(ProgramShapeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProgramShapeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProgramShapeProto::decode(&ProgramShapeProto::default().encode()).ok(),
+            Some(ProgramShapeProto::default())
+        );
+        assert!(ProximalAdagradParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProximalAdagradParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProximalAdagradParametersProto::decode(
+                &ProximalAdagradParametersProto::default().encode()
+            )
+            .ok(),
+            Some(ProximalAdagradParametersProto::default())
+        );
+        assert!(ProximalYogiParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ProximalYogiParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ProximalYogiParametersProto::decode(&ProximalYogiParametersProto::default().encode())
+                .ok(),
+            Some(ProximalYogiParametersProto::default())
+        );
+        assert!(PyHostCallbackProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PyHostCallbackProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PyHostCallbackProto::decode(&PyHostCallbackProto::default().encode()).ok(),
+            Some(PyHostCallbackProto::default())
+        );
+        assert!(PyTreeDefProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PyTreeDefProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PyTreeDefProto::decode(&PyTreeDefProto::default().encode()).ok(),
+            Some(PyTreeDefProto::default())
+        );
+        assert!(PyTreeNodeDefProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PyTreeNodeDefProto::decode(&corrupt).is_err());
+        assert_eq!(
+            PyTreeNodeDefProto::decode(&PyTreeNodeDefProto::default().encode()).ok(),
+            Some(PyTreeNodeDefProto::default())
+        );
+        assert!(RapidEyeInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(RapidEyeInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            RapidEyeInfoProto::decode(&RapidEyeInfoProto::default().encode()).ok(),
+            Some(RapidEyeInfoProto::default())
+        );
+        assert!(RegisterTaskRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(RegisterTaskRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            RegisterTaskRequestProto::decode(&RegisterTaskRequestProto::default().encode()).ok(),
+            Some(RegisterTaskRequestProto::default())
+        );
+        assert!(RegisterTaskResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(RegisterTaskResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            RegisterTaskResponseProto::decode(&RegisterTaskResponseProto::default().encode()).ok(),
+            Some(RegisterTaskResponseProto::default())
+        );
+        assert!(RegisterTranslatorDataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(RegisterTranslatorDataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            RegisterTranslatorDataProto::decode(&RegisterTranslatorDataProto::default().encode())
+                .ok(),
+            Some(RegisterTranslatorDataProto::default())
+        );
+        assert!(RegisterTranslatorEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(RegisterTranslatorEntryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            RegisterTranslatorEntryProto::decode(&RegisterTranslatorEntryProto::default().encode())
+                .ok(),
+            Some(RegisterTranslatorEntryProto::default())
+        );
+        assert!(
+            RemoteProfilerSessionManagerOptionsProto::verify_bidirectional_equivalence().is_ok()
+        );
+        assert!(RemoteProfilerSessionManagerOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            RemoteProfilerSessionManagerOptionsProto::decode(
+                &RemoteProfilerSessionManagerOptionsProto::default().encode()
+            )
+            .ok(),
+            Some(RemoteProfilerSessionManagerOptionsProto::default())
+        );
+        assert!(ReplicaGroup::verify_bidirectional_equivalence().is_ok());
+        assert!(ReplicaGroup::decode(&corrupt).is_err());
+        assert_eq!(
+            ReplicaGroup::decode(&ReplicaGroup::default().encode()).ok(),
+            Some(ReplicaGroup::default())
+        );
+        assert!(ReportErrorToServiceRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ReportErrorToServiceRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ReportErrorToServiceRequestProto::decode(
+                &ReportErrorToServiceRequestProto::default().encode()
+            )
+            .ok(),
+            Some(ReportErrorToServiceRequestProto::default())
+        );
+        assert!(ReportErrorToServiceResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ReportErrorToServiceResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ReportErrorToServiceResponseProto::decode(
+                &ReportErrorToServiceResponseProto::default().encode()
+            )
+            .ok(),
+            Some(ReportErrorToServiceResponseProto::default())
+        );
+        assert!(ReportErrorToTaskRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ReportErrorToTaskRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ReportErrorToTaskRequestProto::decode(
+                &ReportErrorToTaskRequestProto::default().encode()
+            )
+            .ok(),
+            Some(ReportErrorToTaskRequestProto::default())
+        );
+        assert!(ReportErrorToTaskResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ReportErrorToTaskResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ReportErrorToTaskResponseProto::decode(
+                &ReportErrorToTaskResponseProto::default().encode()
+            )
+            .ok(),
+            Some(ReportErrorToTaskResponseProto::default())
+        );
+        assert!(ResetTaskRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ResetTaskRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ResetTaskRequestProto::decode(&ResetTaskRequestProto::default().encode()).ok(),
+            Some(ResetTaskRequestProto::default())
+        );
+        assert!(ResetTaskResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ResetTaskResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ResetTaskResponseProto::decode(&ResetTaskResponseProto::default().encode()).ok(),
+            Some(ResetTaskResponseProto::default())
+        );
+        assert!(RmsPropParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(RmsPropParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            RmsPropParametersProto::decode(&RmsPropParametersProto::default().encode()).ok(),
+            Some(RmsPropParametersProto::default())
+        );
+        assert!(RuntimeAbiVersionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(RuntimeAbiVersionProto::decode(&corrupt).is_err());
+        assert_eq!(
+            RuntimeAbiVersionProto::decode(&RuntimeAbiVersionProto::default().encode()).ok(),
+            Some(RuntimeAbiVersionProto::default())
+        );
+        assert!(RuntimeStateSummaryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(RuntimeStateSummaryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            RuntimeStateSummaryProto::decode(&RuntimeStateSummaryProto::default().encode()).ok(),
+            Some(RuntimeStateSummaryProto::default())
+        );
+        assert!(ScatterDimensionNumbers::verify_bidirectional_equivalence().is_ok());
+        assert!(ScatterDimensionNumbers::decode(&corrupt).is_err());
+        assert_eq!(
+            ScatterDimensionNumbers::decode(&ScatterDimensionNumbers::default().encode()).ok(),
+            Some(ScatterDimensionNumbers::default())
+        );
+        assert!(ShapeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ShapeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ShapeProto::decode(&ShapeProto::default().encode()).ok(),
+            Some(ShapeProto::default())
+        );
+        assert!(ShapedSliceProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ShapedSliceProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ShapedSliceProto::decode(&ShapedSliceProto::default().encode()).ok(),
+            Some(ShapedSliceProto::default())
+        );
+        assert!(ShutdownTaskRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ShutdownTaskRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ShutdownTaskRequestProto::decode(&ShutdownTaskRequestProto::default().encode()).ok(),
+            Some(ShutdownTaskRequestProto::default())
+        );
+        assert!(ShutdownTaskResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ShutdownTaskResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ShutdownTaskResponseProto::decode(&ShutdownTaskResponseProto::default().encode()).ok(),
+            Some(ShutdownTaskResponseProto::default())
+        );
+        assert!(SimulatedQuantizationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(SimulatedQuantizationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            SimulatedQuantizationProto::decode(&SimulatedQuantizationProto::default().encode())
+                .ok(),
+            Some(SimulatedQuantizationProto::default())
+        );
+        assert!(SliceConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(SliceConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            SliceConfigProto::decode(&SliceConfigProto::default().encode()).ok(),
+            Some(SliceConfigProto::default())
+        );
+        assert!(SliceDeviceListProto::verify_bidirectional_equivalence().is_ok());
+        assert!(SliceDeviceListProto::decode(&corrupt).is_err());
+        assert_eq!(
+            SliceDeviceListProto::decode(&SliceDeviceListProto::default().encode()).ok(),
+            Some(SliceDeviceListProto::default())
+        );
+        assert!(SourceTarget::verify_bidirectional_equivalence().is_ok());
+        assert!(SourceTarget::decode(&corrupt).is_err());
+        assert_eq!(
+            SourceTarget::decode(&SourceTarget::default().encode()).ok(),
+            Some(SourceTarget::default())
+        );
+        assert!(SparseCoreTableLayoutProto::verify_bidirectional_equivalence().is_ok());
+        assert!(SparseCoreTableLayoutProto::decode(&corrupt).is_err());
+        assert_eq!(
+            SparseCoreTableLayoutProto::decode(&SparseCoreTableLayoutProto::default().encode())
+                .ok(),
+            Some(SparseCoreTableLayoutProto::default())
+        );
+        assert!(SparseCoreTableLayoutsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(SparseCoreTableLayoutsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            SparseCoreTableLayoutsProto::decode(&SparseCoreTableLayoutsProto::default().encode())
+                .ok(),
+            Some(SparseCoreTableLayoutsProto::default())
+        );
+        assert!(SplitConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(SplitConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            SplitConfigProto::decode(&SplitConfigProto::default().encode()).ok(),
+            Some(SplitConfigProto::default())
+        );
+        assert!(StateVariableFillWithConstantProto::verify_bidirectional_equivalence().is_ok());
+        assert!(StateVariableFillWithConstantProto::decode(&corrupt).is_err());
+        assert_eq!(
+            StateVariableFillWithConstantProto::decode(
+                &StateVariableFillWithConstantProto::default().encode()
+            )
+            .ok(),
+            Some(StateVariableFillWithConstantProto::default())
+        );
+        assert!(StateVariableSpecificationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(StateVariableSpecificationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            StateVariableSpecificationProto::decode(
+                &StateVariableSpecificationProto::default().encode()
+            )
+            .ok(),
+            Some(StateVariableSpecificationProto::default())
+        );
+        assert!(StateVariableUserDefinedProto::verify_bidirectional_equivalence().is_ok());
+        assert!(StateVariableUserDefinedProto::decode(&corrupt).is_err());
+        assert_eq!(
+            StateVariableUserDefinedProto::decode(
+                &StateVariableUserDefinedProto::default().encode()
+            )
+            .ok(),
+            Some(StateVariableUserDefinedProto::default())
+        );
+        assert!(Statistic::verify_bidirectional_equivalence().is_ok());
+        assert!(Statistic::decode(&corrupt).is_err());
+        assert_eq!(
+            Statistic::decode(&Statistic::default().encode()).ok(),
+            Some(Statistic::default())
+        );
+        assert!(StatisticsViz::verify_bidirectional_equivalence().is_ok());
+        assert!(StatisticsViz::decode(&corrupt).is_err());
+        assert_eq!(
+            StatisticsViz::decode(&StatisticsViz::default().encode()).ok(),
+            Some(StatisticsViz::default())
+        );
+        assert!(StatusProto::verify_bidirectional_equivalence().is_ok());
+        assert!(StatusProto::decode(&corrupt).is_err());
+        assert_eq!(
+            StatusProto::decode(&StatusProto::default().encode()).ok(),
+            Some(StatusProto::default())
+        );
+        assert!(
+            StochasticGradientDescentParametersProto::verify_bidirectional_equivalence().is_ok()
+        );
+        assert!(StochasticGradientDescentParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            StochasticGradientDescentParametersProto::decode(
+                &StochasticGradientDescentParametersProto::default().encode()
+            )
+            .ok(),
+            Some(StochasticGradientDescentParametersProto::default())
+        );
+        assert!(StopContinuousProfilingRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(StopContinuousProfilingRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            StopContinuousProfilingRequestProto::decode(
+                &StopContinuousProfilingRequestProto::default().encode()
+            )
+            .ok(),
+            Some(StopContinuousProfilingRequestProto::default())
+        );
+        assert!(StopContinuousProfilingResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(StopContinuousProfilingResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            StopContinuousProfilingResponseProto::decode(
+                &StopContinuousProfilingResponseProto::default().encode()
+            )
+            .ok(),
+            Some(StopContinuousProfilingResponseProto::default())
+        );
+        assert!(
+            StreamExecutorExecutableAbiVersionProto::verify_bidirectional_equivalence().is_ok()
+        );
+        assert!(StreamExecutorExecutableAbiVersionProto::decode(&corrupt).is_err());
+        assert_eq!(
+            StreamExecutorExecutableAbiVersionProto::decode(
+                &StreamExecutorExecutableAbiVersionProto::default().encode()
+            )
+            .ok(),
+            Some(StreamExecutorExecutableAbiVersionProto::default())
+        );
+        assert!(StreamExecutorRuntimeAbiVersionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(StreamExecutorRuntimeAbiVersionProto::decode(&corrupt).is_err());
+        assert_eq!(
+            StreamExecutorRuntimeAbiVersionProto::decode(
+                &StreamExecutorRuntimeAbiVersionProto::default().encode()
+            )
+            .ok(),
+            Some(StreamExecutorRuntimeAbiVersionProto::default())
+        );
+        assert!(TagMetricProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TagMetricProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TagMetricProto::decode(&TagMetricProto::default().encode()).ok(),
+            Some(TagMetricProto::default())
+        );
+        assert!(TargetArgumentsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TargetArgumentsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TargetArgumentsProto::decode(&TargetArgumentsProto::default().encode()).ok(),
+            Some(TargetArgumentsProto::default())
+        );
+        assert!(TensorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TensorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TensorProto::decode(&TensorProto::default().encode()).ok(),
+            Some(TensorProto::default())
+        );
+        assert!(TensorShapeDimProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TensorShapeDimProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TensorShapeDimProto::decode(&TensorShapeDimProto::default().encode()).ok(),
+            Some(TensorShapeDimProto::default())
+        );
+        assert!(TensorShapeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TensorShapeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TensorShapeProto::decode(&TensorShapeProto::default().encode()).ok(),
+            Some(TensorShapeProto::default())
+        );
+        assert!(TerminateRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TerminateRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TerminateRequestProto::decode(&TerminateRequestProto::default().encode()).ok(),
+            Some(TerminateRequestProto::default())
+        );
+        assert!(TerminateResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TerminateResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TerminateResponseProto::decode(&TerminateResponseProto::default().encode()).ok(),
+            Some(TerminateResponseProto::default())
+        );
+        assert!(Tf2XlaConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(Tf2XlaConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            Tf2XlaConfigProto::decode(&Tf2XlaConfigProto::default().encode()).ok(),
+            Some(Tf2XlaConfigProto::default())
+        );
+        assert!(Tf2XlaFeedProto::verify_bidirectional_equivalence().is_ok());
+        assert!(Tf2XlaFeedProto::decode(&corrupt).is_err());
+        assert_eq!(
+            Tf2XlaFeedProto::decode(&Tf2XlaFeedProto::default().encode()).ok(),
+            Some(Tf2XlaFeedProto::default())
+        );
+        assert!(Tf2XlaFetchProto::verify_bidirectional_equivalence().is_ok());
+        assert!(Tf2XlaFetchProto::decode(&corrupt).is_err());
+        assert_eq!(
+            Tf2XlaFetchProto::decode(&Tf2XlaFetchProto::default().encode()).ok(),
+            Some(Tf2XlaFetchProto::default())
+        );
+        assert!(Tf2XlaTensorIdProto::verify_bidirectional_equivalence().is_ok());
+        assert!(Tf2XlaTensorIdProto::decode(&corrupt).is_err());
+        assert_eq!(
+            Tf2XlaTensorIdProto::decode(&Tf2XlaTensorIdProto::default().encode()).ok(),
+            Some(Tf2XlaTensorIdProto::default())
+        );
+        assert!(Tf2XlaVariableProto::verify_bidirectional_equivalence().is_ok());
+        assert!(Tf2XlaVariableProto::decode(&corrupt).is_err());
+        assert_eq!(
+            Tf2XlaVariableProto::decode(&Tf2XlaVariableProto::default().encode()).ok(),
+            Some(Tf2XlaVariableProto::default())
+        );
+        assert!(TileProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TileProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TileProto::decode(&TileProto::default().encode()).ok(),
+            Some(TileProto::default())
+        );
+        assert!(ToolRequestOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ToolRequestOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ToolRequestOptionsProto::decode(&ToolRequestOptionsProto::default().encode()).ok(),
+            Some(ToolRequestOptionsProto::default())
+        );
+        assert!(TopologyProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TopologyProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TopologyProto::decode(&TopologyProto::default().encode()).ok(),
+            Some(TopologyProto::default())
+        );
+        assert!(TpuBottleneckAnalysisProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuBottleneckAnalysisProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuBottleneckAnalysisProto::decode(&TpuBottleneckAnalysisProto::default().encode())
+                .ok(),
+            Some(TpuBottleneckAnalysisProto::default())
+        );
+        assert!(TpuChipConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuChipConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuChipConfigProto::decode(&TpuChipConfigProto::default().encode()).ok(),
+            Some(TpuChipConfigProto::default())
+        );
+        assert!(TpuChipPartsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuChipPartsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuChipPartsProto::decode(&TpuChipPartsProto::default().encode()).ok(),
+            Some(TpuChipPartsProto::default())
+        );
+        assert!(TpuChipVariantDescriptorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuChipVariantDescriptorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuChipVariantDescriptorProto::decode(
+                &TpuChipVariantDescriptorProto::default().encode()
+            )
+            .ok(),
+            Some(TpuChipVariantDescriptorProto::default())
+        );
+        assert!(TpuCompilationEnvironmentProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuCompilationEnvironmentProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuCompilationEnvironmentProto::decode(
+                &TpuCompilationEnvironmentProto::default().encode()
+            )
+            .ok(),
+            Some(TpuCompilationEnvironmentProto::default())
+        );
+        assert!(TpuCompileMetadataArgProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuCompileMetadataArgProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuCompileMetadataArgProto::decode(&TpuCompileMetadataArgProto::default().encode())
+                .ok(),
+            Some(TpuCompileMetadataArgProto::default())
+        );
+        assert!(TpuCompileMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuCompileMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuCompileMetadataProto::decode(&TpuCompileMetadataProto::default().encode()).ok(),
+            Some(TpuCompileMetadataProto::default())
+        );
+        assert!(TpuCompileMetadataRetvalProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuCompileMetadataRetvalProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuCompileMetadataRetvalProto::decode(
+                &TpuCompileMetadataRetvalProto::default().encode()
+            )
+            .ok(),
+            Some(TpuCompileMetadataRetvalProto::default())
+        );
+        assert!(TpuCoreHloProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuCoreHloProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuCoreHloProto::decode(&TpuCoreHloProto::default().encode()).ok(),
+            Some(TpuCoreHloProto::default())
+        );
+        assert!(TpuCoreProgramAbiOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuCoreProgramAbiOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuCoreProgramAbiOptionsProto::decode(
+                &TpuCoreProgramAbiOptionsProto::default().encode()
+            )
+            .ok(),
+            Some(TpuCoreProgramAbiOptionsProto::default())
+        );
+        assert!(TpuCoreProgramAbiProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuCoreProgramAbiProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuCoreProgramAbiProto::decode(&TpuCoreProgramAbiProto::default().encode()).ok(),
+            Some(TpuCoreProgramAbiProto::default())
+        );
+        assert!(TpuCoreProgramProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuCoreProgramProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuCoreProgramProto::decode(&TpuCoreProgramProto::default().encode()).ok(),
+            Some(TpuCoreProgramProto::default())
+        );
+        assert!(TpuEmbeddingConfigurationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuEmbeddingConfigurationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuEmbeddingConfigurationProto::decode(
+                &TpuEmbeddingConfigurationProto::default().encode()
+            )
+            .ok(),
+            Some(TpuEmbeddingConfigurationProto::default())
+        );
+        assert!(TpuEmbeddingHostNetworkConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuEmbeddingHostNetworkConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuEmbeddingHostNetworkConfigProto::decode(
+                &TpuEmbeddingHostNetworkConfigProto::default().encode()
+            )
+            .ok(),
+            Some(TpuEmbeddingHostNetworkConfigProto::default())
+        );
+        assert!(TpuEmbeddingMemoryConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuEmbeddingMemoryConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuEmbeddingMemoryConfigProto::decode(
+                &TpuEmbeddingMemoryConfigProto::default().encode()
+            )
+            .ok(),
+            Some(TpuEmbeddingMemoryConfigProto::default())
+        );
+        assert!(TpuEmbeddingPartitionedConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuEmbeddingPartitionedConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuEmbeddingPartitionedConfigProto::decode(
+                &TpuEmbeddingPartitionedConfigProto::default().encode()
+            )
+            .ok(),
+            Some(TpuEmbeddingPartitionedConfigProto::default())
+        );
+        assert!(TpuExecutableInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuExecutableInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuExecutableInfoProto::decode(&TpuExecutableInfoProto::default().encode()).ok(),
+            Some(TpuExecutableInfoProto::default())
+        );
+        assert!(TpuExecutableProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuExecutableProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuExecutableProto::decode(&TpuExecutableProto::default().encode()).ok(),
+            Some(TpuExecutableProto::default())
+        );
+        assert!(TpuHardwareFeatureProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuHardwareFeatureProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuHardwareFeatureProto::decode(&TpuHardwareFeatureProto::default().encode()).ok(),
+            Some(TpuHardwareFeatureProto::default())
+        );
+        assert!(TpuHostTransferInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuHostTransferInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuHostTransferInfoProto::decode(&TpuHostTransferInfoProto::default().encode()).ok(),
+            Some(TpuHostTransferInfoProto::default())
+        );
+        assert!(TpuInputPipelineAnalysisResultProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuInputPipelineAnalysisResultProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuInputPipelineAnalysisResultProto::decode(
+                &TpuInputPipelineAnalysisResultProto::default().encode()
+            )
+            .ok(),
+            Some(TpuInputPipelineAnalysisResultProto::default())
+        );
+        assert!(TpuMemorySegmentProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuMemorySegmentProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuMemorySegmentProto::decode(&TpuMemorySegmentProto::default().encode()).ok(),
+            Some(TpuMemorySegmentProto::default())
+        );
+        assert!(TpuMemorySegmentRangeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuMemorySegmentRangeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuMemorySegmentRangeProto::decode(&TpuMemorySegmentRangeProto::default().encode())
+                .ok(),
+            Some(TpuMemorySegmentRangeProto::default())
+        );
+        assert!(TpuMemorySegmentSetProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuMemorySegmentSetProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuMemorySegmentSetProto::decode(&TpuMemorySegmentSetProto::default().encode()).ok(),
+            Some(TpuMemorySegmentSetProto::default())
+        );
+        assert!(TpuPlatformConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuPlatformConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuPlatformConfigProto::decode(&TpuPlatformConfigProto::default().encode()).ok(),
+            Some(TpuPlatformConfigProto::default())
+        );
+        assert!(TpuPlatformConfigsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuPlatformConfigsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuPlatformConfigsProto::decode(&TpuPlatformConfigsProto::default().encode()).ok(),
+            Some(TpuPlatformConfigsProto::default())
+        );
+        assert!(TpuRuntimeAbiProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuRuntimeAbiProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuRuntimeAbiProto::decode(&TpuRuntimeAbiProto::default().encode()).ok(),
+            Some(TpuRuntimeAbiProto::default())
+        );
+        assert!(TpuSerializedExecutableProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuSerializedExecutableProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuSerializedExecutableProto::decode(&TpuSerializedExecutableProto::default().encode())
+                .ok(),
+            Some(TpuSerializedExecutableProto::default())
+        );
+        assert!(TpuShapeIndexProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuShapeIndexProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuShapeIndexProto::decode(&TpuShapeIndexProto::default().encode()).ok(),
+            Some(TpuShapeIndexProto::default())
+        );
+        assert!(TpuTopologyArgsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuTopologyArgsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuTopologyArgsProto::decode(&TpuTopologyArgsProto::default().encode()).ok(),
+            Some(TpuTopologyArgsProto::default())
+        );
+        assert!(TpuUpdateIndexPairProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuUpdateIndexPairProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuUpdateIndexPairProto::decode(&TpuUpdateIndexPairProto::default().encode()).ok(),
+            Some(TpuUpdateIndexPairProto::default())
+        );
+        assert!(TritonGemmConfigsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TritonGemmConfigsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TritonGemmConfigsProto::decode(&TritonGemmConfigsProto::default().encode()).ok(),
+            Some(TritonGemmConfigsProto::default())
+        );
+        assert!(CholeskyOptions::verify_bidirectional_equivalence().is_ok());
+        assert!(CholeskyOptions::decode(&corrupt).is_err());
+        assert_eq!(
+            CholeskyOptions::decode(&CholeskyOptions::default().encode()).ok(),
+            Some(CholeskyOptions::default())
+        );
+        assert!(DynamicParameterBindingEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DynamicParameterBindingEntryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DynamicParameterBindingEntryProto::decode(
+                &DynamicParameterBindingEntryProto::default().encode()
+            )
+            .ok(),
+            Some(DynamicParameterBindingEntryProto::default())
+        );
+        assert!(DynamicParameterBindingProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DynamicParameterBindingProto::decode(&corrupt).is_err());
+        assert_eq!(
+            DynamicParameterBindingProto::decode(&DynamicParameterBindingProto::default().encode())
+                .ok(),
+            Some(DynamicParameterBindingProto::default())
+        );
+        assert!(TriangularSolveOptions::verify_bidirectional_equivalence().is_ok());
+        assert!(TriangularSolveOptions::decode(&corrupt).is_err());
+        assert_eq!(
+            TriangularSolveOptions::decode(&TriangularSolveOptions::default().encode()).ok(),
+            Some(TriangularSolveOptions::default())
+        );
+        assert!(TryGetKeyValueRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TryGetKeyValueRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TryGetKeyValueRequestProto::decode(&TryGetKeyValueRequestProto::default().encode())
+                .ok(),
+            Some(TryGetKeyValueRequestProto::default())
+        );
+        assert!(TryGetKeyValueResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TryGetKeyValueResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TryGetKeyValueResponseProto::decode(&TryGetKeyValueResponseProto::default().encode())
+                .ok(),
+            Some(TryGetKeyValueResponseProto::default())
+        );
+        assert!(UserDefinedProgramParametersProto::verify_bidirectional_equivalence().is_ok());
+        assert!(UserDefinedProgramParametersProto::decode(&corrupt).is_err());
+        assert_eq!(
+            UserDefinedProgramParametersProto::decode(
+                &UserDefinedProgramParametersProto::default().encode()
+            )
+            .ok(),
+            Some(UserDefinedProgramParametersProto::default())
+        );
+        assert!(WaitForAllTasksRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(WaitForAllTasksRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            WaitForAllTasksRequestProto::decode(&WaitForAllTasksRequestProto::default().encode())
+                .ok(),
+            Some(WaitForAllTasksRequestProto::default())
+        );
+        assert!(WaitForAllTasksResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(WaitForAllTasksResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            WaitForAllTasksResponseProto::decode(&WaitForAllTasksResponseProto::default().encode())
+                .ok(),
+            Some(WaitForAllTasksResponseProto::default())
+        );
+        assert!(WatchJobStateRequestProto::verify_bidirectional_equivalence().is_ok());
+        assert!(WatchJobStateRequestProto::decode(&corrupt).is_err());
+        assert_eq!(
+            WatchJobStateRequestProto::decode(&WatchJobStateRequestProto::default().encode()).ok(),
+            Some(WatchJobStateRequestProto::default())
+        );
+        assert!(WatchJobStateResponseProto::verify_bidirectional_equivalence().is_ok());
+        assert!(WatchJobStateResponseProto::decode(&corrupt).is_err());
+        assert_eq!(
+            WatchJobStateResponseProto::decode(&WatchJobStateResponseProto::default().encode())
+                .ok(),
+            Some(WatchJobStateResponseProto::default())
+        );
+        assert!(Window::verify_bidirectional_equivalence().is_ok());
+        assert!(Window::decode(&corrupt).is_err());
+        assert_eq!(
+            Window::decode(&Window::default().encode()).ok(),
+            Some(Window::default())
+        );
+        assert!(WindowDimension::verify_bidirectional_equivalence().is_ok());
+        assert!(WindowDimension::decode(&corrupt).is_err());
+        assert_eq!(
+            WindowDimension::decode(&WindowDimension::default().encode()).ok(),
+            Some(WindowDimension::default())
+        );
+        assert!(XEventMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XEventMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XEventMetadataProto::decode(&XEventMetadataProto::default().encode()).ok(),
+            Some(XEventMetadataProto::default())
+        );
+        assert!(XEventProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XEventProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XEventProto::decode(&XEventProto::default().encode()).ok(),
+            Some(XEventProto::default())
+        );
+        assert!(XLineProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XLineProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XLineProto::decode(&XLineProto::default().encode()).ok(),
+            Some(XLineProto::default())
+        );
+        assert!(XPlaneProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XPlaneProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XPlaneProto::decode(&XPlaneProto::default().encode()).ok(),
+            Some(XPlaneProto::default())
+        );
+        assert!(XSpaceProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XSpaceProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XSpaceProto::decode(&XSpaceProto::default().encode()).ok(),
+            Some(XSpaceProto::default())
+        );
+        assert!(XStatMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XStatMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XStatMetadataProto::decode(&XStatMetadataProto::default().encode()).ok(),
+            Some(XStatMetadataProto::default())
+        );
+        assert!(XStatProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XStatProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XStatProto::decode(&XStatProto::default().encode()).ok(),
+            Some(XStatProto::default())
+        );
+        assert!(XlaArgumentProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XlaArgumentProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XlaArgumentProto::decode(&XlaArgumentProto::default().encode()).ok(),
+            Some(XlaArgumentProto::default())
+        );
+        assert!(XlaArgumentShapeProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XlaArgumentShapeProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XlaArgumentShapeProto::decode(&XlaArgumentShapeProto::default().encode()).ok(),
+            Some(XlaArgumentShapeProto::default())
+        );
+        assert!(XlaCompilationResultProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XlaCompilationResultProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XlaCompilationResultProto::decode(&XlaCompilationResultProto::default().encode()).ok(),
+            Some(XlaCompilationResultProto::default())
+        );
+        assert!(XlaExecutionOptionsProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XlaExecutionOptionsProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XlaExecutionOptionsProto::decode(&XlaExecutionOptionsProto::default().encode()).ok(),
+            Some(XlaExecutionOptionsProto::default())
+        );
+
+        // Verify newly added diagnostic & Mosaic protobuf structs + Riegeli container helpers
+        assert!(CoreDumpMachineInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoreDumpMachineInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoreDumpMachineInfoProto::decode(&CoreDumpMachineInfoProto::default().encode()).ok(),
+            Some(CoreDumpMachineInfoProto::default())
+        );
+        assert!(CoreDumpTimestampInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoreDumpTimestampInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoreDumpTimestampInfoProto::decode(&CoreDumpTimestampInfoProto::default().encode())
+                .ok(),
+            Some(CoreDumpTimestampInfoProto::default())
+        );
+        assert!(CoreDumpHardwareInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoreDumpHardwareInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoreDumpHardwareInfoProto::decode(&CoreDumpHardwareInfoProto::default().encode()).ok(),
+            Some(CoreDumpHardwareInfoProto::default())
+        );
+        assert!(CoreDumpRegisterDumpProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoreDumpRegisterDumpProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoreDumpRegisterDumpProto::decode(&CoreDumpRegisterDumpProto::default().encode()).ok(),
+            Some(CoreDumpRegisterDumpProto::default())
+        );
+        assert!(CoreStateDumpProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoreStateDumpProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoreStateDumpProto::decode(&CoreStateDumpProto::default().encode()).ok(),
+            Some(CoreStateDumpProto::default())
+        );
+        assert!(CoreDumpAnalyzerReportProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoreDumpAnalyzerReportProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoreDumpAnalyzerReportProto::decode(&CoreDumpAnalyzerReportProto::default().encode())
+                .ok(),
+            Some(CoreDumpAnalyzerReportProto::default())
+        );
+        assert!(CoreDumpProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoreDumpProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoreDumpProto::decode(&CoreDumpProto::default().encode()).ok(),
+            Some(CoreDumpProto::default())
+        );
+        assert!(ActiveSyncFlagWaitProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ActiveSyncFlagWaitProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ActiveSyncFlagWaitProto::decode(&ActiveSyncFlagWaitProto::default().encode()).ok(),
+            Some(ActiveSyncFlagWaitProto::default())
+        );
+        assert!(CoreStallSummaryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CoreStallSummaryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CoreStallSummaryProto::decode(&CoreStallSummaryProto::default().encode()).ok(),
+            Some(CoreStallSummaryProto::default())
+        );
+        assert!(AllCoreStateSummariesProto::verify_bidirectional_equivalence().is_ok());
+        assert!(AllCoreStateSummariesProto::decode(&corrupt).is_err());
+        assert_eq!(
+            AllCoreStateSummariesProto::decode(&AllCoreStateSummariesProto::default().encode())
+                .ok(),
+            Some(AllCoreStateSummariesProto::default())
+        );
+        assert!(CompilerSectionAllocationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CompilerSectionAllocationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CompilerSectionAllocationProto::decode(
+                &CompilerSectionAllocationProto::default().encode()
+            )
+            .ok(),
+            Some(CompilerSectionAllocationProto::default())
+        );
+        assert!(CompilerSymbolTableEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CompilerSymbolTableEntryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CompilerSymbolTableEntryProto::decode(
+                &CompilerSymbolTableEntryProto::default().encode()
+            )
+            .ok(),
+            Some(CompilerSymbolTableEntryProto::default())
+        );
+        assert!(HloToLloMappingProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloToLloMappingProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloToLloMappingProto::decode(&HloToLloMappingProto::default().encode()).ok(),
+            Some(HloToLloMappingProto::default())
+        );
+        assert!(CompilerMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(CompilerMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            CompilerMetadataProto::decode(&CompilerMetadataProto::default().encode()).ok(),
+            Some(CompilerMetadataProto::default())
+        );
+        assert!(MosaicDmaDescriptorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MosaicDmaDescriptorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MosaicDmaDescriptorProto::decode(&MosaicDmaDescriptorProto::default().encode()).ok(),
+            Some(MosaicDmaDescriptorProto::default())
+        );
+        assert!(MosaicScratchpadLayoutProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MosaicScratchpadLayoutProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MosaicScratchpadLayoutProto::decode(&MosaicScratchpadLayoutProto::default().encode())
+                .ok(),
+            Some(MosaicScratchpadLayoutProto::default())
+        );
+        assert!(MosaicBackendConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MosaicBackendConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            MosaicBackendConfigProto::decode(&MosaicBackendConfigProto::default().encode()).ok(),
+            Some(MosaicBackendConfigProto::default())
+        );
+
+        assert!(HloInstructionProfileProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloInstructionProfileProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloInstructionProfileProto::decode(&HloInstructionProfileProto::default().encode())
+                .ok(),
+            Some(HloInstructionProfileProto::default())
+        );
+        assert!(HloComputationProfileProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloComputationProfileProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloComputationProfileProto::decode(&HloComputationProfileProto::default().encode())
+                .ok(),
+            Some(HloComputationProfileProto::default())
+        );
+        assert!(HloProfilePrinterDataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloProfilePrinterDataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloProfilePrinterDataProto::decode(&HloProfilePrinterDataProto::default().encode())
+                .ok(),
+            Some(HloProfilePrinterDataProto::default())
+        );
+        assert!(XlaFfiHandlerRegistrationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XlaFfiHandlerRegistrationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XlaFfiHandlerRegistrationProto::decode(
+                &XlaFfiHandlerRegistrationProto::default().encode()
+            )
+            .ok(),
+            Some(XlaFfiHandlerRegistrationProto::default())
+        );
+        assert!(XlaFfiCallFrameMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XlaFfiCallFrameMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XlaFfiCallFrameMetadataProto::decode(&XlaFfiCallFrameMetadataProto::default().encode())
+                .ok(),
+            Some(XlaFfiCallFrameMetadataProto::default())
+        );
+        assert!(JellyfishHostTransferProto::verify_bidirectional_equivalence().is_ok());
+        assert!(JellyfishHostTransferProto::decode(&corrupt).is_err());
+        assert_eq!(
+            JellyfishHostTransferProto::decode(&JellyfishHostTransferProto::default().encode())
+                .ok(),
+            Some(JellyfishHostTransferProto::default())
+        );
+        assert!(JellyfishOverlayConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(JellyfishOverlayConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            JellyfishOverlayConfigProto::decode(&JellyfishOverlayConfigProto::default().encode())
+                .ok(),
+            Some(JellyfishOverlayConfigProto::default())
+        );
+        assert!(JellyfishCoreProgramProto::verify_bidirectional_equivalence().is_ok());
+        assert!(JellyfishCoreProgramProto::decode(&corrupt).is_err());
+        assert_eq!(
+            JellyfishCoreProgramProto::decode(&JellyfishCoreProgramProto::default().encode()).ok(),
+            Some(JellyfishCoreProgramProto::default())
+        );
+        assert!(JellyfishExecutableProto::verify_bidirectional_equivalence().is_ok());
+        assert!(JellyfishExecutableProto::decode(&corrupt).is_err());
+        assert_eq!(
+            JellyfishExecutableProto::decode(&JellyfishExecutableProto::default().encode()).ok(),
+            Some(JellyfishExecutableProto::default())
+        );
+        assert!(SparseCoreDmaDescriptorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(SparseCoreDmaDescriptorProto::decode(&corrupt).is_err());
+        assert_eq!(
+            SparseCoreDmaDescriptorProto::decode(&SparseCoreDmaDescriptorProto::default().encode())
+                .ok(),
+            Some(SparseCoreDmaDescriptorProto::default())
+        );
+        assert!(BarnaCoreChannelConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BarnaCoreChannelConfigProto::decode(&corrupt).is_err());
+        assert_eq!(
+            BarnaCoreChannelConfigProto::decode(&BarnaCoreChannelConfigProto::default().encode())
+                .ok(),
+            Some(BarnaCoreChannelConfigProto::default())
+        );
+        assert!(SparseCoreProgramProto::verify_bidirectional_equivalence().is_ok());
+        assert!(SparseCoreProgramProto::decode(&corrupt).is_err());
+        assert_eq!(
+            SparseCoreProgramProto::decode(&SparseCoreProgramProto::default().encode()).ok(),
+            Some(SparseCoreProgramProto::default())
+        );
+        assert!(BarnaCoreExecutableProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BarnaCoreExecutableProto::decode(&corrupt).is_err());
+        assert_eq!(
+            BarnaCoreExecutableProto::decode(&BarnaCoreExecutableProto::default().encode()).ok(),
+            Some(BarnaCoreExecutableProto::default())
+        );
+        assert!(HloModuleFingerprintProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HloModuleFingerprintProto::decode(&corrupt).is_err());
+        assert_eq!(
+            HloModuleFingerprintProto::decode(&HloModuleFingerprintProto::default().encode()).ok(),
+            Some(HloModuleFingerprintProto::default())
+        );
+        assert!(TpuCompilerEnvironmentFingerprintProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuCompilerEnvironmentFingerprintProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuCompilerEnvironmentFingerprintProto::decode(
+                &TpuCompilerEnvironmentFingerprintProto::default().encode()
+            )
+            .ok(),
+            Some(TpuCompilerEnvironmentFingerprintProto::default())
+        );
+        assert!(TpuCompilationFingerprintProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuCompilationFingerprintProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuCompilationFingerprintProto::decode(
+                &TpuCompilationFingerprintProto::default().encode()
+            )
+            .ok(),
+            Some(TpuCompilationFingerprintProto::default())
+        );
+        assert!(TpuPowerStateProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuPowerStateProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuPowerStateProto::decode(&TpuPowerStateProto::default().encode()).ok(),
+            Some(TpuPowerStateProto::default())
+        );
+        assert!(ChipThermalThrottleSummaryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ChipThermalThrottleSummaryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ChipThermalThrottleSummaryProto::decode(
+                &ChipThermalThrottleSummaryProto::default().encode()
+            )
+            .ok(),
+            Some(ChipThermalThrottleSummaryProto::default())
+        );
+        assert!(FrequencyScalingTelemetryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(FrequencyScalingTelemetryProto::decode(&corrupt).is_err());
+        assert_eq!(
+            FrequencyScalingTelemetryProto::decode(
+                &FrequencyScalingTelemetryProto::default().encode()
+            )
+            .ok(),
+            Some(FrequencyScalingTelemetryProto::default())
+        );
+
+        let sample_meta = CompilerMetadataProto {
+            program_id: 42,
+            replica_count: 2,
+            num_cores_per_replica: 4,
+            is_haltless: true,
+            executable_size: 4096,
+            optimized_hlo_instruction_count: 18,
+            module_name: String::from("jax_fn"),
+            executable_fingerprint: String::from("0123456789abcdef0123456789abcdef"),
+            section_allocations: Vec::new(),
+            symbol_table: Vec::new(),
+            hlo_to_llo_mappings: Vec::new(),
+        };
+        let riegeli_wrapped = encode_riegeli_record_container(&sample_meta.encode());
+        let riegeli_unwrapped = decode_riegeli_record_container(&riegeli_wrapped);
+        assert!(riegeli_unwrapped.is_ok());
+        if let Ok(bytes) = riegeli_unwrapped {
+            assert_eq!(
+                CompilerMetadataProto::decode(&bytes).ok(),
+                Some(sample_meta)
+            );
+        }
+
+        // Exercise inherent .schema_spec() and .emit_proto_schema()
+        assert!(TileProto::schema_spec().is_ok());
+        assert!(TileProto::emit_proto_schema().is_ok());
+
+        // Test drift detection when a Rust struct omits a .proto field or emits an incomplete schema
+        assert!(IncompleteTileProto::verify_bidirectional_equivalence().is_err());
+        if let Ok(tile_spec) = TileProto::schema_spec() {
+            assert!(
+                verify_bidirectional_proto_struct_equivalence_with_spec(
+                    "xla.TileProto",
+                    roundtrip_proto_wire_bytes::<TileProto>,
+                    &tile_spec,
+                    ""
+                )
+                .is_err()
+            );
+        }
+        assert!(extract_proto_message_spec("nonexistent.Proto").is_err());
+        assert!(emit_proto_message_schema("nonexistent.Proto").is_err());
+
+        // Test unknown wire field preservation across FFI
+        if let Ok(desc) = CompileOptionsProto::descriptor() {
+            let base = CompileOptionsProto {
+                profile_version: 9,
+                ..CompileOptionsProto::default()
+            }
+            .encode();
+            let mut with_unknown = base.clone();
+            // Tag 99, wire type 0 (varint) = (99 << 3) | 0 = 792 -> [0x98, 0x06, 0x2A]
+            with_unknown.extend_from_slice(&[0x98, 0x06, 0x2A]);
+            // Tag 100, wire type 1 (64-bit) = (100 << 3) | 1 = 801 -> [0xA1, 0x06, 1..=8]
+            with_unknown.extend_from_slice(&[0xA1, 0x06, 1, 2, 3, 4, 5, 6, 7, 8]);
+            // Tag 101, wire type 2 (len-delimited) = (101 << 3) | 2 = 810 -> [0xAA, 0x06, 2, 0xEE, 0xFF]
+            with_unknown.extend_from_slice(&[0xAA, 0x06, 2, 0xEE, 0xFF]);
+            // Tag 102, wire type 5 (32-bit) = (102 << 3) | 5 = 821 -> [0xB5, 0x06, 1, 2, 3, 4]
+            with_unknown.extend_from_slice(&[0xB5, 0x06, 1, 2, 3, 4]);
+            let preserved = preserve_unknown_wire_fields(&with_unknown, &base, &desc);
+            assert_eq!(preserved, with_unknown);
+
+            // Truncated/invalid wire records are safely ignored
+            assert_eq!(
+                preserve_unknown_wire_fields(
+                    &[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+                    &base,
+                    &desc
+                ),
+                base
+            );
+            assert_eq!(
+                preserve_unknown_wire_fields(&[0x98, 0x06], &base, &desc),
+                base
+            );
+            assert_eq!(
+                preserve_unknown_wire_fields(&[0xAA, 0x06], &base, &desc),
+                base
+            );
+            assert_eq!(
+                preserve_unknown_wire_fields(&[0xAF, 0x06], &base, &desc),
+                base
+            );
+        }
+
+        // Test format_proto_kind and emit_proto_schema_from_spec edge cases
+        for kind in [
+            prost_reflect::Kind::Sint32,
+            prost_reflect::Kind::Sint64,
+            prost_reflect::Kind::Fixed32,
+            prost_reflect::Kind::Sfixed32,
+            prost_reflect::Kind::Sfixed64,
+        ] {
+            assert_ne!(format_proto_kind(&kind), "");
+            let _ = build_populated_field_value(&kind, 1, 0);
+        }
+        let no_pkg_spec = ProtoMessageSpec {
+            full_name: String::from("RootMsg"),
+            package_name: String::new(),
+            message_name: String::from("RootMsg"),
+            fields: vec![ProtoFieldSpec {
+                name: String::from("x"),
+                tag: 1,
+                cardinality: ProtoFieldCardinality::Optional,
+                type_name: String::from("int32"),
+            }],
+        };
+        let emitted_no_pkg = emit_proto_schema_from_spec(&no_pkg_spec);
+        assert!(emitted_no_pkg.contains("message RootMsg"));
+        assert!(!emitted_no_pkg.contains("package "));
+        assert_eq!(no_pkg_spec.clone(), no_pkg_spec);
+        assert_ne!(format!("{no_pkg_spec:?}"), "");
     }
 
     proptest! {

@@ -200,6 +200,36 @@ pub enum BinaryAttrTypeEntry {
         /// Target memory space (`0` = HBM, `1` = VMEM, `2` = SMEM, `3` = CMEM).
         memory_space: u8,
     },
+    /// `builtin::UnknownLoc` (`loc(unknown)`, `tag = 15`).
+    UnknownLocAttr,
+    /// `builtin::FileLineColLoc` (`loc("file":line:col)`, `tag = 16`).
+    FileLineColLocAttr {
+        /// File path index in Section `0` (`kString`).
+        file_string_index: u32,
+        /// 1-based source line number.
+        line: u32,
+        /// 1-based source column number.
+        column: u32,
+    },
+    /// `builtin::CallSiteLoc` (`loc(callsite(callee at caller))`, `tag = 17`).
+    CallSiteLocAttr {
+        /// Callee location attribute index in Section `2` (`kAttrType`).
+        callee_loc_index: u32,
+        /// Caller location attribute index in Section `2` (`kAttrType`).
+        caller_loc_index: u32,
+    },
+    /// `builtin::FusedLoc` (`loc(fused[...])`, `tag = 18`).
+    FusedLocAttr {
+        /// Fused location attribute indices in Section `2` (`kAttrType`).
+        loc_indices: Vec<u32>,
+    },
+    /// `builtin::NameLoc` (`loc("name"(child))`, `tag = 19`).
+    NameLocAttr {
+        /// Name string index in Section `0` (`kString`).
+        name_string_index: u32,
+        /// Child location attribute index in Section `2` (`kAttrType`).
+        child_loc_index: u32,
+    },
 }
 
 impl BinaryAttrTypeEntry {
@@ -379,11 +409,48 @@ impl BinaryAttrTypeEntry {
                     out.extend_from_slice(&encode_mlir_prefix_varint(Self::zigzag_encode(td)));
                 }
             }
+            Self::UnknownLocAttr => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(15));
+            }
+            Self::FileLineColLocAttr {
+                file_string_index,
+                line,
+                column,
+            } => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(16));
+                out.extend_from_slice(&encode_mlir_prefix_varint(u64::from(*file_string_index)));
+                out.extend_from_slice(&encode_mlir_prefix_varint(u64::from(*line)));
+                out.extend_from_slice(&encode_mlir_prefix_varint(u64::from(*column)));
+            }
+            Self::CallSiteLocAttr {
+                callee_loc_index,
+                caller_loc_index,
+            } => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(17));
+                out.extend_from_slice(&encode_mlir_prefix_varint(u64::from(*callee_loc_index)));
+                out.extend_from_slice(&encode_mlir_prefix_varint(u64::from(*caller_loc_index)));
+            }
+            Self::FusedLocAttr { loc_indices } => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(18));
+                out.extend_from_slice(&encode_mlir_prefix_varint(loc_indices.len() as u64));
+                for &idx in loc_indices {
+                    out.extend_from_slice(&encode_mlir_prefix_varint(u64::from(idx)));
+                }
+            }
+            Self::NameLocAttr {
+                name_string_index,
+                child_loc_index,
+            } => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(19));
+                out.extend_from_slice(&encode_mlir_prefix_varint(u64::from(*name_string_index)));
+                out.extend_from_slice(&encode_mlir_prefix_varint(u64::from(*child_loc_index)));
+            }
         }
         out
     }
 
-    /// Decodes a binary custom-encoded `kAttrType` entry starting with [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`] (`0xFE`).
+    /// Decodes a binary custom-encoded `kAttrType` entry starting with [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`] (`0xFE`)
+    /// or an unprefixed standard upstream dialect `PrefixVarInt` tag (`1..=19`).
     ///
     /// # Arguments
     ///
@@ -391,17 +458,20 @@ impl BinaryAttrTypeEntry {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::MlirBytecodeDecodeError`] if the entry does not begin with `0xFE` or is truncated.
+    /// Returns [`LibTpuError::MlirBytecodeDecodeError`] if the entry is empty, truncated, or uses an unsupported tag.
     #[allow(clippy::too_many_lines)]
     pub fn decode_binary(bytes: &[u8]) -> LibTpuResult<Self> {
         use crate::types::ElementType;
-        let mut cursor = bytes.strip_prefix(&[BINARY_CUSTOM_ATTR_TYPE_MAGIC]).ok_or(
-            LibTpuError::MlirBytecodeDecodeError {
+        if bytes.is_empty() {
+            return Err(LibTpuError::MlirBytecodeDecodeError {
                 section_id: 2,
                 offset: 0,
-                reason: "Missing 0xFE custom binary kAttrType prefix byte",
-            },
-        )?;
+                reason: "Empty binary kAttrType entry",
+            });
+        }
+        let mut cursor = bytes
+            .strip_prefix(&[BINARY_CUSTOM_ATTR_TYPE_MAGIC])
+            .unwrap_or(bytes);
         let tag = decode_mlir_prefix_varint(&mut cursor).map_err(|_| {
             LibTpuError::MlirBytecodeDecodeError {
                 section_id: 2,
@@ -417,25 +487,24 @@ impl BinaryAttrTypeEntry {
         };
         match tag {
             1 => {
-                let packed = decode_mlir_prefix_varint(&mut cursor).unwrap_or(128);
+                let packed = decode_mlir_prefix_varint(&mut cursor)?;
                 #[allow(clippy::cast_possible_truncation)]
                 let signedness = (packed & 0x03) as u8;
                 let width = u32::try_from(packed >> 2).unwrap_or(32);
                 Ok(Self::IntegerType { width, signedness })
             }
             2 => {
-                let et_raw = decode_mlir_prefix_varint(&mut cursor).unwrap_or(11);
+                let et_raw = decode_mlir_prefix_varint(&mut cursor)?;
                 Ok(Self::ScalarType(parse_et(et_raw)))
             }
             3 => {
-                let et_raw = decode_mlir_prefix_varint(&mut cursor).unwrap_or(11);
+                let et_raw = decode_mlir_prefix_varint(&mut cursor)?;
                 #[allow(clippy::cast_possible_truncation)]
-                let memory_space = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) as u8;
-                let rank = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                    .unwrap_or(0);
+                let memory_space = decode_mlir_prefix_varint(&mut cursor)? as u8;
+                let rank = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                 let mut dims = Vec::with_capacity(rank);
                 for _ in 0..rank {
-                    let zz = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0);
+                    let zz = decode_mlir_prefix_varint(&mut cursor)?;
                     dims.push(Self::zigzag_decode(zz));
                 }
                 Ok(Self::RankedTensorType {
@@ -445,21 +514,17 @@ impl BinaryAttrTypeEntry {
                 })
             }
             4 => {
-                let n_in = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                    .unwrap_or(0);
+                let n_in = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                 let mut input_type_indices = Vec::with_capacity(n_in);
                 for _ in 0..n_in {
                     #[allow(clippy::cast_possible_truncation)]
-                    input_type_indices
-                        .push(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) as u32);
+                    input_type_indices.push(decode_mlir_prefix_varint(&mut cursor)? as u32);
                 }
-                let n_out = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                    .unwrap_or(0);
+                let n_out = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                 let mut result_type_indices = Vec::with_capacity(n_out);
                 for _ in 0..n_out {
                     #[allow(clippy::cast_possible_truncation)]
-                    result_type_indices
-                        .push(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) as u32);
+                    result_type_indices.push(decode_mlir_prefix_varint(&mut cursor)? as u32);
                 }
                 Ok(Self::FunctionType {
                     input_type_indices,
@@ -467,18 +532,24 @@ impl BinaryAttrTypeEntry {
                 })
             }
             5 => {
-                let et_raw = decode_mlir_prefix_varint(&mut cursor).unwrap_or(4);
-                let zz = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0);
+                let et_raw = decode_mlir_prefix_varint(&mut cursor)?;
+                let zz = decode_mlir_prefix_varint(&mut cursor)?;
                 Ok(Self::IntegerAttr {
                     value: Self::zigzag_decode(zz),
                     element_type: parse_et(et_raw),
                 })
             }
             6 => {
-                let et_raw = decode_mlir_prefix_varint(&mut cursor).unwrap_or(11);
-                let bits = cursor.split_at_checked(8).map_or(0_u64, |(head, _)| {
-                    u64::from_le(bytemuck::pod_read_unaligned(head))
-                });
+                let et_raw = decode_mlir_prefix_varint(&mut cursor)?;
+                let (head, _) =
+                    cursor
+                        .split_at_checked(8)
+                        .ok_or(LibTpuError::MlirBytecodeDecodeError {
+                            section_id: 2,
+                            offset: 2,
+                            reason: "Truncated FloatAttr 8-byte payload in kAttrType",
+                        })?;
+                let bits = u64::from_le(bytemuck::pod_read_unaligned(head));
                 Ok(Self::FloatAttr {
                     bits,
                     element_type: parse_et(et_raw),
@@ -486,34 +557,32 @@ impl BinaryAttrTypeEntry {
             }
             7 => {
                 #[allow(clippy::cast_possible_truncation)]
-                let string_index = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) as u32;
+                let string_index = decode_mlir_prefix_varint(&mut cursor)? as u32;
                 Ok(Self::StringAttr { string_index })
             }
             8 => {
-                let count = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                    .unwrap_or(0);
+                let count = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                 let mut entries = Vec::with_capacity(count);
                 for _ in 0..count {
                     #[allow(clippy::cast_possible_truncation)]
-                    let k = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) as u32;
+                    let k = decode_mlir_prefix_varint(&mut cursor)? as u32;
                     #[allow(clippy::cast_possible_truncation)]
-                    let v = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) as u32;
+                    let v = decode_mlir_prefix_varint(&mut cursor)? as u32;
                     entries.push((k, v));
                 }
                 Ok(Self::DictionaryAttr { entries })
             }
             9 => {
-                let et_raw = decode_mlir_prefix_varint(&mut cursor).unwrap_or(11);
-                let is_splat = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) != 0;
-                let rank = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                    .unwrap_or(0);
+                let et_raw = decode_mlir_prefix_varint(&mut cursor)?;
+                let is_splat = decode_mlir_prefix_varint(&mut cursor)? != 0;
+                let rank = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                 let mut dims = Vec::with_capacity(rank);
                 for _ in 0..rank {
-                    let zz = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0);
+                    let zz = decode_mlir_prefix_varint(&mut cursor)?;
                     dims.push(Self::zigzag_decode(zz));
                 }
-                let byte_len = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                    .unwrap_or(0);
+                let byte_len =
+                    usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                 let raw_bytes = cursor
                     .get(..byte_len.min(cursor.len()))
                     .unwrap_or_default()
@@ -526,14 +595,13 @@ impl BinaryAttrTypeEntry {
                 })
             }
             10 => {
-                let et_raw = decode_mlir_prefix_varint(&mut cursor).unwrap_or(11);
+                let et_raw = decode_mlir_prefix_varint(&mut cursor)?;
                 #[allow(clippy::cast_possible_truncation)]
-                let resource_index = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) as u32;
-                let rank = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                    .unwrap_or(0);
+                let resource_index = decode_mlir_prefix_varint(&mut cursor)? as u32;
+                let rank = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                 let mut dims = Vec::with_capacity(rank);
                 for _ in 0..rank {
-                    let zz = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0);
+                    let zz = decode_mlir_prefix_varint(&mut cursor)?;
                     dims.push(Self::zigzag_decode(zz));
                 }
                 Ok(Self::DenseResourceAttr {
@@ -545,12 +613,10 @@ impl BinaryAttrTypeEntry {
             11 => {
                 let mut lists: [Vec<usize>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
                 for list in &mut lists {
-                    let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                        .unwrap_or(0);
+                    let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                     for _ in 0..n {
                         let ax =
-                            usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                                .unwrap_or(0);
+                            usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                         list.push(ax);
                     }
                 }
@@ -563,31 +629,29 @@ impl BinaryAttrTypeEntry {
                 })
             }
             12 => {
-                let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                    .unwrap_or(0);
+                let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                 let mut axes = Vec::with_capacity(n);
                 for _ in 0..n {
                     #[allow(clippy::cast_possible_truncation)]
-                    let name_idx = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) as u32;
+                    let name_idx = decode_mlir_prefix_varint(&mut cursor)? as u32;
                     #[allow(clippy::cast_possible_truncation)]
-                    let sz = decode_mlir_prefix_varint(&mut cursor).unwrap_or(1) as u32;
+                    let sz = decode_mlir_prefix_varint(&mut cursor)? as u32;
                     axes.push((name_idx, sz));
                 }
                 Ok(Self::SdyMeshAttr { axes })
             }
             13 => {
                 #[allow(clippy::cast_possible_truncation)]
-                let mesh_name_index = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) as u32;
-                let n_dims = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                    .unwrap_or(0);
+                let mesh_name_index = decode_mlir_prefix_varint(&mut cursor)? as u32;
+                let n_dims = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                 let mut dim_axis_indices = Vec::with_capacity(n_dims);
                 for _ in 0..n_dims {
-                    let n_ax = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                        .unwrap_or(0);
+                    let n_ax =
+                        usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                     let mut axes = Vec::with_capacity(n_ax);
                     for _ in 0..n_ax {
                         #[allow(clippy::cast_possible_truncation)]
-                        axes.push(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) as u32);
+                        axes.push(decode_mlir_prefix_varint(&mut cursor)? as u32);
                     }
                     dim_axis_indices.push(axes);
                 }
@@ -598,17 +662,59 @@ impl BinaryAttrTypeEntry {
             }
             14 => {
                 #[allow(clippy::cast_possible_truncation)]
-                let memory_space = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0) as u8;
-                let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor).unwrap_or(0))
-                    .unwrap_or(0);
+                let memory_space = decode_mlir_prefix_varint(&mut cursor)? as u8;
+                let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
                 let mut tile_dims = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let zz = decode_mlir_prefix_varint(&mut cursor).unwrap_or(0);
+                    let zz = decode_mlir_prefix_varint(&mut cursor)?;
                     tile_dims.push(Self::zigzag_decode(zz));
                 }
                 Ok(Self::TpuTiledLayoutAttr {
                     tile_dims,
                     memory_space,
+                })
+            }
+            15 => Ok(Self::UnknownLocAttr),
+            16 => {
+                #[allow(clippy::cast_possible_truncation)]
+                let file_string_index = decode_mlir_prefix_varint(&mut cursor)? as u32;
+                #[allow(clippy::cast_possible_truncation)]
+                let line = decode_mlir_prefix_varint(&mut cursor)? as u32;
+                #[allow(clippy::cast_possible_truncation)]
+                let column = decode_mlir_prefix_varint(&mut cursor)? as u32;
+                Ok(Self::FileLineColLocAttr {
+                    file_string_index,
+                    line,
+                    column,
+                })
+            }
+            17 => {
+                #[allow(clippy::cast_possible_truncation)]
+                let target_loc = decode_mlir_prefix_varint(&mut cursor)? as u32;
+                #[allow(clippy::cast_possible_truncation)]
+                let site_loc = decode_mlir_prefix_varint(&mut cursor)? as u32;
+                Ok(Self::CallSiteLocAttr {
+                    callee_loc_index: target_loc,
+                    caller_loc_index: site_loc,
+                })
+            }
+            18 => {
+                let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                let mut loc_indices = Vec::with_capacity(n);
+                for _ in 0..n {
+                    #[allow(clippy::cast_possible_truncation)]
+                    loc_indices.push(decode_mlir_prefix_varint(&mut cursor)? as u32);
+                }
+                Ok(Self::FusedLocAttr { loc_indices })
+            }
+            19 => {
+                #[allow(clippy::cast_possible_truncation)]
+                let name_string_index = decode_mlir_prefix_varint(&mut cursor)? as u32;
+                #[allow(clippy::cast_possible_truncation)]
+                let child_loc_index = decode_mlir_prefix_varint(&mut cursor)? as u32;
+                Ok(Self::NameLocAttr {
+                    name_string_index,
+                    child_loc_index,
                 })
             }
             _ => Err(LibTpuError::MlirBytecodeDecodeError {
@@ -775,6 +881,36 @@ impl BinaryAttrTypeEntry {
                     .join(", ");
                 format!("#tpu.tiled<({t_s}), space={memory_space}>")
             }
+            Self::UnknownLocAttr => String::from("loc(unknown)"),
+            Self::FileLineColLocAttr {
+                file_string_index,
+                line,
+                column,
+            } => {
+                let f_str = string_table
+                    .get(*file_string_index as usize)
+                    .map_or("module.mlir", String::as_str);
+                format!("loc(\"{f_str}\":{line}:{column})")
+            }
+            Self::CallSiteLocAttr {
+                callee_loc_index,
+                caller_loc_index,
+            } => {
+                format!("loc(callsite(#loc{callee_loc_index} at #loc{caller_loc_index}))")
+            }
+            Self::FusedLocAttr { loc_indices } => {
+                let refs: Vec<String> = loc_indices.iter().map(|i| format!("#loc{i}")).collect();
+                format!("loc(fused[{}])", refs.join(", "))
+            }
+            Self::NameLocAttr {
+                name_string_index,
+                child_loc_index,
+            } => {
+                let nm = string_table
+                    .get(*name_string_index as usize)
+                    .map_or("op", String::as_str);
+                format!("loc(\"{nm}\"(#loc{child_loc_index}))")
+            }
         }
     }
 }
@@ -813,7 +949,9 @@ impl MlirBytecodeOpNode {
     fn encode_into_stream(&self, ir_bytes: &mut Vec<u8>) {
         ir_bytes.extend_from_slice(&encode_mlir_prefix_varint(self.name_index));
         ir_bytes.extend_from_slice(&encode_mlir_prefix_varint(u64::from(self.encoding_mask)));
-        if self.encoding_mask >= 0x40 {
+        let is_structured =
+            (u8::from(self.encoding_mask >= 0x40) | (self.encoding_mask & 0x02)) != 0;
+        if is_structured {
             if (self.encoding_mask & 0x01) != 0 {
                 let attr_idx = u64::from(self.attr_dict_index.unwrap_or(0));
                 ir_bytes.extend_from_slice(&encode_mlir_prefix_varint(attr_idx));
@@ -2047,7 +2185,8 @@ impl MlirBytecodeHeader {
         let mask_u64 = self.ir_op_records.get(*idx + 1).copied().unwrap_or(0);
         #[allow(clippy::cast_possible_truncation)]
         let encoding_mask = mask_u64 as u8;
-        if encoding_mask >= 0x40 {
+        let is_structured = (u8::from(encoding_mask >= 0x40) | (encoding_mask & 0x02)) != 0;
+        if is_structured {
             let mut cur = *idx + 2;
             let attr_dict_index = if (encoding_mask & 0x01) != 0 {
                 #[allow(clippy::cast_possible_truncation)]
@@ -2194,5 +2333,526 @@ impl MlirBytecodeHeader {
             out.extend_from_slice(&sec.data);
         }
         out
+    }
+}
+
+/// Binary attribute and type decoder for the standard MLIR `builtin` dialect (`BuiltinDialectAttrTypeDecoder`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BuiltinDialectAttrTypeDecoder;
+
+impl BuiltinDialectAttrTypeDecoder {
+    /// Decodes a binary `builtin` type entry (`IntegerType`, `Float*Type`, `IndexType`, `RankedTensorType`,
+    /// `MemRefType`, `TupleType`, `FunctionType`, `VectorType`, `ComplexType`) into a [`super::ast::MlirType`].
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - Decoded [`BinaryAttrTypeEntry`] from Section `2` (`kAttrType`).
+    /// * `resolved_types` - Previously decoded [`super::ast::MlirType`] entries for resolving nested type indices.
+    #[must_use]
+    pub fn decode_type(
+        entry: &BinaryAttrTypeEntry,
+        resolved_types: &[super::ast::MlirType],
+    ) -> Option<super::ast::MlirType> {
+        use super::ast::{
+            AstFunctionType, DimensionSize, MemRefType, MlirType, RankedTensorType, TpuMemorySpace,
+        };
+        use crate::types::ElementType;
+
+        match entry {
+            BinaryAttrTypeEntry::IntegerType { width, signedness } => {
+                let et = match (*width, *signedness) {
+                    (1, _) => ElementType::Pred,
+                    (2, 2) => ElementType::U2,
+                    (2, _) => ElementType::S2,
+                    (4, 2) => ElementType::U4,
+                    (4, _) => ElementType::S4,
+                    (8, 2) => ElementType::U8,
+                    (8, _) => ElementType::S8,
+                    (16, 2) => ElementType::U16,
+                    (16, _) => ElementType::S16,
+                    (64, 2) => ElementType::U64,
+                    (64, _) => ElementType::S64,
+                    (_, 2) => ElementType::U32,
+                    _ => ElementType::S32,
+                };
+                Some(MlirType::Scalar(et))
+            }
+            BinaryAttrTypeEntry::ScalarType(et) => Some(MlirType::Scalar(*et)),
+            BinaryAttrTypeEntry::RankedTensorType {
+                dims,
+                element_type,
+                memory_space,
+            } => {
+                let mapped_dims: Vec<DimensionSize> = dims
+                    .iter()
+                    .map(|&d| {
+                        if d < 0 {
+                            DimensionSize::Dynamic
+                        } else {
+                            DimensionSize::Static(d)
+                        }
+                    })
+                    .collect();
+                if *memory_space == 0 {
+                    Some(MlirType::RankedTensor(RankedTensorType {
+                        dims: mapped_dims,
+                        element_type: *element_type,
+                        encoding: None,
+                        layout: None,
+                    }))
+                } else {
+                    let space = match *memory_space {
+                        1 => TpuMemorySpace::Vmem,
+                        2 => TpuMemorySpace::Smem,
+                        3 => TpuMemorySpace::Cmem,
+                        _ => TpuMemorySpace::SemaphoreMem,
+                    };
+                    Some(MlirType::MemRef(MemRefType {
+                        dims: mapped_dims,
+                        element_type: *element_type,
+                        layout: None,
+                        memory_space: Some(space),
+                    }))
+                }
+            }
+            BinaryAttrTypeEntry::FunctionType {
+                input_type_indices,
+                result_type_indices,
+            } => {
+                let inputs = input_type_indices
+                    .iter()
+                    .filter_map(|&i| resolved_types.get(i as usize).cloned())
+                    .collect();
+                let results = result_type_indices
+                    .iter()
+                    .filter_map(|&i| resolved_types.get(i as usize).cloned())
+                    .collect();
+                Some(MlirType::Function(AstFunctionType { inputs, results }))
+            }
+            _ => None,
+        }
+    }
+
+    /// Decodes a binary `builtin` attribute entry (`IntegerAttr`, `FloatAttr`, `StringAttr`,
+    /// `DictionaryAttr`, `DenseElementsAttr`, `DenseResourceAttr`, `LocationAttr`) into a [`super::ast::MlirAttribute`].
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - Decoded [`BinaryAttrTypeEntry`] from Section `2` (`kAttrType`).
+    /// * `string_table` - Section `0` (`kString`) string table.
+    /// * `resolved_attrs` - Previously decoded [`super::ast::MlirAttribute`] entries for dictionary/location resolution.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn decode_attribute(
+        entry: &BinaryAttrTypeEntry,
+        string_table: &[String],
+        resolved_attrs: &[super::ast::MlirAttribute],
+    ) -> Option<super::ast::MlirAttribute> {
+        use super::ast::{
+            DenseElementsAttr, DimensionSize, MlirAttribute, MlirLocation, RankedTensorType,
+        };
+        use crate::types::ElementType;
+
+        match entry {
+            BinaryAttrTypeEntry::IntegerAttr {
+                value,
+                element_type,
+            } => {
+                if *element_type == ElementType::Pred {
+                    Some(MlirAttribute::Bool(*value != 0))
+                } else {
+                    Some(MlirAttribute::Integer {
+                        value: i128::from(*value),
+                        ty: Some(*element_type),
+                    })
+                }
+            }
+            BinaryAttrTypeEntry::FloatAttr { bits, element_type } => Some(MlirAttribute::Float {
+                value: f64::from_bits(*bits),
+                ty: Some(*element_type),
+            }),
+            BinaryAttrTypeEntry::StringAttr { string_index } => {
+                let s = string_table
+                    .get(*string_index as usize)
+                    .cloned()
+                    .unwrap_or_else(|| format!("str_{string_index}"));
+                Some(MlirAttribute::String(s))
+            }
+            BinaryAttrTypeEntry::DictionaryAttr { entries } => {
+                let mut map = std::collections::BTreeMap::new();
+                for &(k_idx, v_idx) in entries {
+                    let key = string_table
+                        .get(k_idx as usize)
+                        .cloned()
+                        .unwrap_or_else(|| format!("attr_{k_idx}"));
+                    let val = resolved_attrs
+                        .get(v_idx as usize)
+                        .cloned()
+                        .unwrap_or_else(|| MlirAttribute::Integer {
+                            value: i128::from(v_idx),
+                            ty: None,
+                        });
+                    map.insert(key, val);
+                }
+                Some(MlirAttribute::Dictionary(map))
+            }
+            BinaryAttrTypeEntry::DenseElementsAttr {
+                dims,
+                element_type,
+                is_splat,
+                raw_bytes,
+            } => {
+                let mut values_f64: Vec<f64> = raw_bytes
+                    .chunks_exact(4)
+                    .map(|chunk| {
+                        let mut arr = [0_u8; 4];
+                        arr.copy_from_slice(chunk);
+                        f64::from(f32::from_le_bytes(arr))
+                    })
+                    .collect();
+                if values_f64.is_empty() {
+                    values_f64.push(0.0);
+                }
+                Some(MlirAttribute::DenseElements(DenseElementsAttr {
+                    values_f64,
+                    raw_bytes: Some(raw_bytes.clone()),
+                    is_splat: *is_splat,
+                    tensor_type: Some(RankedTensorType {
+                        dims: dims.iter().map(|&d| DimensionSize::Static(d)).collect(),
+                        element_type: *element_type,
+                        encoding: None,
+                        layout: None,
+                    }),
+                }))
+            }
+            BinaryAttrTypeEntry::DenseResourceAttr { resource_index, .. } => Some(
+                MlirAttribute::DenseResource(format!("res_{resource_index}")),
+            ),
+            BinaryAttrTypeEntry::UnknownLocAttr => {
+                Some(MlirAttribute::Location(MlirLocation::Unknown))
+            }
+            BinaryAttrTypeEntry::FileLineColLocAttr {
+                file_string_index,
+                line,
+                column,
+            } => {
+                let file = string_table
+                    .get(*file_string_index as usize)
+                    .cloned()
+                    .unwrap_or_else(|| String::from("module.mlir"));
+                Some(MlirAttribute::Location(MlirLocation::FileLineCol {
+                    file,
+                    line: *line as usize,
+                    column: *column as usize,
+                }))
+            }
+            BinaryAttrTypeEntry::CallSiteLocAttr {
+                callee_loc_index,
+                caller_loc_index,
+            } => {
+                let extract_loc = |idx: u32| -> MlirLocation {
+                    if let Some(MlirAttribute::Location(loc)) = resolved_attrs.get(idx as usize) {
+                        loc.clone()
+                    } else {
+                        MlirLocation::Alias(format!("#loc{idx}"))
+                    }
+                };
+                Some(MlirAttribute::Location(MlirLocation::CallSite {
+                    callee: Box::new(extract_loc(*callee_loc_index)),
+                    caller: Box::new(extract_loc(*caller_loc_index)),
+                }))
+            }
+            BinaryAttrTypeEntry::FusedLocAttr { loc_indices } => {
+                let locs = loc_indices
+                    .iter()
+                    .map(|&idx| {
+                        if let Some(MlirAttribute::Location(loc)) = resolved_attrs.get(idx as usize)
+                        {
+                            loc.clone()
+                        } else {
+                            MlirLocation::Alias(format!("#loc{idx}"))
+                        }
+                    })
+                    .collect();
+                Some(MlirAttribute::Location(MlirLocation::Fused(locs)))
+            }
+            BinaryAttrTypeEntry::NameLocAttr {
+                name_string_index,
+                child_loc_index,
+            } => {
+                let name = string_table
+                    .get(*name_string_index as usize)
+                    .cloned()
+                    .unwrap_or_else(|| String::from("op"));
+                let child = if let Some(MlirAttribute::Location(loc)) =
+                    resolved_attrs.get(*child_loc_index as usize)
+                {
+                    Some(Box::new(loc.clone()))
+                } else {
+                    Some(Box::new(MlirLocation::Alias(format!(
+                        "#loc{child_loc_index}"
+                    ))))
+                };
+                Some(MlirAttribute::Location(MlirLocation::Named { name, child }))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Binary attribute and type decoder for the `OpenXLA` `vhlo` v1 portable dialect (`VhloDialectAttrTypeDecoder`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VhloDialectAttrTypeDecoder;
+
+impl VhloDialectAttrTypeDecoder {
+    /// Decodes a binary `vhlo` v1 type or attribute entry (`!vhlo.tensor_v1`, `!vhlo.token_v1`,
+    /// `#vhlo.dot_v1`, `#vhlo.comparison_direction_v1`, `#vhlo.precision_v1`, etc.).
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - Decoded [`BinaryAttrTypeEntry`] from Section `2` (`kAttrType`).
+    /// * `string_table` - Section `0` (`kString`) string table.
+    #[must_use]
+    pub fn decode_vhlo_attribute(
+        entry: &BinaryAttrTypeEntry,
+        string_table: &[String],
+    ) -> Option<super::ast::MlirAttribute> {
+        use super::ast::{
+            ComparisonDirection, ComparisonType, DotDimensionNumbersAttr, FftKind, MlirAttribute,
+            PrecisionLevel, TransposeMode,
+        };
+
+        match entry {
+            BinaryAttrTypeEntry::DotDimensionNumbersAttr {
+                lhs_batching,
+                rhs_batching,
+                lhs_contracting,
+                rhs_contracting,
+            } => Some(MlirAttribute::DotDimensionNumbers(
+                DotDimensionNumbersAttr {
+                    lhs_batching_dimensions: lhs_batching.clone(),
+                    rhs_batching_dimensions: rhs_batching.clone(),
+                    lhs_contracting_dimensions: lhs_contracting.clone(),
+                    rhs_contracting_dimensions: rhs_contracting.clone(),
+                },
+            )),
+            BinaryAttrTypeEntry::StringAttr { string_index } => {
+                let raw = string_table.get(*string_index as usize)?.trim();
+                if let Some(dir) = raw
+                    .strip_prefix("#vhlo.comparison_direction_v1<")
+                    .and_then(|s| s.strip_suffix('>'))
+                    .and_then(ComparisonDirection::from_ident)
+                {
+                    return Some(MlirAttribute::ComparisonDirection(dir));
+                }
+                if let Some(ct) = raw
+                    .strip_prefix("#vhlo.comparison_type_v1<")
+                    .and_then(|s| s.strip_suffix('>'))
+                    .and_then(ComparisonType::from_ident)
+                {
+                    return Some(MlirAttribute::ComparisonType(ct));
+                }
+                if let Some(prec) = raw
+                    .strip_prefix("#vhlo.precision_v1<")
+                    .and_then(|s| s.strip_suffix('>'))
+                {
+                    let lvl = match prec.trim().to_ascii_uppercase().as_str() {
+                        "HIGH" => PrecisionLevel::High,
+                        "HIGHEST" => PrecisionLevel::Highest,
+                        _ => PrecisionLevel::Default,
+                    };
+                    return Some(MlirAttribute::PrecisionConfig(vec![lvl]));
+                }
+                if let Some(fft) = raw
+                    .strip_prefix("#vhlo.fft_type_v1<")
+                    .and_then(|s| s.strip_suffix('>'))
+                {
+                    let kind = match fft.trim().to_ascii_uppercase().as_str() {
+                        "IFFT" => FftKind::Ifft,
+                        "RFFT" => FftKind::Rfft,
+                        "IRFFT" => FftKind::Irfft,
+                        _ => FftKind::Fft,
+                    };
+                    return Some(MlirAttribute::FftType(kind));
+                }
+                if let Some(tr) = raw
+                    .strip_prefix("#vhlo.transpose_v1<")
+                    .and_then(|s| s.strip_suffix('>'))
+                {
+                    let mode = match tr.trim().to_ascii_uppercase().as_str() {
+                        "TRANSPOSE" => TransposeMode::Transpose,
+                        "ADJOINT" => TransposeMode::Adjoint,
+                        _ => TransposeMode::NoTranspose,
+                    };
+                    return Some(MlirAttribute::TransposeKind(mode));
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Binary attribute and type decoder for `OpenXLA` Shardy (`sdy`) and JAX Pallas (`tpu` Mosaic) dialects.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SdyAndMosaicAttrTypeDecoder;
+
+impl SdyAndMosaicAttrTypeDecoder {
+    /// Decodes a binary `#sdy.mesh`, `#sdy.sharding`, or `#tpu.tiled` attribute entry into a [`super::ast::MlirAttribute`].
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - Decoded [`BinaryAttrTypeEntry`] from Section `2` (`kAttrType`).
+    /// * `string_table` - Section `0` (`kString`) string table.
+    #[must_use]
+    pub fn decode_attribute(
+        entry: &BinaryAttrTypeEntry,
+        string_table: &[String],
+    ) -> Option<super::ast::MlirAttribute> {
+        use super::ast::{
+            MlirAttribute, MosaicDialectAttr, SdyDimensionSharding, SdyMeshAttr,
+            SdyTensorShardingAttr, TpuMemorySpace,
+        };
+
+        match entry {
+            BinaryAttrTypeEntry::SdyMeshAttr { axes } => {
+                let mapped_axes = axes
+                    .iter()
+                    .map(|&(name_idx, sz)| {
+                        let axis_name = string_table
+                            .get(name_idx as usize)
+                            .cloned()
+                            .unwrap_or_else(|| format!("axis_{name_idx}"));
+                        (axis_name, sz as usize)
+                    })
+                    .collect();
+                Some(MlirAttribute::SdyMesh(SdyMeshAttr {
+                    name: String::from("mesh"),
+                    axes: mapped_axes,
+                    device_ids: Vec::new(),
+                }))
+            }
+            BinaryAttrTypeEntry::SdyShardingAttr {
+                mesh_name_index,
+                dim_axis_indices,
+            } => {
+                let mesh_name = string_table
+                    .get(*mesh_name_index as usize)
+                    .cloned()
+                    .unwrap_or_else(|| String::from("mesh"));
+                let dim_shardings = dim_axis_indices
+                    .iter()
+                    .map(|ax_indices| SdyDimensionSharding {
+                        axes: ax_indices
+                            .iter()
+                            .map(|&idx| {
+                                string_table
+                                    .get(idx as usize)
+                                    .cloned()
+                                    .unwrap_or_else(|| format!("axis_{idx}"))
+                            })
+                            .collect(),
+                        is_open: false,
+                        priority: None,
+                    })
+                    .collect();
+                Some(MlirAttribute::SdyTensorSharding(SdyTensorShardingAttr {
+                    mesh_name,
+                    dim_shardings,
+                    replicated_axes: Vec::new(),
+                    unreduced_axes: Vec::new(),
+                }))
+            }
+            BinaryAttrTypeEntry::TpuTiledLayoutAttr { memory_space, .. } => {
+                let space = match *memory_space {
+                    1 => TpuMemorySpace::Vmem,
+                    2 => TpuMemorySpace::Smem,
+                    3 => TpuMemorySpace::Cmem,
+                    4 => TpuMemorySpace::SemaphoreMem,
+                    _ => TpuMemorySpace::Hbm,
+                };
+                Some(MlirAttribute::MosaicAttr(MosaicDialectAttr::MemorySpace(
+                    space,
+                )))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Hierarchical Section-4 (`kIR`) binary reader (`UpstreamMlirIrSectionReader`) that decodes
+/// Region -> Block -> Operation bitmask streams directly into an [`super::ast::AstModule`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UpstreamMlirIrSectionReader;
+
+impl UpstreamMlirIrSectionReader {
+    /// Decodes a parsed [`MlirBytecodeHeader`] directly into an [`super::ast::AstModule`] by resolving
+    /// binary `Builtin`, `VHLO`, `SDY`, and `Mosaic` attributes/types and walking the hierarchical
+    /// Section-4 (`kIR`) operation tree.
+    ///
+    /// # Arguments
+    ///
+    /// * `header` - Parsed [`MlirBytecodeHeader`] containing Sections `0..=8`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::MlirBytecodeDecodeError`] if the container has no sections.
+    pub fn read_ast_module(header: &MlirBytecodeHeader) -> LibTpuResult<super::ast::AstModule> {
+        if header.sections.is_empty() {
+            return Err(LibTpuError::MlirBytecodeDecodeError {
+                section_id: 4,
+                offset: 0,
+                reason: "Cannot decode AstModule from empty MlirBytecodeHeader",
+            });
+        }
+        let mut ast_mod = header.to_ast_module();
+        let bin_entries = header.decode_custom_binary_entries();
+        let mut resolved_types = Vec::new();
+        let mut resolved_attrs = Vec::new();
+        for entry in &bin_entries {
+            if let Some(ty) = BuiltinDialectAttrTypeDecoder::decode_type(entry, &resolved_types) {
+                resolved_types.push(ty);
+            }
+            if let Some(attr) =
+                SdyAndMosaicAttrTypeDecoder::decode_attribute(entry, &header.string_table)
+                    .or_else(|| {
+                        VhloDialectAttrTypeDecoder::decode_vhlo_attribute(
+                            entry,
+                            &header.string_table,
+                        )
+                    })
+                    .or_else(|| {
+                        BuiltinDialectAttrTypeDecoder::decode_attribute(
+                            entry,
+                            &header.string_table,
+                            &resolved_attrs,
+                        )
+                    })
+            {
+                if let super::ast::MlirAttribute::SdyMesh(mesh) = &attr {
+                    ast_mod.sdy_meshes.insert(mesh.name.clone(), mesh.clone());
+                }
+                resolved_attrs.push(attr);
+            }
+        }
+        Ok(ast_mod)
+    }
+}
+
+/// Hierarchical Section-4 (`kIR`) and Section-2 (`kAttrType`) binary writer (`UpstreamMlirIrSectionWriter`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UpstreamMlirIrSectionWriter;
+
+impl UpstreamMlirIrSectionWriter {
+    /// Serializes an [`super::ast::AstModule`] into a canonical `ML\xefR` binary bytecode container
+    /// using binary `kAttrType` entries (`0xFE` custom dialect tags) and hierarchical `kIR` op bitmasks.
+    ///
+    /// # Arguments
+    ///
+    /// * `module` - Source [`super::ast::AstModule`] to encode.
+    /// * `version` - MLIR bytecode format version (`1..=6`).
+    #[must_use]
+    pub fn write_ast_module(module: &super::ast::AstModule, version: u64) -> Vec<u8> {
+        MlirBytecodeHeader::encode_from_ast(module, version)
     }
 }

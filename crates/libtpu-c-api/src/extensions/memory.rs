@@ -4,8 +4,7 @@ use super::args::*;
 use super::{dispatch_typed_extension_args, extension_state};
 use crate::pjrt_helpers::{box_serialized_artifact, pjrt_serialized_artifact_deleter};
 use crate::pjrt_types::{
-    PJRT_Error, PJRT_ExecutableMetadata_Handle, PJRT_Layouts_MemoryLayout, PJRT_MemoryDescription,
-    PJRT_RawBuffer,
+    PJRT_Error, PJRT_Layouts_MemoryLayout, PJRT_MemoryDescription, PJRT_RawBuffer,
 };
 use libtpu_core::config::global_init_config;
 use libtpu_core::types::{ByteSize, DeviceAddress, MemoryLayout, MemorySpaceKind};
@@ -176,15 +175,8 @@ unsafe fn handle_executable_metadata_get(args: &mut PJRT_Metadata_Get_Args) {
         platform_specific_metadata: Vec::new(),
     }
     .encode();
-    let mut handle = Box::new(PJRT_ExecutableMetadata_Handle {
-        raw: PJRT_ExecutableMetadata {
-            serialized_metadata: ptr::null(),
-            serialized_metadata_size: encoded.len(),
-        },
-        serialized_bytes: encoded,
-    });
-    handle.raw.serialized_metadata = handle.serialized_bytes.as_ptr().cast();
-    args.metadata_out = Box::into_raw(handle) as usize;
+    let (_, _, holder) = box_serialized_artifact(encoded);
+    args.metadata_out = holder as usize;
 }
 
 /// Queries metadata from an executable (`PJRT_ExecutableMetadata_Get`).
@@ -219,14 +211,7 @@ pub unsafe extern "C" fn PJRT_ExecutableMetadata_Get(
 ///
 /// `args` must be a valid [`PJRT_Metadata_Destroy_Args`].
 unsafe fn handle_executable_metadata_destroy(args: &mut PJRT_Metadata_Destroy_Args) {
-    if !args.metadata.is_null() {
-        // SAFETY: `metadata` was allocated by `PJRT_ExecutableMetadata_Get`.
-        unsafe {
-            drop(Box::from_raw(
-                args.metadata.cast::<PJRT_ExecutableMetadata_Handle>(),
-            ));
-        }
-    }
+    pjrt_serialized_artifact_deleter(args.metadata);
     args.metadata = ptr::null_mut();
 }
 

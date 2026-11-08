@@ -227,6 +227,8 @@ impl TpuCoreProfiler {
                     name: String::from(name),
                     metadata: String::from("llo.vfc"),
                     display_name: String::from(display),
+                    stats: Vec::new(),
+                    child_id: Vec::new(),
                 },
             );
         }

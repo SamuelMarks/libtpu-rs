@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: xla/stream_executor/sycl/oneapi_compute_capability.proto
+
+syntax = "proto3";
+
+package stream_executor;
+
+message OneAPIComputeCapabilityProto {
+  int32 generation = 1;
+}

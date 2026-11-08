@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: learning/45eac/tpu/sdk/tpu_telemetry/stall_summaries.proto (embedded in libtpu/sdk.so protodesc_cold)
+
+syntax = "proto3";
+
+package libtpu.sdk.tpu_telemetry;
+
+message ActiveSyncFlagWait {
+  uint32 sync_flag_id = 1;
+  uint32 expected_value = 2;
+  uint32 current_value = 3;
+}
+
+message CoreStallSummary {
+  string core_key = 1;
+  int32 global_core_id = 2;
+  int32 chip_id = 3;
+  string core_on_chip_type = 4;
+  int32 core_on_chip_index = 5;
+  bool xdb_server_running = 6;
+  uint64 pc = 7;
+  string hlo_location = 8;
+  string error_message = 9;
+  repeated ActiveSyncFlagWait active_sync_waits = 10;
+}
+
+message AllCoreStateSummaries {
+  repeated CoreStallSummary core_stall_summaries = 1;
+  string hostname = 2;
+  int64 harvest_start_time_unix_micros = 3;
+  int64 harvest_end_time_unix_micros = 4;
+  string libtpu_build = 5;
+}

@@ -758,6 +758,20 @@ def _load_cdll() -> ctypes.CDLL:
     lib.TpuEmbeddingEngine_ReadParameters.argtypes = [ctypes.c_void_p]
     lib.TpuEmbeddingEngine_ReadParameters.restype = ctypes.c_int32
 
+    lib.libtpu_rs_disassemble_executable_llo.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
+    lib.libtpu_rs_disassemble_executable_llo.restype = ctypes.c_size_t
+
+    lib.libtpu_rs_inspect_register_allocation.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
+    lib.libtpu_rs_inspect_register_allocation.restype = ctypes.c_size_t
+
     _CDLL_CACHE[lib_path] = lib
     return lib
 
@@ -1063,6 +1077,58 @@ class TpuExecutable:
         """
         return self.execute_multi(device_id, inputs, num_outputs=1)[0]
 
+    def execute_sharded(
+        self,
+        per_device_inputs: Sequence[Sequence[TpuBuffer]],
+        num_outputs: int = 1,
+    ) -> list[list[TpuBuffer]]:
+        """Executes the compiled SPMD program across multiple addressable devices.
+
+        Args:
+            per_device_inputs: Sequence of per-device input `TpuBuffer` sequences.
+            num_outputs: Number of output buffers produced per device.
+
+        Returns:
+            List of per-device output `TpuBuffer` lists.
+        """
+        return [
+            self.execute_multi(dev_idx, dev_ins, num_outputs=num_outputs)
+            for dev_idx, dev_ins in enumerate(per_device_inputs)
+        ]
+
+    def cost_analysis(self) -> dict[str, float]:
+        """Returns the dictionary of cost analysis metrics via `PJRT_Executable_GetCostAnalysis`.
+
+        Returns:
+            Dictionary mapping metric names (`"flops"`, `"transcendentals"`,
+            `"bytes_accessed"`, `"optimal_seconds"`) to float values.
+        """
+        get_ex = _PjrtLoadedExecutableGetExecutableArgs(
+            ctypes.sizeof(_PjrtLoadedExecutableGetExecutableArgs),
+            0,
+            self._handle.value or 0,
+            0,
+        )
+        self._lib.PJRT_LoadedExecutable_GetExecutable(ctypes.byref(get_ex))
+        cost_args = _PjrtExecutableGetCostAnalysisArgs(
+            ctypes.sizeof(_PjrtExecutableGetCostAnalysisArgs),
+            0,
+            int(get_ex.executable or 0),
+            0,
+            0,
+        )
+        self._lib.PJRT_Executable_GetCostAnalysis(ctypes.byref(cost_args))
+        out: dict[str, float] = {}
+        base_addr = int(cost_args.properties or 0)
+        stride = ctypes.sizeof(_PjrtNamedValue)
+        for idx in range(int(cost_args.num_properties)):
+            prop = _PjrtNamedValue.from_address(base_addr + idx * stride)
+            key = ctypes.string_at(int(prop.name or 0), int(prop.name_size)).decode("utf-8")
+            raw_u32 = int(prop.value_payload) & 0xFFFFFFFF
+            val = float(struct.unpack("<f", struct.pack("<I", raw_u32))[0])
+            out[key] = val
+        return out
+
     def serialize(self) -> bytes:
         """Serializes the executable into wire bytes via `PJRT_Executable_Serialize`.
 
@@ -1162,6 +1228,28 @@ class TpuExecutable:
         err = self._lib.PJRT_Executable_OptimizedProgram(ctypes.byref(opt_args))
         _check_pjrt_error(self._lib, err)
         return raw.raw
+
+    def disassemble_vliw(self) -> str:
+        """Disassembles this executable into a multi-line `DeepSea` LLO VLIW assembly listing.
+
+        Returns:
+            Multi-line LLO VLIW assembly string.
+        """
+        sz = int(self._lib.libtpu_rs_disassemble_executable_llo(self._handle, None, 0))
+        buf = ctypes.create_string_buffer(sz + 1)
+        self._lib.libtpu_rs_disassemble_executable_llo(self._handle, buf, sz + 1)
+        return buf.value.decode("utf-8")
+
+    def inspect_register_allocation(self) -> str:
+        """Returns the physical register allocation and `VMEM` spill summary for this executable.
+
+        Returns:
+            Human-readable register allocation summary string.
+        """
+        sz = int(self._lib.libtpu_rs_inspect_register_allocation(self._handle, None, 0))
+        buf = ctypes.create_string_buffer(sz + 1)
+        self._lib.libtpu_rs_inspect_register_allocation(self._handle, buf, sz + 1)
+        return buf.value.decode("utf-8")
 
     def close(self) -> None:
         """Frees the underlying `PJRT_LoadedExecutable*` via `PJRT_LoadedExecutable_Destroy`."""
@@ -2327,6 +2415,62 @@ def get_sdk_c_api_capsule() -> object:
     lib.GetLibtpuSdkApi.restype = ctypes.c_void_p
     ptr_addr = int(lib.GetLibtpuSdkApi() or 0)
     return _create_c_api_capsule(ptr_addr, "libtpu_sdk_c_api")
+
+
+def query_chip_config_summary() -> str:
+    """Queries the hardware chip configuration summary for the active TPU generation.
+
+    Returns:
+        Hardware chip configuration summary string from `libtpu_rs_query_chip_config_summary`.
+    """
+    lib = _load_cdll()
+    lib.libtpu_rs_query_chip_config_summary.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
+    lib.libtpu_rs_query_chip_config_summary.restype = ctypes.c_size_t
+    length = int(lib.libtpu_rs_query_chip_config_summary(None, 0))
+    buf = ctypes.create_string_buffer(length + 1)
+    lib.libtpu_rs_query_chip_config_summary(buf, length + 1)
+    return buf.value.decode("utf-8")
+
+
+def compute_ici_route(
+    src_x: int,
+    src_y: int,
+    src_z: int,
+    dst_x: int,
+    dst_y: int,
+    dst_z: int,
+    wrap_around: bool = True,
+) -> int:
+    """Computes the shortest 3D Torus optical ICI hop count between two chip coordinates.
+
+    Args:
+        src_x: Source X chip coordinate.
+        src_y: Source Y chip coordinate.
+        src_z: Source Z chip coordinate.
+        dst_x: Destination X chip coordinate.
+        dst_y: Destination Y chip coordinate.
+        dst_z: Destination Z chip coordinate.
+        wrap_around: Whether twisted-torus wrap-around links are enabled.
+
+    Returns:
+        Shortest hop count along the 3D Torus mesh.
+    """
+    lib = _load_cdll()
+    lib.libtpu_rs_compute_ici_route.argtypes = [
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_int32,
+    ]
+    lib.libtpu_rs_compute_ici_route.restype = ctypes.c_uint32
+    return int(
+        lib.libtpu_rs_compute_ici_route(
+            src_x, src_y, src_z, dst_x, dst_y, dst_z, 1 if wrap_around else 0
+        )
+    )
 
 
 configure_library_path()

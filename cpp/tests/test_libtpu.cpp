@@ -31,6 +31,16 @@ extern "C" void test_event_ready_callback(PJRT_Error *error, void *user_arg) {
 }
 
 /**
+ * @brief C OpenXLA Typed FFI v0.2 handler callback returning `nullptr` (`OK`).
+ * @param frame Pointer to `XLA_FFI_CallFrame`.
+ * @return `nullptr` on success.
+ */
+extern "C" PJRT_Error *test_ffi_handler(XLA_FFI_CallFrame *frame) {
+  (void)frame;
+  return nullptr;
+}
+
+/**
  * @brief Main test entrypoint exercising all C and C++20 RAII methods and error
  * branches.
  * @return `0` on success, non-zero if any assertion fails.
@@ -201,6 +211,22 @@ int main() {
     return 110;
   }
   libtpu_rs_buffer_destroy(raw_outputs[0]);
+
+  const PJRT_Buffer *dev0_inputs[2] = {b0.raw(), b1.raw()};
+  const PJRT_Buffer *dev1_inputs[2] = {b_copied.raw(), b1_copied.raw()};
+  const PJRT_Buffer *const *sharded_args[2] = {dev0_inputs, dev1_inputs};
+  PJRT_Buffer *dev0_outs[1] = {nullptr};
+  PJRT_Buffer *dev1_outs[1] = {nullptr};
+  PJRT_Buffer *const sharded_outs[2] = {dev0_outs[0], dev1_outs[0]};
+  PJRT_Buffer **sharded_out_lists[2] = {dev0_outs, dev1_outs};
+  (void)sharded_outs;
+  if (!exec.execute_sharded(sharded_args, 2, 2, sharded_out_lists).is_ok() ||
+      dev0_outs[0] == nullptr || dev1_outs[0] == nullptr ||
+      exec.cost_analysis_property_count() != 3) {
+    return 111;
+  }
+  libtpu_rs_buffer_destroy(dev0_outs[0]);
+  libtpu_rs_buffer_destroy(dev1_outs[0]);
 
   // Execute error branch (invalid device 99)
   libtpu::Buffer bad_out;
@@ -466,13 +492,56 @@ int main() {
 
   libtpu::TpuExecutableInspector exec_insp(nullptr);
   libtpu::ShardingsInspector shard_insp(nullptr);
+  const std::string tile_proto_schema =
+      libtpu::emit_proto_schema("xla.TileProto");
+  const std::string bad_proto_schema =
+      libtpu::emit_proto_schema("nonexistent.Msg");
   if (exec_insp.target_arguments_size() == 0 ||
       exec_insp.hlo_module_with_config_size() == 0 ||
       exec_insp.generated_code_size_bytes() <= 0 ||
       exec_insp.set_and_query_compilation_env(1) == 0 ||
       shard_insp.parameter_sharding_count() == 0 ||
-      shard_insp.output_sharding_count() == 0) {
+      shard_insp.output_sharding_count() == 0 || tile_proto_schema.empty() ||
+      !bad_proto_schema.empty()) {
     return 31;
+  }
+
+  libtpu::Coordinator coord;
+  libtpu::Coordinator coord_moved(static_cast<libtpu::Coordinator &&>(coord));
+  coord = static_cast<libtpu::Coordinator &&>(coord_moved);
+  if (!coord.put_key_value("topo/host0", "ready").is_ok() ||
+      coord.get_key_value("topo/host0") != "ready" ||
+      !coord.get_key_value("missing_key").empty()) {
+    return 32;
+  }
+
+  libtpu::LoadedExecutable null_exec;
+  const uint8_t empty_pb[1] = {0};
+  const std::string llo_text = libtpu::disassemble_executable_llo(exec);
+  const std::string bad_llo = libtpu::disassemble_executable_llo(null_exec);
+  const std::string cd_json = libtpu::read_core_dump_json(empty_pb, 0);
+  const std::string bad_cd_json = libtpu::read_core_dump_json(nullptr, 0);
+  const std::string ss_json = libtpu::read_stall_summaries_json(empty_pb, 0);
+  const std::string bad_ss_json = libtpu::read_stall_summaries_json(nullptr, 0);
+  const std::string cm_json = libtpu::read_compiler_metadata_json(empty_pb, 0);
+  const std::string bad_cm_json =
+      libtpu::read_compiler_metadata_json(nullptr, 0);
+  const std::string reg_summary = libtpu::inspect_register_allocation(exec);
+  const std::string bad_reg_summary =
+      libtpu::inspect_register_allocation(null_exec);
+  const libtpu::Status ffi_ok =
+      libtpu::register_ffi_handler("cpp_ffi_custom_op", &test_ffi_handler);
+  const libtpu::Status ffi_bad =
+      libtpu::register_ffi_handler(nullptr, &test_ffi_handler);
+  const std::string chip_cfg_summary = libtpu::query_chip_config_summary();
+  const uint32_t wrap_hops = libtpu::compute_ici_route(0, 0, 0, 3, 0, 0, true);
+  const uint32_t mesh_hops = libtpu::compute_ici_route(0, 0, 0, 3, 0, 0, false);
+  if (llo_text.empty() || !bad_llo.empty() || cd_json.empty() ||
+      !bad_cd_json.empty() || ss_json.empty() || !bad_ss_json.empty() ||
+      cm_json.empty() || !bad_cm_json.empty() || reg_summary.empty() ||
+      !bad_reg_summary.empty() || !ffi_ok.is_ok() || ffi_bad.is_ok() ||
+      chip_cfg_summary.empty() || wrap_hops != 1 || mesh_hops != 3) {
+    return 33;
   }
 
   return 0;

@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package xla;
+
+message HloInstructionProfile {
+  int64 instruction_id = 1;
+  string instruction_name = 2;
+  string computation_name = 3;
+  string category = 4;
+  int64 flop_count = 5;
+  int64 transcendental_count = 6;
+  int64 bytes_accessed = 7;
+  double optimal_seconds = 8;
+  int64 clock_cycles = 9;
+}
+
+message HloComputationProfile {
+  int64 computation_id = 1;
+  string computation_name = 2;
+  bool is_entry_computation = 3;
+  repeated HloInstructionProfile instructions = 4;
+  int64 total_cycles = 5;
+}
+
+message HloProfilePrinterData {
+  repeated HloComputationProfile computation_profiles = 1;
+  int64 profile_counters_size = 2;
+  map<string, int64> extra_metrics = 3;
+  string entry_computation = 4;
+}

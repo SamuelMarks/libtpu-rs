@@ -1190,3 +1190,86 @@ const _: () = assert!(size_of::<PJRT_PhaseCompile_GetPhaseNames_Args>() == 48);
 const _: () = assert!(size_of::<PJRT_Triton_Compile_Args>() == 88);
 const _: () = assert!(size_of::<PJRT_TpuTopology_SliceConfig>() == 56);
 const _: () = assert!(size_of::<PJRT_TpuTopology_ComputeSubsliceForDevices_Args>() == 64);
+
+/// `OpenXLA` Typed FFI API version structure (`XLA_FFI_Api_Version`, `24` bytes, v0.2).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct XLA_FFI_Api_Version {
+    /// Size of this struct (`24`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Major version (`0`).
+    pub major_version: i32,
+    /// Minor version (`2`).
+    pub minor_version: i32,
+}
+
+/// `OpenXLA` Typed FFI buffer descriptor passed inside [`XLA_FFI_CallFrame`] (`XLA_FFI_Buffer`, `40` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct XLA_FFI_Buffer {
+    /// Size of this struct (`40`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Element data type (`PJRT_Buffer_Type`).
+    pub dtype: i32,
+    ///Rank of the buffer (`dims` length).
+    pub rank: i32,
+    /// Mutable device/host data pointer.
+    pub data: *mut std::ffi::c_void,
+    /// Pointer to `rank` dimension extents (`const int64_t*`).
+    pub dims: *const i64,
+}
+
+/// `OpenXLA` Typed FFI call frame passed to `XLA_FFI_Handler` callbacks (`XLA_FFI_CallFrame`, `64` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct XLA_FFI_CallFrame {
+    /// Size of this struct (`64`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Pointer to the host `XLA_FFI_Api` vtable.
+    pub api: *const XLA_FFI_Api,
+    /// Opaque execution context pointer.
+    pub ctx: *mut std::ffi::c_void,
+    /// Execution stage (`0 = Instantiate`, `1 = Prepare`, `2 = Initialize`, `3 = Execute`).
+    pub stage: i32,
+    /// Number of input [`XLA_FFI_Buffer`] arguments.
+    pub num_args: u32,
+    /// Array of `num_args` input [`XLA_FFI_Buffer`] pointers.
+    pub args: *const *const XLA_FFI_Buffer,
+    /// Number of output [`XLA_FFI_Buffer`] return slots.
+    pub num_rets: usize,
+    /// Array of `num_rets` output [`XLA_FFI_Buffer`] pointers.
+    pub rets: *const *mut XLA_FFI_Buffer,
+}
+
+/// `OpenXLA` Typed FFI handler callback signature (`XLA_FFI_Error* (*)(XLA_FFI_CallFrame*)`).
+pub type XLA_FFI_Handler = unsafe extern "C" fn(*mut XLA_FFI_CallFrame) -> *mut PJRT_Error;
+
+/// `OpenXLA` Typed FFI vtable (`XLA_FFI_Api`, `56` bytes, v0.2).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct XLA_FFI_Api {
+    /// Size of this struct (`56`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Embedded `XLA_FFI_Api_Version` (`0.2`).
+    pub api_version: XLA_FFI_Api_Version,
+    /// Handler registration entrypoint (`PJRT_FFI_Register_Handler`).
+    pub register_handler: unsafe extern "C" fn(*mut std::ffi::c_void) -> *mut PJRT_Error,
+    /// Type ID registration entrypoint (`PJRT_FFI_TypeID_Register`).
+    pub register_type_id: unsafe extern "C" fn(*mut std::ffi::c_void) -> *mut PJRT_Error,
+}
+
+// SAFETY: Contains only immutable function pointers and version integers.
+unsafe impl Sync for XLA_FFI_Api {}
+
+const _: () = assert!(size_of::<XLA_FFI_Api_Version>() == 24);
+const _: () = assert!(size_of::<XLA_FFI_Buffer>() == 40);
+const _: () = assert!(size_of::<XLA_FFI_CallFrame>() == 64);
+const _: () = assert!(size_of::<XLA_FFI_Api>() == 56);

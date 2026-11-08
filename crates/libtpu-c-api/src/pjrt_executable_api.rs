@@ -1351,6 +1351,7 @@ unsafe fn handle_executable_get_compile_options(
                 env_option_overrides: std::collections::BTreeMap::new(),
                 profile_version: 1,
                 serialized_multi_slice_config: Vec::new(),
+                ..libtpu_core::proto::CompileOptionsProto::default()
             }
             .encode()
         },

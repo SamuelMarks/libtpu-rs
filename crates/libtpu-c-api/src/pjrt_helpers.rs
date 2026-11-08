@@ -294,9 +294,16 @@ pub(crate) fn box_serialized_artifact(
     usize,
     *mut crate::pjrt_types::PjrtSerializedArtifact,
 ) {
-    let holder = Box::new(crate::pjrt_types::PjrtSerializedArtifact { bytes });
+    let mut holder = Box::new(crate::pjrt_types::PjrtSerializedArtifact {
+        raw: crate::extensions::PJRT_ExecutableMetadata {
+            serialized_metadata: ptr::null(),
+            serialized_metadata_size: bytes.len(),
+        },
+        bytes,
+    });
     let ptr = holder.bytes.as_ptr().cast::<c_char>();
     let len = holder.bytes.len();
+    holder.raw.serialized_metadata = ptr;
     (ptr, len, Box::into_raw(holder))
 }
 

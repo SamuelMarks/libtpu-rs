@@ -713,6 +713,96 @@ impl ElementType {
         }
         out
     }
+
+    /// Unpacks a raw little-endian byte buffer of this [`ElementType`] into exact 128-bit signed
+    /// `i128` values so both `S64` (`i64::MIN..=i64::MAX`) and `U64` (`0..=u64::MAX`) retain full
+    /// signedness and 64-bit precision without overflow or `f64` precision loss.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Raw little-endian tensor payload.
+    #[must_use]
+    pub fn unpack_to_i128_vec(self, bytes: &[u8]) -> Vec<i128> {
+        if self == Self::U64 {
+            let aligned = (bytes.len() / 8) * 8;
+            return bytemuck::pod_collect_to_vec::<u8, u64>(
+                bytes.get(..aligned).unwrap_or_default(),
+            )
+            .into_iter()
+            .map(|v| i128::from(u64::from_le(v)))
+            .collect();
+        }
+        self.unpack_to_i64_vec(bytes)
+            .into_iter()
+            .map(i128::from)
+            .collect()
+    }
+
+    /// Packs a slice of exact 128-bit `i128` values into a little-endian byte vector of this [`ElementType`].
+    ///
+    /// # Arguments
+    ///
+    /// * `values` - Exact 128-bit integer values to pack.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    pub fn pack_from_i128_slice(self, values: &[i128]) -> Vec<u8> {
+        if self == Self::U64 {
+            let mut out = Vec::with_capacity(values.len().saturating_mul(8));
+            for &v in values {
+                out.extend_from_slice(&(v as u64).to_le_bytes());
+            }
+            return out;
+        }
+        let i64s: Vec<i64> = values.iter().map(|&v| v as i64).collect();
+        self.pack_from_i64_slice(&i64s)
+    }
+
+    /// Unpacks a raw little-endian byte buffer of this [`ElementType`] into complex `(re, im)` pairs.
+    ///
+    /// For `C64` (`[f32; 2]`) and `C128` (`[f64; 2]`), pairs consecutive `[re, im]` components;
+    /// for real scalar types, returns `(re, 0.0)` pairs.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Raw little-endian tensor payload.
+    #[must_use]
+    pub fn unpack_to_complex_vec(self, bytes: &[u8]) -> Vec<(f64, f64)> {
+        let scalars = self.unpack_to_f64_vec(bytes);
+        if matches!(self, Self::C64 | Self::C128) {
+            return scalars
+                .chunks_exact(2)
+                .map(|pair| {
+                    (
+                        pair.first().copied().unwrap_or(0.0),
+                        pair.get(1).copied().unwrap_or(0.0),
+                    )
+                })
+                .collect();
+        }
+        scalars.into_iter().map(|re| (re, 0.0)).collect()
+    }
+
+    /// Packs a slice of complex `(re, im)` pairs into a little-endian byte vector of this [`ElementType`].
+    ///
+    /// For `C64` (`[f32; 2]`) and `C128` (`[f64; 2]`), packs interleaved `[re, im]`;
+    /// for real scalar types, packs the real component `re`.
+    ///
+    /// # Arguments
+    ///
+    /// * `values` - Complex `(re, im)` pairs to pack.
+    #[must_use]
+    pub fn pack_from_complex_slice(self, values: &[(f64, f64)]) -> Vec<u8> {
+        if matches!(self, Self::C64 | Self::C128) {
+            let mut interleaved = Vec::with_capacity(values.len().saturating_mul(2));
+            for &(re, im) in values {
+                interleaved.push(re);
+                interleaved.push(im);
+            }
+            return self.pack_from_f64_slice(&interleaved);
+        }
+        let reals: Vec<f64> = values.iter().map(|&(re, _)| re).collect();
+        self.pack_from_f64_slice(&reals)
+    }
 }
 
 #[cfg(test)]
@@ -882,5 +972,38 @@ mod tests {
             assert_eq!(u.first().copied(), Some(0));
             assert_eq!(u.get(1).copied(), Some(1));
         }
+
+        let unsigned_vals = [
+            i128::from(u64::MAX),
+            i128::from(u64::MAX - 1),
+            0x0020_0000_0000_0003_i128,
+        ];
+        let unsigned_packed = ElementType::U64.pack_from_i128_slice(&unsigned_vals);
+        assert_eq!(
+            ElementType::U64.unpack_to_i128_vec(&unsigned_packed),
+            unsigned_vals
+        );
+
+        let signed_vals = [
+            i128::from(i64::MIN + 1),
+            i128::from(i64::MAX),
+            -0x0020_0000_0000_0005_i128,
+        ];
+        let signed_packed = ElementType::S64.pack_from_i128_slice(&signed_vals);
+        assert_eq!(
+            ElementType::S64.unpack_to_i128_vec(&signed_packed),
+            signed_vals
+        );
+
+        let complex_pairs = [(1.25, -2.5), (3.5, 4.0)];
+        for cet in [ElementType::C64, ElementType::C128] {
+            let cb = cet.pack_from_complex_slice(&complex_pairs);
+            assert_eq!(cet.unpack_to_complex_vec(&cb), complex_pairs);
+        }
+        let real_b = ElementType::F64.pack_from_complex_slice(&complex_pairs);
+        assert_eq!(
+            ElementType::F64.unpack_to_complex_vec(&real_b),
+            vec![(1.25, 0.0), (3.5, 0.0)]
+        );
     }
 }

@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package tpu.telemetry;
+
+message TpuPowerStateProto {
+  uint32 chip_id = 1;
+  int32 power_state_level = 2;
+  double current_watts = 3;
+  double max_tdp_watts = 4;
+  double junction_temp_celsius = 5;
+}
+
+message ChipThermalThrottleSummaryProto {
+  uint32 chip_id = 1;
+  uint64 throttle_duration_us = 2;
+  uint32 throttle_event_count = 3;
+  double peak_temp_celsius = 4;
+}
+
+message FrequencyScalingTelemetryProto {
+  uint32 chip_id = 1;
+  uint32 nominal_clock_mhz = 2;
+  uint32 active_clock_mhz = 3;
+  uint32 hbm_clock_mhz = 4;
+  repeated TpuPowerStateProto power_states = 5;
+  repeated ChipThermalThrottleSummaryProto thermal_summaries = 6;
+}

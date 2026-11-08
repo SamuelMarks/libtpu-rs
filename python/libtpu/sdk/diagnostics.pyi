@@ -34,4 +34,12 @@ def read_core_dump(path: str | os.PathLike[str]) -> dict[str, object]:
     """
     ...
 
+def emit_proto_schema(full_message_name: str) -> str:
+    """Emits a canonical `proto3` `.proto` schema string from the compiled Rust protobuf descriptor.
+
+    Args:
+        full_message_name: Fully-qualified protobuf message name (e.g., `"xla.TileProto"`).
+    """
+    ...
+
 __all__: list[str]

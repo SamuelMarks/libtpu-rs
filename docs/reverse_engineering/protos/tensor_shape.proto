@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The TensorFlow Authors and Google LLC.
+// Source: tensorflow/core/framework/tensor_shape.proto
+
+syntax = "proto3";
+
+package tensorflow;
+
+message TensorShapeProto {
+  message Dim {
+    int64 size = 1;
+    string name = 2;
+  }
+  repeated Dim dim = 2;
+  bool unknown_rank = 3;
+}

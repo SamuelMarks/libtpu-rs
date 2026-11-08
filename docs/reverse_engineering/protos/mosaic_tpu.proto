@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: third_party/tensorflow/compiler/mlir/tpu/mosaic_tpu.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package mlir.tpu;
+
+message MosaicDmaDescriptorProto {
+  uint32 dma_id = 1;
+  uint32 src_memory_space = 2;
+  uint32 dst_memory_space = 3;
+  uint64 transfer_bytes = 4;
+  uint32 semaphore_id = 5;
+}
+
+message MosaicScratchpadLayoutProto {
+  uint64 vmem_bytes = 1;
+  uint64 smem_bytes = 2;
+  uint64 cmem_bytes = 3;
+  repeated int64 tile_strides = 4;
+}
+
+message MosaicBackendConfigProto {
+  string kernel_name = 1;
+  int32 core_type = 2;
+  repeated int64 grid_bounds = 3;
+  MosaicScratchpadLayoutProto scratchpad_layout = 4;
+  repeated MosaicDmaDescriptorProto dma_descriptors = 5;
+}

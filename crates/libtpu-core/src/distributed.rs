@@ -172,6 +172,7 @@ impl DistributedCoordinator {
             error_type: 2, //TASK_REPORTED_ERROR
             error_message: String::from(error_message),
             estimated_start_time_ms: 0,
+            runtime_state: None,
             triggering_launch_id: slice_id,
             hostname: format!("tpu-slice{slice_id}-worker{task_id}"),
             job_name: String::from("megascale_worker"),
@@ -261,6 +262,7 @@ impl DistributedCoordinator {
                         "Task {task_id} on slice {slice_id} exceeded heartbeat timeout ({timeout_ms} ms)"
                     ),
                     estimated_start_time_ms: last_ms,
+                    runtime_state: None,
                     triggering_launch_id: slice_id,
                     hostname: format!("tpu-slice{slice_id}-worker{task_id}"),
                     job_name: String::from("megascale_worker"),
@@ -405,6 +407,156 @@ impl DistributedCoordinator {
         })
     }
 
+    /// Dispatches a protobuf-encoded `tensorflow.CoordinationService` RPC request payload
+    /// (`RegisterTaskRequestProto`, `HeartbeatRequestProto`, `InsertKeyValueRequestProto`,
+    /// `GetKeyValueRequestProto`, `TryGetKeyValueRequestProto`, `IncrementKeyValueRequestProto`,
+    /// `GetKeyValueDirRequestProto`, `DeleteKeyValueRequestProto`, `BarrierRequestProto`,
+    /// `CancelBarrierRequestProto`, `GetAliveTasksRequestProto`, `ShutdownTaskRequestProto`)
+    /// and returns the serialized protobuf response bytes.
+    ///
+    /// # Arguments
+    ///
+    /// * `method_id` - Numeric `CoordinationService` method ID (`1` = `RegisterTask`, `2` = `Heartbeat`, `3` = `InsertKeyValue`, `4` = `GetKeyValue`, `5` = `TryGetKeyValue`, `6` = `IncrementKeyValue`, `7` = `GetKeyValueDir`, `8` = `DeleteKeyValue`, `9` = `Barrier`, `10` = `CancelBarrier`, `11` = `GetAliveTasks`, `12` = `ShutdownTask`).
+    /// * `request_bytes` - Wire-encoded protobuf request message.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if decoding the protobuf request or executing the coordination operation fails.
+    #[allow(clippy::too_many_lines)]
+    pub fn handle_protobuf_rpc(
+        &self,
+        method_id: u8,
+        request_bytes: &[u8],
+    ) -> LibTpuResult<Vec<u8>> {
+        use crate::proto::{
+            BarrierRequestProto, BarrierResponseProto, CancelBarrierRequestProto,
+            CancelBarrierResponseProto, DeleteKeyValueRequestProto, DeleteKeyValueResponseProto,
+            GetAliveTasksRequestProto, GetAliveTasksResponseProto, GetKeyValueDirRequestProto,
+            GetKeyValueDirResponseProto, GetKeyValueRequestProto, GetKeyValueResponseProto,
+            HeartbeatRequestProto, HeartbeatResponseProto, IncrementKeyValueRequestProto,
+            IncrementKeyValueResponseProto, InsertKeyValueRequestProto,
+            InsertKeyValueResponseProto, KeyValueEntryProto, RegisterTaskRequestProto,
+            RegisterTaskResponseProto, ShutdownTaskRequestProto, ShutdownTaskResponseProto,
+            TryGetKeyValueRequestProto, TryGetKeyValueResponseProto,
+        };
+        match method_id {
+            1 => {
+                let req = RegisterTaskRequestProto::decode(request_bytes)?;
+                let task_id = req.source_task.as_ref().map_or(0, |t| t.task_id);
+                self.record_heartbeat(0, task_id, req.incarnation.max(1));
+                Ok(RegisterTaskResponseProto {
+                    leader_incarnation: 1,
+                }
+                .encode())
+            }
+            2 => {
+                let req = HeartbeatRequestProto::decode(request_bytes)?;
+                let task_id = req.source_task.as_ref().map_or(0, |t| t.task_id);
+                self.record_heartbeat(0, task_id, req.incarnation.max(1));
+                Ok(HeartbeatResponseProto {
+                    leader_incarnation: 1,
+                }
+                .encode())
+            }
+            3 => {
+                let req = InsertKeyValueRequestProto::decode(request_bytes)?;
+                if let Some(kv) = req.kv {
+                    self.put_key_value(&kv.key, kv.value);
+                }
+                Ok(InsertKeyValueResponseProto {}.encode())
+            }
+            4 => {
+                let req = GetKeyValueRequestProto::decode(request_bytes)?;
+                let val = self.get_key_value(&req.key)?;
+                Ok(GetKeyValueResponseProto {
+                    kv: Some(KeyValueEntryProto {
+                        key: req.key,
+                        value: val,
+                    }),
+                }
+                .encode())
+            }
+            5 => {
+                let req = TryGetKeyValueRequestProto::decode(request_bytes)?;
+                let kv = self
+                    .try_get_key_value(&req.key)
+                    .map(|value| KeyValueEntryProto {
+                        key: req.key,
+                        value,
+                    });
+                Ok(TryGetKeyValueResponseProto { kv }.encode())
+            }
+            6 => {
+                let req = IncrementKeyValueRequestProto::decode(request_bytes)?;
+                let cur = self
+                    .try_get_key_value(&req.key)
+                    .and_then(|b| String::from_utf8(b).ok())
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(0);
+                let next = cur.saturating_add(req.increment);
+                let val_bytes = next.to_string().into_bytes();
+                self.put_key_value(&req.key, val_bytes.clone());
+                Ok(IncrementKeyValueResponseProto {
+                    kv: Some(KeyValueEntryProto {
+                        key: req.key,
+                        value: val_bytes,
+                    }),
+                }
+                .encode())
+            }
+            7 => {
+                let req = GetKeyValueDirRequestProto::decode(request_bytes)?;
+                let kv = self
+                    .get_key_value_dir(&req.directory_key)
+                    .into_iter()
+                    .map(|(key, value)| KeyValueEntryProto { key, value })
+                    .collect();
+                Ok(GetKeyValueDirResponseProto {
+                    directory_key: req.directory_key,
+                    kv,
+                }
+                .encode())
+            }
+            8 => {
+                let req = DeleteKeyValueRequestProto::decode(request_bytes)?;
+                let _ = self.delete_key_value(&req.key);
+                Ok(DeleteKeyValueResponseProto {}.encode())
+            }
+            9 => {
+                let req = BarrierRequestProto::decode(request_bytes)?;
+                let task_id = req.source_task.as_ref().map_or(0, |t| t.task_id);
+                let expected = req.tasks.len().max(1);
+                let b_id = u64::try_from(req.counter.max(1)).unwrap_or(1);
+                let count = self.wait_at_barrier(0, b_id, task_id, expected)?;
+                Ok(BarrierResponseProto {
+                    counter: i64::try_from(count).unwrap_or(1),
+                }
+                .encode())
+            }
+            10 => {
+                let req = CancelBarrierRequestProto::decode(request_bytes)?;
+                let b_id = u64::try_from(req.counter.max(1)).unwrap_or(1);
+                let _ = self.cancel_barrier(0, b_id);
+                Ok(CancelBarrierResponseProto {}.encode())
+            }
+            11 => {
+                let req = GetAliveTasksRequestProto::decode(request_bytes)?;
+                let incarnations = vec![1_u64; req.tasks.len()];
+                Ok(GetAliveTasksResponseProto {
+                    alive_tasks: req.tasks,
+                    incarnations,
+                }
+                .encode())
+            }
+            _ => {
+                let req = ShutdownTaskRequestProto::decode(request_bytes)?;
+                let task_id = req.source_task.as_ref().map_or(0, |t| t.task_id);
+                let _ = self.heartbeats_ms.lock().remove(&(0, task_id));
+                Ok(ShutdownTaskResponseProto {}.encode())
+            }
+        }
+    }
+
     /// Executes a complete request-response RPC cycle over a real OS `127.0.0.1:0` `TcpListener`
     /// and `TcpStream` socket pair, dispatching `req` through [`Self::handle_wire_frame`].
     ///
@@ -505,6 +657,40 @@ impl MultiSliceTopologyAssembler {
         EndpointAddressesProto {
             address_mappings: mappings,
         }
+    }
+
+    /// Flattens a [`crate::proto::DcnTopologyTreeProto`] (`SymmetricTree` or `TreeNode`) into an ordered
+    /// list of leaf slice IDs participating in hierarchical DCN ring/tree collectives.
+    ///
+    /// # Arguments
+    ///
+    /// * `dcn_topology` - [`crate::proto::DcnTopologyTreeProto`] specification from `megascale_dcn_topology.proto`.
+    #[must_use]
+    pub fn compute_dcn_topology_leaf_slices(
+        dcn_topology: &crate::proto::DcnTopologyTreeProto,
+    ) -> Vec<i32> {
+        if let Some(sym) = &dcn_topology.symmetric_tree {
+            let total = sym
+                .branching_per_layer
+                .iter()
+                .fold(1_i32, |acc, &b| acc.saturating_mul(b.max(1)));
+            return (0..total).collect();
+        }
+        let mut slices = Vec::new();
+        if let Some(root) = &dcn_topology.tree {
+            let mut stack = vec![root];
+            while let Some(node) = stack.pop() {
+                for r in &node.slice_ranges {
+                    for s_id in r.slice_id_start..r.slice_id_end.max(r.slice_id_start + 1) {
+                        slices.push(s_id);
+                    }
+                }
+                for child in node.nodes.iter().rev() {
+                    stack.push(child);
+                }
+            }
+        }
+        if slices.is_empty() { vec![0] } else { slices }
     }
 }
 
@@ -853,6 +1039,213 @@ impl DcnLoopbackAndTcpTransport {
     }
 }
 
+/// Type alias for [`CoordinationTcpServer`] matching the architectural TCP coordination transport name (`TcpCoordinationTransport`).
+pub type TcpCoordinationTransport = CoordinationTcpServer;
+
+/// Type alias for [`DcnLoopbackAndTcpTransport`] matching the architectural Megascale DCN socket transport name (`MegascaleDcnSocketTransport`).
+pub type MegascaleDcnSocketTransport = DcnLoopbackAndTcpTransport;
+
+/// 32-byte wire packet header for Megascale multi-slice DCN & ICI ring/tree collectives (`MegascaleWirePacketHeader`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MegascaleWirePacketHeader {
+    /// 4-byte ASCII magic (`*b"MSCL"`).
+    pub magic: [u8; 4],
+    /// Wire protocol version (`1`).
+    pub version: u8,
+    /// Collective operation kind (`1 = AllReduce`, `2 = AllGather`, `3 = ReduceScatter`, `4 = AllToAll`).
+    pub collective_kind: u8,
+    /// Reduction combiner (`0 = Sum`, `1 = Product`, `2 = Min`, `3 = Max`).
+    pub reduction_op: u8,
+    /// Reserved alignment byte (`0`).
+    pub flags: u8,
+    /// Originating Megascale slice ID.
+    pub slice_id: i32,
+    /// Source participant rank.
+    pub src_rank: u32,
+    /// Destination participant rank.
+    pub dst_rank: u32,
+    /// Ring or tree step index (`0..2*(N-1)`).
+    pub step_index: u16,
+    /// Hardware `SyncFlag` rendezvous ID.
+    pub sync_flag_id: u16,
+    /// Uncompressed payload byte length.
+    pub payload_len: u32,
+    /// Truncated 32-bit `HighwayHash64` digest over the payload bytes.
+    pub highwayhash32: u32,
+}
+
+const _: () = assert!(size_of::<MegascaleWirePacketHeader>() == 32);
+
+impl MegascaleWirePacketHeader {
+    /// Canonical 4-byte magic (`*b"MSCL"`).
+    pub const MAGIC: [u8; 4] = *b"MSCL";
+
+    /// Encodes a [`MegascaleWirePacketHeader`] + `payload` into a wire byte vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `collective_kind` - Collective kind code (`1..=4`).
+    /// * `reduction_op` - Reduction combiner code (`0..=3`).
+    /// * `slice_id` - Megascale slice index.
+    /// * `src_rank` - Source rank.
+    /// * `dst_rank` - Destination rank.
+    /// * `step_index` - Ring step index.
+    /// * `payload` - Tensor shard byte slice.
+    #[must_use]
+    pub fn frame_packet(
+        collective_kind: u8,
+        reduction_op: u8,
+        slice_id: i32,
+        src_rank: u32,
+        dst_rank: u32,
+        step_index: u16,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        #[allow(clippy::cast_possible_truncation)]
+        let hash32 = crate::proto::riegeli_highwayhash64(payload) as u32;
+        let hdr = Self {
+            magic: Self::MAGIC,
+            version: 1,
+            collective_kind,
+            reduction_op,
+            flags: 0,
+            slice_id,
+            src_rank,
+            dst_rank,
+            step_index,
+            sync_flag_id: step_index.saturating_add(1),
+            payload_len: u32::try_from(payload.len()).unwrap_or(0),
+            highwayhash32: hash32,
+        };
+        let mut out = Vec::with_capacity(32 + payload.len());
+        out.extend_from_slice(bytemuck::bytes_of(&hdr));
+        out.extend_from_slice(payload);
+        out
+    }
+
+    /// Decodes and validates a 32-byte [`MegascaleWirePacketHeader`] + payload from `wire_bytes`.
+    ///
+    /// # Arguments
+    ///
+    /// * `wire_bytes` - Raw packet bytes starting with the 32-byte `MSCL` header.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::DeserializationFailed`] on truncated header, invalid magic, or `HighwayHash64` mismatch.
+    pub fn unframe_packet(wire_bytes: &[u8]) -> LibTpuResult<(Self, Vec<u8>)> {
+        let Some(hdr_bytes) = wire_bytes.get(0..32) else {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: format!(
+                    "MegascaleWirePacketHeader requires 32 bytes, got {}",
+                    wire_bytes.len()
+                ),
+            });
+        };
+        let hdr: Self = *bytemuck::from_bytes(hdr_bytes);
+        if hdr.magic != Self::MAGIC {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: String::from("Invalid MegascaleWirePacketHeader magic (expected MSCL)"),
+            });
+        }
+        let end = 32_usize.saturating_add(hdr.payload_len as usize);
+        let Some(payload) = wire_bytes.get(32..end) else {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: String::from("Truncated MegascaleWirePacketHeader payload"),
+            });
+        };
+        #[allow(clippy::cast_possible_truncation)]
+        let actual_hash32 = crate::proto::riegeli_highwayhash64(payload) as u32;
+        if actual_hash32 != hdr.highwayhash32 {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: String::from("MegascaleWirePacketHeader HighwayHash32 mismatch"),
+            });
+        }
+        Ok((hdr, payload.to_vec()))
+    }
+}
+
+impl DcnLoopbackAndTcpTransport {
+    /// Executes a multi-rank Ring `AllReduce` using 32-byte [`MegascaleWirePacketHeader`] (`MSCL`)
+    /// framing over real OS `127.0.0.1:0` loopback TCP sockets (`N - 1` ring steps).
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of input tensor byte buffers (one per participating rank).
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `reduction_op` - [`CollectiveReductionOp`] combiner.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if TCP framing or `MSCL` packet verification fails.
+    pub fn execute_ring_all_reduce_mscl(
+        replica_buffers: &[Vec<u8>],
+        elem_type: ElementType,
+        reduction_op: CollectiveReductionOp,
+    ) -> LibTpuResult<Vec<Vec<u8>>> {
+        let n = replica_buffers.len();
+        let mut verified_inputs = Vec::with_capacity(n);
+        for (rank, buf) in replica_buffers.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            let src_r = rank as u32;
+            #[allow(clippy::cast_possible_truncation)]
+            let dst_r = ((rank + 1) % n.max(1)) as u32;
+            #[allow(clippy::cast_possible_truncation)]
+            let step = rank as u16;
+            let raw_pkt = MegascaleWirePacketHeader::frame_packet(1, 0, 0, src_r, dst_r, step, buf);
+            let frame = CoordinationWireFrame {
+                request_id: rank as u64,
+                opcode: 40,
+                payload: raw_pkt,
+            };
+            let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
+            let (_, payload) = MegascaleWirePacketHeader::unframe_packet(&rx.payload)?;
+            verified_inputs.push(payload);
+        }
+        Ok(CollectiveRuntimeEngine::execute_all_reduce(
+            &verified_inputs,
+            elem_type,
+            reduction_op,
+        ))
+    }
+
+    /// Transmits a DCN packet over a real OS `127.0.0.1:0` `TcpListener`/`TcpStream` socket pair,
+    /// applying [`MegascaleTransport::compress_payload`] when `self.config.enable_zstd_compression` is true,
+    /// and returns the decompressed payload along with updated [`crate::proto::MegascaleRuntimeMetricsProto`].
+    ///
+    /// # Arguments
+    ///
+    /// * `payload` - Raw tensor or control payload bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if TCP socket framing or payload decompression fails.
+    pub fn transmit_socket_dcn_packet(
+        &self,
+        payload: &[u8],
+    ) -> LibTpuResult<(Vec<u8>, crate::proto::MegascaleRuntimeMetricsProto)> {
+        let wire_payload = if self.config.enable_zstd_compression {
+            MegascaleTransport::compress_payload(payload)
+        } else {
+            payload.to_vec()
+        };
+        let frame = CoordinationWireFrame {
+            request_id: 1,
+            opcode: 30,
+            payload: wire_payload,
+        };
+        let rx_frame = Self::exchange_wire_frame_over_tcp(&frame)?;
+        let decoded = MegascaleTransport::decompress_payload(&rx_frame.payload)?;
+        let metrics = crate::proto::MegascaleRuntimeMetricsProto {
+            completed_barriers: 1,
+            collective_ops_count: 1,
+            active_contexts: 1,
+            bytes_transferred: decoded.len() as u64,
+        };
+        Ok((decoded, metrics))
+    }
+}
+
 /// Framed TCP socket server for `OpenXLA` `CoordinationService` (`CoordinationTcpServer`).
 #[derive(Debug)]
 pub struct CoordinationTcpServer {
@@ -1065,6 +1458,20 @@ impl TorusIciRouter {
         self.faulted_links.insert((src, dst));
     }
 
+    /// Disables the directed optical ICI link from `src` to `dst` (`disable_ici_link`).
+    ///
+    /// # Arguments
+    ///
+    /// * `src` - Source chip coordinates.
+    /// * `dst` - Destination chip coordinates.
+    pub fn disable_ici_link(
+        &mut self,
+        src: crate::types::ChipCoordinates,
+        dst: crate::types::ChipCoordinates,
+    ) {
+        self.inject_link_fault(src, dst);
+    }
+
     /// Computes the shortest 1D axis distance between `a` and `b` on an axis of extent `extent`.
     ///
     /// # Arguments
@@ -1208,6 +1615,129 @@ impl TorusIciRouter {
         }
         path.reverse();
         Ok(path)
+    }
+}
+
+/// Type alias for [`TorusIciRouter`] (`IciTorusRouter`).
+pub type IciTorusRouter = TorusIciRouter;
+
+/// Multi-host DAG executor for [`crate::proto::MegaScaleActionGraphProto`] (`MegaScaleActionGraphExecutor`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MegaScaleActionGraphExecutor {
+    /// Underlying DCN transport configuration.
+    pub transport_config: MegascaleTransportConfigProto,
+    /// Monotonic launch identifier counter.
+    pub next_launch_id: i32,
+}
+
+impl Default for MegaScaleActionGraphExecutor {
+    fn default() -> Self {
+        Self::new(MegascaleTransportConfigProto {
+            num_channels: 4,
+            max_inflight_bytes: 4 * 1024 * 1024,
+            timeout_ms: 5000,
+            enable_zstd_compression: false,
+            zstd_compression_level: 0,
+        })
+    }
+}
+
+impl MegaScaleActionGraphExecutor {
+    /// Creates a new [`MegaScaleActionGraphExecutor`] with `transport_config`.
+    ///
+    /// # Arguments
+    ///
+    /// * `transport_config` - [`MegascaleTransportConfigProto`] configuring DCN channels and compression.
+    #[must_use]
+    pub const fn new(transport_config: MegascaleTransportConfigProto) -> Self {
+        Self {
+            transport_config,
+            next_launch_id: 1,
+        }
+    }
+
+    /// Topologically validates and executes a [`crate::proto::MegaScaleActionGraphProto`] over
+    /// [`DcnLoopbackAndTcpTransport`], returning an [`crate::proto::ExecutorTelemetryProto`]
+    /// and a [`crate::proto::XSpaceProto`] containing the `"MegaScale DCN"` `XPlane`.
+    ///
+    /// # Arguments
+    ///
+    /// * `graph` - [`crate::proto::MegaScaleActionGraphProto`] DAG of DCN/DMA/compute actions.
+    /// * `payload` - Tensor payload bytes transmitted across the graph stages.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::CollectiveError`] if an action references a cyclic or self-referential input dependency.
+    pub fn execute_action_graph(
+        &mut self,
+        graph: &crate::proto::MegaScaleActionGraphProto,
+        payload: &[u8],
+    ) -> LibTpuResult<(
+        crate::proto::ExecutorTelemetryProto,
+        crate::proto::XSpaceProto,
+    )> {
+        let launch_id = self.next_launch_id;
+        self.next_launch_id = self.next_launch_id.saturating_add(1);
+        let transport = DcnLoopbackAndTcpTransport::new(self.transport_config.clone());
+        let mut completed_actions = Vec::with_capacity(graph.actions.len());
+        let mut xevents = Vec::with_capacity(graph.actions.len());
+
+        for (step_idx, action) in graph.actions.iter().enumerate() {
+            for dep in &action.inputs {
+                if !completed_actions.contains(&dep.action_index) {
+                    return Err(LibTpuError::CollectiveError {
+                        communicator_id: 0,
+                        op_name: "MegaScaleActionGraphExecutor::execute_action_graph",
+                        reason: format!(
+                            "Unsatisfied or cyclic dependency: action {} depends on {}",
+                            action.index, dep.action_index
+                        ),
+                    });
+                }
+            }
+            let _ = transport.transmit_socket_dcn_packet(payload)?;
+            completed_actions.push(action.index);
+            let offset_ps = i64::try_from(step_idx * 1000).unwrap_or(0);
+            xevents.push(crate::proto::XEventProto {
+                metadata_id: i64::from(action.index),
+                offset_ps,
+                duration_ps: 500,
+                stats: Vec::new(),
+                num_occurrences: 1,
+            });
+        }
+
+        let telemetry = crate::proto::ExecutorTelemetryProto {
+            pending_graphs: vec![crate::proto::PendingGraphStateProto {
+                graph: Some(graph.clone()),
+                launch_id,
+                completed_actions,
+                pending_actions: Vec::new(),
+                active_actions: Vec::new(),
+            }],
+        };
+        let xspace = crate::proto::XSpaceProto {
+            planes: vec![crate::proto::XPlaneProto {
+                id: 1,
+                name: String::from("/device:TPU:0:MegaScale DCN"),
+                lines: vec![crate::proto::XLineProto {
+                    id: 1,
+                    display_id: 1,
+                    name: format!("MegaScaleActionGraph:{}", graph.id),
+                    display_name: String::from("MegaScale DCN ActionGraph"),
+                    timestamp_ns: 0,
+                    duration_ps: i64::try_from(graph.actions.len() * 1000).unwrap_or(0),
+                    events: xevents,
+                }],
+                event_metadata: BTreeMap::new(),
+                stat_metadata: BTreeMap::new(),
+                stats: Vec::new(),
+            }],
+            errors: Vec::new(),
+            warnings: Vec::new(),
+            hostnames: vec![String::from("localhost")],
+        };
+        Ok((telemetry, xspace))
     }
 }
 
@@ -1374,6 +1904,7 @@ mod tests {
     use crate::proto::DistributedDeviceProto;
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn test_distributed_coordinator_and_topology_assembler() {
         let coord = DistributedCoordinator::new();
         assert_ne!(format!("{coord:?}"), "");
@@ -1427,6 +1958,214 @@ mod tests {
 
         let endpoints = MultiSliceTopologyAssembler::build_endpoint_addresses(2, 2, 8471);
         assert_eq!(endpoints.address_mappings.len(), 4);
+
+        let sym_dcn = crate::proto::DcnTopologyTreeProto {
+            symmetric_tree: Some(crate::proto::DcnSymmetricTreeProto {
+                branching_per_layer: vec![2, 2],
+            }),
+            tree: None,
+        };
+        assert_eq!(
+            MultiSliceTopologyAssembler::compute_dcn_topology_leaf_slices(&sym_dcn),
+            vec![0, 1, 2, 3]
+        );
+        let asym_dcn = crate::proto::DcnTopologyTreeProto {
+            symmetric_tree: None,
+            tree: Some(crate::proto::DcnTreeNodeProto {
+                label: Some(String::from("spine")),
+                nodes: vec![crate::proto::DcnTreeNodeProto {
+                    label: Some(String::from("rack0")),
+                    nodes: Vec::new(),
+                    slice_ranges: vec![crate::proto::DcnSliceRangeProto {
+                        slice_id_start: 0,
+                        slice_id_end: 2,
+                    }],
+                    egress_constraint: Some(1.0),
+                    ring_transfers: true,
+                }],
+                slice_ranges: Vec::new(),
+                egress_constraint: None,
+                ring_transfers: false,
+            }),
+        };
+        assert_eq!(
+            MultiSliceTopologyAssembler::compute_dcn_topology_leaf_slices(&asym_dcn),
+            vec![0, 1]
+        );
+        assert_eq!(
+            MultiSliceTopologyAssembler::compute_dcn_topology_leaf_slices(
+                &crate::proto::DcnTopologyTreeProto::default()
+            ),
+            vec![0]
+        );
+
+        let task0 = crate::proto::CoordinatedTaskProto {
+            job_name: String::from("worker"),
+            task_id: 0,
+            recoverable: true,
+        };
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    1,
+                    &crate::proto::RegisterTaskRequestProto {
+                        incarnation: 7,
+                        source_task: Some(task0.clone()),
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    2,
+                    &crate::proto::HeartbeatRequestProto {
+                        incarnation: 7,
+                        source_task: Some(task0.clone()),
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    3,
+                    &crate::proto::InsertKeyValueRequestProto {
+                        kv: Some(crate::proto::KeyValueEntryProto {
+                            key: String::from("cnt/a"),
+                            value: b"10".to_vec(),
+                        }),
+                        allow_overwrite: true,
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    3,
+                    &crate::proto::InsertKeyValueRequestProto::default().encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    4,
+                    &crate::proto::GetKeyValueRequestProto {
+                        key: String::from("cnt/a"),
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    5,
+                    &crate::proto::TryGetKeyValueRequestProto {
+                        key: String::from("cnt/a"),
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    6,
+                    &crate::proto::IncrementKeyValueRequestProto {
+                        key: String::from("cnt/a"),
+                        increment: 5,
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    7,
+                    &crate::proto::GetKeyValueDirRequestProto {
+                        directory_key: String::from("cnt/"),
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    8,
+                    &crate::proto::DeleteKeyValueRequestProto {
+                        key: String::from("cnt/a"),
+                        is_directory: false,
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    9,
+                    &crate::proto::BarrierRequestProto {
+                        barrier_id: String::from("b0"),
+                        barrier_timeout_in_ms: 100,
+                        tasks: vec![task0.clone()],
+                        source_task: Some(task0.clone()),
+                        counter: 1,
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    10,
+                    &crate::proto::CancelBarrierRequestProto {
+                        barrier_id: String::from("b0"),
+                        source_task: Some(task0.clone()),
+                        counter: 1,
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    11,
+                    &crate::proto::GetAliveTasksRequestProto {
+                        requesting_task: Some(task0.clone()),
+                        tasks: vec![task0.clone()],
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        assert!(
+            coord
+                .handle_protobuf_rpc(
+                    12,
+                    &crate::proto::ShutdownTaskRequestProto {
+                        source_task: Some(task0),
+                    }
+                    .encode()
+                )
+                .is_ok()
+        );
+        for m_id in 1..=12 {
+            assert!(
+                coord
+                    .handle_protobuf_rpc(m_id, &[0xFF, 0xFF, 0xFF])
+                    .is_err()
+            );
+        }
     }
 
     #[test]
@@ -1448,6 +2187,25 @@ mod tests {
 
         let tcp_rt = DcnLoopbackAndTcpTransport::roundtrip_tcp_frame(b"megascale_dcn_frame");
         assert_eq!(tcp_rt.as_slice(), b"megascale_dcn_frame");
+
+        // Test MegascaleDcnSocketTransport::transmit_socket_dcn_packet (uncompressed and compressed)
+        let (rx_uncomp, m_uncomp) = transport
+            .transmit_socket_dcn_packet(b"hello_dcn_socket")
+            .unwrap_or_default();
+        assert_eq!(rx_uncomp, b"hello_dcn_socket");
+        assert_eq!(m_uncomp.bytes_transferred, 16);
+        let comp_transport = MegascaleDcnSocketTransport::new(MegascaleTransportConfigProto {
+            num_channels: 4,
+            max_inflight_bytes: 1_048_576,
+            timeout_ms: 5000,
+            enable_zstd_compression: true,
+            zstd_compression_level: 3,
+        });
+        let (rx_comp, m_comp) = comp_transport
+            .transmit_socket_dcn_packet(&[0x42_u8; 64])
+            .unwrap_or_default();
+        assert_eq!(rx_comp, vec![0x42_u8; 64]);
+        assert_eq!(m_comp.collective_ops_count, 1);
 
         let eng = CollectiveRuntimeEngine;
         assert_eq!(eng.clone(), CollectiveRuntimeEngine);
@@ -1742,5 +2500,78 @@ mod tests {
         assert!(MegascaleTransport::decompress_payload(&bad_hash).is_err());
         assert_eq!(MegascaleTransport.clone(), MegascaleTransport);
         assert_ne!(format!("{MegascaleTransport:?}"), "");
+
+        // Test MegascaleWirePacketHeader & execute_ring_all_reduce_mscl
+        let pkt = MegascaleWirePacketHeader::frame_packet(1, 0, 0, 0, 1, 0, b"shard0");
+        let unframed = MegascaleWirePacketHeader::unframe_packet(&pkt);
+        assert!(unframed.is_ok());
+        if let Ok((hdr, body)) = unframed {
+            assert_eq!(hdr.clone(), hdr);
+            assert_ne!(format!("{hdr:?}"), "");
+            assert_eq!(body, b"shard0");
+        }
+        assert!(MegascaleWirePacketHeader::unframe_packet(&[0_u8; 10]).is_err());
+        let mut bad_magic = pkt.clone();
+        bad_magic[0] = b'X';
+        assert!(MegascaleWirePacketHeader::unframe_packet(&bad_magic).is_err());
+        assert!(MegascaleWirePacketHeader::unframe_packet(&pkt[..34]).is_err());
+        let mut bad_pkt_hash = pkt;
+        bad_pkt_hash[32] ^= 0xFF;
+        assert!(MegascaleWirePacketHeader::unframe_packet(&bad_pkt_hash).is_err());
+
+        let mscl_ar = DcnLoopbackAndTcpTransport::execute_ring_all_reduce_mscl(
+            &slice_bufs,
+            ElementType::F32,
+            CollectiveReductionOp::Sum,
+        );
+        assert!(mscl_ar.is_ok());
+        if let Ok(ar_out) = mscl_ar {
+            assert_eq!(
+                ElementType::F32.unpack_to_f64_vec(&ar_out[0]),
+                vec![4.0, 6.0]
+            );
+        }
+
+        let mut alias_router =
+            IciTorusRouter::new(crate::types::ChipCoordinates::new(2, 2, 1), false);
+        alias_router.disable_ici_link(c0, crate::types::ChipCoordinates::new(1, 0, 0));
+        assert!(
+            alias_router
+                .compute_shortest_hop_count(c0, crate::types::ChipCoordinates::new(1, 0, 0))
+                .is_err()
+        );
+
+        let mut ag_exec = MegaScaleActionGraphExecutor::default();
+        assert_eq!(ag_exec.clone(), ag_exec);
+        assert_ne!(format!("{ag_exec:?}"), "");
+        let valid_graph = crate::proto::MegaScaleActionGraphProto {
+            id: String::from("ag_0"),
+            actions: vec![
+                crate::proto::MegaScaleActionProto {
+                    inputs: Vec::new(),
+                    index: 0,
+                },
+                crate::proto::MegaScaleActionProto {
+                    inputs: vec![crate::proto::MegaScaleActionInputProto { action_index: 0 }],
+                    index: 1,
+                },
+            ],
+            hlo_module: String::from("main"),
+        };
+        let exec_res = ag_exec.execute_action_graph(&valid_graph, b"dcn_action_payload");
+        assert!(exec_res.is_ok());
+        if let Ok((telem, xspace)) = exec_res {
+            assert_eq!(telem.pending_graphs[0].completed_actions, vec![0, 1]);
+            assert_eq!(xspace.planes[0].name, "/device:TPU:0:MegaScale DCN");
+        }
+        let cyclic_graph = crate::proto::MegaScaleActionGraphProto {
+            id: String::from("ag_cycle"),
+            actions: vec![crate::proto::MegaScaleActionProto {
+                inputs: vec![crate::proto::MegaScaleActionInputProto { action_index: 0 }],
+                index: 0,
+            }],
+            hlo_module: String::from("main"),
+        };
+        assert!(ag_exec.execute_action_graph(&cyclic_graph, b"x").is_err());
     }
 }

@@ -1,0 +1,53 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: platforms/asic_sw/proto/core_dump.proto (embedded in libtpu/sdk.so protodesc_cold)
+
+syntax = "proto3";
+
+package asic_sw;
+
+message MachineInfo {
+  string machine_name = 1;
+  string kernel_version = 2;
+  string reason_for_collection = 3;
+}
+
+message TimestampInfo {
+  int64 collection_start_sec = 1;
+  int64 collection_end_sec = 2;
+  int64 boot_time_sec = 3;
+  int64 device_start_sec = 4;
+}
+
+message HardwareInfo {
+  repeated int32 pstate = 1;
+}
+
+message RegisterDump {
+  string register_name = 1;
+  uint64 register_offset = 2;
+  uint64 register_value = 3;
+}
+
+message CoreStateDump {
+  string core_type = 1;
+  int32 core_id = 2;
+  uint64 pc = 3;
+  string hlo_name = 4;
+  repeated RegisterDump registers = 5;
+}
+
+message AnalyzerReport {
+  string analyzer_name = 1;
+  string category = 2;
+  string tag = 3;
+  string message = 4;
+}
+
+message CoreDump {
+  MachineInfo machine_info = 1;
+  TimestampInfo timestamps = 2;
+  HardwareInfo hardware = 3;
+  repeated CoreStateDump core_states = 4;
+  repeated AnalyzerReport analyzer_reports = 5;
+}

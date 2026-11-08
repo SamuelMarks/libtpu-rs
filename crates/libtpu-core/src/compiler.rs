@@ -46,8 +46,10 @@ pub use self::lexer::{
     SpannedToken, TokenSpan,
 };
 pub use self::mlir_bytecode::{
-    BINARY_CUSTOM_ATTR_TYPE_MAGIC, BinaryAttrTypeEntry, MLIR_BYTECODE_MAGIC, MlirBytecodeEncoder,
-    MlirBytecodeHeader, MlirBytecodeOpNode, MlirBytecodeSection, MlirDialectDescriptor,
+    BINARY_CUSTOM_ATTR_TYPE_MAGIC, BinaryAttrTypeEntry, BuiltinDialectAttrTypeDecoder,
+    MLIR_BYTECODE_MAGIC, MlirBytecodeEncoder, MlirBytecodeHeader, MlirBytecodeOpNode,
+    MlirBytecodeSection, MlirDialectDescriptor, SdyAndMosaicAttrTypeDecoder,
+    UpstreamMlirIrSectionReader, UpstreamMlirIrSectionWriter, VhloDialectAttrTypeDecoder,
     decode_mlir_prefix_varint, encode_mlir_prefix_varint,
 };
 pub use self::opcode::{InstructionAttrs, TpuInstructionBundle, TpuOpCode};
@@ -57,8 +59,10 @@ pub use self::parser::{
     resolve_reduction_region_opcode, split_shaped_dims_and_dtype,
 };
 pub use self::passes::{
-    CompiledMemoryStats, CostAnalysis, CseExpressionKey, HloDagAnalysisReport, ParsedShardingSpec,
-    RegisterLivenessInterval, analyze_hlo_computation_dag,
+    CompiledMemoryStats, CostAnalysis, CseExpressionKey, HardwareRegisterFileConfig,
+    HloDagAnalysisReport, LearnedCostModelEvaluator, LinearScanAllocationReport,
+    LinearScanRegisterAllocator, ParsedShardingSpec, RegisterLivenessInterval, SpillAction,
+    analyze_hlo_computation_dag,
 };
 pub use self::serialization::{
     DeepseaRelocatedArtifact, EM_DEEPSEA, EXECUTABLE_FORMAT_VERSION, EXECUTABLE_MAGIC,
@@ -66,9 +70,11 @@ pub use self::serialization::{
     R_DEEPSEA_VMEM_OFF32,
 };
 pub use self::vliw::{
-    AsyncDmaSlot, ExtendedUnarySlot, LloVliwScheduler, MatrixMxuSlot, PolyhedralTileSchedule,
-    ScalarAluSlot, TensorCoreVliwBundle, VectorAluSlot, VliwBundleHeader, VliwInstructionWord,
-    VliwScoreboard,
+    AsyncDmaSlot, ExtendedUnarySlot, LloVliwScheduler, MatrixMxuSlot, ModuloPipelinePlan,
+    ModuloPipelineScheduler, ModuloPipelineStage, PfcV4BundleWord, PolyhedralTileSchedule,
+    ScalarAluSlot, TensorCoreVliwBundle, VectorAluSlot, VfcV5BundleWord, VfkV6V7BundleWord,
+    VliwBundleHeader, VliwInstructionWord, VliwScoreboard, compute_vliw_bundle_crc8,
+    format_llo_assembly, parse_llo_assembly,
 };
 
 use crate::error::{LibTpuError, LibTpuResult};
@@ -265,7 +271,7 @@ impl CompiledProgram {
                 Self::lower_from_hlo_proto(&hlo_proto)?
             } else if let Some(bc_hdr) = decoded_bc.as_ref().filter(|h| !h.ir_op_records.is_empty())
             {
-                let ast_mod = bc_hdr.to_ast_module();
+                let ast_mod = UpstreamMlirIrSectionReader::read_ast_module(bc_hdr)?;
                 let parsed = lower_ast_module_to_parsed_hlo(&ast_mod)?;
                 let extracted_name = ast_mod.name.unwrap_or_default();
                 (
@@ -768,6 +774,7 @@ mod tests {
             env_option_overrides: std::collections::BTreeMap::new(),
             profile_version: 1,
             serialized_multi_slice_config: Vec::new(),
+            ..CompileOptionsProto::default()
         };
         let opts_bytes = opts.encode();
 
@@ -975,6 +982,103 @@ ENTRY main { ROOT r = f32[4] parameter(0) }",
         if let Ok(p) = with_cfg_prog {
             assert_eq!(p.name, "binary_hlo_add");
             assert_eq!(p.opcode, TpuOpCode::AddF32);
+        }
+
+        for (sub_op_name, parent_op_name) in [
+            ("maximum", "reduce"),
+            ("minimum", "reduce"),
+            ("multiply", "reduce"),
+            ("and", "reduce"),
+            ("or", "reduce"),
+            ("xor", "reduce"),
+            ("add", "fusion"),
+            ("subtract", "call"),
+            ("add", "while"),
+            ("negate", "conditional"),
+        ] {
+            let sub_hlo = HloModuleProto {
+                name: String::from("binary_subcomp"),
+                entry_computation_name: String::from("main"),
+                entry_computation_id: 2,
+                computations: vec![
+                    HloComputationProto {
+                        name: String::from("sub"),
+                        id: 1,
+                        root_id: 3,
+                        instructions: vec![
+                            HloInstructionProto {
+                                name: String::from("sp0"),
+                                opcode: String::from("parameter"),
+                                id: 1,
+                                parameter_number: 0,
+                                ..HloInstructionProto::default()
+                            },
+                            HloInstructionProto {
+                                name: String::from("sp1"),
+                                opcode: String::from("parameter"),
+                                id: 2,
+                                parameter_number: 1,
+                                ..HloInstructionProto::default()
+                            },
+                            HloInstructionProto {
+                                name: String::from("sub_op"),
+                                opcode: String::from(sub_op_name),
+                                id: 3,
+                                operand_ids: vec![1, 2],
+                                ..HloInstructionProto::default()
+                            },
+                        ],
+                        ..HloComputationProto::default()
+                    },
+                    HloComputationProto {
+                        name: String::from("main"),
+                        id: 2,
+                        root_id: 12,
+                        instructions: vec![
+                            HloInstructionProto {
+                                name: String::from("p0"),
+                                opcode: String::from("parameter"),
+                                shape: Some(ShapeProto {
+                                    element_type: 11,
+                                    dimensions: vec![4],
+                                    ..ShapeProto::default()
+                                }),
+                                id: 10,
+                                parameter_number: 0,
+                                ..HloInstructionProto::default()
+                            },
+                            HloInstructionProto {
+                                name: String::from("p1"),
+                                opcode: String::from("parameter"),
+                                shape: Some(ShapeProto {
+                                    element_type: 11,
+                                    dimensions: vec![4],
+                                    ..ShapeProto::default()
+                                }),
+                                id: 11,
+                                parameter_number: 1,
+                                ..HloInstructionProto::default()
+                            },
+                            HloInstructionProto {
+                                name: String::from("root_op"),
+                                opcode: String::from(parent_op_name),
+                                id: 12,
+                                operand_ids: vec![10, 11],
+                                called_computation_ids: vec![1, 99],
+                                replica_groups: vec![crate::proto::ReplicaGroup {
+                                    replica_ids: vec![0, 1],
+                                }],
+                                ..HloInstructionProto::default()
+                            },
+                        ],
+                        ..HloComputationProto::default()
+                    },
+                ],
+                id: 1,
+                ..HloModuleProto::default()
+            };
+            let compiled_sub = CompiledProgram::compile("hlo", &sub_hlo.encode(), b"");
+            assert!(compiled_sub.is_ok());
         }
 
         let mut mlir_bc = Vec::from(MLIR_BYTECODE_MAGIC.as_slice());
@@ -3305,6 +3409,32 @@ ENTRY %main (x: f32[4]) -> f32[4] {
                 tile_dims: vec![8, 128],
                 memory_space: 1,
             },
+            BinaryAttrTypeEntry::UnknownLocAttr,
+            BinaryAttrTypeEntry::FileLineColLocAttr {
+                file_string_index: 3,
+                line: 42,
+                column: 7,
+            },
+            BinaryAttrTypeEntry::FileLineColLocAttr {
+                file_string_index: 99,
+                line: 1,
+                column: 1,
+            },
+            BinaryAttrTypeEntry::CallSiteLocAttr {
+                callee_loc_index: 0,
+                caller_loc_index: 1,
+            },
+            BinaryAttrTypeEntry::FusedLocAttr {
+                loc_indices: vec![0, 1],
+            },
+            BinaryAttrTypeEntry::NameLocAttr {
+                name_string_index: 3,
+                child_loc_index: 0,
+            },
+            BinaryAttrTypeEntry::NameLocAttr {
+                name_string_index: 99,
+                child_loc_index: 0,
+            },
         ];
         let mut bin_mod_enc = MlirBytecodeEncoder::new("MLIR20.0.0");
         for s in &sample_strings {
@@ -3338,6 +3468,11 @@ ENTRY %main (x: f32[4]) -> f32[4] {
         let mut bad_tag = vec![BINARY_CUSTOM_ATTR_TYPE_MAGIC];
         bad_tag.extend_from_slice(&encode_mlir_prefix_varint(99));
         assert!(BinaryAttrTypeEntry::decode_binary(&bad_tag).is_err());
+        let mut trunc_float = vec![BINARY_CUSTOM_ATTR_TYPE_MAGIC];
+        trunc_float.extend_from_slice(&encode_mlir_prefix_varint(6));
+        trunc_float.extend_from_slice(&encode_mlir_prefix_varint(11));
+        trunc_float.extend_from_slice(&[1, 2, 3]);
+        assert!(BinaryAttrTypeEntry::decode_binary(&trunc_float).is_err());
 
         let _ = bin_mod_enc.add_resource_blob(vec![
             0, 0, 128, 63, 0, 0, 0, 64, 0, 0, 64, 64, 0, 0, 128, 64,
@@ -3412,6 +3547,11 @@ ENTRY %main (x: f32[4]) -> f32[4] {
                 %y = f32[] parameter(1)
                 ROOT %m = f32[] or(%x, %y)
             }
+            %xor_reducer (x: f32[], y: f32[]) -> f32[] {
+                %x = f32[] parameter(0)
+                %y = f32[] parameter(1)
+                ROOT %m = f32[] xor(%x, %y)
+            }
             %fused_sub (p0: f32[4], p1: f32[4]) -> f32[4] {
                 %p0 = f32[4] parameter(0)
                 %p1 = f32[4] parameter(1)
@@ -3443,10 +3583,15 @@ ENTRY %main (x: f32[4]) -> f32[4] {
                 %r_mul = f32[4] reduce(%r_min, %arg1), dimensions={0}, to_apply=%mul_reducer
                 %r_and = f32[4] reduce(%r_mul, %arg1), dimensions={0}, to_apply=%and_reducer
                 %r_or = f32[4] reduce(%r_and, %arg1), dimensions={0}, to_apply=%or_reducer
-                %fus = f32[4] fusion(%r_or, %arg1), kind=kLoop, calls=%fused_sub
+                %r_xor = f32[4] reduce(%r_or, %arg1), dimensions={0}, to_apply=%xor_reducer
+                %fus = f32[4] fusion(%r_xor, %arg1), kind=kLoop, calls=%fused_sub
                 %called = f32[4] call(%fus, %arg1), to_apply=%fused_sub
                 %wh = f32[4] while(%called), condition=%while_cond, body=%while_body
-                ROOT %cond = f32[4] conditional(%arg0, %wh, %arg1), true_computation=%true_branch, false_computation=%false_branch
+                %cv = f32[4] convolution(%wh, %arg1), window={size=3x3 stride=1x1 pad=1_1x1_1 lhs_dilate=1x1 rhs_dilate=1x1}, dim_labels=b01f_01io->b01f
+                %dt = f32[4] dot(%cv, %arg1), lhs_batch_dims={0}, lhs_contracting_dims={1}, rhs_batch_dims={0}, rhs_contracting_dims={1}
+                %pd = f32[4] pad(%dt, %arg1), padding=1_1_0x0_2_1
+                %ar = f32[4] all-reduce(%pd), channel_id=5, replica_groups={{0,1},{2,3}}, to_apply=%max_reducer, backend_config=opaquecfg
+                ROOT %cond = f32[4] conditional(%arg0, %ar, %arg1), true_computation=%true_branch, false_computation=%false_branch
             }
         ";
         let parsed_mc = HloParser::parse_verified_ast_module(multi_comp_hlo);
@@ -3848,6 +3993,434 @@ ENTRY %main (x: f32[4]) -> f32[4] {
             MlirAttribute::DenseResource(String::from("res")),
         ] {
             assert_ne!(attr_val.to_mlir_string(), "");
+        }
+
+        assert!(BinaryAttrTypeEntry::decode_binary(&[]).is_err());
+        let encoded_scalar = BinaryAttrTypeEntry::ScalarType(ElementType::F32).encode_binary();
+        let unprefixed_scalar = encoded_scalar.get(1..).unwrap_or_default();
+        assert_eq!(
+            BinaryAttrTypeEntry::decode_binary(unprefixed_scalar),
+            Ok(BinaryAttrTypeEntry::ScalarType(ElementType::F32))
+        );
+        let std_op_node = MlirBytecodeOpNode {
+            name_index: 0,
+            encoding_mask: 0x06,
+            attr_dict_index: None,
+            operands: vec![0, 1],
+            result_type_indices: vec![0],
+            successors: Vec::new(),
+            num_regions: 0,
+            properties_index: None,
+            inline_regions: Vec::new(),
+            region_block_arg_types: Vec::new(),
+        };
+        let mut std_enc = MlirBytecodeEncoder::new("libtpu-rs");
+        let _ = std_enc.intern_string("stablehlo.add");
+        std_enc.dialects.push(String::from("stablehlo"));
+        let _ = std_enc.intern_attr_type("tensor<4xf32>");
+        std_enc.operations.push(std_op_node);
+        let std_bc = std_enc.encode_to_bytes();
+        if let Ok(std_hdr) = MlirBytecodeHeader::decode(&std_bc) {
+            assert_eq!(std_hdr.decode_ir_operations().len(), 1);
+            assert!(UpstreamMlirIrSectionReader::read_ast_module(&std_hdr).is_ok());
+        }
+        let empty_hdr = MlirBytecodeHeader {
+            version: 1,
+            producer: String::new(),
+            section_count: 0,
+            sections: Vec::new(),
+            string_table: Vec::new(),
+            dialects: Vec::new(),
+            attr_type_offsets: Vec::new(),
+            attr_type_entries: Vec::new(),
+            ir_op_records: Vec::new(),
+            resources: Vec::new(),
+            resource_offsets: Vec::new(),
+            properties: Vec::new(),
+        };
+        assert!(UpstreamMlirIrSectionReader::read_ast_module(&empty_hdr).is_err());
+
+        for (w, s) in [
+            (1, 0),
+            (2, 2),
+            (2, 1),
+            (4, 2),
+            (4, 1),
+            (8, 2),
+            (8, 1),
+            (16, 2),
+            (16, 1),
+            (32, 2),
+            (32, 1),
+            (64, 2),
+            (64, 1),
+        ] {
+            let entry = BinaryAttrTypeEntry::IntegerType {
+                width: w,
+                signedness: s,
+            };
+            assert!(BuiltinDialectAttrTypeDecoder::decode_type(&entry, &[]).is_some());
+        }
+        assert!(
+            BuiltinDialectAttrTypeDecoder::decode_type(
+                &BinaryAttrTypeEntry::ScalarType(ElementType::Bf16),
+                &[],
+            )
+            .is_some()
+        );
+        for space in 0..=4 {
+            assert!(
+                BuiltinDialectAttrTypeDecoder::decode_type(
+                    &BinaryAttrTypeEntry::RankedTensorType {
+                        dims: vec![-1, 8],
+                        element_type: ElementType::F32,
+                        memory_space: space,
+                    },
+                    &[],
+                )
+                .is_some()
+            );
+        }
+        let base_ty = MlirType::Scalar(ElementType::F32);
+        assert!(
+            BuiltinDialectAttrTypeDecoder::decode_type(
+                &BinaryAttrTypeEntry::FunctionType {
+                    input_type_indices: vec![0],
+                    result_type_indices: vec![0],
+                },
+                &[base_ty],
+            )
+            .is_some()
+        );
+        assert!(
+            BuiltinDialectAttrTypeDecoder::decode_type(&BinaryAttrTypeEntry::UnknownLocAttr, &[],)
+                .is_none()
+        );
+
+        let str_tbl = vec![
+            String::from("k0"),
+            String::from("#vhlo.comparison_direction_v1<LT>"),
+            String::from("#vhlo.comparison_type_v1<FLOAT>"),
+            String::from("#vhlo.precision_v1<HIGH>"),
+            String::from("#vhlo.precision_v1<HIGHEST>"),
+            String::from("#vhlo.precision_v1<DEFAULT>"),
+            String::from("#vhlo.fft_type_v1<IFFT>"),
+            String::from("#vhlo.fft_type_v1<RFFT>"),
+            String::from("#vhlo.fft_type_v1<IRFFT>"),
+            String::from("#vhlo.fft_type_v1<FFT>"),
+            String::from("#vhlo.transpose_v1<TRANSPOSE>"),
+            String::from("#vhlo.transpose_v1<ADJOINT>"),
+            String::from("#vhlo.transpose_v1<NO_TRANSPOSE>"),
+        ];
+        let mut resolved_attrs = Vec::new();
+        for b_entry in [
+            BinaryAttrTypeEntry::IntegerAttr {
+                value: 1,
+                element_type: ElementType::Pred,
+            },
+            BinaryAttrTypeEntry::IntegerAttr {
+                value: 7,
+                element_type: ElementType::S32,
+            },
+            BinaryAttrTypeEntry::FloatAttr {
+                bits: 1.0_f64.to_bits(),
+                element_type: ElementType::F32,
+            },
+            BinaryAttrTypeEntry::StringAttr { string_index: 0 },
+            BinaryAttrTypeEntry::StringAttr { string_index: 99 },
+            BinaryAttrTypeEntry::UnknownLocAttr,
+            BinaryAttrTypeEntry::FileLineColLocAttr {
+                file_string_index: 0,
+                line: 1,
+                column: 1,
+            },
+            BinaryAttrTypeEntry::FileLineColLocAttr {
+                file_string_index: 99,
+                line: 2,
+                column: 3,
+            },
+            BinaryAttrTypeEntry::DenseElementsAttr {
+                dims: vec![1],
+                element_type: ElementType::F32,
+                is_splat: true,
+                raw_bytes: vec![0, 0, 0x80, 0x3F],
+            },
+            BinaryAttrTypeEntry::DenseElementsAttr {
+                dims: vec![1],
+                element_type: ElementType::F32,
+                is_splat: false,
+                raw_bytes: Vec::new(),
+            },
+            BinaryAttrTypeEntry::DenseResourceAttr {
+                dims: vec![4],
+                element_type: ElementType::F32,
+                resource_index: 0,
+            },
+        ] {
+            if let Some(a) =
+                BuiltinDialectAttrTypeDecoder::decode_attribute(&b_entry, &str_tbl, &resolved_attrs)
+            {
+                resolved_attrs.push(a);
+            }
+        }
+        for loc_entry in [
+            BinaryAttrTypeEntry::DictionaryAttr {
+                entries: vec![(0, 0), (99, 99)],
+            },
+            BinaryAttrTypeEntry::CallSiteLocAttr {
+                callee_loc_index: 5,
+                caller_loc_index: 99,
+            },
+            BinaryAttrTypeEntry::FusedLocAttr {
+                loc_indices: vec![5, 99],
+            },
+            BinaryAttrTypeEntry::NameLocAttr {
+                name_string_index: 0,
+                child_loc_index: 5,
+            },
+            BinaryAttrTypeEntry::NameLocAttr {
+                name_string_index: 99,
+                child_loc_index: 99,
+            },
+        ] {
+            assert!(
+                BuiltinDialectAttrTypeDecoder::decode_attribute(
+                    &loc_entry,
+                    &str_tbl,
+                    &resolved_attrs,
+                )
+                .is_some()
+            );
+        }
+        assert!(
+            BuiltinDialectAttrTypeDecoder::decode_attribute(
+                &BinaryAttrTypeEntry::ScalarType(ElementType::F32),
+                &str_tbl,
+                &resolved_attrs,
+            )
+            .is_none()
+        );
+        assert!(
+            VhloDialectAttrTypeDecoder::decode_vhlo_attribute(
+                &BinaryAttrTypeEntry::DotDimensionNumbersAttr {
+                    lhs_batching: vec![0],
+                    rhs_batching: vec![0],
+                    lhs_contracting: vec![1],
+                    rhs_contracting: vec![1],
+                },
+                &str_tbl,
+            )
+            .is_some()
+        );
+        for s_idx in 1..=12_u32 {
+            assert!(
+                VhloDialectAttrTypeDecoder::decode_vhlo_attribute(
+                    &BinaryAttrTypeEntry::StringAttr {
+                        string_index: s_idx
+                    },
+                    &str_tbl,
+                )
+                .is_some()
+            );
+        }
+        assert!(
+            VhloDialectAttrTypeDecoder::decode_vhlo_attribute(
+                &BinaryAttrTypeEntry::StringAttr { string_index: 0 },
+                &str_tbl,
+            )
+            .is_none()
+        );
+        assert!(
+            VhloDialectAttrTypeDecoder::decode_vhlo_attribute(
+                &BinaryAttrTypeEntry::UnknownLocAttr,
+                &str_tbl,
+            )
+            .is_none()
+        );
+        assert!(
+            SdyAndMosaicAttrTypeDecoder::decode_attribute(
+                &BinaryAttrTypeEntry::SdyMeshAttr {
+                    axes: vec![(0, 2), (99, 4)],
+                },
+                &str_tbl,
+            )
+            .is_some()
+        );
+        assert!(
+            SdyAndMosaicAttrTypeDecoder::decode_attribute(
+                &BinaryAttrTypeEntry::SdyShardingAttr {
+                    mesh_name_index: 0,
+                    dim_axis_indices: vec![vec![0, 99]],
+                },
+                &str_tbl,
+            )
+            .is_some()
+        );
+        assert!(
+            SdyAndMosaicAttrTypeDecoder::decode_attribute(
+                &BinaryAttrTypeEntry::SdyShardingAttr {
+                    mesh_name_index: 99,
+                    dim_axis_indices: Vec::new(),
+                },
+                &str_tbl,
+            )
+            .is_some()
+        );
+        for sp in 0..=4 {
+            assert!(
+                SdyAndMosaicAttrTypeDecoder::decode_attribute(
+                    &BinaryAttrTypeEntry::TpuTiledLayoutAttr {
+                        tile_dims: vec![8, 128],
+                        memory_space: sp,
+                    },
+                    &str_tbl,
+                )
+                .is_some()
+            );
+        }
+        assert!(
+            SdyAndMosaicAttrTypeDecoder::decode_attribute(
+                &BinaryAttrTypeEntry::UnknownLocAttr,
+                &str_tbl,
+            )
+            .is_none()
+        );
+
+        let mut bin_enc = MlirBytecodeEncoder::new("MLIR20.0.0");
+        let _ = bin_enc.intern_string("stablehlo.add");
+        bin_enc.dialects.push(String::from("stablehlo"));
+        let _ = bin_enc.intern_binary_attr_type(BinaryAttrTypeEntry::RankedTensorType {
+            dims: vec![4],
+            element_type: ElementType::F32,
+            memory_space: 0,
+        });
+        let _ = bin_enc
+            .intern_binary_attr_type(BinaryAttrTypeEntry::SdyMeshAttr { axes: vec![(0, 2)] });
+        let _ = bin_enc.intern_binary_attr_type(BinaryAttrTypeEntry::DotDimensionNumbersAttr {
+            lhs_batching: Vec::new(),
+            rhs_batching: Vec::new(),
+            lhs_contracting: vec![1],
+            rhs_contracting: vec![0],
+        });
+        let _ = bin_enc.intern_binary_attr_type(BinaryAttrTypeEntry::UnknownLocAttr);
+        bin_enc.operations.push(MlirBytecodeOpNode {
+            name_index: 0,
+            encoding_mask: 0x06,
+            attr_dict_index: None,
+            operands: vec![0, 1],
+            result_type_indices: vec![0],
+            successors: Vec::new(),
+            num_regions: 0,
+            properties_index: None,
+            inline_regions: Vec::new(),
+            region_block_arg_types: Vec::new(),
+        });
+        let bin_bc_bytes = bin_enc.encode_to_bytes();
+        if let Ok(bin_hdr) = MlirBytecodeHeader::decode(&bin_bc_bytes) {
+            if let Ok(read_mod) = UpstreamMlirIrSectionReader::read_ast_module(&bin_hdr) {
+                assert!(!read_mod.sdy_meshes.is_empty());
+                let written = UpstreamMlirIrSectionWriter::write_ast_module(&read_mod, 2);
+                assert!(written.starts_with(MLIR_BYTECODE_MAGIC));
+            }
+        }
+
+        if let Ok(cost_prog) = CompiledProgram::compile(
+            "mlir",
+            b"module @cm { func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.exponential %arg0 : tensor<4xf32> return %0 : tensor<4xf32> } }",
+            b"",
+        ) {
+            for tpu_gen in [
+                crate::types::TpuGeneration::V2,
+                crate::types::TpuGeneration::V3,
+                crate::types::TpuGeneration::V4,
+                crate::types::TpuGeneration::V4Lite,
+                crate::types::TpuGeneration::V5e,
+                crate::types::TpuGeneration::V5p,
+                crate::types::TpuGeneration::V6e,
+                crate::types::TpuGeneration::V7x,
+            ] {
+                let eval_def = LearnedCostModelEvaluator::from_options(tpu_gen, None);
+                let dict = eval_def.evaluate_dictionary(&cost_prog);
+                assert!(dict.contains_key("optimal_seconds"));
+                let opts_off = crate::proto::EmitterLearnedCostModelOptionsProto {
+                    enabled: false,
+                    model_version: String::from("v2"),
+                    confidence_threshold: 0.9,
+                };
+                let eval_off = LearnedCostModelEvaluator::from_options(tpu_gen, Some(&opts_off));
+                assert_eq!(eval_off.clone(), eval_off);
+                assert_ne!(format!("{eval_off:?}"), "");
+                let dict_off = eval_off.evaluate_dictionary(&cost_prog);
+                assert!(dict_off.contains_key("vmem_bytes"));
+            }
+        }
+
+        let msa_env = crate::proto::TpuCompilationEnvironmentProto {
+            xla_tpu_scoped_vmem_limit_kib: 1,
+            memory_space_assignment_options: Some(
+                crate::proto::MemorySpaceAssignmentOptionsProto {
+                    expanded_scoped_alternate_memory_mode: 2,
+                    tensor_overrides: Some(crate::proto::MsaTensorOverridesProto {
+                        pinned_hlo_instruction_names: Vec::new(),
+                        max_alternate_memory_bytes: 64,
+                    }),
+                    memory_bound_loop_optimizer_options: None,
+                    preferred_prefetch_overrides: None,
+                    sort_order_overrides: None,
+                },
+            ),
+            ..crate::proto::TpuCompilationEnvironmentProto::default()
+        };
+        let msa_prog = CompiledProgram::compile(
+            "mlir",
+            b"module @msa { func.func @main(%a: tensor<128xf32>, %b: tensor<128xf32>) -> tensor<128xf32> { %0 = stablehlo.add %a, %b : tensor<128xf32> func.return %0 : tensor<128xf32> } }",
+            b"",
+        );
+        assert!(msa_prog.is_ok());
+        if let Ok(mut mp) = msa_prog {
+            mp.compile_options_bytes = msa_env.encode();
+            mp.pass_vmem_scratchpad_allocation();
+            assert_eq!(
+                mp.instruction_bundles.first().map(|b| b.opcode),
+                Some(TpuOpCode::Infeed)
+            );
+            assert_eq!(
+                mp.instruction_bundles.last().map(|b| b.opcode),
+                Some(TpuOpCode::Outfeed)
+            );
+            for idx in 2..=6_u32 {
+                mp.instruction_bundles.push(TpuInstructionBundle {
+                    pc_offset: idx,
+                    opcode: TpuOpCode::AddF32,
+                    operand_slots: vec![0, 1],
+                    output_slot: idx as usize,
+                    sync_flag_id: idx + 1,
+                    attrs: InstructionAttrs::default(),
+                });
+            }
+            if let Some(first_b) = mp.instruction_bundles.first_mut() {
+                first_b.attrs.fused_epilogue_op = Some(TpuOpCode::TanhF32);
+            }
+            let fusions = mp.build_fused_computations_proto();
+            assert_eq!(fusions.len(), 1);
+            assert!(fusions.first().is_some_and(|f| f.is_fusion_computation));
+            let (spliced_vliw, spill_rep) =
+                mp.encode_vliw_with_register_spills(crate::types::TpuGeneration::V4, 1);
+            assert_ne!(spill_rep.spill_actions.len(), 0);
+            assert!(spliced_vliw.len() > mp.instruction_bundles.len());
+            for tpu_gen in [
+                crate::types::TpuGeneration::V5e,
+                crate::types::TpuGeneration::V6e,
+            ] {
+                let mut g_cfg = crate::config::global_init_config();
+                g_cfg.generation = tpu_gen;
+                crate::config::set_global_init_config(g_cfg);
+                let bc_proto = mp.build_barnacore_executable_proto();
+                assert_eq!(bc_proto.programs.len(), 1);
+            }
+            let cm_proto = mp.build_compiler_metadata_proto();
+            assert_eq!(cm_proto.module_name, mp.name);
+            assert_ne!(cm_proto.hlo_to_llo_mappings.len(), 0);
         }
     }
 

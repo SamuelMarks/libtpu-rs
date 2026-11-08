@@ -232,6 +232,36 @@ Status LoadedExecutable::execute_binary(uint32_t device_id,
   return st;
 }
 
+Status LoadedExecutable::execute_sharded(
+    const PJRT_Buffer *const *const *arg_lists, size_t num_devices,
+    size_t num_args, PJRT_Buffer **const *output_lists) const noexcept {
+  PJRT_LoadedExecutable_Execute_Args ex_args{
+      sizeof(PJRT_LoadedExecutable_Execute_Args),
+      nullptr,
+      handle_,
+      nullptr,
+      arg_lists,
+      num_devices,
+      num_args,
+      output_lists,
+      nullptr,
+      nullptr};
+  return pjrt_error_to_status(
+      GetPjrtApi()->pjrt_loaded_executable_execute(&ex_args));
+}
+
+size_t LoadedExecutable::cost_analysis_property_count() const noexcept {
+  PJRT_LoadedExecutable_GetExecutable_Args get_ex_args{
+      sizeof(PJRT_LoadedExecutable_GetExecutable_Args), nullptr, handle_,
+      nullptr};
+  (void)GetPjrtApi()->pjrt_loaded_executable_get_executable(&get_ex_args);
+  PJRT_Executable_GetCostAnalysis_Args cost_args{
+      sizeof(PJRT_Executable_GetCostAnalysis_Args), nullptr,
+      get_ex_args.executable, nullptr, 0};
+  (void)GetPjrtApi()->pjrt_executable_get_cost_analysis(&cost_args);
+  return cost_args.num_properties;
+}
+
 Status LoadedExecutable::serialize(uint8_t *out_bytes, size_t max_len,
                                    size_t *out_len) const noexcept {
   PJRT_LoadedExecutable_GetExecutable_Args get_ex_args{
@@ -1262,10 +1292,15 @@ size_t TpuExecutableInspector::set_and_query_compilation_env(
   PJRT_Megascale_Query_Args set_args{sizeof(PJRT_Megascale_Query_Args), nullptr,
                                      field_tag, 0};
   (void)PJRT_TpuExecutable_SetTpuCompilationEnv(&set_args);
-  PJRT_Megascale_Data_Args get_args{sizeof(PJRT_Megascale_Data_Args), nullptr,
-                                    field_tag, 0, 0};
+  PJRT_TpuExecutable_ProtoQuery_Args get_args{
+      sizeof(PJRT_TpuExecutable_ProtoQuery_Args),
+      nullptr,
+      executable_,
+      0,
+      0,
+      nullptr};
   (void)PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString(&get_args);
-  return set_args.out_value + get_args.out_second;
+  return set_args.out_value + get_args.serialized_bytes_size;
 }
 
 ShardingsInspector::ShardingsInspector(PJRT_Executable *executable) noexcept
@@ -1293,6 +1328,141 @@ size_t ShardingsInspector::output_sharding_count() const noexcept {
       nullptr};
   (void)PJRT_Shardings_OutputShardings(&args);
   return args.num_items;
+}
+
+Coordinator::Coordinator() noexcept : handle_(libtpu_rs_coordinator_create()) {}
+
+Coordinator::~Coordinator() noexcept { libtpu_rs_coordinator_destroy(handle_); }
+
+Coordinator::Coordinator(Coordinator &&other) noexcept
+    : handle_(other.handle_) {
+  other.handle_ = nullptr;
+}
+
+Coordinator &Coordinator::operator=(Coordinator &&other) noexcept {
+  void *next = other.handle_;
+  other.handle_ = nullptr;
+  libtpu_rs_coordinator_destroy(handle_);
+  handle_ = next;
+  return *this;
+}
+
+Status Coordinator::put_key_value(const char *key,
+                                  const std::string &value) noexcept {
+  const LibTpuCStatus st = libtpu_rs_coordinator_put_kv(
+      handle_, key, reinterpret_cast<const uint8_t *>(value.data()),
+      value.size());
+  return Status(st);
+}
+
+std::string Coordinator::get_key_value(const char *key) const noexcept {
+  const size_t len = libtpu_rs_coordinator_get_kv(handle_, key, nullptr, 0);
+  if (len == 0) {
+    return "";
+  }
+  std::string out(len, '\0');
+  (void)libtpu_rs_coordinator_get_kv(
+      handle_, key, reinterpret_cast<uint8_t *>(&out[0]), out.size());
+  return out;
+}
+
+std::string emit_proto_schema(const char *full_message_name) noexcept {
+  const size_t len = libtpu_rs_emit_proto_schema(full_message_name, nullptr, 0);
+  if (len == 0) {
+    return "";
+  }
+  std::string out(len + 1, '\0');
+  (void)libtpu_rs_emit_proto_schema(full_message_name, &out[0], out.size());
+  out.resize(len);
+  return out;
+}
+
+std::string
+disassemble_executable_llo(const LoadedExecutable &executable) noexcept {
+  const size_t len =
+      libtpu_rs_disassemble_executable_llo(executable.raw(), nullptr, 0);
+  if (len == 0) {
+    return "";
+  }
+  std::string out(len + 1, '\0');
+  (void)libtpu_rs_disassemble_executable_llo(executable.raw(), &out[0],
+                                             out.size());
+  out.resize(len);
+  return out;
+}
+
+std::string read_core_dump_json(const uint8_t *raw_bytes,
+                                size_t raw_len) noexcept {
+  const size_t len = libtpu_rs_read_core_dump(raw_bytes, raw_len, nullptr, 0);
+  if (len == 0) {
+    return "";
+  }
+  std::string out(len + 1, '\0');
+  (void)libtpu_rs_read_core_dump(raw_bytes, raw_len, &out[0], out.size());
+  out.resize(len);
+  return out;
+}
+
+std::string read_stall_summaries_json(const uint8_t *raw_bytes,
+                                      size_t raw_len) noexcept {
+  const size_t len =
+      libtpu_rs_read_stall_summaries(raw_bytes, raw_len, nullptr, 0);
+  if (len == 0) {
+    return "";
+  }
+  std::string out(len + 1, '\0');
+  (void)libtpu_rs_read_stall_summaries(raw_bytes, raw_len, &out[0], out.size());
+  out.resize(len);
+  return out;
+}
+
+std::string read_compiler_metadata_json(const uint8_t *raw_bytes,
+                                        size_t raw_len) noexcept {
+  const size_t len =
+      libtpu_rs_read_compiler_metadata(raw_bytes, raw_len, nullptr, 0);
+  if (len == 0) {
+    return "";
+  }
+  std::string out(len + 1, '\0');
+  (void)libtpu_rs_read_compiler_metadata(raw_bytes, raw_len, &out[0],
+                                         out.size());
+  out.resize(len);
+  return out;
+}
+
+Status register_ffi_handler(const char *target_name,
+                            XLA_FFI_Handler handler) noexcept {
+  const LibTpuCStatus st = libtpu_rs_register_ffi_handler(target_name, handler);
+  return Status(st);
+}
+
+std::string
+inspect_register_allocation(const LoadedExecutable &executable) noexcept {
+  const size_t len =
+      libtpu_rs_inspect_register_allocation(executable.raw(), nullptr, 0);
+  if (len == 0) {
+    return "";
+  }
+  std::string out(len + 1, '\0');
+  (void)libtpu_rs_inspect_register_allocation(executable.raw(), &out[0],
+                                              out.size());
+  out.resize(len);
+  return out;
+}
+
+std::string query_chip_config_summary() noexcept {
+  const size_t len = libtpu_rs_query_chip_config_summary(nullptr, 0);
+  std::string out(len + 1, '\0');
+  (void)libtpu_rs_query_chip_config_summary(&out[0], out.size());
+  out.resize(len);
+  return out;
+}
+
+uint32_t compute_ici_route(uint32_t src_x, uint32_t src_y, uint32_t src_z,
+                           uint32_t dst_x, uint32_t dst_y, uint32_t dst_z,
+                           bool wrap_around) noexcept {
+  return libtpu_rs_compute_ici_route(src_x, src_y, src_z, dst_x, dst_y, dst_z,
+                                     wrap_around ? 1 : 0);
 }
 
 } // namespace libtpu

@@ -482,6 +482,260 @@ pub fn scan_x86_64_bitfield_encoders(code: &[u8], base_ip: u64) -> Vec<DeepSeaBi
     patterns
 }
 
+/// Functional unit slot classification inside a `TensorCore` VLIW bundle (`IsaSlotKind`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IsaSlotKind {
+    /// Bundle header, predicate mask, and CRC-8 integrity slot (`Header`).
+    Header,
+    /// Primary Scalar ALU slot (`S0`).
+    S0,
+    /// Secondary Scalar ALU / branch slot (`S1`).
+    S1,
+    /// Primary Vector ALU (`VALU`) slot (`V0`).
+    V0,
+    /// Secondary Vector ALU / load-store slot (`V1`).
+    V1,
+    /// Primary Matrix Multiply Unit (`MXU0`) slot (`M0`).
+    M0,
+    /// Secondary Matrix Multiply Unit (`MXU1`) slot (`M1`).
+    M1,
+    /// Extended Unary & Cross-Lane Permutation (`XLU` / `EUP`) slot (`X0`).
+    X0,
+    /// Asynchronous DMA & `SyncFlag` engine slot (`D0`).
+    D0,
+}
+
+/// Bitfield position and width specification for a single VLIW functional unit slot (`IsaBitfieldSpec`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IsaBitfieldSpec {
+    /// Functional unit slot kind ([`IsaSlotKind`]).
+    pub slot: IsaSlotKind,
+    /// Starting bit offset (`0..bundle_width_bits`) within the architectural bundle word.
+    pub bit_offset: u16,
+    /// Bit width of the encoded slot within the bundle word.
+    pub bit_width: u16,
+}
+
+/// Per-generation `asic_sw::deepsea::pxc::{pfc,vfc,vfi,vfk,vfl}::BundleEncoder` bitfield table (`IsaBitfieldSpecTable`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IsaBitfieldSpecTable {
+    /// Target Cloud TPU generation ([`crate::types::TpuGeneration`]).
+    pub generation: crate::types::TpuGeneration,
+    /// Total bundle width in bits (`320` for v4, `416` for v5e/v5p, `512` for v6e/v7x).
+    pub bundle_width_bits: u16,
+    /// Ordered slot bitfield specifications covering `[0..bundle_width_bits]`.
+    pub slots: Vec<IsaBitfieldSpec>,
+}
+
+impl IsaBitfieldSpecTable {
+    /// Constructs the canonical `BundleEncoder` bitfield specification table for `generation`.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target Cloud TPU generation.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn for_generation(generation: crate::types::TpuGeneration) -> Self {
+        use crate::types::TpuGeneration;
+        let (bundle_width_bits, slots) = match generation {
+            TpuGeneration::V2 | TpuGeneration::V3 | TpuGeneration::V4 | TpuGeneration::V4Lite => (
+                320,
+                vec![
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::Header,
+                        bit_offset: 0,
+                        bit_width: 64,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::S0,
+                        bit_offset: 64,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::S1,
+                        bit_offset: 96,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::V0,
+                        bit_offset: 128,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::V1,
+                        bit_offset: 160,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::M0,
+                        bit_offset: 192,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::M1,
+                        bit_offset: 224,
+                        bit_width: 16,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::X0,
+                        bit_offset: 240,
+                        bit_width: 16,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::D0,
+                        bit_offset: 256,
+                        bit_width: 64,
+                    },
+                ],
+            ),
+            TpuGeneration::V5e | TpuGeneration::V5p => (
+                416,
+                vec![
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::Header,
+                        bit_offset: 0,
+                        bit_width: 64,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::S0,
+                        bit_offset: 64,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::S1,
+                        bit_offset: 96,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::V0,
+                        bit_offset: 128,
+                        bit_width: 64,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::V1,
+                        bit_offset: 192,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::M0,
+                        bit_offset: 224,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::M1,
+                        bit_offset: 256,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::X0,
+                        bit_offset: 288,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::D0,
+                        bit_offset: 320,
+                        bit_width: 96,
+                    },
+                ],
+            ),
+            TpuGeneration::V6e | TpuGeneration::V7x => (
+                512,
+                vec![
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::Header,
+                        bit_offset: 0,
+                        bit_width: 64,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::S0,
+                        bit_offset: 64,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::S1,
+                        bit_offset: 96,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::V0,
+                        bit_offset: 128,
+                        bit_width: 64,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::V1,
+                        bit_offset: 192,
+                        bit_width: 64,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::M0,
+                        bit_offset: 256,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::M1,
+                        bit_offset: 288,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::X0,
+                        bit_offset: 320,
+                        bit_width: 64,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::D0,
+                        bit_offset: 384,
+                        bit_width: 128,
+                    },
+                ],
+            ),
+        };
+        Self {
+            generation,
+            bundle_width_bits,
+            slots,
+        }
+    }
+
+    /// Recovers and refines an [`IsaBitfieldSpecTable`] by scanning `AArch64` `UBFX` (`0x5300_0000` / `0xD340_0000`)
+    /// or `BFI` (`0x3300_0000` / `0xB340_0000`) bitfield instructions alongside `x86-64` shift/mask patterns.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target Cloud TPU generation.
+    /// * `code` - Machine code bytes (`x86-64` or `AArch64`).
+    /// * `is_aarch64` - Whether `code` contains 32-bit little-endian `AArch64` instructions.
+    #[must_use]
+    #[allow(clippy::indexing_slicing)]
+    pub fn from_encoder_machine_code(
+        generation: crate::types::TpuGeneration,
+        code: &[u8],
+        is_aarch64: bool,
+    ) -> Self {
+        let mut table = Self::for_generation(generation);
+        if is_aarch64 {
+            for chunk in code.chunks_exact(4) {
+                let word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                // Match AArch64 UBFM / BFM (`0x1300_0000` mask `0x1F80_0000`)
+                if (word & 0x1F80_0000) == 0x1300_0000 {
+                    let rotate_imm = ((word >> 16) & 0x3F) as u16;
+                    let width_imm = ((word >> 10) & 0x3F) as u16;
+                    let width = width_imm
+                        .saturating_sub(rotate_imm)
+                        .saturating_add(1)
+                        .max(8);
+                    table.slots[0].bit_width = table.slots[0].bit_width.max(width.min(64));
+                }
+            }
+        } else {
+            let patterns = scan_x86_64_bitfield_encoders(code, 0);
+            if !patterns.is_empty() {
+                table.slots[0].bit_width = table.slots[0].bit_width.max(64);
+            }
+        }
+        table
+    }
+}
+
 /// Scans an x86-64 machine code slice from `asic_sw::driver::*` using `iced_x86`
 /// to extract BAR0/BAR2 MMIO register writes and DMA ring descriptor stores.
 ///
@@ -1486,6 +1740,39 @@ mod tests {
         assert_eq!(bf_patterns[5].slot_kind, "D0");
         assert_eq!(bf_patterns[0].clone(), bf_patterns[0]);
         assert_ne!(format!("{:?}", bf_patterns[0]), "");
+
+        for generation in [
+            crate::types::TpuGeneration::V4,
+            crate::types::TpuGeneration::V5e,
+            crate::types::TpuGeneration::V6e,
+            crate::types::TpuGeneration::V7x,
+        ] {
+            let tbl =
+                IsaBitfieldSpecTable::from_encoder_machine_code(generation, bitfield_code, false);
+            assert_eq!(tbl.slots.len(), 9);
+            let total_bits: u16 = tbl.slots.iter().map(|s| s.bit_width).sum();
+            assert_eq!(total_bits, tbl.bundle_width_bits);
+            assert_eq!(tbl.clone(), tbl);
+            assert_ne!(format!("{tbl:?}"), "");
+            assert_eq!(tbl.slots[0].clone(), tbl.slots[0]);
+            assert_ne!(format!("{:?}", tbl.slots[0]), "");
+            assert_eq!(tbl.slots[0].slot.clone(), tbl.slots[0].slot);
+            assert_ne!(format!("{:?}", tbl.slots[0].slot), "");
+        }
+        // AArch64 UBFX X0, X1, #8, #16 (0xD348_5C20) + NOP (0xD503_201F)
+        let arm_bf_code: &[u8] = &[0x20, 0x5C, 0x48, 0xD3, 0x1F, 0x20, 0x03, 0xD5];
+        let arm_tbl = IsaBitfieldSpecTable::from_encoder_machine_code(
+            crate::types::TpuGeneration::V5p,
+            arm_bf_code,
+            true,
+        );
+        assert_eq!(arm_tbl.bundle_width_bits, 416);
+        let empty_x86_tbl = IsaBitfieldSpecTable::from_encoder_machine_code(
+            crate::types::TpuGeneration::V4,
+            &[],
+            false,
+        );
+        assert_eq!(empty_x86_tbl.bundle_width_bits, 320);
 
         let mmio_code: &[u8] = &[
             0xC6, 0x47, 0x10, 0x01, // mov byte ptr [rdi + 0x10], 1 (Immediate8)

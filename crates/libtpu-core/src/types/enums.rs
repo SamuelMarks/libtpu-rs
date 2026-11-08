@@ -420,6 +420,310 @@ impl MemoryKind {
     }
 }
 
+/// Matrix Multiply Unit (`MXU`) operand precision mode (`MxuPrecisionMode`).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Display)]
+pub enum MxuPrecisionMode {
+    /// Standard 16-bit Brain Float (`BF16`, `0`).
+    #[default]
+    #[display("bf16")]
+    Bf16 = 0,
+    /// Multi-pass IEEE-754 32-bit float (`F32`, `1`).
+    #[display("f32")]
+    F32 = 1,
+    /// 8-bit signed integer (`INT8`, `2`).
+    #[display("int8")]
+    Int8 = 2,
+    /// 8-bit float `E4M3FN` (`FP8_E4M3FN`, `3`).
+    #[display("fp8_e4m3fn")]
+    Fp8E4M3Fn = 3,
+    /// 8-bit float `E5M2` (`FP8_E5M2`, `4`).
+    #[display("fp8_e5m2")]
+    Fp8E5M2 = 4,
+    /// 4-bit signed integer (`INT4`, `5`).
+    #[display("int4")]
+    Int4 = 5,
+    /// 4-bit float `E2M1FN` (`FP4_E2M1FN`, `6`).
+    #[display("fp4_e2m1fn")]
+    Fp4E2M1Fn = 6,
+}
+
+impl MxuPrecisionMode {
+    /// Converts a raw 8-bit precision discriminant into [`MxuPrecisionMode`].
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw precision code (`0..=6`).
+    #[must_use]
+    pub const fn from_raw(raw: u8) -> Self {
+        match raw {
+            0 => Self::Bf16,
+            1 => Self::F32,
+            2 => Self::Int8,
+            3 => Self::Fp8E4M3Fn,
+            4 => Self::Fp8E5M2,
+            5 => Self::Int4,
+            _ => Self::Fp4E2M1Fn,
+        }
+    }
+
+    /// Returns the raw 8-bit discriminant of this [`MxuPrecisionMode`].
+    #[must_use]
+    pub const fn as_raw(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Asynchronous DMA and ICI collective slot opcode (`DmaOpcode`).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Display)]
+pub enum DmaOpcode {
+    /// No-op DMA slot (`0`).
+    #[default]
+    #[display("noop")]
+    Noop = 0,
+    /// Asynchronous HBM-to-VMEM prefetch transfer (`1`).
+    #[display("hbm_to_vmem")]
+    HbmToVmem = 1,
+    /// Asynchronous VMEM-to-HBM writeback transfer (`2`).
+    #[display("vmem_to_hbm")]
+    VmemToHbm = 2,
+    /// On-chip VMEM-to-VMEM scratchpad copy (`3`).
+    #[display("vmem_to_vmem")]
+    VmemToVmem = 3,
+    /// Asynchronous HBM-to-SMEM scalar table load (`4`).
+    #[display("hbm_to_smem")]
+    HbmToSmem = 4,
+    /// Inter-Chip Interconnect (`ICI`) remote DMA send (`5`).
+    #[display("ici_remote_send")]
+    IciRemoteSend = 5,
+    /// Inter-Chip Interconnect (`ICI`) remote DMA receive (`6`).
+    #[display("ici_remote_recv")]
+    IciRemoteRecv = 6,
+    /// Hardware `AllReduce` collective (`7`).
+    #[display("all_reduce")]
+    AllReduce = 7,
+    /// Hardware `AllGather` collective (`8`).
+    #[display("all_gather")]
+    AllGather = 8,
+    /// Hardware `ReduceScatter` collective (`9`).
+    #[display("reduce_scatter")]
+    ReduceScatter = 9,
+    /// Hardware `AllToAll` collective (`10`).
+    #[display("all_to_all")]
+    AllToAll = 10,
+    /// Hardware `CollectivePermute` point-to-point exchange (`11`).
+    #[display("collective_permute")]
+    CollectivePermute = 11,
+}
+
+impl DmaOpcode {
+    /// Converts a raw 8-bit DMA opcode into [`DmaOpcode`].
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw DMA opcode byte (`0..=11`).
+    #[must_use]
+    pub const fn from_raw(raw: u8) -> Self {
+        match raw {
+            0 => Self::Noop,
+            1 => Self::HbmToVmem,
+            2 => Self::VmemToHbm,
+            3 => Self::VmemToVmem,
+            4 => Self::HbmToSmem,
+            5 => Self::IciRemoteSend,
+            6 => Self::IciRemoteRecv,
+            7 => Self::AllReduce,
+            8 => Self::AllGather,
+            9 => Self::ReduceScatter,
+            10 => Self::AllToAll,
+            _ => Self::CollectivePermute,
+        }
+    }
+
+    /// Returns the raw 8-bit discriminant of this [`DmaOpcode`].
+    #[must_use]
+    pub const fn as_raw(self) -> u8 {
+        self as u8
+    }
+}
+
+/// XLA `MemorySpaceAssignment` memory space color (`MemorySpaceColor`).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Display)]
+pub enum MemorySpaceColor {
+    /// Default High-Bandwidth Memory (`HBM`, color `0`).
+    #[default]
+    #[display("HBM")]
+    Hbm = 0,
+    /// Alternate on-chip Vector Memory (`VMEM`, color `1`).
+    #[display("VMEM")]
+    Vmem = 1,
+    /// On-chip Scalar Memory (`SMEM`, color `2`).
+    #[display("SMEM")]
+    Smem = 2,
+    /// On-chip Collective Memory (`CMEM`, color `3`).
+    #[display("CMEM")]
+    Cmem = 3,
+    /// Pinned host memory for host-offloading (`HOST_PINNED`, color `4`).
+    #[display("HOST_PINNED")]
+    HostPinned = 4,
+}
+
+impl MemorySpaceColor {
+    /// Converts a raw 8-bit memory space color into [`MemorySpaceColor`].
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw memory space color (`0..=4`).
+    #[must_use]
+    pub const fn from_raw(raw: u8) -> Self {
+        match raw {
+            0 => Self::Hbm,
+            1 => Self::Vmem,
+            2 => Self::Smem,
+            3 => Self::Cmem,
+            _ => Self::HostPinned,
+        }
+    }
+
+    /// Returns the raw 8-bit color index of this [`MemorySpaceColor`].
+    #[must_use]
+    pub const fn as_raw(self) -> u8 {
+        self as u8
+    }
+}
+
+/// `TensorCore` Scalar ALU (`S0` / `S1`) instruction opcode (`ScalarAluOpcode`).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Display)]
+pub enum ScalarAluOpcode {
+    /// Scalar no-op (`0`).
+    #[default]
+    #[display("s.nop")]
+    Noop = 0,
+    /// Move 32-bit immediate into scalar register (`1`).
+    #[display("s.mov_imm")]
+    MovImm = 1,
+    /// 64-bit unsigned integer addition (`2`).
+    #[display("s.add_u64")]
+    AddU64 = 2,
+    /// 64-bit unsigned integer subtraction (`3`).
+    #[display("s.sub_u64")]
+    SubU64 = 3,
+    /// 64-bit unsigned integer multiplication (`4`).
+    #[display("s.mul_u64")]
+    MulU64 = 4,
+    /// Unsigned less-than comparison setting predicate register (`5`).
+    #[display("s.cmp_lt")]
+    CmpLt = 5,
+    /// PC-relative conditional branch on predicate register (`6`).
+    #[display("s.branch_cond")]
+    BranchCond = 6,
+    /// Program halt (`7`).
+    #[display("s.halt")]
+    Halt = 7,
+    /// Wait on hardware `SyncFlag` threshold (`8`).
+    #[display("s.wait_sync_flag")]
+    WaitSyncFlag = 8,
+    /// Fused scalar iota/concatenate address arithmetic (`9`).
+    #[display("s.add_iota_concat")]
+    AddIotaConcat = 9,
+}
+
+impl ScalarAluOpcode {
+    /// Converts a raw 8-bit scalar ALU opcode into [`ScalarAluOpcode`].
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw scalar ALU opcode (`0..=9`).
+    #[must_use]
+    pub const fn from_raw(raw: u8) -> Self {
+        match raw {
+            0 => Self::Noop,
+            1 => Self::MovImm,
+            2 => Self::AddU64,
+            3 => Self::SubU64,
+            4 => Self::MulU64,
+            5 => Self::CmpLt,
+            6 => Self::BranchCond,
+            7 => Self::Halt,
+            8 => Self::WaitSyncFlag,
+            _ => Self::AddIotaConcat,
+        }
+    }
+
+    /// Returns the raw 8-bit discriminant of this [`ScalarAluOpcode`].
+    #[must_use]
+    pub const fn as_raw(self) -> u8 {
+        self as u8
+    }
+}
+
+/// Distributed `tensorflow.CoordinationService` RPC method identifier (`CoordinationOpcode`).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Display)]
+pub enum CoordinationOpcode {
+    /// `RegisterTask` (`1`).
+    #[default]
+    #[display("RegisterTask")]
+    RegisterTask = 1,
+    /// `Heartbeat` (`2`).
+    #[display("Heartbeat")]
+    Heartbeat = 2,
+    /// `WaitForAllTasks` (`3`).
+    #[display("WaitForAllTasks")]
+    WaitForAllTasks = 3,
+    /// `ShutdownTask` (`4`).
+    #[display("ShutdownTask")]
+    ShutdownTask = 4,
+    /// `ResetTask` (`5`).
+    #[display("ResetTask")]
+    ResetTask = 5,
+    /// `ReportErrorToTask` (`6`).
+    #[display("ReportErrorToTask")]
+    ReportErrorToTask = 6,
+    /// `ReportErrorToService` (`7`).
+    #[display("ReportErrorToService")]
+    ReportErrorToService = 7,
+    /// `GetTaskState` (`8`).
+    #[display("GetTaskState")]
+    GetTaskState = 8,
+    /// `InsertKeyValue` (`9`).
+    #[display("InsertKeyValue")]
+    InsertKeyValue = 9,
+    /// `GetKeyValue` (`10`).
+    #[display("GetKeyValue")]
+    GetKeyValue = 10,
+    /// `TryGetKeyValue` (`11`).
+    #[display("TryGetKeyValue")]
+    TryGetKeyValue = 11,
+    /// `GetKeyValueDir` (`12`).
+    #[display("GetKeyValueDir")]
+    GetKeyValueDir = 12,
+    /// `IncrementKeyValue` (`13`).
+    #[display("IncrementKeyValue")]
+    IncrementKeyValue = 13,
+    /// `DeleteKeyValue` (`14`).
+    #[display("DeleteKeyValue")]
+    DeleteKeyValue = 14,
+    /// `Barrier` (`15`).
+    #[display("Barrier")]
+    Barrier = 15,
+    /// `CancelBarrier` (`16`).
+    #[display("CancelBarrier")]
+    CancelBarrier = 16,
+    /// `GetAliveTasks` (`17`).
+    #[display("GetAliveTasks")]
+    GetAliveTasks = 17,
+    /// `PollForError` (`18`).
+    #[display("PollForError")]
+    PollForError = 18,
+}
+
+/// Type alias for [`CoordinationOpcode`] (`CoordinationMethodId`).
+pub type CoordinationMethodId = CoordinationOpcode;
+
 #[cfg(test)]
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -526,5 +830,63 @@ mod tests {
             ProfilerState::Recording,
         );
         assert_ne!(misc_enums, "");
+
+        for raw in 0_u8..=7 {
+            let mode = MxuPrecisionMode::from_raw(raw);
+            assert!(mode.as_raw() <= 6);
+            assert_ne!(mode.to_string(), "");
+            assert_ne!(format!("{mode:?}"), "");
+        }
+        assert_eq!(MxuPrecisionMode::default(), MxuPrecisionMode::Bf16);
+
+        for raw in 0_u8..=12 {
+            let op = DmaOpcode::from_raw(raw);
+            assert!(op.as_raw() <= 11);
+            assert_ne!(op.to_string(), "");
+            assert_ne!(format!("{op:?}"), "");
+        }
+        assert_eq!(DmaOpcode::default(), DmaOpcode::Noop);
+
+        for raw in 0_u8..=5 {
+            let color = MemorySpaceColor::from_raw(raw);
+            assert!(color.as_raw() <= 4);
+            assert_ne!(color.to_string(), "");
+            assert_ne!(format!("{color:?}"), "");
+        }
+        assert_eq!(MemorySpaceColor::default(), MemorySpaceColor::Hbm);
+
+        for raw in 0_u8..=10 {
+            let sop = ScalarAluOpcode::from_raw(raw);
+            assert!(sop.as_raw() <= 9);
+            assert_ne!(sop.to_string(), "");
+            assert_ne!(format!("{sop:?}"), "");
+        }
+        assert_eq!(ScalarAluOpcode::default(), ScalarAluOpcode::Noop);
+
+        for cop in [
+            CoordinationOpcode::default(),
+            CoordinationOpcode::Heartbeat,
+            CoordinationOpcode::WaitForAllTasks,
+            CoordinationOpcode::ShutdownTask,
+            CoordinationOpcode::ResetTask,
+            CoordinationOpcode::ReportErrorToTask,
+            CoordinationOpcode::ReportErrorToService,
+            CoordinationOpcode::GetTaskState,
+            CoordinationOpcode::InsertKeyValue,
+            CoordinationOpcode::GetKeyValue,
+            CoordinationOpcode::TryGetKeyValue,
+            CoordinationOpcode::GetKeyValueDir,
+            CoordinationOpcode::IncrementKeyValue,
+            CoordinationOpcode::DeleteKeyValue,
+            CoordinationOpcode::Barrier,
+            CoordinationOpcode::CancelBarrier,
+            CoordinationOpcode::GetAliveTasks,
+            CoordinationOpcode::PollForError,
+        ] {
+            let alias: CoordinationMethodId = cop;
+            assert_eq!(alias, cop);
+            assert_ne!(cop.to_string(), "");
+            assert_ne!(format!("{cop:?}"), "");
+        }
     }
 }

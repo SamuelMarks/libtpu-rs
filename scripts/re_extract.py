@@ -635,10 +635,12 @@ def inspect_wheel_archive(wheel_path: Path) -> dict[str, object]:
                 payload = zf.read(info.filename)
                 sha256_hex = compute_sha256_bytes(payload)
                 sections, symbols = parse_elf64_sections_and_dynsym(payload)
+                carved_protos = carve_protodesc_cold(payload)
                 binaries_dict[info.filename] = {
                     "size_bytes": len(payload),
                     "sha256": sha256_hex,
                     "section_names": [s.name for s in sections if s.name],
+                    "carved_protos_count": len(carved_protos),
                     "exported_functions": [
                         {
                             "name": sym.name,
@@ -775,9 +777,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--wheel",
+        "--extract-wheel",
+        dest="wheel",
         type=Path,
         default=None,
-        help="Optional path to a libtpu .whl archive to inspect",
+        help="Optional path to a libtpu .whl archive to inspect and extract",
     )
     parser.add_argument(
         "--repo-root",

@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The TensorFlow Authors and Google LLC.
+// Source: tensorflow/core/framework/types.proto
+
+syntax = "proto3";
+
+package tensorflow;
+
+enum DataType {
+  DT_INVALID = 0;
+  DT_FLOAT = 1;
+  DT_DOUBLE = 2;
+  DT_INT32 = 3;
+  DT_UINT8 = 4;
+  DT_INT16 = 5;
+  DT_INT8 = 6;
+  DT_STRING = 7;
+  DT_COMPLEX64 = 8;
+  DT_INT64 = 9;
+  DT_BOOL = 10;
+  DT_BFLOAT16 = 14;
+  DT_UINT16 = 17;
+  DT_COMPLEX128 = 18;
+  DT_HALF = 19;
+  DT_UINT32 = 22;
+  DT_UINT64 = 23;
+  DT_FLOAT8_E5M2 = 24;
+  DT_FLOAT8_E4M3FN = 25;
+  DT_INT4 = 29;
+  DT_UINT4 = 30;
+  DT_INT2 = 31;
+  DT_UINT2 = 32;
+  DT_FLOAT4_E2M1FN = 33;
+}

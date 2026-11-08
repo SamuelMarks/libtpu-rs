@@ -29,22 +29,25 @@ pub mod relocations;
 pub mod symbols;
 
 pub use self::carver::{
-    CarvedFileDescriptorSummary, CarvedProtoDesc, EmbeddedChipResourceBundle, FileTocEntry,
+    BrotliRegisterTreeEntry, CarvedFileDescriptorSummary, CarvedFirmwareOverlay, CarvedProtoDesc,
+    EmbeddedChipResourceBundle, FileTocEntry, FileTocFirmwareExtractor, FirmwareOverlayTarget,
     build_descriptor_pool_from_carved_protos, carve_protodesc_cold_descriptors,
     carve_protodesc_cold_entries, decode_carved_file_descriptor, decode_embedded_chip_resources,
-    decompress_brotli_csr_table, extract_filewrapper_toc, extract_indirect_filewrapper_toc,
-    proto_scalar_type_name, render_proto_schema, verify_descriptor_topological_closure,
+    decompress_brotli_csr_table, extract_carved_firmware_overlays, extract_filewrapper_toc,
+    extract_indirect_filewrapper_toc, parse_and_verify_brotli_csr_tree, proto_scalar_type_name,
+    render_proto_schema, verify_descriptor_topological_closure,
 };
 pub use self::disassembler::{
     AArch64ForensicsAnalyzer, AArch64FunctionSpec, CPythonAbi3IntrospectionReport, CallGraphEdge,
     CallGraphReport, ControlFlowGraphReport, DecodedIoctlCallsite, DeepSeaBitfieldPattern,
     DisassembledFunctionSpec, DriverQueuePattern, DwarfCfiFunctionRecord, EhFrameCfiParser,
-    JumpTableDescriptor, PrologueLayoutReport, PrologueStructSizeVerification, RdiFieldAccess,
-    RipRelativeStringLiteral, build_interprocedural_call_graph, build_x86_64_cfg,
-    disassemble_function_spec, disassemble_x86_64_prologue, introspect_cpython_abi3_binary,
-    recover_aarch64_jump_table, recover_x86_64_jump_table, scan_x86_64_bitfield_encoders,
-    scan_x86_64_driver_mmio_sequences, scan_x86_64_ioctl_callsites,
-    scan_x86_64_rip_relative_strings, verify_prologue_struct_sizes_against_golden,
+    IsaBitfieldSpec, IsaBitfieldSpecTable, IsaSlotKind, JumpTableDescriptor, PrologueLayoutReport,
+    PrologueStructSizeVerification, RdiFieldAccess, RipRelativeStringLiteral,
+    build_interprocedural_call_graph, build_x86_64_cfg, disassemble_function_spec,
+    disassemble_x86_64_prologue, introspect_cpython_abi3_binary, recover_aarch64_jump_table,
+    recover_x86_64_jump_table, scan_x86_64_bitfield_encoders, scan_x86_64_driver_mmio_sequences,
+    scan_x86_64_ioctl_callsites, scan_x86_64_rip_relative_strings,
+    verify_prologue_struct_sizes_against_golden,
 };
 pub use self::manifest::{
     ArtifactDigestReport, GoldenBinaryManifest, GoldenExportedSymbol, GoldenExtensionNode,

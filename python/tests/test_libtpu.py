@@ -109,6 +109,15 @@ def test_client_buffer_executable_and_profiler() -> None:
     assert multi_outs[0].to_float_list() == [11.5, 22.5, 33.5, 44.5]
     multi_outs[0].close()
 
+    sharded_outs = executable.execute_sharded([[b0, b1]], num_outputs=1)
+    assert len(sharded_outs) == 1
+    assert sharded_outs[0][0].to_float_list() == [11.5, 22.5, 33.5, 44.5]
+    sharded_outs[0][0].close()
+
+    cost_dict = executable.cost_analysis()
+    assert cost_dict["flops"] >= 4.0
+    assert "bytes_accessed" in cost_dict
+
     # Rectangular 2x3 * 3x2 -> 2x2 dot_general execution
     m0 = client.buffer_from_floats(0, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dims=[2, 3])
     m1 = client.buffer_from_floats(0, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], dims=[3, 2])
@@ -293,6 +302,24 @@ def test_sdk_submodules(tmp_path: Path) -> None:
         debug.unregister_debug_callback(cb_id1)
 
     # Verify libtpu.sdk.diagnostics offline artifact parsers
+    tile_schema = diagnostics.emit_proto_schema("xla.TileProto")
+    assert "message TileProto" in tile_schema
+    assert "repeated int64 dimensions = 1;" in tile_schema
+    assert "message CoreDump" in diagnostics.emit_proto_schema("asic_sw.CoreDump")
+    assert "message AllCoreStateSummaries" in diagnostics.emit_proto_schema(
+        "libtpu.sdk.tpu_telemetry.AllCoreStateSummaries"
+    )
+    assert "message CompilerMetadata" in diagnostics.emit_proto_schema(
+        "platforms_deepsea.jellyfish.xdb.CompilerMetadata"
+    )
+    assert "message MosaicBackendConfigProto" in diagnostics.emit_proto_schema(
+        "mlir.tpu.MosaicBackendConfigProto"
+    )
+    with pytest.raises(ValueError, match="must not be empty"):
+        diagnostics.emit_proto_schema("")
+    with pytest.raises(ValueError, match="Unknown protobuf message schema"):
+        diagnostics.emit_proto_schema("nonexistent.MessageProto")
+
     def _varint(v: int) -> bytes:
         if v < 0:
             v += 1 << 64
@@ -907,6 +934,8 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     )
     out_s64_buf = exec_s64.execute(0, [buf_s64_a, buf_s64_b])
     assert struct.unpack("<2q", out_s64_buf.to_bytes()) == (0x7FFFFFFFFFFFFFFF, 100)
+    assert "pc=" in exec_s64.disassemble_vliw()
+    assert "num_vregs=" in exec_s64.inspect_register_allocation()
     out_s64_buf.close()
     exec_s64.close()
     buf_s64_b.close()
@@ -919,6 +948,9 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     assert sdk_capsule is not None
     assert "pjrt_c_api" in repr(pjrt_capsule)
     assert "libtpu.sdk._C_API" in repr(sdk_capsule)
+    assert "hbm_bytes=" in libtpu.query_chip_config_summary()
+    assert libtpu.compute_ici_route(0, 0, 0, 3, 0, 0, True) == 1
+    assert libtpu.compute_ici_route(0, 0, 0, 3, 0, 0, False) == 3
 
     # Verify all 138 PJRT_Api slots against golden_struct_layouts.json min_struct_size
     golden_path = (

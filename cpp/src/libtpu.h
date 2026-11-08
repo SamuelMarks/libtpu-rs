@@ -3321,7 +3321,7 @@ PJRT_Error *PJRT_TpuExecutable_SetTpuCompilationEnv(void *raw_args);
 /**
  * @brief Queries a `TpuCompilationEnvironmentProto` field as a string
  * (`PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString`).
- * @param raw_args Pointer to `PJRT_Megascale_Data_Args`.
+ * @param raw_args Pointer to `PJRT_TpuExecutable_ProtoQuery_Args`.
  * @return `nullptr` on success or `PJRT_Error*` on failure.
  */
 PJRT_Error *
@@ -3344,12 +3344,245 @@ PJRT_Error *PJRT_ExecutableMetadata_Destroy(void *raw_args);
 PJRT_Error *PJRT_Shardings_ParameterShardings(void *raw_args);
 
 /**
- * @brief Queries output `OpSharding` protos for an executable
+ * @brief Queries output shardings for an executable
  * (`PJRT_Shardings_OutputShardings`).
  * @param raw_args Pointer to `PJRT_Shardings_PJRT_Executable_Shardings_Args`.
  * @return `nullptr` on success or `PJRT_Error*` on failure.
  */
 PJRT_Error *PJRT_Shardings_OutputShardings(void *raw_args);
+
+/**
+ * @brief Emits a canonical `proto3` `.proto` schema string for
+ * `full_message_name` into `out_buf` (`libtpu_rs_emit_proto_schema`).
+ * @param full_message_name Null-terminated fully-qualified protobuf message
+ * name (e.g., `"xla.TileProto"`).
+ * @param out_buf Optional destination character buffer.
+ * @param buf_len Capacity of `out_buf` in bytes (including null terminator).
+ * @return Full UTF-8 byte length of the emitted `.proto` schema, or `0` if
+ * `full_message_name` is null or unknown.
+ */
+size_t libtpu_rs_emit_proto_schema(const char *full_message_name, char *out_buf,
+                                   size_t buf_len);
+
+/**
+ * @brief Creates a new in-memory `DistributedCoordinator` handle
+ * (`libtpu_rs_coordinator_create`).
+ * @return Newly allocated coordinator handle pointer.
+ */
+void *libtpu_rs_coordinator_create(void);
+
+/**
+ * @brief Destroys a coordinator handle created by
+ * `libtpu_rs_coordinator_create` (`libtpu_rs_coordinator_destroy`).
+ * @param coordinator Coordinator handle pointer (may be `nullptr`).
+ */
+void libtpu_rs_coordinator_destroy(void *coordinator);
+
+/**
+ * @brief Inserts a key-value entry into a coordinator handle
+ * (`libtpu_rs_coordinator_put_kv`).
+ * @param coordinator Coordinator handle pointer.
+ * @param key Null-terminated UTF-8 key string.
+ * @param val Value byte buffer pointer.
+ * @param val_len Byte length of `val`.
+ * @return `LibTpuCStatus` indicating success or error.
+ */
+LibTpuCStatus libtpu_rs_coordinator_put_kv(void *coordinator, const char *key,
+                                           const uint8_t *val, size_t val_len);
+
+/**
+ * @brief Looks up a key-value entry from a coordinator handle
+ * (`libtpu_rs_coordinator_get_kv`).
+ * @param coordinator Coordinator handle pointer.
+ * @param key Null-terminated UTF-8 key string.
+ * @param out_buf Optional destination byte buffer.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return Byte length of the value, or `0` if missing or invalid.
+ */
+size_t libtpu_rs_coordinator_get_kv(const void *coordinator, const char *key,
+                                    uint8_t *out_buf, size_t buf_len);
+
+/**
+ * @brief Disassembles a `PJRT_LoadedExecutable` into a multi-line `DeepSea` LLO
+ * assembly listing (`libtpu_rs_disassemble_executable_llo`).
+ * @param executable Pointer to `PJRT_LoadedExecutable`.
+ * @param out_buf Optional destination character buffer.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return Full UTF-8 byte length of the LLO listing, or `0` on invalid input.
+ */
+size_t
+libtpu_rs_disassemble_executable_llo(const PJRT_LoadedExecutable *executable,
+                                     char *out_buf, size_t buf_len);
+
+/**
+ * @brief Decodes a raw or Riegeli-framed `asic_sw.CoreDump` payload into
+ * canonical JSON (`libtpu_rs_read_core_dump`).
+ * @param raw_bytes Pointer to raw or Riegeli-framed `CoreDump` bytes.
+ * @param raw_len Byte length of `raw_bytes`.
+ * @param out_buf Optional destination character buffer.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return Full UTF-8 byte length of the JSON output, or `0` on invalid input.
+ */
+size_t libtpu_rs_read_core_dump(const uint8_t *raw_bytes, size_t raw_len,
+                                char *out_buf, size_t buf_len);
+
+/**
+ * @brief Decodes a raw or Riegeli-framed `AllCoreStateSummaries` payload into
+ * canonical JSON (`libtpu_rs_read_stall_summaries`).
+ * @param raw_bytes Pointer to raw or Riegeli-framed `AllCoreStateSummaries`
+ * bytes.
+ * @param raw_len Byte length of `raw_bytes`.
+ * @param out_buf Optional destination character buffer.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return Full UTF-8 byte length of the JSON output, or `0` on invalid input.
+ */
+size_t libtpu_rs_read_stall_summaries(const uint8_t *raw_bytes, size_t raw_len,
+                                      char *out_buf, size_t buf_len);
+
+/**
+ * @brief Decodes a raw or Riegeli-framed `CompilerMetadata` payload into
+ * canonical JSON (`libtpu_rs_read_compiler_metadata`).
+ * @param raw_bytes Pointer to raw or Riegeli-framed `CompilerMetadata` bytes.
+ * @param raw_len Byte length of `raw_bytes`.
+ * @param out_buf Optional destination character buffer.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return Full UTF-8 byte length of the JSON output, or `0` on invalid input.
+ */
+size_t libtpu_rs_read_compiler_metadata(const uint8_t *raw_bytes,
+                                        size_t raw_len, char *out_buf,
+                                        size_t buf_len);
+
+/**
+ * @brief OpenXLA Typed FFI API version structure (`XLA_FFI_Api_Version`, `24`
+ * bytes, v0.2).
+ */
+typedef struct XLA_FFI_Api_Version {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Major version (`0`). */
+  int32_t major_version;
+  /** @brief Minor version (`2`). */
+  int32_t minor_version;
+} XLA_FFI_Api_Version;
+
+/**
+ * @brief OpenXLA Typed FFI buffer descriptor passed inside `XLA_FFI_CallFrame`
+ * (`XLA_FFI_Buffer`, `40` bytes).
+ */
+typedef struct XLA_FFI_Buffer {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Element data type (`PJRT_Buffer_Type`). */
+  int32_t dtype;
+  /** @brief Rank of the buffer (`dims` length). */
+  int32_t rank;
+  /** @brief Mutable device/host data pointer. */
+  void *data;
+  /** @brief Pointer to `rank` dimension extents (`const int64_t*`). */
+  const int64_t *dims;
+} XLA_FFI_Buffer;
+
+struct XLA_FFI_Api;
+
+/**
+ * @brief OpenXLA Typed FFI call frame passed to `XLA_FFI_Handler` callbacks
+ * (`XLA_FFI_CallFrame`, `72` bytes).
+ */
+typedef struct XLA_FFI_CallFrame {
+  /** @brief Size of this struct (`72`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Pointer to the host `XLA_FFI_Api` vtable. */
+  const struct XLA_FFI_Api *api;
+  /** @brief Opaque execution context pointer. */
+  void *ctx;
+  /** @brief Execution stage (`0 = Instantiate`, `3 = Execute`). */
+  int32_t stage;
+  /** @brief Number of input `XLA_FFI_Buffer` arguments. */
+  uint32_t num_args;
+  /** @brief Array of `num_args` input `XLA_FFI_Buffer` pointers. */
+  const XLA_FFI_Buffer *const *args;
+  /** @brief Number of output `XLA_FFI_Buffer` return slots. */
+  size_t num_rets;
+  /** @brief Array of `num_rets` output `XLA_FFI_Buffer` pointers. */
+  XLA_FFI_Buffer *const *rets;
+} XLA_FFI_CallFrame;
+
+/**
+ * @brief OpenXLA Typed FFI handler callback signature (`XLA_FFI_Handler`).
+ */
+typedef PJRT_Error *(*XLA_FFI_Handler)(XLA_FFI_CallFrame *);
+
+/**
+ * @brief OpenXLA Typed FFI vtable (`XLA_FFI_Api`, `56` bytes, v0.2).
+ */
+typedef struct XLA_FFI_Api {
+  /** @brief Size of this struct (`56`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Embedded `XLA_FFI_Api_Version` (`0.2`). */
+  XLA_FFI_Api_Version api_version;
+  /** @brief Handler registration entrypoint (`PJRT_FFI_Register_Handler`). */
+  PjrtApiFn register_handler;
+  /** @brief Type ID registration entrypoint (`PJRT_FFI_TypeID_Register`). */
+  PjrtApiFn register_type_id;
+} XLA_FFI_Api;
+
+/**
+ * @brief Registers an OpenXLA Typed FFI v0.2 `XLA_FFI_Handler` callback under
+ * `target_name` (`libtpu_rs_register_ffi_handler`).
+ * @param target_name Null-terminated UTF-8 custom-call target name.
+ * @param handler Function pointer matching `XLA_FFI_Handler`.
+ * @return `LibTpuCStatus` indicating success (`code == 0`) or error.
+ */
+LibTpuCStatus libtpu_rs_register_ffi_handler(const char *target_name,
+                                             XLA_FFI_Handler handler);
+
+/**
+ * @brief Formats a human-readable physical register allocation and `VMEM` spill
+ * summary for `executable` (`libtpu_rs_inspect_register_allocation`).
+ * @param executable Pointer to `PJRT_LoadedExecutable`.
+ * @param out_buf Optional destination character buffer.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return Full UTF-8 byte length of the summary string, or `0` on invalid
+ * input.
+ */
+size_t
+libtpu_rs_inspect_register_allocation(const PJRT_LoadedExecutable *executable,
+                                      char *out_buf, size_t buf_len);
+
+/**
+ * @brief Formats a canonical hardware chip configuration summary for the active
+ * TPU generation (`libtpu_rs_query_chip_config_summary`).
+ * @param out_buf Optional destination character buffer.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return Full UTF-8 byte length of the summary string.
+ */
+size_t libtpu_rs_query_chip_config_summary(char *out_buf, size_t buf_len);
+
+/**
+ * @brief Computes the shortest 3D Torus optical ICI hop count between
+ * `(src_x, src_y, src_z)` and `(dst_x, dst_y, dst_z)`
+ * (`libtpu_rs_compute_ici_route`).
+ * @param src_x Source X chip coordinate.
+ * @param src_y Source Y chip coordinate.
+ * @param src_z Source Z chip coordinate.
+ * @param dst_x Destination X chip coordinate.
+ * @param dst_y Destination Y chip coordinate.
+ * @param dst_z Destination Z chip coordinate.
+ * @param wrap_around Non-zero (`1`) to enable twisted-torus wrap-around links.
+ * @return Shortest hop count along the 3D Torus mesh.
+ */
+uint32_t libtpu_rs_compute_ici_route(uint32_t src_x, uint32_t src_y,
+                                     uint32_t src_z, uint32_t dst_x,
+                                     uint32_t dst_y, uint32_t dst_z,
+                                     int32_t wrap_around);
 
 /** @cond INTERNAL */
 #if defined(__cplusplus)
@@ -3425,6 +3658,10 @@ static_assert(sizeof(PJRT_Communicator_AllReduce_Args) == 64,
 static_assert(sizeof(PJRT_TpuTopology_SliceConfig) == 56, "SliceConfig == 56");
 static_assert(sizeof(PJRT_TpuTopology_ComputeSubsliceForDevices_Args) == 64,
               "ComputeSubslice == 64");
+static_assert(sizeof(XLA_FFI_Api_Version) == 24, "XLA_FFI_Api_Version == 24");
+static_assert(sizeof(XLA_FFI_Buffer) == 40, "XLA_FFI_Buffer == 40");
+static_assert(sizeof(XLA_FFI_CallFrame) == 64, "XLA_FFI_CallFrame == 64");
+static_assert(sizeof(XLA_FFI_Api) == 56, "XLA_FFI_Api == 56");
 #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(PJRT_Extension_Base) == 24, "PJRT_Extension_Base == 24");
 _Static_assert(sizeof(PJRT_Api_Version) == 24, "PJRT_Api_Version == 24");

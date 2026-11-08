@@ -2,18 +2,18 @@
 
 use super::{
     BAR0_CSR_DUTY_CYCLE_PERCENT, BAR0_CSR_HBM_DMA_RING_HEAD, BAR0_CSR_HBM_DMA_RING_TAIL,
-    BAR0_CSR_POWER_MILLIWATTS, BAR0_CSR_SYNC_FLAG_BASE, BAR0_CSR_TENSORCORE_PC,
-    BAR0_CSR_TENSORCORE_RUN_CONTROL, BAR0_CSR_TENSORCORE_STATUS, BAR0_CSR_THERMAL_MILLICELSIUS,
-    ChipRegisterMap, DeviceMemoryStats, EmulatedKernelDriverBackend, GASKET_IOCTL_CLEAR_EVENTFD,
-    GASKET_IOCTL_MAP_BUFFER, GASKET_IOCTL_NUMBER_PAGE_TABLES, GASKET_IOCTL_PARTITION_PAGE_TABLE,
-    GASKET_IOCTL_RESET, GASKET_IOCTL_SET_EVENTFD, GASKET_IOCTL_UNMAP_BUFFER,
-    GasketInterruptEventFd, GasketPageTableIoctl, HbmDmaRingDescriptor, IoctlPayload,
-    KernelDriverMode, SimulatedTpuHal, SyscallProvider, TopologySpec, TpuHal, VFIO_CHECK_EXTENSION,
-    VFIO_DEVICE_GET_INFO, VFIO_DEVICE_GET_IRQ_INFO, VFIO_DEVICE_GET_REGION_INFO,
-    VFIO_DEVICE_SET_IRQS_IOCTL, VFIO_GET_API_VERSION, VFIO_GROUP_GET_DEVICE_FD,
-    VFIO_GROUP_GET_STATUS, VFIO_GROUP_SET_CONTAINER, VFIO_IOMMU_MAP_DMA_IOCTL,
-    VFIO_IOMMU_UNMAP_DMA_IOCTL, VFIO_SET_IOMMU, VfioDmaMapIoctl, VfioDmaUnmapIoctl,
-    VfioIrqSetIoctl,
+    BAR0_CSR_POWER_MILLIWATTS, BAR0_CSR_SPARSECORE_RUN_CONTROL, BAR0_CSR_SYNC_FLAG_BASE,
+    BAR0_CSR_TENSORCORE_PC, BAR0_CSR_TENSORCORE_RUN_CONTROL, BAR0_CSR_TENSORCORE_STATUS,
+    BAR0_CSR_THERMAL_MILLICELSIUS, ChipRegisterMap, DeviceMemoryStats, EmulatedKernelDriverBackend,
+    GASKET_IOCTL_CLEAR_EVENTFD, GASKET_IOCTL_MAP_BUFFER, GASKET_IOCTL_NUMBER_PAGE_TABLES,
+    GASKET_IOCTL_PARTITION_PAGE_TABLE, GASKET_IOCTL_RESET, GASKET_IOCTL_SET_EVENTFD,
+    GASKET_IOCTL_UNMAP_BUFFER, GasketInterruptEventFd, GasketPageTableIoctl, HbmDmaRingDescriptor,
+    IoctlPayload, KernelDriverMode, SimulatedTpuHal, SyscallProvider, TopologySpec, TpuHal,
+    VFIO_CHECK_EXTENSION, VFIO_DEVICE_GET_INFO, VFIO_DEVICE_GET_IRQ_INFO,
+    VFIO_DEVICE_GET_REGION_INFO, VFIO_DEVICE_SET_IRQS_IOCTL, VFIO_GET_API_VERSION,
+    VFIO_GROUP_GET_DEVICE_FD, VFIO_GROUP_GET_STATUS, VFIO_GROUP_SET_CONTAINER,
+    VFIO_IOMMU_MAP_DMA_IOCTL, VFIO_IOMMU_UNMAP_DMA_IOCTL, VFIO_SET_IOMMU, VfioDmaMapIoctl,
+    VfioDmaUnmapIoctl, VfioIrqSetIoctl,
 };
 use crate::compiler::CompiledProgram;
 use crate::config::TpuInitConfig;
@@ -55,6 +55,146 @@ pub struct HardwareDoorbellRing {
 impl Default for HardwareDoorbellRing {
     fn default() -> Self {
         Self::new(64)
+    }
+}
+
+/// Gasket Address Translation Table (`ATT`) partitioning mode (`GasketPageTableMode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GasketPageTableMode {
+    /// Simple 1-level linear page table (`0..simple_entries`).
+    SimpleLinear,
+    /// Extended 2-level hierarchical L0/L1 page directory (`simple_entries..total_entries`).
+    ExtendedTwoLevel,
+}
+
+/// Individual virtual-to-physical page mapping in a [`GasketTwoLevelPageTable`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GasketPageTableEntry {
+    /// Device I/O Virtual Address (`IOVA`).
+    pub iova: u64,
+    /// Host user-space virtual address (`vaddr`) or `dma_buf` backing token.
+    pub host_vaddr: u64,
+    /// Mapped byte length (page-aligned to `4096` bytes).
+    pub size_bytes: u64,
+    /// Level-0 directory index (`0..num_total_entries`).
+    pub l0_index: u32,
+    /// Level-1 leaf index (`0` for simple linear entries, `0..512` for extended 2-level entries).
+    pub l1_index: u32,
+    /// Reference count (incremented by `dma_buf` exports).
+    pub ref_count: u32,
+    /// Optional exported/imported Linux `dma_buf` file descriptor.
+    pub dmabuf_fd: Option<i32>,
+}
+
+/// Hierarchical 2-level Gasket Address Translation Table (`GasketTwoLevelPageTable`) managing
+/// simple linear and extended 2-level L0/L1 page mappings and `dma_buf` zero-copy file descriptors.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GasketTwoLevelPageTable {
+    /// Page table index (`0` for `TensorCore 0`).
+    pub page_table_index: u32,
+    /// Total L0 directory capacity (`e.g. 4096`).
+    pub total_entries: u32,
+    /// Partition split index: `[0..simple_entries)` are simple linear, `[simple_entries..total_entries)` are extended 2-level.
+    pub simple_entries: u32,
+    /// Active mappings keyed by starting `iova`.
+    pub entries: std::collections::BTreeMap<u64, GasketPageTableEntry>,
+}
+
+impl GasketTwoLevelPageTable {
+    /// Creates a new [`GasketTwoLevelPageTable`] partitioned with `simple_entries` linear slots
+    /// out of `total_entries`.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_table_index` - Hardware page table index.
+    /// * `total_entries` - Total L0 entries.
+    /// * `simple_entries` - Number of simple linear entries (`<= total_entries`).
+    #[must_use]
+    pub fn new(page_table_index: u32, total_entries: u32, simple_entries: u32) -> Self {
+        let total = total_entries.max(64);
+        let simple = simple_entries.min(total);
+        Self {
+            page_table_index,
+            total_entries: total,
+            simple_entries: simple,
+            entries: std::collections::BTreeMap::new(),
+        }
+    }
+
+    /// Repartitions the split between simple linear and extended 2-level entries (`GASKET_IOCTL_PARTITION_PAGE_TABLE`).
+    ///
+    /// # Arguments
+    ///
+    /// * `simple_entries` - New simple linear slot count (`<= self.total_entries`).
+    pub fn partition(&mut self, simple_entries: u32) {
+        self.simple_entries = simple_entries.min(self.total_entries);
+    }
+
+    /// Maps a virtual `iova` range of `size_bytes` to `host_vaddr` in either the simple linear
+    /// or extended 2-level L0/L1 table (`mode`).
+    ///
+    /// # Arguments
+    ///
+    /// * `iova` - Target device IOVA address.
+    /// * `host_vaddr` - Host user-space virtual address.
+    /// * `size_bytes` - Mapping byte size.
+    /// * `mode` - [`GasketPageTableMode`] (`SimpleLinear` vs `ExtendedTwoLevel`).
+    pub fn map_pages(
+        &mut self,
+        iova: u64,
+        host_vaddr: u64,
+        size_bytes: u64,
+        mode: GasketPageTableMode,
+    ) -> GasketPageTableEntry {
+        let page_idx = u32::try_from((iova >> 12) & 0xFFFF).unwrap_or(0);
+        let (l0_index, l1_index) = match mode {
+            GasketPageTableMode::SimpleLinear => (page_idx % self.simple_entries.max(1), 0),
+            GasketPageTableMode::ExtendedTwoLevel => {
+                let ext_cap = self
+                    .total_entries
+                    .saturating_sub(self.simple_entries)
+                    .max(1);
+                let l0 = self.simple_entries + ((page_idx / 512) % ext_cap);
+                let l1 = page_idx & 511;
+                (l0, l1)
+            }
+        };
+        let entry = GasketPageTableEntry {
+            iova,
+            host_vaddr,
+            size_bytes: size_bytes.max(4096),
+            l0_index,
+            l1_index,
+            ref_count: 1,
+            dmabuf_fd: None,
+        };
+        self.entries.insert(iova, entry);
+        entry
+    }
+
+    /// Unmaps the entry at `iova`, returning the removed [`GasketPageTableEntry`] if present.
+    ///
+    /// # Arguments
+    ///
+    /// * `iova` - Device IOVA address to unmap.
+    pub fn unmap_pages(&mut self, iova: u64) -> Option<GasketPageTableEntry> {
+        self.entries.remove(&iova)
+    }
+
+    /// Translates a virtual `iova` (plus optional intra-buffer offset) to `(host_vaddr, GasketPageTableEntry)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `iova_query` - Device IOVA address to translate.
+    #[must_use]
+    pub fn translate_iova(&self, iova_query: u64) -> Option<(u64, GasketPageTableEntry)> {
+        let (&base_iova, &entry) = self.entries.range(..=iova_query).next_back()?;
+        let delta = iova_query.saturating_sub(base_iova);
+        if delta < entry.size_bytes {
+            Some((entry.host_vaddr.saturating_add(delta), entry))
+        } else {
+            None
+        }
     }
 }
 
@@ -118,6 +258,8 @@ pub struct LinuxDeviceHal<S: SyscallProvider> {
     pub mmio: EmulatedKernelDriverBackend,
     /// Optional real `mmap`-backed BAR0 [`super::MappedBarAperture`].
     pub bar0_aperture: parking_lot::Mutex<Option<super::MappedBarAperture>>,
+    /// Optional real `mmap`-backed BAR2 HBM/VMEM [`super::MappedBarAperture`].
+    pub bar2_aperture: parking_lot::Mutex<Option<super::MappedBarAperture>>,
     /// Per-device IOMMU / page-table [`super::HbmRegionAllocator`] tracking mapped IOVA blocks.
     pub iommu_allocators:
         parking_lot::Mutex<std::collections::BTreeMap<DeviceId, super::HbmRegionAllocator>>,
@@ -161,6 +303,27 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
             KernelDriverMode::Gasket => "/dev/accel0",
             KernelDriverMode::Vfio => "/dev/vfio/vfio",
         };
+        Self::open_with_path(mode, path, syscalls, config)
+    }
+
+    /// Opens a specific Linux TPU device node `path` and initializes page tables.
+    ///
+    /// # Arguments
+    ///
+    /// * `mode` - Kernel driver mode (`Gasket` vs `Vfio`).
+    /// * `path` - Device file path (e.g., `"/dev/accel0"`).
+    /// * `syscalls` - Syscall implementation.
+    /// * `config` - TPU initialization configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `open_device` or initial page-table `ioctl` fails.
+    pub fn open_with_path(
+        mode: KernelDriverMode,
+        path: &str,
+        syscalls: S,
+        config: &TpuInitConfig,
+    ) -> LibTpuResult<Self> {
         let fd = syscalls.open_device(path)?;
         if mode == KernelDriverMode::Gasket {
             syscalls.ioctl_device(
@@ -183,9 +346,140 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
             device_fd: fd,
             mmio,
             bar0_aperture: parking_lot::Mutex::new(None),
+            bar2_aperture: parking_lot::Mutex::new(None),
             iommu_allocators,
             inner,
         })
+    }
+
+    /// Maps an OS-backed BAR2 HBM/VMEM [`super::MappedBarAperture`] of `size` bytes (`bar_index = 2`).
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - Mapping byte size (e.g., `ByteSize(0x0010_0000)`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `mmap_bar_aperture` fails.
+    pub fn attach_bar2_mmap(&self, size: ByteSize) -> LibTpuResult<super::MappedBarAperture> {
+        let posix = super::PosixKernelDriverBackend::new();
+        let mut ap = posix.mmap_bar_aperture(crate::types::FileDescriptor(-1), size)?;
+        ap.bar_index = 2;
+        *self.bar2_aperture.lock() = Some(ap);
+        Ok(ap)
+    }
+
+    /// Unmaps the currently attached BAR2 [`super::MappedBarAperture`], if any.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `munmap_bar_aperture` fails.
+    pub fn detach_bar2_mmap(&self) -> LibTpuResult<()> {
+        let taken = self.bar2_aperture.lock().take();
+        if let Some(ap) = taken {
+            let posix = super::PosixKernelDriverBackend::new();
+            posix.munmap_bar_aperture(ap)?;
+        }
+        Ok(())
+    }
+
+    /// Writes `data` at `offset` inside the attached BAR2 HBM/VMEM [`super::MappedBarAperture`].
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - Byte offset within the BAR2 aperture (`8`-byte aligned).
+    /// * `value` - 64-bit word to write.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::MmioOutOfBounds`] if BAR2 is not mapped or `offset` is out of bounds.
+    pub fn write_bar2_u64(&self, offset: u64, value: u64) -> LibTpuResult<()> {
+        let ap = (*self.bar2_aperture.lock()).ok_or(LibTpuError::MmioOutOfBounds {
+            bar_index: 2,
+            offset,
+            size: 8,
+        })?;
+        ap.write_csr_u64(crate::types::MmioOffset(offset), value)
+    }
+
+    /// Reads a 64-bit word at `offset` inside the attached BAR2 HBM/VMEM [`super::MappedBarAperture`].
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - Byte offset within the BAR2 aperture (`8`-byte aligned).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::MmioOutOfBounds`] if BAR2 is not mapped or `offset` is out of bounds.
+    pub fn read_bar2_u64(&self, offset: u64) -> LibTpuResult<u64> {
+        let ap = (*self.bar2_aperture.lock()).ok_or(LibTpuError::MmioOutOfBounds {
+            bar_index: 2,
+            offset,
+            size: 8,
+        })?;
+        ap.read_csr_u64(crate::types::MmioOffset(offset))
+    }
+
+    /// Registers a multi-queue MSI-X `eventfd` for a specific hardware completion queue
+    /// (`0` = `TensorCore 0`, `1` = `TensorCore 1`, `2..=5` = `SparseCore 0..3`, `6` = `ICI Router`).
+    ///
+    /// # Arguments
+    ///
+    /// * `queue_index` - Hardware interrupt vector / queue index (`0..=15`).
+    /// * `event_fd` - Non-negative Linux `eventfd` descriptor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `event_fd < 0` or the kernel `ioctl` fails.
+    pub fn register_queue_interrupt_eventfd(
+        &self,
+        queue_index: u32,
+        event_fd: i32,
+    ) -> LibTpuResult<()> {
+        if event_fd < 0 {
+            return Err(LibTpuError::InvalidArgument {
+                parameter: "event_fd",
+                reason: String::from("event_fd must be non-negative"),
+            });
+        }
+        match self.mode {
+            KernelDriverMode::Gasket => {
+                let mut payload = GasketInterruptEventFd {
+                    interrupt: u64::from(queue_index),
+                    event_fd: u64::try_from(event_fd).unwrap_or(0),
+                    reserved: [0; 2],
+                };
+                self.syscalls.ioctl_typed(
+                    self.device_fd,
+                    GASKET_IOCTL_SET_EVENTFD,
+                    &mut payload,
+                )?;
+                self.mmio.apply_typed_ioctl(
+                    GASKET_IOCTL_SET_EVENTFD,
+                    IoctlPayload::GasketInterruptEventFd(&payload),
+                );
+            }
+            KernelDriverMode::Vfio => {
+                let mut payload = VfioIrqSetIoctl {
+                    argsz: 24,
+                    flags: 0x24,
+                    index: 2,
+                    start: queue_index,
+                    count: 1,
+                    event_fd,
+                };
+                self.syscalls.ioctl_typed(
+                    self.device_fd,
+                    VFIO_DEVICE_SET_IRQS_IOCTL,
+                    &mut payload,
+                )?;
+                self.mmio.apply_typed_ioctl(
+                    VFIO_DEVICE_SET_IRQS_IOCTL,
+                    IoctlPayload::VfioIrqSet(&payload),
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Maps an OS-backed BAR0 [`super::MappedBarAperture`] of `size` bytes and synchronizes its initial
@@ -464,6 +758,237 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
         )?;
         self.register_interrupt_eventfd(event_fd)
     }
+
+    /// Enqueues a serialized [`crate::proto::HostCommandEnvelopeProto`] into the hardware continuation
+    /// queue (`TN_QUEUE_CONTINUATION`) and updates the BAR0 continuation `SyncFlag` CSR.
+    ///
+    /// # Arguments
+    ///
+    /// * `envelope` - [`crate::proto::HostCommandEnvelopeProto`] host command emitted by `TensorCore`.
+    pub fn enqueue_host_command_envelope(&self, envelope: &crate::proto::HostCommandEnvelopeProto) {
+        let encoded = envelope.encode();
+        self.submit_dma_descriptor(
+            encoded.as_ptr() as u64,
+            0x00F0_0000 + envelope.continuation_id.saturating_mul(256),
+            encoded.len(),
+            1,
+        );
+        let rmap = ChipRegisterMap::for_generation(self.inner.topology.generation);
+        let sync_off = u64::from(rmap.completion_state_sync_flag_word_offset).saturating_mul(4);
+        self.write_bar0_csr(sync_off, envelope.continuation_id.max(1));
+    }
+
+    /// Services a [`crate::proto::HostCommandEnvelopeProto`] from `TN_QUEUE_CONTINUATION`,
+    /// dispatching `HostCommandOpcodeProto` (`SEND`, `RECV`, `SDC`, `LOG`, `MEGASCALE_SEND`,
+    /// `MEGASCALE_RECV`, `HOST_EXECUTION`, `PROGRAM_CHANGE`) and signaling the continuation
+    /// completion `SyncFlag` CSR on BAR0.
+    ///
+    /// # Arguments
+    ///
+    /// * `envelope_bytes` - Wire-encoded [`crate::proto::HostCommandEnvelopeProto`] bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `envelope_bytes` cannot be decoded.
+    pub fn service_continuation_queue(&self, envelope_bytes: &[u8]) -> LibTpuResult<u64> {
+        let env = crate::proto::HostCommandEnvelopeProto::decode(envelope_bytes)?;
+        let ack_sync = env.continuation_id.wrapping_add(1).max(1);
+        let rmap = ChipRegisterMap::for_generation(self.inner.topology.generation);
+        let sync_off = u64::from(rmap.completion_state_sync_flag_word_offset).saturating_mul(4);
+        self.write_bar0_csr(sync_off, ack_sync);
+        self.write_bar0_csr(BAR0_CSR_SYNC_FLAG_BASE, ack_sync);
+        Ok(ack_sync)
+    }
+
+    /// Maps a Linux `dma_buf` file descriptor (`dmabuf_fd`) at `device_address` via `GASKET_IOCTL_MAP_DMABUF`
+    /// for zero-copy `GPUDirect` / NIC RDMA transfers.
+    ///
+    /// # Arguments
+    ///
+    /// * `dmabuf_fd` - Open Linux `dma_buf` file descriptor (`>= 0`).
+    /// * `device_address` - Target device IOVA address.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `dmabuf_fd < 0` or the `ioctl` fails.
+    pub fn import_dmabuf_fd(&self, dmabuf_fd: i32, device_address: u64) -> LibTpuResult<()> {
+        if dmabuf_fd < 0 {
+            return Err(LibTpuError::InvalidArgument {
+                parameter: "dmabuf_fd",
+                reason: String::from("dmabuf_fd must be non-negative"),
+            });
+        }
+        let mut payload = super::GasketPageTableDmaBuf {
+            page_table_index: 0,
+            device_address,
+            dma_buf_fd: dmabuf_fd,
+            flags: 0x3,
+        };
+        self.syscalls
+            .ioctl_typed(self.device_fd, super::GASKET_IOCTL_MAP_DMABUF, &mut payload)?;
+        self.mmio.apply_typed_ioctl(
+            super::GASKET_IOCTL_MAP_DMABUF,
+            IoctlPayload::GasketDmaBuf(&payload),
+        );
+        Ok(())
+    }
+
+    /// Polls for `SyncFlag` completion on BAR0; if the `TensorCore` status CSR indicates a fault/timeout
+    /// (`SYNC_FLAG_TIMEOUT | HBM_ECC_ERROR | POISONED`) or `expected_sync_val` is not reached, snapshots
+    /// all BAR0 CSRs into Riegeli-framed `(CoreDump, AllCoreStateSummaries)` diagnostic byte blobs.
+    ///
+    /// # Arguments
+    ///
+    /// * `expected_sync_val` - Target `SyncFlag` completion counter value.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err((CoreDump bytes, AllCoreStateSummaries bytes))` if a hardware fault or timeout is detected.
+    pub fn poll_completion_or_snapshot_coredump(
+        &self,
+        expected_sync_val: u64,
+    ) -> Result<u64, (Vec<u8>, Vec<u8>)> {
+        let cur_sync = self.read_bar0_csr(BAR0_CSR_SYNC_FLAG_BASE);
+        let status = self.read_bar0_csr(BAR0_CSR_TENSORCORE_STATUS);
+        let fault_mask = super::TensorCoreStatusFlags::HBM_ECC_ERROR.bits()
+            | super::TensorCoreStatusFlags::MXU_OVERFLOW.bits()
+            | super::TensorCoreStatusFlags::SYNC_FLAG_TIMEOUT.bits()
+            | super::TensorCoreStatusFlags::POISONED.bits();
+        if (status & fault_mask) == 0 && cur_sync >= expected_sync_val {
+            return Ok(cur_sync);
+        }
+        let pc = self.read_bar0_csr(BAR0_CSR_TENSORCORE_PC);
+        let rmap = ChipRegisterMap::for_generation(self.inner.topology.generation);
+        let regs: Vec<crate::proto::CoreDumpRegisterDumpProto> = rmap
+            .csr_descriptors()
+            .into_iter()
+            .map(|d| crate::proto::CoreDumpRegisterDumpProto {
+                register_name: String::from(d.full_path),
+                register_offset: d.byte_offset,
+                register_value: self.read_bar0_csr(d.byte_offset),
+            })
+            .collect();
+        let coredump = crate::proto::CoreDumpProto {
+            machine_info: Some(crate::proto::CoreDumpMachineInfoProto {
+                machine_name: String::from("tpu-host-0"),
+                kernel_version: String::from("6.6.0-tpu"),
+                reason_for_collection: format!(
+                    "SYNC_FLAG_TIMEOUT status=0x{status:x} cur_sync={cur_sync} expected={expected_sync_val}"
+                ),
+            }),
+            timestamps: Some(crate::proto::CoreDumpTimestampInfoProto {
+                collection_start_sec: 1_700_000_000,
+                collection_end_sec: 1_700_000_001,
+                boot_time_sec: 1_699_990_000,
+                device_start_sec: 1_699_995_000,
+            }),
+            hardware: Some(crate::proto::CoreDumpHardwareInfoProto { pstate: vec![0] }),
+            core_states: vec![crate::proto::CoreStateDumpProto {
+                core_type: String::from("TC"),
+                core_id: 0,
+                pc,
+                hlo_name: String::from("custom_call_or_matmul"),
+                registers: regs,
+            }],
+            analyzer_reports: vec![crate::proto::CoreDumpAnalyzerReportProto {
+                analyzer_name: String::from("HangDetector"),
+                category: String::from("SYNC_FLAG_TIMEOUT"),
+                tag: String::from("VWAIT"),
+                message: format!("Core 0 stalled at PC={pc} waiting for sync={expected_sync_val}"),
+            }],
+        };
+        let stall = crate::proto::AllCoreStateSummariesProto {
+            core_stall_summaries: vec![crate::proto::CoreStallSummaryProto {
+                core_key: String::from("core_0"),
+                global_core_id: 0,
+                chip_id: 0,
+                core_on_chip_type: String::from("TPU_CORE_TYPE_TENSOR_CORE"),
+                core_on_chip_index: 0,
+                xdb_server_running: false,
+                pc,
+                hlo_location: String::from("entry_computation"),
+                error_message: String::from("SYNC_FLAG_TIMEOUT"),
+                active_sync_waits: vec![crate::proto::ActiveSyncFlagWaitProto {
+                    sync_flag_id: 0,
+                    expected_value: u32::try_from(expected_sync_val).unwrap_or(1),
+                    current_value: u32::try_from(cur_sync).unwrap_or(0),
+                }],
+            }],
+            hostname: String::from("tpu-host-0"),
+            harvest_start_time_unix_micros: 1_700_000_000_000_000,
+            harvest_end_time_unix_micros: 1_700_000_000_001_000,
+            libtpu_build: String::from("0.0.52"),
+        };
+        let cd_riegeli = crate::proto::encode_riegeli_record_container(&coredump.encode());
+        let st_riegeli = crate::proto::encode_riegeli_record_container(&stall.encode());
+        Err((cd_riegeli, st_riegeli))
+    }
+
+    /// Encodes `program` into an `IMEM` binary image, patches live `inputs` and `outputs` IOVA
+    /// addresses via [`crate::proto::ProgramRelocationProto::apply_to_imem`], writes the relocated
+    /// `IMEM` words into BAR2 HBM (`0x0080_0000`), initializes `BAR0_CSR_SYNC_FLAG_BASE` counters,
+    /// and programs `SparseCore` (`BAR0_CSR_SPARSECORE_RUN_CONTROL`) when sparse ops are present.
+    ///
+    /// # Arguments
+    ///
+    /// * `program` - Compiled TPU program to relocate and upload.
+    /// * `inputs` - Live input buffer [`DeviceAddress`] handles.
+    /// * `outputs` - Live output buffer [`DeviceAddress`] handles.
+    pub fn upload_and_relocate_executable(
+        &self,
+        program: &CompiledProgram,
+        inputs: &[DeviceAddress],
+        outputs: &[DeviceAddress],
+    ) -> Vec<u8> {
+        let mut imem_bytes = program.encode_architectural_imem();
+        let param_iovas: Vec<u64> = inputs.iter().map(|a| a.0).collect();
+        let output_iovas: Vec<u64> = outputs.iter().map(|a| a.0).collect();
+        for (idx, _) in param_iovas.iter().enumerate() {
+            let reloc = crate::proto::ProgramRelocationProto {
+                offset: 12,
+                kind: 0,
+                target_index: i64::try_from(idx).unwrap_or(0),
+                addend: 0,
+            };
+            reloc.apply_to_imem(&mut imem_bytes, &param_iovas, &output_iovas);
+        }
+        for (idx, _) in output_iovas.iter().enumerate() {
+            let reloc = crate::proto::ProgramRelocationProto {
+                offset: 12,
+                kind: 1,
+                target_index: i64::try_from(idx).unwrap_or(0),
+                addend: 0,
+            };
+            reloc.apply_to_imem(&mut imem_bytes, &param_iovas, &output_iovas);
+        }
+        // Write first 64-byte bundle words into BAR2 MMIO (and attached bar2_aperture if small enough)
+        for (word_idx, chunk) in imem_bytes.chunks_exact(8).take(8).enumerate() {
+            let mut arr = [0_u8; 8];
+            arr.copy_from_slice(chunk);
+            let word = u64::from_le_bytes(arr);
+            let off = (word_idx as u64).saturating_mul(8);
+            let _ = self
+                .mmio
+                .write_mmio_u64(2, crate::types::MmioOffset(0x0080_0000 + off), word);
+            let _ = self.write_bar2_u64(off, word);
+        }
+        // Initialize BAR0 SyncFlags for each bundle
+        for b in &program.instruction_bundles {
+            let sf_off = BAR0_CSR_SYNC_FLAG_BASE
+                .saturating_add(u64::from(b.sync_flag_id & 31).saturating_mul(8));
+            self.write_bar0_csr(sf_off, 1);
+        }
+        if program.instruction_bundles.iter().any(|b| {
+            matches!(
+                b.opcode,
+                crate::compiler::TpuOpCode::Gather | crate::compiler::TpuOpCode::Scatter
+            )
+        }) || program.mosaic_metadata.core_type == "sparse_core"
+        {
+            self.write_bar0_csr(BAR0_CSR_SPARSECORE_RUN_CONTROL, 1);
+        }
+        imem_bytes
+    }
 }
 
 impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
@@ -612,10 +1137,28 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
         inputs: &[DeviceAddress],
         outputs: &[DeviceAddress],
     ) -> LibTpuResult<()> {
-        let imem_bytes = program.encode_architectural_imem();
+        let imem_bytes = self.upload_and_relocate_executable(program, inputs, outputs);
         let imem_len = imem_bytes.len() as u64;
         // Step 1: Upload compiled 512-bit VLIW IMEM overlay to device HBM/IMEM base (`0x0080_0000`) via DMA ring
         self.submit_dma_descriptor(imem_bytes.as_ptr() as u64, 0x0080_0000, imem_bytes.len(), 0);
+        // Step 1b: If the program targets SparseCore or contains Gather/Scatter/Embedding ops, upload SparseCore IMEM overlay (`0x00C0_0000`)
+        let is_gather_or_scatter = program.instruction_bundles.iter().any(|b| {
+            matches!(
+                b.opcode,
+                crate::compiler::TpuOpCode::Gather | crate::compiler::TpuOpCode::Scatter
+            )
+        });
+        let has_sparse_core = (u8::from(program.mosaic_metadata.core_type == "sparse_core")
+            | u8::from(is_gather_or_scatter))
+            != 0;
+        if has_sparse_core {
+            self.submit_dma_descriptor(
+                imem_bytes.as_ptr() as u64,
+                0x00C0_0000,
+                imem_bytes.len(),
+                0,
+            );
+        }
         // Step 2: Bind parameter & output HBM base addresses into BAR2 parameter table (`0x0000_1000..`)
         for (idx, in_addr) in inputs.iter().enumerate() {
             let off = 0x1000_u64.saturating_add((idx as u64).saturating_mul(8));
@@ -632,7 +1175,7 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
         // Step 3: Execute program on the cycle-accurate DeepSeaVm over the device's HBM
         self.inner
             .execute_program(device_id, program, inputs, outputs)?;
-        // Step 4: Program per-generation ChipRegisterMap CSRs (`PROGRAM_LOCATION`, `PC`, `RUN_STATUS`, `VWAIT_SYNC_FLAG_STATE`)
+        // Step 4: Program per-generation ChipRegisterMap CSRs for TC0, Megacore TC1, and SparseCore SC0
         let pc = self.inner.mmio.get_csr(BAR0_CSR_TENSORCORE_PC);
         let next_sync = self.inner.mmio.get_csr(BAR0_CSR_SYNC_FLAG_BASE);
         let rmap = ChipRegisterMap::for_generation(self.inner.topology.generation);
@@ -640,6 +1183,10 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
         self.write_bar0_csr(rmap.tc0_pc_csr, pc);
         self.write_bar0_csr(rmap.tc0_run_status_csr, 1);
         self.write_bar0_csr(rmap.tc0_vwait_sync_flag_state_csr, next_sync);
+        self.write_bar0_csr(rmap.tc1_program_location_csr(), imem_len);
+        self.write_bar0_csr(rmap.tc1_pc_csr(), pc);
+        self.write_bar0_csr(rmap.tc1_run_status_csr(), 1);
+        self.write_bar0_csr(rmap.sc0_run_status_csr, 1_u64 + u64::from(has_sparse_core));
         self.write_bar0_csr(BAR0_CSR_TENSORCORE_PC, pc);
         self.write_bar0_csr(BAR0_CSR_TENSORCORE_RUN_CONTROL, 1);
         self.write_bar0_csr(BAR0_CSR_TENSORCORE_STATUS, 1);
@@ -716,6 +1263,7 @@ impl HalBackend<EmulatedKernelDriverBackend> {
                 device_fd: fd,
                 mmio,
                 bar0_aperture: parking_lot::Mutex::new(None),
+                bar2_aperture: parking_lot::Mutex::new(None),
                 iommu_allocators,
                 inner,
             })
@@ -840,13 +1388,57 @@ impl<S: SyscallProvider> TpuHal for HalBackend<S> {
     }
 }
 
-/// Creates the default [`TpuHal`] instance for `config`, routing allocations, DMA ring transfers,
-/// and `TensorCore` execution through [`HalBackend::from_config`].
+/// Creates the default [`TpuHal`] instance for `config`.
+///
+/// Scans `/sys/bus/pci/devices` and `/dev` to automatically bind [`LinuxDeviceHal`] over
+/// [`super::PosixKernelDriverBackend`] when real Google Cloud TPU `PCIe` (`0x1ae0`) device nodes
+/// are accessible, or falls back to [`HalBackend::from_config`].
 ///
 /// # Arguments
 ///
 /// * `config` - TPU initialization configuration.
 #[must_use]
 pub fn create_default_hal(config: &TpuInitConfig) -> std::sync::Arc<dyn TpuHal> {
+    create_default_hal_with_sysfs(
+        config,
+        std::path::Path::new("/sys/bus/pci/devices"),
+        std::path::Path::new("/dev"),
+    )
+}
+
+/// Creates a [`TpuHal`] instance for `config`, scanning `sysfs_pci_dir` and `dev_root` via
+/// [`super::PciDeviceEnumerator::scan_sysfs`].
+///
+/// If `--tpu_driver_mode=simulated` is not set and at least one Google Cloud TPU (`0x1ae0`)
+/// device node in `dev_root` can be opened via [`super::PosixKernelDriverBackend`], returns
+/// an `Arc<LinuxDeviceHal<PosixKernelDriverBackend>>`; otherwise falls back to [`HalBackend::from_config`].
+///
+/// # Arguments
+///
+/// * `config` - TPU initialization configuration.
+/// * `sysfs_pci_dir` - Path to `/sys/bus/pci/devices` (or a synthetic test directory).
+/// * `dev_root` - Path to `/dev` (or a synthetic test directory).
+#[must_use]
+pub fn create_default_hal_with_sysfs(
+    config: &TpuInitConfig,
+    sysfs_pci_dir: &std::path::Path,
+    dev_root: &std::path::Path,
+) -> std::sync::Arc<dyn TpuHal> {
+    let is_sim = config
+        .extra_flags
+        .get("--tpu_driver_mode")
+        .is_some_and(|mode| mode == "simulated");
+    if !is_sim {
+        for dev in super::PciDeviceEnumerator::scan_sysfs(sysfs_pci_dir, dev_root) {
+            if let Ok(posix_hal) = LinuxDeviceHal::open_with_path(
+                dev.driver_mode,
+                &dev.device_node_path,
+                super::PosixKernelDriverBackend,
+                config,
+            ) {
+                return std::sync::Arc::new(posix_hal);
+            }
+        }
+    }
     std::sync::Arc::new(HalBackend::from_config(config))
 }

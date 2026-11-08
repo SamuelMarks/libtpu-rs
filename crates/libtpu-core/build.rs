@@ -79,300 +79,6 @@ fn normalize_proto_for_protox(raw: &str, available_files: &BTreeSet<String>) -> 
     out
 }
 
-/// Synthetic leaf dependency and runtime bridge `.proto` schemas staged alongside
-/// `docs/reverse_engineering/protos/*.proto`.
-const SYNTHETIC_DEPENDENCY_PROTOS: &[(&str, &str)] = &[
-    (
-        "gpu_topology.proto",
-        r#"syntax = "proto3";
-package xla;
-message GpuTopologyProto {
-  int32 num_partitions = 1;
-  int32 num_hosts_per_partition = 2;
-  int32 num_devices_per_host = 3;
-}
-"#,
-    ),
-    (
-        "backends.proto",
-        r#"syntax = "proto3";
-package xla.autotuner;
-enum Backend {
-  BACKEND_UNSPECIFIED = 0;
-  CPU = 1;
-  GPU = 2;
-  TPU = 3;
-}
-"#,
-    ),
-    (
-        "dnn.proto",
-        r#"syntax = "proto3";
-package stream_executor.dnn;
-message AlgorithmProto {
-  int64 algo_id = 1;
-  bool math_type = 2;
-}
-"#,
-    ),
-    (
-        "cuda_compute_capability.proto",
-        r#"syntax = "proto3";
-package stream_executor;
-message CudaComputeCapabilityProto {
-  int32 major = 1;
-  int32 minor = 2;
-}
-"#,
-    ),
-    (
-        "oneapi_compute_capability.proto",
-        r#"syntax = "proto3";
-package stream_executor;
-message OneAPIComputeCapabilityProto {
-  int32 generation = 1;
-}
-"#,
-    ),
-    (
-        "tensor_shape.proto",
-        r#"syntax = "proto3";
-package tensorflow;
-message TensorShapeProto {
-  message Dim {
-    int64 size = 1;
-    string name = 2;
-  }
-  repeated Dim dim = 2;
-  bool unknown_rank = 3;
-}
-"#,
-    ),
-    (
-        "types.proto",
-        r#"syntax = "proto3";
-package tensorflow;
-enum DataType {
-  DT_INVALID = 0;
-  DT_FLOAT = 1;
-  DT_DOUBLE = 2;
-  DT_INT32 = 3;
-  DT_UINT8 = 4;
-  DT_INT16 = 5;
-  DT_INT8 = 6;
-  DT_STRING = 7;
-  DT_COMPLEX64 = 8;
-  DT_INT64 = 9;
-  DT_BOOL = 10;
-  DT_BFLOAT16 = 14;
-  DT_UINT32 = 22;
-  DT_UINT64 = 23;
-}
-"#,
-    ),
-    (
-        "tensor.proto",
-        r#"syntax = "proto3";
-package tensorflow;
-import "tensor_shape.proto";
-import "types.proto";
-message TensorProto {
-  DataType dtype = 1;
-  TensorShapeProto tensor_shape = 2;
-  int32 version_number = 3;
-  bytes tensor_content = 4;
-}
-"#,
-    ),
-    (
-        "libtpu_runtime_tpu_bridge.proto",
-        r#"syntax = "proto3";
-package tpu;
-import "xla_data.proto";
-
-message TpuCompilationEnvironmentProto {
-  bool xla_tpu_enable_megacore_fusion = 1;
-  bool xla_tpu_enable_async_collective_fusion = 2;
-  int64 xla_tpu_scoped_vmem_limit_kib = 3;
-  string custom_flags = 4;
-}
-
-message TpuTopologyArgsProto {
-  int32 version = 1;
-  int32 num_hosts = 2;
-  int32 chips_per_host = 3;
-  repeated int64 mesh_bounds = 4;
-  string platform_version = 5;
-  string fingerprint = 6;
-}
-
-message TpuSerializedExecutableProto {
-  string name = 1;
-  string fingerprint = 2;
-  int32 num_replicas = 3;
-  int32 num_partitions = 4;
-  repeated int64 instruction_opcodes = 5;
-  repeated xla.ShapeProto output_shapes = 6;
-  bytes compile_options_bytes = 7;
-  bytes hlo_module_bytes = 8;
-}
-
-message TpuEmbeddingPartitionedConfigProto {
-  int32 num_partitions = 1;
-  repeated string table_names = 2;
-  bytes raw_config_bytes = 3;
-}
-
-message TpuEmbeddingMemoryConfigProto {
-  uint64 hbm_buffers_bytes = 1;
-  int32 num_segments = 2;
-  repeated bytes segment_blobs = 3;
-}
-
-message TpuEmbeddingHostNetworkConfigProto {
-  int32 host_id = 1;
-  string endpoint_address = 2;
-  bytes partition_payload = 3;
-}
-
-message RegisterTranslatorEntryProto {
-  string full_path = 1;
-  uint64 byte_offset = 2;
-  uint32 width_bits = 3;
-  string access_mode = 4;
-  uint64 reset_value = 5;
-}
-
-message RegisterTranslatorDataProto {
-  string chip_codename = 1;
-  int32 tpu_version = 2;
-  uint64 hardware_abi_version = 3;
-  repeated RegisterTranslatorEntryProto registers = 4;
-}
-
-message TpuChipConfigProto {
-  string chip_name = 1;
-  int32 tpu_version = 2;
-  uint32 tensor_cores_per_chip = 3;
-  uint32 sparse_cores_per_chip = 4;
-  uint64 hbm_capacity_bytes = 5;
-  uint64 vmem_capacity_bytes = 6;
-  uint64 smem_capacity_bytes = 7;
-  bool megacore_enabled = 8;
-}
-
-message TpuChipPartsProto {
-  string part_name = 1;
-  int32 tpu_version = 2;
-  uint32 mxu_dimension = 3;
-  uint32 mxu_count_per_core = 4;
-  uint32 ici_link_count = 5;
-  int64 clock_rate_mhz = 6;
-  int64 ici_bandwidth_bps = 7;
-  uint64 cmem_capacity_bytes = 8;
-}
-
-message TpuRuntimeAbiProto {
-  int64 base_abi_version = 1;
-  int64 hardware_abi_version = 2;
-  string compiler_hash = 3;
-  repeated string supported_chip_variants = 4;
-}
-
-message SliceConfig {
-  string name = 1;
-  repeated int32 dimensions = 2;
-  repeated bool wraps = 3;
-  bool twist = 4;
-}
-
-message TpuPlatformConfig {
-  string platform_type_name = 1;
-  repeated SliceConfig slice_configs = 2;
-  int64 num_chips_per_tray = 3;
-  int64 num_trays = 4;
-}
-
-message TpuPlatformConfigs {
-  repeated TpuPlatformConfig platform_configs = 1;
-}
-"#,
-    ),
-    (
-        "libtpu_runtime_xla_bridge.proto",
-        r#"syntax = "proto3";
-package xla;
-import "deepsea_executable.proto";
-import "hlo.proto";
-import "xla.proto";
-import "compile_options.proto";
-import "target_arguments.proto";
-import "libtpu_runtime_tpu_bridge.proto";
-
-message TpuExecutableProto {
-  DeepseaExecutableProto ds_executable = 1;
-  HloModuleProtoWithConfig hlo_module_with_config = 3;
-  CompileOptionsProto compile_options = 6;
-  TargetArgumentsProto target_arguments = 7;
-  tpu.TpuSerializedExecutableProto legacy_executable = 8;
-  string source_uri = 9;
-}
-
-message HostOffloadingExecutableProto {
-  HloModuleProto hlo_module = 1;
-  int32 executable_type = 2;
-}
-"#,
-    ),
-    (
-        "libtpu_runtime_megascale_bridge.proto",
-        r#"syntax = "proto3";
-package megascale;
-
-message MultiSliceConfigProto {
-  int32 num_slices = 1;
-  int32 slice_id = 2;
-  int32 num_devices_per_slice = 3;
-  string coordinator_address = 4;
-}
-
-message DCNTopologyProto {
-  int32 num_slices = 1;
-  int32 num_hosts_per_slice = 2;
-  int32 transport_type = 3;
-}
-
-message RuntimeMetricsProto {
-  uint64 completed_barriers = 1;
-  uint64 collective_ops_count = 2;
-  int32 active_contexts = 3;
-}
-"#,
-    ),
-];
-
-/// Writes synthetic leaf dependency `.proto` schemas required by top-level `OpenXLA`
-/// and TensorFlow `.proto` files into `staged_proto_dir`.
-///
-/// # Arguments
-///
-/// * `staged_proto_dir` - Output staging directory for `protox`.
-/// * `staged_paths` - Vector of staged `.proto` paths to append to.
-/// * `available_files` - Set of staged `.proto` basenames.
-fn write_synthetic_dependency_protos(
-    staged_proto_dir: &std::path::Path,
-    staged_paths: &mut Vec<PathBuf>,
-    available_files: &mut BTreeSet<String>,
-) -> std::io::Result<()> {
-    for &(name, content) in SYNTHETIC_DEPENDENCY_PROTOS {
-        available_files.insert(name.to_owned());
-        let dst = staged_proto_dir.join(name);
-        std::fs::write(&dst, content)?;
-        staged_paths.push(dst);
-    }
-    Ok(())
-}
-
 /// Unified build-script error enum for `libtpu-core` schema staging and compilation.
 #[derive(Debug)]
 enum BuildError {
@@ -405,6 +111,153 @@ impl From<protox::Error> for BuildError {
     }
 }
 
+/// Post-processes `prost-build` generated `.rs` files in `out_dir` so every generated struct,
+/// enum, module, field, and variant has a rustdoc comment satisfying `forbid(missing_docs)`.
+///
+/// # Arguments
+///
+/// * `out_dir` - Directory containing `.rs` files emitted by `prost-build`.
+fn ensure_doc_comments_in_generated_rs(out_dir: &std::path::Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(out_dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let raw = std::fs::read_to_string(&path)?;
+        let mut out = String::with_capacity(raw.len() + 4096);
+        let mut pending_docs: Vec<&str> = Vec::new();
+        let mut pending_attrs: Vec<&str> = Vec::new();
+        for line in raw.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("///") || trimmed.starts_with("//!") {
+                pending_docs.push(line);
+                continue;
+            }
+            if trimmed.starts_with("#[") {
+                pending_attrs.push(line);
+                continue;
+            }
+            let is_item = trimmed.starts_with("pub struct ")
+                || trimmed.starts_with("pub enum ")
+                || trimmed.starts_with("pub mod ")
+                || trimmed.starts_with("pub type ")
+                || (trimmed.starts_with("pub ") && trimmed.contains(": "))
+                || (!pending_attrs.is_empty()
+                    && !trimmed.is_empty()
+                    && !trimmed.starts_with('}')
+                    && !trimmed.starts_with("//"))
+                || (trimmed.contains(" = ") && trimmed.ends_with(','));
+            if is_item && pending_docs.is_empty() {
+                let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+                let _ = writeln!(out, "{indent}/// Generated protobuf schema item.");
+            }
+            for doc in std::mem::take(&mut pending_docs) {
+                let _ = writeln!(out, "{doc}");
+            }
+            for attr in std::mem::take(&mut pending_attrs) {
+                let _ = writeln!(out, "{attr}");
+            }
+            let _ = writeln!(out, "{line}");
+        }
+        for doc in pending_docs {
+            let _ = writeln!(out, "{doc}");
+        }
+        for attr in pending_attrs {
+            let _ = writeln!(out, "{attr}");
+        }
+        std::fs::write(&path, out)?;
+    }
+    Ok(())
+}
+
+/// Ordered list of `.proto` schemas in `docs/reverse_engineering/protos/` compiled by `protox`.
+const COMPILE_PROTOS: &[&str] = &[
+    "gpu_topology.proto",
+    "backends.proto",
+    "dnn.proto",
+    "cuda_compute_capability.proto",
+    "oneapi_compute_capability.proto",
+    "tensor_shape.proto",
+    "types.proto",
+    "tensor.proto",
+    "tpu_version.proto",
+    "register_translator.proto",
+    "tpu_chip_config.proto",
+    "target_arguments.proto",
+    "isa_program.proto",
+    "deepsea_executable.proto",
+    "host_command_opcodes.proto",
+    "runtime_config.proto",
+    "memory_scheduler.proto",
+    "memory_space_assignment.proto",
+    "emitter_learned_cost_model_options.proto",
+    "reduction_kind.proto",
+    "error_codes.proto",
+    "status.proto",
+    "pjrt_abi_version.proto",
+    "pjrt_device_dimensions.proto",
+    "pjrt_partial_program.proto",
+    "pjrt_value_type.proto",
+    "pjrt_distributed_protocol.proto",
+    "py_host_callback.proto",
+    "pytree.proto",
+    "ffi_execution_state.proto",
+    "ffi_attribute_map.proto",
+    "dynamic_padding.proto",
+    "runtime_abi_version.proto",
+    "executable_abi_version.proto",
+    "sparse_core_layout.proto",
+    "topology_description.proto",
+    "xla_data.proto",
+    "metrics.proto",
+    "hlo.proto",
+    "buffer_assignment.proto",
+    "shaped_slice.proto",
+    "execute_options.proto",
+    "executable_metadata.proto",
+    "xplane.proto",
+    "profiler_options.proto",
+    "profiler_service.proto",
+    "profiler_topology.proto",
+    "tf_tpu_topology.proto",
+    "optimization_parameters.proto",
+    "tpu_embedding_configuration.proto",
+    "tpu_compilation_environment.proto",
+    "tpu_topology.proto",
+    "tpu_runtime.proto",
+    "tpu_executable.proto",
+    "tpu_input_pipeline.proto",
+    "host_offloading_executable.proto",
+    "megascale_dcn_topology.proto",
+    "megascale_addresses.proto",
+    "megascale_runtime_error_overlay.proto",
+    "megascale.proto",
+    "coordination_config.proto",
+    "coordination_service.proto",
+    "xla_compile_result.proto",
+    "autotuning.proto",
+    "autotune_results.proto",
+    "device_description.proto",
+    "xla.proto",
+    "compile_options.proto",
+    "compile_metadata.proto",
+    "compilation_result.proto",
+    "host_compute_metadata.proto",
+    "tf2xla.proto",
+    "xla_argument.proto",
+    "tpu_executable_info.proto",
+    "coredump.proto",
+    "stall_summaries.proto",
+    "compiler_metadata.proto",
+    "mosaic_tpu.proto",
+    "hlo_profile_printer_data.proto",
+    "jellyfish_executable.proto",
+    "barnacore_executable.proto",
+    "tpu_fingerprint.proto",
+    "xla_ffi.proto",
+    "power_telemetry.proto",
+];
+
 /// Entrypoint for `cargo` build script execution.
 ///
 /// # Errors
@@ -417,75 +270,15 @@ fn main() -> Result<(), BuildError> {
         .canonicalize()
         .unwrap_or_else(|_| manifest_dir.join("../../docs/reverse_engineering/protos"));
 
-    let compile_protos = [
-        "tpu_version.proto",
-        "target_arguments.proto",
-        "isa_program.proto",
-        "deepsea_executable.proto",
-        "host_command_opcodes.proto",
-        "runtime_config.proto",
-        "memory_scheduler.proto",
-        "memory_space_assignment.proto",
-        "emitter_learned_cost_model_options.proto",
-        "reduction_kind.proto",
-        "error_codes.proto",
-        "status.proto",
-        "pjrt_abi_version.proto",
-        "pjrt_device_dimensions.proto",
-        "pjrt_partial_program.proto",
-        "pjrt_value_type.proto",
-        "pjrt_distributed_protocol.proto",
-        "py_host_callback.proto",
-        "pytree.proto",
-        "ffi_execution_state.proto",
-        "ffi_attribute_map.proto",
-        "dynamic_padding.proto",
-        "runtime_abi_version.proto",
-        "executable_abi_version.proto",
-        "sparse_core_layout.proto",
-        "topology_description.proto",
-        "xla_data.proto",
-        "metrics.proto",
-        "hlo.proto",
-        "buffer_assignment.proto",
-        "shaped_slice.proto",
-        "execute_options.proto",
-        "executable_metadata.proto",
-        "xplane.proto",
-        "profiler_options.proto",
-        "tf_tpu_topology.proto",
-        "optimization_parameters.proto",
-        "tpu_embedding_configuration.proto",
-        "megascale_dcn_topology.proto",
-        "megascale_addresses.proto",
-        "megascale_runtime_error_overlay.proto",
-        "coordination_config.proto",
-        "coordination_service.proto",
-        "xla_compile_result.proto",
-        "autotuning.proto",
-        "autotune_results.proto",
-        "device_description.proto",
-        "xla.proto",
-        "compile_options.proto",
-        "compile_metadata.proto",
-        "compilation_result.proto",
-        "host_compute_metadata.proto",
-        "tf2xla.proto",
-        "xla_argument.proto",
-        "tpu_executable_info.proto",
-    ];
-
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap_or_default());
     let staged_proto_dir = out_dir.join("staged_protos");
     std::fs::create_dir_all(&staged_proto_dir)?;
 
-    let mut available_files: BTreeSet<String> =
-        compile_protos.iter().map(|s| (*s).to_owned()).collect();
-    let mut staged_paths = Vec::with_capacity(compile_protos.len() + 12);
+    let available_files: BTreeSet<String> =
+        COMPILE_PROTOS.iter().map(|s| (*s).to_owned()).collect();
+    let mut staged_paths = Vec::with_capacity(COMPILE_PROTOS.len());
 
-    write_synthetic_dependency_protos(&staged_proto_dir, &mut staged_paths, &mut available_files)?;
-
-    for name in compile_protos {
+    for &name in COMPILE_PROTOS {
         let src_path = proto_dir.join(name);
         println!("cargo:rerun-if-changed={}", src_path.display());
         let raw = std::fs::read_to_string(&src_path)?;
@@ -500,7 +293,9 @@ fn main() -> Result<(), BuildError> {
     std::fs::write(&fds_path, file_descriptor_set.encode_to_vec())?;
 
     let mut config = prost_build::Config::new();
+    config.btree_map(["."]);
     config.file_descriptor_set_path(&fds_path);
     config.compile_fds(file_descriptor_set)?;
+    ensure_doc_comments_in_generated_rs(&out_dir)?;
     Ok(())
 }

@@ -2332,6 +2332,41 @@ mod tests {
             );
             assert!(tpu_mem_stats.generated_code_size_in_bytes >= 256);
 
+            let mut target_proto_q = PJRT_TpuExecutable_ProtoQuery_Args {
+                struct_size: size_of::<PJRT_TpuExecutable_ProtoQuery_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: (*comp_args.executable).executable_ptr.cast(),
+                serialized_bytes: 0,
+                serialized_bytes_size: 0,
+                holder: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_TpuExecutable_GetTargetArguments(ptr::addr_of_mut!(target_proto_q).cast())
+                    .is_null()
+            );
+            assert!(target_proto_q.serialized_bytes_size > 0);
+            assert!(!target_proto_q.holder.is_null());
+            let mut holder_del = PJRT_Metadata_Destroy_Args {
+                struct_size: size_of::<PJRT_Metadata_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                metadata: target_proto_q.holder,
+            };
+            assert!(
+                PJRT_ExecutableMetadata_Destroy(ptr::addr_of_mut!(holder_del).cast()).is_null()
+            );
+            assert!(holder_del.metadata.is_null());
+
+            assert!(
+                PJRT_TpuExecutable_GetHloModuleWithConfig(ptr::addr_of_mut!(target_proto_q).cast())
+                    .is_null()
+            );
+            assert!(target_proto_q.serialized_bytes_size > 0);
+            holder_del.metadata = target_proto_q.holder;
+            assert!(
+                PJRT_ExecutableMetadata_Destroy(ptr::addr_of_mut!(holder_del).cast()).is_null()
+            );
+            assert!(holder_del.metadata.is_null());
+
             let pred_err = box_pjrt_error(LibTpuError::DevicePoisoned {
                 device_id: 0,
                 launch_id: 1,

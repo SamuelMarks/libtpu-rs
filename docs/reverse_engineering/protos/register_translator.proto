@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: platforms/deepsea/software/driver/register_translator.proto (embedded in libtpu/libtpu.so protodesc_cold & *_pf_csrs.br)
+
+syntax = "proto3";
+
+package tpu;
+
+message RegisterTranslatorEntryProto {
+  string full_path = 1;
+  uint64 byte_offset = 2;
+  uint32 width_bits = 3;
+  string access_mode = 4;
+  uint64 reset_value = 5;
+}
+
+message RegisterTranslatorDataProto {
+  string chip_codename = 1;
+  int32 tpu_version = 2;
+  uint64 hardware_abi_version = 3;
+  repeated RegisterTranslatorEntryProto registers = 4;
+}

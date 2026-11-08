@@ -168,10 +168,34 @@ pub struct ProgramRelocationProto {
     pub addend: i64,
 }
 
-impl_proto_schema_message!(
-    ProgramRelocationProto,
-    "platforms_deepsea.jellyfish.ProgramRelocation"
-);
+impl ProgramRelocationProto {
+    /// Patches live parameter and output IOVA addresses (`param_iovas`, `output_iovas`) into `imem_bytes`
+    /// at `self.offset` (`32`-bit immediate field of the target VLIW slot).
+    ///
+    /// # Arguments
+    ///
+    /// * `imem_bytes` - Mutable `IMEM` VLIW instruction stream.
+    /// * `param_iovas` - Live device HBM/IOVA addresses for program input parameters (`kind == 0`).
+    /// * `output_iovas` - Live device HBM/IOVA addresses for program output buffers (`kind == 1`).
+    pub fn apply_to_imem(&self, imem_bytes: &mut [u8], param_iovas: &[u64], output_iovas: &[u64]) {
+        let idx = usize::try_from(self.target_index.max(0)).unwrap_or(0);
+        let base_addr = if self.kind == 0 {
+            param_iovas.get(idx).copied().unwrap_or(0)
+        } else {
+            output_iovas.get(idx).copied().unwrap_or(0)
+        };
+        let patched_u64 = base_addr.wrapping_add_signed(self.addend);
+        #[allow(clippy::cast_possible_truncation)]
+        let patched_u32 = (patched_u64 & 0xFFFF_FFFF) as u32;
+        let off = usize::try_from(self.offset.max(0)).unwrap_or(0);
+        imem_bytes
+            .get_mut(off..off.saturating_add(4))
+            .into_iter()
+            .for_each(|dst| dst.copy_from_slice(&patched_u32.to_le_bytes()));
+    }
+}
+
+impl_proto_schema_message!(ProgramRelocationProto, "xla.ProgramRelocation");
 
 /// Wire-compatible `xla.IsaProgramProto` (`platforms/xla/service/jellyfish/isa_program.proto`).
 #[derive(Clone, PartialEq, Eq, Message)]
@@ -344,6 +368,19 @@ pub struct DeepseaSyncFlagInitProto {
 
 impl_proto_schema_message!(DeepseaSyncFlagInitProto, "xla.DeepseaSyncFlagInitProto");
 
+/// Wire-compatible `tpu.TpuCoreProgramAbiOptionsProto` (`learning/45eac/tpu/runtime/tpu_version.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuCoreProgramAbiOptionsProto {
+    /// Whether hardware continuation dispatch is enabled (field `1`).
+    #[prost(bool, tag = "1")]
+    pub use_continuations: bool,
+}
+
+impl_proto_schema_message!(
+    TpuCoreProgramAbiOptionsProto,
+    "tpu.TpuCoreProgramAbiOptionsProto"
+);
+
 /// Wire-compatible `tpu.TpuCoreProgramAbiProto` (`learning/45eac/tpu/runtime/tpu_version.proto`).
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct TpuCoreProgramAbiProto {
@@ -365,6 +402,9 @@ pub struct TpuCoreProgramAbiProto {
     /// Required compiler SHA-256 hash string (field `6`).
     #[prost(string, tag = "6")]
     pub required_compiler_hash: String,
+    /// Core program ABI options (field `7`).
+    #[prost(message, optional, tag = "7")]
+    pub options: Option<TpuCoreProgramAbiOptionsProto>,
 }
 
 impl_proto_schema_message!(TpuCoreProgramAbiProto, "tpu.TpuCoreProgramAbiProto");
@@ -694,6 +734,34 @@ impl_proto_schema_message!(
     "xla.HostOffloadingExecutableProto"
 );
 
+/// Wire-compatible `tpu.TpuChipVariantDescriptorProto` (`tpu_version.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuChipVariantDescriptorProto {
+    /// TPU version enum (`TpuVersionProto`, field `1`).
+    #[prost(int32, tag = "1")]
+    pub version: i32,
+    /// Chip codename string (field `2`).
+    #[prost(string, tag = "2")]
+    pub codename: String,
+    /// `PCIe` vendor ID (`0x1ae0`, field `3`).
+    #[prost(uint32, tag = "3")]
+    pub pcie_vendor_id: u32,
+    /// `PCIe` device ID (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub pcie_device_id: u32,
+    /// Total CSR count in BAR0 (field `5`).
+    #[prost(uint32, tag = "5")]
+    pub csr_count: u32,
+    /// BAR0 MMIO aperture span in bytes (field `6`).
+    #[prost(uint64, tag = "6")]
+    pub bar0_span_bytes: u64,
+}
+
+impl_proto_schema_message!(
+    TpuChipVariantDescriptorProto,
+    "tpu.TpuChipVariantDescriptorProto"
+);
+
 /// Wire-compatible `xla.ffi.ExecutionStateProto` (`xla/ffi/execution_state.proto`).
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct FfiExecutionStateProto {
@@ -707,10 +775,57 @@ pub struct FfiExecutionStateProto {
 
 impl_proto_schema_message!(FfiExecutionStateProto, "xla.ffi.ExecutionStateProto");
 
+/// Wire-compatible `xla.ffi.ScalarProto` (`xla/ffi/attribute_map.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct FfiScalarProto {
+    /// Boolean scalar value (field `1`).
+    #[prost(bool, tag = "1")]
+    pub b: bool,
+    /// Signed 32-bit integer scalar value (field `4`).
+    #[prost(int32, tag = "4")]
+    pub i32: i32,
+    /// Signed 64-bit integer scalar value (field `5`).
+    #[prost(int64, tag = "5")]
+    pub i64: i64,
+    /// 32-bit float scalar value (field `10`).
+    #[prost(float, tag = "10")]
+    pub f32: f32,
+    /// 64-bit float scalar value (field `11`).
+    #[prost(double, tag = "11")]
+    pub f64: f64,
+}
+
+impl_proto_schema_message!(FfiScalarProto, "xla.ffi.ScalarProto");
+
+/// Wire-compatible `xla.ffi.ArrayProto` (`xla/ffi/attribute_map.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct FfiArrayProto {
+    /// Signed 32-bit integer array elements (field `3`).
+    #[prost(int32, repeated, packed = "true", tag = "3")]
+    pub i32_values: Vec<i32>,
+    /// Signed 64-bit integer array elements (field `4`).
+    #[prost(int64, repeated, packed = "true", tag = "4")]
+    pub i64_values: Vec<i64>,
+    /// 32-bit float array elements (field `9`).
+    #[prost(float, repeated, packed = "true", tag = "9")]
+    pub f32_values: Vec<f32>,
+    /// 64-bit float array elements (field `10`).
+    #[prost(double, repeated, packed = "true", tag = "10")]
+    pub f64_values: Vec<f64>,
+}
+
+impl_proto_schema_message!(FfiArrayProto, "xla.ffi.ArrayProto");
+
 /// Wire-compatible `xla.ffi.FlatAttributeProto` (`xla/ffi/attribute_map.proto`).
-#[derive(Clone, PartialEq, Eq, Message)]
+#[derive(Clone, PartialEq, Message)]
 pub struct FfiFlatAttributeProto {
-    /// Raw string or byte attribute value (`oneof value.str`, field `3`).
+    /// Scalar attribute payload (field `1`).
+    #[prost(message, optional, tag = "1")]
+    pub scalar: Option<FfiScalarProto>,
+    /// Array attribute payload (field `2`).
+    #[prost(message, optional, tag = "2")]
+    pub array: Option<FfiArrayProto>,
+    /// Raw string or byte attribute value (field `3`).
     #[prost(bytes = "vec", tag = "3")]
     pub str: Vec<u8>,
 }
@@ -718,7 +833,7 @@ pub struct FfiFlatAttributeProto {
 impl_proto_schema_message!(FfiFlatAttributeProto, "xla.ffi.FlatAttributeProto");
 
 /// Wire-compatible `xla.ffi.FlatAttributesMapProto` (`xla/ffi/attribute_map.proto`).
-#[derive(Clone, PartialEq, Eq, Message)]
+#[derive(Clone, PartialEq, Message)]
 pub struct FfiFlatAttributesMapProto {
     /// Flat attribute dictionary keyed by attribute name (field `1`).
     #[prost(btree_map = "string, message", tag = "1")]
@@ -726,6 +841,265 @@ pub struct FfiFlatAttributesMapProto {
 }
 
 impl_proto_schema_message!(FfiFlatAttributesMapProto, "xla.ffi.FlatAttributesMapProto");
+
+/// Wire-compatible `xla.ffi.XlaFfiHandlerRegistrationProto` (`xla_ffi.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct XlaFfiHandlerRegistrationProto {
+    /// Custom call target name (field `1`).
+    #[prost(string, tag = "1")]
+    pub target_name: String,
+    /// Target platform name (e.g., `"TPU"`, field `2`).
+    #[prost(string, tag = "2")]
+    pub platform_name: String,
+    /// `OpenXLA` FFI major version (`0`, field `3`).
+    #[prost(uint32, tag = "3")]
+    pub api_major_version: u32,
+    /// `OpenXLA` FFI minor version (`2`, field `4`).
+    #[prost(uint32, tag = "4")]
+    pub api_minor_version: u32,
+    /// Handler traits bitmask (`XLA_FFI_Handler_Traits`, field `5`).
+    #[prost(uint32, tag = "5")]
+    pub traits_mask: u32,
+}
+
+impl_proto_schema_message!(
+    XlaFfiHandlerRegistrationProto,
+    "xla.ffi.XlaFfiHandlerRegistrationProto"
+);
+
+/// Wire-compatible `xla.ffi.XlaFfiCallFrameMetadataProto` (`xla_ffi.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct XlaFfiCallFrameMetadataProto {
+    /// Invoked custom call target name (field `1`).
+    #[prost(string, tag = "1")]
+    pub custom_call_target: String,
+    /// Number of input buffer arguments (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub num_args: u32,
+    /// Number of output return buffers (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub num_rets: u32,
+    /// Execution stage ordinal (`0 = Instantiate`, `1 = Prepare`, `2 = Initialize`, `3 = Execute`, field `4`).
+    #[prost(int32, tag = "4")]
+    pub execution_stage: i32,
+    /// Target device ordinal (field `5`).
+    #[prost(int32, tag = "5")]
+    pub device_ordinal: i32,
+    /// Wire-serialized `FlatAttributesMapProto` bytes (field `6`).
+    #[prost(bytes = "vec", tag = "6")]
+    pub serialized_attributes: Vec<u8>,
+}
+
+impl_proto_schema_message!(
+    XlaFfiCallFrameMetadataProto,
+    "xla.ffi.XlaFfiCallFrameMetadataProto"
+);
+
+/// Wire-compatible `xla.jellyfish.JellyfishHostTransferProto` (`jellyfish_executable.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct JellyfishHostTransferProto {
+    /// Host transfer channel ID (field `1`).
+    #[prost(int64, tag = "1")]
+    pub channel_id: i64,
+    /// Transfer direction (`0 = HostToDevice`, `1 = DeviceToHost`, field `2`).
+    #[prost(int32, tag = "2")]
+    pub direction: i32,
+    /// Transfer payload length in bytes (field `3`).
+    #[prost(uint64, tag = "3")]
+    pub byte_size: u64,
+    /// Associated hardware `SyncFlag` ID (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub sync_flag_id: u32,
+    /// Host rendezvous key string (field `5`).
+    #[prost(string, tag = "5")]
+    pub rendezvous_key: String,
+}
+
+impl_proto_schema_message!(
+    JellyfishHostTransferProto,
+    "xla.jellyfish.JellyfishHostTransferProto"
+);
+
+/// Wire-compatible `xla.jellyfish.JellyfishOverlayConfigProto` (`jellyfish_executable.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct JellyfishOverlayConfigProto {
+    /// Overlay identifier (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub overlay_id: u32,
+    /// Base `IMEM` byte offset (field `2`).
+    #[prost(uint64, tag = "2")]
+    pub imem_base_offset: u64,
+    /// Overlay size in bytes (field `3`).
+    #[prost(uint64, tag = "3")]
+    pub imem_size_bytes: u64,
+    /// Whether to prefetch the overlay on program launch (field `4`).
+    #[prost(bool, tag = "4")]
+    pub prefetch_on_launch: bool,
+}
+
+impl_proto_schema_message!(
+    JellyfishOverlayConfigProto,
+    "xla.jellyfish.JellyfishOverlayConfigProto"
+);
+
+/// Wire-compatible `xla.jellyfish.JellyfishCoreProgramProto` (`jellyfish_executable.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct JellyfishCoreProgramProto {
+    /// Intra-chip core ordinal index (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub core_index: u32,
+    /// Core type (`0 = TensorCore`, `1 = SparseCore`, field `2`).
+    #[prost(uint32, tag = "2")]
+    pub core_type: u32,
+    /// Raw 64-byte VLIW instruction bundle stream (field `3`).
+    #[prost(bytes = "vec", tag = "3")]
+    pub encoded_vliw_stream: Vec<u8>,
+    /// Entry program counter offset (field `4`).
+    #[prost(uint64, tag = "4")]
+    pub entry_pc: u64,
+    /// Overlay descriptors for this core (field `5`).
+    #[prost(message, repeated, tag = "5")]
+    pub overlays: Vec<JellyfishOverlayConfigProto>,
+    /// Host transfer descriptors for this core (field `6`).
+    #[prost(message, repeated, tag = "6")]
+    pub host_transfers: Vec<JellyfishHostTransferProto>,
+}
+
+impl_proto_schema_message!(
+    JellyfishCoreProgramProto,
+    "xla.jellyfish.JellyfishCoreProgramProto"
+);
+
+/// Wire-compatible `xla.jellyfish.JellyfishExecutableProto` (`jellyfish_executable.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct JellyfishExecutableProto {
+    /// Compiled module name (field `1`).
+    #[prost(string, tag = "1")]
+    pub module_name: String,
+    /// Deterministic 64-bit compilation fingerprint (field `2`).
+    #[prost(uint64, tag = "2")]
+    pub compilation_fingerprint: u64,
+    /// Target Cloud TPU generation (`TpuGeneration`, field `3`).
+    #[prost(int32, tag = "3")]
+    pub tpu_generation: i32,
+    /// Per-core compiled programs (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub core_programs: Vec<JellyfishCoreProgramProto>,
+    /// HBM scratchpad allocation in bytes (field `5`).
+    #[prost(int64, tag = "5")]
+    pub hbm_scratchpad_bytes: i64,
+    /// Scoped VMEM limit in bytes (field `6`).
+    #[prost(int64, tag = "6")]
+    pub vmem_limit_bytes: i64,
+}
+
+impl_proto_schema_message!(
+    JellyfishExecutableProto,
+    "xla.jellyfish.JellyfishExecutableProto"
+);
+
+/// Wire-compatible `xla.barnacore.SparseCoreDmaDescriptorProto` (`barnacore_executable.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct SparseCoreDmaDescriptorProto {
+    /// DMA descriptor ordinal ID (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub descriptor_id: u32,
+    /// Base HBM table byte offset (field `2`).
+    #[prost(uint64, tag = "2")]
+    pub hbm_base_offset: u64,
+    /// Scratchpad memory (`Spmem`) byte offset (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub spmem_offset: u32,
+    /// Transfer size in bytes (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub transfer_bytes: u32,
+    /// Completion `SyncFlag` ID (field `5`).
+    #[prost(uint32, tag = "5")]
+    pub sync_flag_id: u32,
+    /// True for scatter-add HBM writeback, false for gather read (field `6`).
+    #[prost(bool, tag = "6")]
+    pub is_scatter_write: bool,
+}
+
+impl_proto_schema_message!(
+    SparseCoreDmaDescriptorProto,
+    "xla.barnacore.SparseCoreDmaDescriptorProto"
+);
+
+/// Wire-compatible `xla.barnacore.BarnaCoreChannelConfigProto` (`barnacore_executable.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct BarnaCoreChannelConfigProto {
+    /// Channel identifier (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub channel_id: u32,
+    /// `SparseCore` ordinal index (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub sparse_core_index: u32,
+    /// Maximum unique sparse IDs per partition (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub max_unique_ids_per_partition: u32,
+    /// Maximum total sparse IDs per partition (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub max_ids_per_partition: u32,
+    /// Associated embedding table name (field `5`).
+    #[prost(string, tag = "5")]
+    pub table_name: String,
+}
+
+impl_proto_schema_message!(
+    BarnaCoreChannelConfigProto,
+    "xla.barnacore.BarnaCoreChannelConfigProto"
+);
+
+/// Wire-compatible `xla.barnacore.SparseCoreProgramProto` (`barnacore_executable.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct SparseCoreProgramProto {
+    /// Target `SparseCore` ordinal ID (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub sparse_core_id: u32,
+    /// Encoded `SparseCore` instruction bytecode stream (field `2`).
+    #[prost(bytes = "vec", tag = "2")]
+    pub instruction_stream: Vec<u8>,
+    /// Allocated `Spmem` scratchpad size in bytes (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub spmem_scratchpad_bytes: u32,
+    /// Associated gather/scatter DMA descriptors (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub dma_descriptors: Vec<SparseCoreDmaDescriptorProto>,
+    /// Optimizer algorithm opcode (`0 = Adagrad`, `1 = Adam`, `2 = Ftrl`, `3 = Sgd`, `4 = Lion`, field `5`).
+    #[prost(int32, tag = "5")]
+    pub optimizer_opcode: i32,
+}
+
+impl_proto_schema_message!(
+    SparseCoreProgramProto,
+    "xla.barnacore.SparseCoreProgramProto"
+);
+
+/// Wire-compatible `xla.barnacore.BarnaCoreExecutableProto` (`barnacore_executable.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct BarnaCoreExecutableProto {
+    /// Executable identifier name (field `1`).
+    #[prost(string, tag = "1")]
+    pub executable_name: String,
+    /// Hardware `SparseCore` ISA version (`1` = `SCv1`, `2` = `SCv2`, field `2`).
+    #[prost(uint32, tag = "2")]
+    pub sparse_core_version: u32,
+    /// Configured `BarnaCore` communication channels (field `3`).
+    #[prost(message, repeated, tag = "3")]
+    pub channels: Vec<BarnaCoreChannelConfigProto>,
+    /// Per-`SparseCore` compiled programs (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub programs: Vec<SparseCoreProgramProto>,
+    /// Total HBM bytes reserved for embedding tables (field `5`).
+    #[prost(uint64, tag = "5")]
+    pub table_hbm_total_bytes: u64,
+}
+
+impl_proto_schema_message!(
+    BarnaCoreExecutableProto,
+    "xla.barnacore.BarnaCoreExecutableProto"
+);
 
 impl TargetArgumentsProto {
     /// Constructs a canonical [`TargetArgumentsProto`] from a [`TpuChipConfigProto`] and [`TpuChipPartsProto`].

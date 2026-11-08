@@ -681,6 +681,194 @@ pub fn decompress_brotli_csr_table(compressed: &[u8]) -> LibTpuResult<Vec<u8>> {
     Ok(out)
 }
 
+/// Parsed register tree entry extracted from a decompressed `*_pf_csrs.br` (`asic_sw.tools.RegisterTranslatorData`) table (`BrotliRegisterTreeEntry`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrotliRegisterTreeEntry {
+    /// Hierarchical CSR path (e.g., `"tile.tensor_core_0.program_location"` or `"bar0.tc0_pc_csr"`).
+    pub full_path: String,
+    /// Byte offset inside the `PCIe` BAR0 MMIO aperture (`MmioOffset`).
+    pub bar0_offset: u64,
+    /// Register width in bits (`32` or `64`).
+    pub width_bits: u32,
+}
+
+/// Parses a decompressed `*_pf_csrs.br` register tree payload and verifies its offsets.
+///
+/// Cross-checks known register names against a [`crate::hal::ChipRegisterMap`].
+///
+/// # Arguments
+///
+/// * `decompressed_bytes` - Raw decompressed CSR table bytes from [`decompress_brotli_csr_table`].
+/// * `register_map` - Target generation [`crate::hal::ChipRegisterMap`] to verify against.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::BinaryFormatError`] if any CSR path in `decompressed_bytes` conflicts
+/// with the architectural offset in `register_map`.
+pub fn parse_and_verify_brotli_csr_tree(
+    decompressed_bytes: &[u8],
+    register_map: &crate::hal::ChipRegisterMap,
+) -> LibTpuResult<Vec<BrotliRegisterTreeEntry>> {
+    let text = String::from_utf8_lossy(decompressed_bytes);
+    let mut entries = Vec::new();
+    for raw_line in text.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((name_part, rhs_part)) = trimmed.split_once('=') {
+            let full_path = String::from(name_part.trim());
+            let mut rhs_tokens = rhs_part.split_whitespace();
+            let off_str = rhs_tokens.next().unwrap_or("0");
+            let width_str = rhs_tokens.next().unwrap_or("64");
+            let stripped_hex = off_str
+                .strip_prefix("0x")
+                .or_else(|| off_str.strip_prefix("0X"));
+            let parsed_off = stripped_hex.map_or_else(
+                || off_str.parse::<u64>(),
+                |hex| u64::from_str_radix(hex, 16),
+            );
+            let bar0_offset = parsed_off.map_err(|_| LibTpuError::BinaryFormatError {
+                reason: format!("Invalid CSR offset '{off_str}' for '{full_path}'"),
+            })?;
+            let width_bits = width_str.parse::<u32>().unwrap_or(64);
+            let expected_opt = match full_path.as_str() {
+                "tc0_program_location_csr" => Some(register_map.tc0_program_location_csr),
+                "tc0_pc_csr" => Some(register_map.tc0_pc_csr),
+                "tc0_run_status_csr" => Some(register_map.tc0_run_status_csr),
+                "tc0_vwait_state_csr" => Some(register_map.tc0_vwait_state_csr),
+                "tc0_vwait_sync_flag_state_csr" => Some(register_map.tc0_vwait_sync_flag_state_csr),
+                "sc0_run_status_csr" => Some(register_map.sc0_run_status_csr),
+                "global_chip_id_csr" => Some(register_map.global_chip_id_csr),
+                _ => None,
+            };
+            if let Some(expected) = expected_opt {
+                if bar0_offset != expected {
+                    return Err(LibTpuError::BinaryFormatError {
+                        reason: format!(
+                            "CSR offset mismatch for '{full_path}': expected {expected:#x}, got {bar0_offset:#x}"
+                        ),
+                    });
+                }
+            }
+            entries.push(BrotliRegisterTreeEntry {
+                full_path,
+                bar0_offset,
+                width_bits,
+            });
+        }
+    }
+    Ok(entries)
+}
+
+/// Hardware target engine for an embedded microcode/firmware overlay (`FirmwareOverlayTarget`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FirmwareOverlayTarget {
+    /// Primary `TensorCore` (`TC0` / `TC1`) VLIW instruction memory initialization overlay (`tc_init.bin`).
+    TensorCore,
+    /// `SparseCore` (`SCS` / `TAC` / `TEC`) embedding processor initialization overlay (`sc_init.bin`).
+    SparseCore,
+    /// Inter-Chip Interconnect (`ICI`) `SerDes` & router link training sequence (`ici_init.bin`).
+    IciRouter,
+}
+
+/// Extracted microcode or link-training firmware overlay from `filewrapper_toc` (`CarvedFirmwareOverlay`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarvedFirmwareOverlay {
+    /// Original TOC resource filename (e.g., `"vfc_tc_init.bin"`, `"vfi_sc_init.bin"`, `"ici_link_train.bin"`).
+    pub name: String,
+    /// Classified hardware subsystem target ([`FirmwareOverlayTarget`]).
+    pub target: FirmwareOverlayTarget,
+    /// Target `IMEM` or BAR0 load offset in bytes.
+    pub load_offset_bytes: u64,
+    /// Raw firmware microcode payload bytes.
+    pub payload: Vec<u8>,
+}
+
+/// Extracts `TensorCore` (`tc_init.bin`), `SparseCore` (`sc_init.bin`), and `ICI` link training
+/// (`ici_*.bin`) firmware overlays from a slice of carved `filewrapper_toc` entries.
+///
+/// # Arguments
+///
+/// * `entries` - Slice of [`FileTocEntry`] records carved from `filewrapper_toc`.
+#[must_use]
+pub fn extract_carved_firmware_overlays(entries: &[FileTocEntry]) -> Vec<CarvedFirmwareOverlay> {
+    let mut overlays = Vec::new();
+    for entry in entries {
+        let lower = entry.name.to_ascii_lowercase();
+        let tensor_match =
+            (u8::from(lower.contains("tc_init")) | u8::from(lower.ends_with(".tc.bin"))) != 0;
+        let sparse_match =
+            (u8::from(lower.contains("sc_init")) | u8::from(lower.ends_with(".sc.bin"))) != 0;
+        let ici_match =
+            (u8::from(lower.contains("ici_")) | u8::from(lower.ends_with(".ici.bin"))) != 0;
+        let target_and_offset = if tensor_match {
+            Some((FirmwareOverlayTarget::TensorCore, 0x0080_0000_u64))
+        } else if sparse_match {
+            Some((FirmwareOverlayTarget::SparseCore, 0x00C0_0000_u64))
+        } else if ici_match {
+            Some((FirmwareOverlayTarget::IciRouter, 0x0010_0000_u64))
+        } else {
+            None
+        };
+        if let Some((target, load_offset_bytes)) = target_and_offset {
+            overlays.push(CarvedFirmwareOverlay {
+                name: entry.name.clone(),
+                target,
+                load_offset_bytes,
+                payload: entry.data.clone(),
+            });
+        }
+    }
+    overlays
+}
+
+/// Extractor and validator for `TensorCore`, `SparseCore` (`scs` / `tac`), and `ICI` firmware
+/// overlays embedded inside `libtpu.so`'s `filewrapper_toc` section (`FileTocFirmwareExtractor`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileTocFirmwareExtractor {
+    /// Extracted and classified firmware overlays.
+    pub overlays: Vec<CarvedFirmwareOverlay>,
+    /// Decoded chip configurations, parts, and runtime ABI descriptors.
+    pub chip_resources: EmbeddedChipResourceBundle,
+}
+
+impl FileTocFirmwareExtractor {
+    /// Extracts all firmware overlays and chip configuration descriptors from `entries`.
+    ///
+    /// # Arguments
+    ///
+    /// * `entries` - Slice of [`FileTocEntry`] records carved from `filewrapper_toc`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if any embedded `.binarypb` chip config or ABI descriptor is malformed.
+    pub fn extract_and_validate(entries: &[FileTocEntry]) -> LibTpuResult<Self> {
+        let overlays = extract_carved_firmware_overlays(entries);
+        let chip_resources = decode_embedded_chip_resources(entries)?;
+        Ok(Self {
+            overlays,
+            chip_resources,
+        })
+    }
+
+    /// Returns all extracted overlays targeting `target` ([`FirmwareOverlayTarget`]).
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - Hardware subsystem target to filter by.
+    #[must_use]
+    pub fn overlays_for_target(
+        &self,
+        target: FirmwareOverlayTarget,
+    ) -> Vec<&CarvedFirmwareOverlay> {
+        self.overlays
+            .iter()
+            .filter(|ov| ov.target == target)
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::indexing_slicing, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -1205,6 +1393,85 @@ mod tests {
         assert!(
             decode_embedded_chip_resources(&[FileTocEntry {
                 name: String::from("current_tpu_runtime_abi.binarypb"),
+                data: vec![0xFF, 0xFF, 0xFF],
+            }])
+            .is_err()
+        );
+
+        // Test parse_and_verify_brotli_csr_tree & extract_carved_firmware_overlays
+        let rmap = crate::hal::ChipRegisterMap::for_generation(crate::types::TpuGeneration::V5p);
+        let csr_text = format!(
+            "# comment\n\ntc0_program_location_csr = {:#x} 64\ntc0_pc_csr = {:#x} 64\ntc0_run_status_csr = {:#x} 32\ntc0_vwait_state_csr = {:#x} 64\ntc0_vwait_sync_flag_state_csr = {:#x} 64\nsc0_run_status_csr = {:#x} 32\nglobal_chip_id_csr = {} 32\ncustom_reg = 0X1234 64\nno_equals_line\n",
+            rmap.tc0_program_location_csr,
+            rmap.tc0_pc_csr,
+            rmap.tc0_run_status_csr,
+            rmap.tc0_vwait_state_csr,
+            rmap.tc0_vwait_sync_flag_state_csr,
+            rmap.sc0_run_status_csr,
+            rmap.global_chip_id_csr
+        );
+        let parsed_tree = parse_and_verify_brotli_csr_tree(csr_text.as_bytes(), &rmap);
+        assert!(parsed_tree.is_ok());
+        if let Ok(entries) = parsed_tree {
+            assert_eq!(entries.len(), 8);
+            assert_eq!(entries[0].clone(), entries[0]);
+            assert_ne!(format!("{:?}", entries[0]), "");
+        }
+        assert!(parse_and_verify_brotli_csr_tree(b"tc0_pc_csr = 0xDEAD 64", &rmap).is_err());
+        assert!(parse_and_verify_brotli_csr_tree(b"tc0_pc_csr = not_a_num 64", &rmap).is_err());
+
+        let fw_entries = vec![
+            FileTocEntry {
+                name: String::from("vfc_tc_init.bin"),
+                data: vec![1, 2, 3, 4],
+            },
+            FileTocEntry {
+                name: String::from("vfi_sc_init.bin"),
+                data: vec![5, 6, 7, 8],
+            },
+            FileTocEntry {
+                name: String::from("ici_link_train.bin"),
+                data: vec![9, 10],
+            },
+            FileTocEntry {
+                name: String::from("other.txt"),
+                data: vec![0],
+            },
+        ];
+        let overlays = extract_carved_firmware_overlays(&fw_entries);
+        assert_eq!(overlays.len(), 3);
+        assert_eq!(overlays[0].target, FirmwareOverlayTarget::TensorCore);
+        assert_eq!(overlays[1].target, FirmwareOverlayTarget::SparseCore);
+        assert_eq!(overlays[2].target, FirmwareOverlayTarget::IciRouter);
+        assert_eq!(overlays[0].clone(), overlays[0]);
+        assert_ne!(format!("{:?}", overlays[0]), "");
+        assert_eq!(overlays[0].target.clone(), overlays[0].target);
+        assert_ne!(format!("{:?}", overlays[0].target), "");
+
+        let extractor = FileTocFirmwareExtractor::extract_and_validate(&fw_entries);
+        assert!(extractor.is_ok());
+        if let Ok(ext) = extractor {
+            assert_eq!(
+                ext.overlays_for_target(FirmwareOverlayTarget::TensorCore)
+                    .len(),
+                1
+            );
+            assert_eq!(
+                ext.overlays_for_target(FirmwareOverlayTarget::SparseCore)
+                    .len(),
+                1
+            );
+            assert_eq!(
+                ext.overlays_for_target(FirmwareOverlayTarget::IciRouter)
+                    .len(),
+                1
+            );
+            assert_eq!(ext.clone(), ext);
+            assert_ne!(format!("{ext:?}"), "");
+        }
+        assert!(
+            FileTocFirmwareExtractor::extract_and_validate(&[FileTocEntry {
+                name: String::from("bad_chip_configs.binarypb"),
                 data: vec![0xFF, 0xFF, 0xFF],
             }])
             .is_err()

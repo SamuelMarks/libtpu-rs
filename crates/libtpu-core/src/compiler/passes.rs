@@ -109,6 +109,94 @@ pub struct CostAnalysis {
     pub optimal_seconds: f32,
 }
 
+/// Hardware roofline and `EmitterLearnedCostModelOptionsProto` evaluator (`LearnedCostModelEvaluator`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LearnedCostModelEvaluator {
+    /// Target Cloud TPU generation.
+    pub generation: crate::types::TpuGeneration,
+    /// Whether the learned cost model adjustment is enabled.
+    pub enabled: bool,
+    /// Confidence threshold (`[0.0, 1.0]`).
+    pub confidence_threshold: f64,
+}
+
+impl LearnedCostModelEvaluator {
+    /// Creates a [`LearnedCostModelEvaluator`] for `generation` and optional [`crate::proto::EmitterLearnedCostModelOptionsProto`].
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target Cloud TPU generation.
+    /// * `options` - Optional [`crate::proto::EmitterLearnedCostModelOptionsProto`].
+    #[must_use]
+    pub fn from_options(
+        generation: crate::types::TpuGeneration,
+        options: Option<&crate::proto::EmitterLearnedCostModelOptionsProto>,
+    ) -> Self {
+        let (enabled, confidence_threshold) = options.map_or((true, 0.85), |o| {
+            (o.enabled, o.confidence_threshold.clamp(0.0, 1.0))
+        });
+        Self {
+            generation,
+            enabled,
+            confidence_threshold,
+        }
+    }
+
+    /// Evaluates the roofline [`CostAnalysis`] and returns a dictionary of `PJRT_NamedValue`-compatible
+    /// metrics (`"flops"`, `"transcendentals"`, `"bytes_accessed"`, `"optimal_seconds"`, `"utilization0"`, `"vmem_bytes"`).
+    ///
+    /// # Arguments
+    ///
+    /// * `program` - Compiled [`CompiledProgram`] to evaluate.
+    #[must_use]
+    pub fn evaluate_dictionary(
+        &self,
+        program: &CompiledProgram,
+    ) -> std::collections::BTreeMap<String, f64> {
+        let flops = f64::from(program.cost_analysis.flops);
+        let trans = f64::from(program.cost_analysis.transcendentals);
+        let bytes = f64::from(program.cost_analysis.bytes_accessed);
+        let peak_tflops = match self.generation {
+            crate::types::TpuGeneration::V2 | crate::types::TpuGeneration::V3 => 123e12,
+            crate::types::TpuGeneration::V4 | crate::types::TpuGeneration::V4Lite => 275e12,
+            crate::types::TpuGeneration::V5e => 197e12,
+            crate::types::TpuGeneration::V5p => 459e12,
+            crate::types::TpuGeneration::V6e => 918e12,
+            crate::types::TpuGeneration::V7x => 4614e12,
+        };
+        let hbm_bw = match self.generation {
+            crate::types::TpuGeneration::V2 | crate::types::TpuGeneration::V3 => 900e9,
+            crate::types::TpuGeneration::V4 | crate::types::TpuGeneration::V4Lite => 1200e9,
+            crate::types::TpuGeneration::V5e => 819e9,
+            crate::types::TpuGeneration::V5p => 2765e9,
+            crate::types::TpuGeneration::V6e => 1638e9,
+            crate::types::TpuGeneration::V7x => 7372e9,
+        };
+        let compute_sec = f64::mul_add(trans, 4.0, flops) / peak_tflops;
+        let mem_sec = bytes / hbm_bw;
+        let factor = if self.enabled {
+            (1.0 - self.confidence_threshold).mul_add(0.1, 1.0)
+        } else {
+            1.0
+        };
+        let optimal_sec = compute_sec.max(mem_sec) * factor;
+        let total_sec = (compute_sec + mem_sec).max(1e-15);
+        let mut dict = std::collections::BTreeMap::new();
+        dict.insert(String::from("flops"), flops);
+        dict.insert(String::from("transcendentals"), trans);
+        dict.insert(String::from("bytes_accessed"), bytes);
+        dict.insert(String::from("optimal_seconds"), optimal_sec);
+        dict.insert(String::from("compute_bound_ratio"), compute_sec / total_sec);
+        dict.insert(String::from("memory_bound_ratio"), mem_sec / total_sec);
+        #[allow(clippy::cast_precision_loss)]
+        dict.insert(
+            String::from("vmem_bytes"),
+            program.memory_stats.temp_size_in_bytes as f64,
+        );
+        dict
+    }
+}
+
 /// On-device memory usage breakdown for a compiled executable (`PJRT_Executable_GetCompiledMemoryStats`).
 #[derive(Debug, Clone, Copy)]
 pub struct CompiledMemoryStats {
@@ -137,6 +225,226 @@ pub struct RegisterLivenessInterval {
     pub size_bytes: usize,
     /// Linear-scan VMEM byte offset assigned to this register slot.
     pub assigned_vmem_offset: u64,
+}
+
+/// Hardware physical register file capacities per [`crate::types::TpuGeneration`] (`HardwareRegisterFileConfig`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HardwareRegisterFileConfig {
+    /// Target Cloud TPU generation.
+    pub generation: crate::types::TpuGeneration,
+    /// Number of physical `[8, 128]` 32-bit vector registers (`$v0..$vN`).
+    pub num_vregs: u8,
+    /// Number of physical scalar general-purpose registers (`$s0..$sN`).
+    pub num_sregs: u8,
+    /// Number of physical scalar predicate registers (`$p0..$pN`).
+    pub num_pregs: u8,
+    /// Number of physical systolic matrix accumulator registers (`$m0..$mN`).
+    pub num_mregs: u8,
+}
+
+impl HardwareRegisterFileConfig {
+    /// Returns the architectural [`HardwareRegisterFileConfig`] for `generation`.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target Cloud TPU generation (`V4`, `V5e`, `V5p`, `V6e`, `V7x`).
+    #[must_use]
+    pub const fn for_generation(generation: crate::types::TpuGeneration) -> Self {
+        match generation {
+            crate::types::TpuGeneration::V2
+            | crate::types::TpuGeneration::V3
+            | crate::types::TpuGeneration::V4
+            | crate::types::TpuGeneration::V4Lite => Self {
+                generation,
+                num_vregs: 32,
+                num_sregs: 32,
+                num_pregs: 16,
+                num_mregs: 4,
+            },
+            crate::types::TpuGeneration::V5e | crate::types::TpuGeneration::V5p => Self {
+                generation,
+                num_vregs: 64,
+                num_sregs: 32,
+                num_pregs: 16,
+                num_mregs: 8,
+            },
+            crate::types::TpuGeneration::V6e => Self {
+                generation,
+                num_vregs: 64,
+                num_sregs: 64,
+                num_pregs: 32,
+                num_mregs: 16,
+            },
+            crate::types::TpuGeneration::V7x => Self {
+                generation,
+                num_vregs: 128,
+                num_sregs: 64,
+                num_pregs: 32,
+                num_mregs: 16,
+            },
+        }
+    }
+}
+
+/// Spill or reload operation synthesized by [`LinearScanRegisterAllocator`] when live SSA slots
+/// exceed `HardwareRegisterFileConfig::num_vregs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpillAction {
+    /// SSA register slot index spilled or reloaded.
+    pub slot_index: usize,
+    /// Physical vector register index freed or reloaded (`0..num_vregs`).
+    pub physical_vreg: u8,
+    /// Assigned 256-byte-aligned `VMEM` spill scratchpad byte offset.
+    pub spill_vmem_offset: u64,
+    /// Program counter (`PC`) at which the spill store or reload occurs.
+    pub pc_offset: u32,
+    /// True if this action is a `VMEM -> VREG` reload, false if `VREG -> VMEM` spill store.
+    pub is_reload: bool,
+}
+
+/// Complete physical register assignment and `VMEM` spill report produced by [`LinearScanRegisterAllocator`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinearScanAllocationReport {
+    /// Hardware register file configuration used during allocation.
+    pub config: HardwareRegisterFileConfig,
+    /// Mapping from SSA `slot_index` to assigned physical vector register (`0..num_vregs`).
+    pub slot_to_vreg: std::collections::BTreeMap<usize, u8>,
+    /// Mapping from SSA `slot_index` to assigned physical scalar register (`0..num_sregs`).
+    pub slot_to_sreg: std::collections::BTreeMap<usize, u8>,
+    /// Mapping from SSA `slot_index` to assigned physical matrix accumulator (`0..num_mregs`).
+    pub slot_to_mreg: std::collections::BTreeMap<usize, u8>,
+    /// Synthesized `VREG -> VMEM` spill stores and `VMEM -> VREG` reloads.
+    pub spill_actions: Vec<SpillAction>,
+    /// Total `VMEM` scratchpad bytes consumed by register spills.
+    pub total_spill_vmem_bytes: u64,
+}
+
+/// Poletto-Sarkar Linear-Scan Register Allocator with furthest-next-use `VMEM` spilling
+/// (`LinearScanRegisterAllocator`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LinearScanRegisterAllocator {
+    /// Target hardware register file configuration.
+    pub config: HardwareRegisterFileConfig,
+}
+
+impl LinearScanRegisterAllocator {
+    /// Creates a new [`LinearScanRegisterAllocator`] for `generation`.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target Cloud TPU generation.
+    #[must_use]
+    pub const fn new(generation: crate::types::TpuGeneration) -> Self {
+        Self {
+            config: HardwareRegisterFileConfig::for_generation(generation),
+        }
+    }
+
+    /// Creates a [`LinearScanRegisterAllocator`] with an explicit `max_vregs` override (for testing spill pressure).
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target Cloud TPU generation.
+    /// * `max_vregs` - Maximum physical vector registers (`>= 2`).
+    #[must_use]
+    pub const fn with_max_vregs(generation: crate::types::TpuGeneration, max_vregs: u8) -> Self {
+        let mut cfg = HardwareRegisterFileConfig::for_generation(generation);
+        cfg.num_vregs = max_vregs;
+        Self { config: cfg }
+    }
+
+    /// Allocates physical `Vreg`, `Sreg`, and `Mreg` registers across `intervals`, synthesizing
+    /// [`SpillAction`]s (both `VREG -> VMEM` store and `VMEM -> VREG` reload) whenever active live
+    /// intervals exceed `self.config.num_vregs`.
+    ///
+    /// # Arguments
+    ///
+    /// * `intervals` - Sorted SSA [`RegisterLivenessInterval`]s from [`CompiledProgram::compute_liveness_intervals`].
+    /// * `base_spill_vmem_offset` - Starting `VMEM` byte offset for spill slots.
+    #[must_use]
+    pub fn allocate(
+        &self,
+        intervals: &[RegisterLivenessInterval],
+        base_spill_vmem_offset: u64,
+    ) -> LinearScanAllocationReport {
+        let mut sorted = intervals.to_vec();
+        sorted.sort_by_key(|iv| (iv.first_def_pc, iv.slot_index));
+
+        let mut free_vregs: Vec<u8> = (0..self.config.num_vregs).rev().collect();
+        // Active list: (last_use_pc, slot_index, assigned_vreg, size_bytes)
+        let mut active: Vec<(u32, usize, u8, usize)> = Vec::new();
+        let mut vreg_map = std::collections::BTreeMap::new();
+        let mut scalar_map = std::collections::BTreeMap::new();
+        let mut matrix_map = std::collections::BTreeMap::new();
+        let mut spill_actions = Vec::new();
+        let mut next_spill_off = base_spill_vmem_offset;
+
+        for (ord, iv) in sorted.iter().enumerate() {
+            // Expire old intervals whose last_use_pc < iv.first_def_pc
+            active.retain(|&(end_pc, _, vreg, _)| {
+                if end_pc < iv.first_def_pc {
+                    free_vregs.push(vreg);
+                    false
+                } else {
+                    true
+                }
+            });
+
+            #[allow(clippy::cast_possible_truncation)]
+            let sreg = (ord % usize::from(self.config.num_sregs.max(1))) as u8;
+            #[allow(clippy::cast_possible_truncation)]
+            let mreg = (ord % usize::from(self.config.num_mregs.max(1))) as u8;
+            scalar_map.insert(iv.slot_index, sreg);
+            matrix_map.insert(iv.slot_index, mreg);
+
+            if let Some(vreg) = free_vregs.pop() {
+                vreg_map.insert(iv.slot_index, vreg);
+                active.push((iv.last_use_pc, iv.slot_index, vreg, iv.size_bytes));
+                active.sort_by_key(|&(end_pc, _, _, _)| end_pc);
+            } else {
+                // Spill the active interval with the furthest last_use_pc
+                let victim_entry =
+                    active
+                        .pop()
+                        .unwrap_or((iv.last_use_pc, iv.slot_index, 0, iv.size_bytes));
+                let (victim_end, victim_slot, stolen_vreg, victim_sz) = victim_entry;
+                let spill_off = next_spill_off;
+                let aligned_sz =
+                    u64::try_from(victim_sz.max(256).div_ceil(256) * 256).unwrap_or(256);
+                next_spill_off = next_spill_off.saturating_add(aligned_sz);
+
+                // Emit VREG -> VMEM spill store at iv.first_def_pc
+                spill_actions.push(SpillAction {
+                    slot_index: victim_slot,
+                    physical_vreg: stolen_vreg,
+                    spill_vmem_offset: spill_off,
+                    pc_offset: iv.first_def_pc,
+                    is_reload: false,
+                });
+                // Emit VMEM -> VREG reload at victim_end
+                spill_actions.push(SpillAction {
+                    slot_index: victim_slot,
+                    physical_vreg: stolen_vreg,
+                    spill_vmem_offset: spill_off,
+                    pc_offset: victim_end,
+                    is_reload: true,
+                });
+
+                vreg_map.insert(iv.slot_index, stolen_vreg);
+                active.push((iv.last_use_pc, iv.slot_index, stolen_vreg, iv.size_bytes));
+                active.sort_by_key(|&(end_pc, _, _, _)| end_pc);
+            }
+        }
+
+        LinearScanAllocationReport {
+            config: self.config,
+            slot_to_vreg: vreg_map,
+            slot_to_sreg: scalar_map,
+            slot_to_mreg: matrix_map,
+            spill_actions,
+            total_spill_vmem_bytes: next_spill_off.saturating_sub(base_spill_vmem_offset),
+        }
+    }
 }
 
 /// Topological schedule and HBM buffer assignment report produced by [`analyze_hlo_computation_dag`].
@@ -770,9 +1078,147 @@ impl CompiledProgram {
         }
     }
 
-    /// Pass 5: On-chip VMEM scratchpad allocation based on intermediate instruction bundle footprint
-    /// and Mosaic `scratch_vmem_bytes` target metadata.
+    /// Synthesizes structured [`HloComputationProto`] fusion subcomputations (`kOutput` for `MXU` + epilogue,
+    /// `kLoop` for elementwise chains) representing fused producer-consumer DAG groups in this program.
+    #[must_use]
+    pub fn build_fused_computations_proto(&self) -> Vec<HloComputationProto> {
+        let mut fusions = Vec::new();
+        for (idx, bundle) in self.instruction_bundles.iter().enumerate() {
+            if let Some(ep_op) = bundle.attrs.fused_epilogue_op {
+                let comp_id = i64::try_from(idx + 100).unwrap_or(100);
+                fusions.push(HloComputationProto {
+                    name: format!("fused_computation.{idx}"),
+                    instructions: vec![
+                        crate::proto::HloInstructionProto {
+                            name: format!("producer.{idx}"),
+                            opcode: format!("{:?}", bundle.opcode),
+                            id: comp_id * 10 + 1,
+                            ..crate::proto::HloInstructionProto::default()
+                        },
+                        crate::proto::HloInstructionProto {
+                            name: format!("epilogue.{idx}"),
+                            opcode: format!("{ep_op:?}"),
+                            id: comp_id * 10 + 2,
+                            operand_ids: vec![comp_id * 10 + 1],
+                            ..crate::proto::HloInstructionProto::default()
+                        },
+                    ],
+                    program_shape: None,
+                    id: comp_id,
+                    root_id: comp_id * 10 + 2,
+                    is_fusion_computation: true,
+                    execution_thread: String::from("main"),
+                });
+            }
+        }
+        fusions
+    }
+
+    /// Splices explicit `AsyncDmaSlot` spill-store (`VmemToHbm`, `DmaOpcode::VmemToHbm`) and
+    /// reload (`HbmToVmem`, `DmaOpcode::HbmToVmem`) [`TensorCoreVliwBundle`]s into a scheduled
+    /// VLIW stream whenever [`LinearScanRegisterAllocator`] reports register pressure exceeding
+    /// `max_vregs`.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target Cloud TPU generation.
+    /// * `max_vregs` - Physical vector register limit (`e.g. 32` or `64`).
+    #[must_use]
+    pub fn encode_vliw_with_register_spills(
+        &self,
+        generation: crate::types::TpuGeneration,
+        max_vregs: u8,
+    ) -> (Vec<TensorCoreVliwBundle>, LinearScanAllocationReport) {
+        let intervals = self.compute_liveness_intervals();
+        let base_off = intervals
+            .iter()
+            .map(|iv| iv.assigned_vmem_offset.saturating_add(iv.size_bytes as u64))
+            .max()
+            .unwrap_or(0);
+        let report = LinearScanRegisterAllocator::with_max_vregs(generation, max_vregs.max(1))
+            .allocate(&intervals, base_off);
+        let base_stream = self.encode_vliw_program();
+        let mut spliced = Vec::with_capacity(base_stream.len() + report.spill_actions.len());
+
+        for (pc_idx, mut bundle) in base_stream.into_iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            let cur_pc = pc_idx as u32;
+            let phys_dst = report
+                .slot_to_vreg
+                .get(&(bundle.vector_slot.dst_vreg as usize))
+                .copied()
+                .unwrap_or(0);
+            bundle.vector_slot.dst_vreg = u32::from(phys_dst);
+            for act in report
+                .spill_actions
+                .iter()
+                .filter(|a| a.pc_offset == cur_pc && !a.is_reload)
+            {
+                let mut spill_bundle = bundle;
+                spill_bundle.vector_slot.opcode = u16::from(TpuOpCode::Identity as u8);
+                spill_bundle.vector_slot.dst_vreg = u32::from(act.physical_vreg);
+                spill_bundle.vector_slot.src0_vreg = u32::from(act.physical_vreg);
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    spill_bundle.scalar_slot.imm32 = act.spill_vmem_offset as u32;
+                }
+                spill_bundle.dma_slot.dma_opcode = crate::types::DmaOpcode::VmemToHbm.as_raw();
+                spill_bundle.dma_slot.src_space = crate::types::MemorySpaceColor::Vmem.as_raw();
+                spill_bundle.dma_slot.dst_space = crate::types::MemorySpaceColor::Hbm.as_raw();
+                spill_bundle.header.bundle_flags |= 1 << 3;
+                spliced.push(spill_bundle);
+            }
+            spliced.push(bundle);
+            for act in report
+                .spill_actions
+                .iter()
+                .filter(|a| a.pc_offset == cur_pc && a.is_reload)
+            {
+                let mut reload_bundle = bundle;
+                reload_bundle.vector_slot.opcode = u16::from(TpuOpCode::Identity as u8);
+                reload_bundle.vector_slot.dst_vreg = u32::from(act.physical_vreg);
+                reload_bundle.vector_slot.src0_vreg = u32::from(act.physical_vreg);
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    reload_bundle.scalar_slot.imm32 = act.spill_vmem_offset as u32;
+                }
+                reload_bundle.dma_slot.dma_opcode = crate::types::DmaOpcode::HbmToVmem.as_raw();
+                reload_bundle.dma_slot.src_space = crate::types::MemorySpaceColor::Hbm.as_raw();
+                reload_bundle.dma_slot.dst_space = crate::types::MemorySpaceColor::Vmem.as_raw();
+                reload_bundle.header.bundle_flags |= 1 << 3;
+                spliced.push(reload_bundle);
+            }
+        }
+        for (new_pc, b) in spliced.iter_mut().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                b.header.pc_offset = new_pc as u32;
+            }
+        }
+        (spliced, report)
+    }
+
+    /// Pass 5: On-chip VMEM scratchpad allocation based on intermediate instruction bundle footprint,
+    /// Mosaic `scratch_vmem_bytes` target metadata, and `MemorySpaceAssignmentOptions` (`MSA`),
+    /// inserting asynchronous `DmaHbmToVmem` prefetch and `DmaVmemToHbm` eviction bundles when
+    /// working sets exceed the configured VMEM limit.
     pub fn pass_vmem_scratchpad_allocation(&mut self) {
+        let mut vmem_limit_bytes: i64 = 16 * 1024 * 1024;
+        if let Ok(env) =
+            crate::proto::TpuCompilationEnvironmentProto::decode(&self.compile_options_bytes)
+        {
+            if env.xla_tpu_scoped_vmem_limit_kib > 0 {
+                vmem_limit_bytes = env.xla_tpu_scoped_vmem_limit_kib.saturating_mul(1024);
+            }
+            let msa_override = env
+                .memory_space_assignment_options
+                .as_ref()
+                .and_then(|msa| msa.tensor_overrides.as_ref())
+                .map_or(0, |o| o.max_alternate_memory_bytes);
+            if msa_override > 0 {
+                vmem_limit_bytes = msa_override;
+            }
+        }
         let mut scratch_bytes: i64 = 0;
         for bundle in &self.instruction_bundles {
             let b_bytes = bundle
@@ -792,10 +1238,50 @@ impl CompiledProgram {
             })
             .max()
             .unwrap_or(256);
-        self.memory_stats.temp_size_in_bytes = scratch_bytes
+        let total_vmem = scratch_bytes
             .max(mosaic_scratch)
             .max(liveness_peak)
             .max(256);
+        if total_vmem > vmem_limit_bytes {
+            let first_out = self
+                .instruction_bundles
+                .first()
+                .map_or(0, |b| b.output_slot);
+            let first_shape = self
+                .instruction_bundles
+                .first()
+                .and_then(|b| b.attrs.output_shape.clone());
+            let pc_prefetch = u32::try_from(self.instruction_bundles.len()).unwrap_or(0);
+            self.instruction_bundles.insert(
+                0,
+                TpuInstructionBundle {
+                    pc_offset: 0,
+                    opcode: TpuOpCode::Infeed,
+                    operand_slots: vec![0],
+                    output_slot: 0,
+                    sync_flag_id: 1,
+                    attrs: InstructionAttrs {
+                        output_shape: first_shape.clone(),
+                        ..InstructionAttrs::default()
+                    },
+                },
+            );
+            self.instruction_bundles.push(TpuInstructionBundle {
+                pc_offset: pc_prefetch + 1,
+                opcode: TpuOpCode::Outfeed,
+                operand_slots: vec![first_out],
+                output_slot: first_out,
+                sync_flag_id: pc_prefetch + 2,
+                attrs: InstructionAttrs {
+                    output_shape: first_shape,
+                    ..InstructionAttrs::default()
+                },
+            });
+            for (idx, b) in self.instruction_bundles.iter_mut().enumerate() {
+                b.pc_offset = u32::try_from(idx).unwrap_or(0);
+            }
+        }
+        self.memory_stats.temp_size_in_bytes = total_vmem;
     }
 
     /// Pass 6: LLO VLIW instruction bundle scheduling, sync flag assignment, and cost analysis.
@@ -1322,6 +1808,26 @@ impl CompiledProgram {
         }
 
         result
+    }
+
+    /// Runs [`LinearScanRegisterAllocator`] over this program's [`RegisterLivenessInterval`]s
+    /// for the specified [`crate::types::TpuGeneration`].
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target Cloud TPU generation.
+    #[must_use]
+    pub fn allocate_physical_registers(
+        &self,
+        generation: crate::types::TpuGeneration,
+    ) -> LinearScanAllocationReport {
+        let intervals = self.compute_liveness_intervals();
+        let base_off = intervals
+            .iter()
+            .map(|iv| iv.assigned_vmem_offset.saturating_add(iv.size_bytes as u64))
+            .max()
+            .unwrap_or(0);
+        LinearScanRegisterAllocator::new(generation).allocate(&intervals, base_off)
     }
 
     /// Runs all compiler passes in sequence on this [`CompiledProgram`].

@@ -4,10 +4,11 @@
 
 use crate::proto::descriptor::impl_proto_schema_message;
 use crate::proto::xla_data::{
-    ConvolutionDimensionNumbers, DeviceAssignmentProto, DotDimensionNumbers, FrontendAttributes,
-    GatherDimensionNumbers, LiteralProto, OpMetadata, OpShardingProto, PaddingConfig,
-    ParameterReplicationProto, PrecisionConfig, ProgramShapeProto, ReplicaGroup,
-    ScatterDimensionNumbers, ShapeProto, SourceTarget, StatisticsViz, Window,
+    CholeskyOptions, ConvolutionDimensionNumbers, DeviceAssignmentProto, DotDimensionNumbers,
+    ExecutionProfile, FrontendAttributes, GatherDimensionNumbers, LiteralProto, OpMetadata,
+    OpShardingProto, PaddingConfig, ParameterReplicationProto, PrecisionConfig, ProgramShapeProto,
+    ReplicaGroup, ScatterDimensionNumbers, ShapeProto, SourceTarget, StatisticsViz,
+    TriangularSolveOptions, Window,
 };
 use prost::Message;
 
@@ -103,6 +104,44 @@ pub struct CrossProgramPrefetchProto {
 }
 
 impl_proto_schema_message!(CrossProgramPrefetchProto, "xla.CrossProgramPrefetch");
+
+/// Wire-compatible `xla.DynamicParameterBindingProto.Binding` (`xla/service/hlo.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct DynamicParameterBindingEntryProto {
+    /// Dynamic size parameter number (field `1`).
+    #[prost(int64, tag = "1")]
+    pub dynamic_param_num: i64,
+    /// Shape index into the dynamic size parameter (field `2`).
+    #[prost(int64, repeated, packed = "true", tag = "2")]
+    pub dynamic_param_index: Vec<i64>,
+    /// Target bounded parameter number (field `3`).
+    #[prost(int64, tag = "3")]
+    pub target_param_num: i64,
+    /// Shape index into the target parameter (field `4`).
+    #[prost(int64, repeated, packed = "true", tag = "4")]
+    pub target_param_index: Vec<i64>,
+    /// Dynamic dimension index on the target parameter (field `5`).
+    #[prost(int64, tag = "5")]
+    pub target_param_dim_num: i64,
+}
+
+impl_proto_schema_message!(
+    DynamicParameterBindingEntryProto,
+    "xla.DynamicParameterBindingProto.Binding"
+);
+
+/// Wire-compatible `xla.DynamicParameterBindingProto` (`xla/service/hlo.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct DynamicParameterBindingProto {
+    /// Dynamic parameter dimension bindings (field `1`).
+    #[prost(message, repeated, tag = "1")]
+    pub entries: Vec<DynamicParameterBindingEntryProto>,
+}
+
+impl_proto_schema_message!(
+    DynamicParameterBindingProto,
+    "xla.DynamicParameterBindingProto"
+);
 
 /// Wire-compatible `xla.HloInstructionProto` (`xla/service/hlo.proto`).
 #[derive(Clone, PartialEq, Message)]
@@ -212,6 +251,12 @@ pub struct HloInstructionProto {
     /// Backend-specific configuration payload (field `43`).
     #[prost(bytes = "vec", tag = "43")]
     pub backend_config: Vec<u8>,
+    /// Triangular solve options (`opcode == "triangular-solve"`, field `45`).
+    #[prost(message, optional, tag = "45")]
+    pub triangular_solve_options: Option<TriangularSolveOptions>,
+    /// Cholesky decomposition options (`opcode == "cholesky"`, field `46`).
+    #[prost(message, optional, tag = "46")]
+    pub cholesky_options: Option<CholeskyOptions>,
     /// Scatter dimension numbers (field `48`).
     #[prost(message, optional, tag = "48")]
     pub scatter_dimension_numbers: Option<ScatterDimensionNumbers>,
@@ -304,6 +349,9 @@ pub struct HloModuleProto {
     /// Input-output buffer aliasing table (field `8`).
     #[prost(message, optional, tag = "8")]
     pub input_output_alias: Option<HloInputOutputAliasProto>,
+    /// Dynamic parameter bindings (field `9`).
+    #[prost(message, optional, tag = "9")]
+    pub dynamic_parameter_binding: Option<DynamicParameterBindingProto>,
     /// Cross-program alternate-memory prefetches (field `10`).
     #[prost(message, repeated, tag = "10")]
     pub cross_program_prefetches: Vec<CrossProgramPrefetchProto>,
@@ -479,3 +527,369 @@ pub struct BufferAssignmentProto {
 }
 
 impl_proto_schema_message!(BufferAssignmentProto, "xla.BufferAssignmentProto");
+
+/// Wire-compatible `xla.HloSnapshot` (`xla/service/hlo.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct HloSnapshotProto {
+    /// Captured `HloModuleProto` (field `1`).
+    #[prost(message, optional, tag = "1")]
+    pub hlo: Option<HloModuleProto>,
+    /// Captured input argument literals (field `2`).
+    #[prost(message, repeated, tag = "2")]
+    pub arguments: Vec<LiteralProto>,
+    /// Captured execution result literal (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub result: Option<LiteralProto>,
+    /// Captured execution profile (field `4`).
+    #[prost(message, optional, tag = "4")]
+    pub execution_profile: Option<ExecutionProfile>,
+}
+
+impl_proto_schema_message!(HloSnapshotProto, "xla.HloSnapshot");
+
+/// Wire-compatible `xla.buffer_assignment.BufferIsolationConfig` (`xla/service/buffer_assignment.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct BufferIsolationConfigProto {
+    /// Base byte offset added to all buffers (field `1`).
+    #[prost(int64, tag = "1")]
+    pub base_offset_bytes: i64,
+    /// Number of buffers to isolate above the heap-simulator pack (field `2`).
+    #[prost(int64, tag = "2")]
+    pub isolation_fuel: i64,
+    /// Extra padding in bytes between isolated buffers (field `3`).
+    #[prost(int64, tag = "3")]
+    pub isolation_padding_bytes: i64,
+    /// Deterministic pseudo-random salt for buffer isolation order (field `4`).
+    #[prost(uint64, tag = "4")]
+    pub isolation_order_salt: u64,
+    /// Memory space colors to isolate (field `5`).
+    #[prost(int32, repeated, packed = "true", tag = "5")]
+    pub isolation_colors: Vec<i32>,
+}
+
+impl_proto_schema_message!(
+    BufferIsolationConfigProto,
+    "xla.buffer_assignment.BufferIsolationConfig"
+);
+
+/// Wire-compatible `xla.buffer_assignment.BufferAssignmentAlgorithmProto` (`xla/service/buffer_assignment.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct BufferAssignmentAlgorithmProto {
+    /// Optional fallback algorithm enum (`BufferAssignmentAlgorithmProto.Value`, field `1`).
+    #[prost(int32, optional, tag = "1")]
+    pub fallback_algorithm: Option<i32>,
+}
+
+impl_proto_schema_message!(
+    BufferAssignmentAlgorithmProto,
+    "xla.buffer_assignment.BufferAssignmentAlgorithmProto"
+);
+
+/// Wire-compatible `xla.buffer_assignment.AssignmentAlgorithmForComputationsWithoutOrderingProto` (`buffer_assignment.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct AssignmentAlgorithmForComputationsWithoutOrderingProto {}
+
+impl_proto_schema_message!(
+    AssignmentAlgorithmForComputationsWithoutOrderingProto,
+    "xla.buffer_assignment.AssignmentAlgorithmForComputationsWithoutOrderingProto"
+);
+
+/// Wire-compatible `xla.ShapedSliceProto` (`xla/service/shaped_slice.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ShapedSliceProto {
+    /// Buffer allocation slice (field `1`).
+    #[prost(message, optional, tag = "1")]
+    pub slice: Option<BufferAllocationSliceProto>,
+    /// Logical tensor shape of the slice (field `2`).
+    #[prost(message, optional, tag = "2")]
+    pub shape: Option<ShapeProto>,
+}
+
+impl_proto_schema_message!(ShapedSliceProto, "xla.ShapedSliceProto");
+
+/// Wire-compatible `xla.NullableShapedSliceProto` (`xla/service/shaped_slice.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct NullableShapedSliceProto {
+    /// Optional shaped slice (`None` represents a null thunk argument, field `1`).
+    #[prost(message, optional, tag = "1")]
+    pub shaped_slice: Option<ShapedSliceProto>,
+}
+
+impl_proto_schema_message!(NullableShapedSliceProto, "xla.NullableShapedSliceProto");
+
+/// Wire-compatible `xla.KeyValueMetric` (`xla/service/metrics.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct KeyValueMetricProto {
+    /// Metric key name (field `1`).
+    #[prost(string, tag = "1")]
+    pub key: String,
+    /// Metric integer value (field `2`).
+    #[prost(int64, tag = "2")]
+    pub value: i64,
+}
+
+impl_proto_schema_message!(KeyValueMetricProto, "xla.KeyValueMetric");
+
+/// Wire-compatible `xla.PassMetrics` (`xla/service/metrics.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct PassMetricsProto {
+    /// Unique ID of the module on which the pass ran (field `1`).
+    #[prost(uint64, tag = "1")]
+    pub module_id: u64,
+    /// Compiler pass name (field `2`).
+    #[prost(string, tag = "2")]
+    pub pass_name: String,
+    /// Duration of the pass (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub pass_duration: Option<prost_types::Duration>,
+    /// Opaque custom pass metrics (field `4`).
+    #[prost(message, optional, tag = "4")]
+    pub custom_metrics: Option<prost_types::Any>,
+    /// Key-value pass metrics (field `5`).
+    #[prost(message, repeated, tag = "5")]
+    pub kv_metrics: Vec<KeyValueMetricProto>,
+}
+
+impl_proto_schema_message!(PassMetricsProto, "xla.PassMetrics");
+
+/// Wire-compatible `xla.JobInfo` (`xla/service/metrics.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct JobInfoProto {
+    /// Job name (field `1`).
+    #[prost(string, optional, tag = "1")]
+    pub name: Option<String>,
+    /// Cluster cell identifier (field `2`).
+    #[prost(string, optional, tag = "2")]
+    pub cell: Option<String>,
+    /// User running the compilation job (field `3`).
+    #[prost(string, optional, tag = "3")]
+    pub user: Option<String>,
+    /// Unique job UID (field `4`).
+    #[prost(int64, optional, tag = "4")]
+    pub uid: Option<i64>,
+    /// Task index (field `5`).
+    #[prost(int64, optional, tag = "5")]
+    pub task_id: Option<i64>,
+    /// Task unique ID across restarts (field `6`).
+    #[prost(int64, optional, tag = "6")]
+    pub task_uid: Option<i64>,
+    /// Host OS process ID (field `7`).
+    #[prost(int64, optional, tag = "7")]
+    pub process_id: Option<i64>,
+    /// Thread unique ID (field `8`).
+    #[prost(int64, optional, tag = "8")]
+    pub thread_id: Option<i64>,
+}
+
+impl_proto_schema_message!(JobInfoProto, "xla.JobInfo");
+
+/// Wire-compatible `xla.TagMetric` (`xla/service/metrics.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TagMetricProto {
+    /// Tag key (field `1`).
+    #[prost(string, tag = "1")]
+    pub key: String,
+    /// Tag value (field `2`).
+    #[prost(string, tag = "2")]
+    pub value: String,
+}
+
+impl_proto_schema_message!(TagMetricProto, "xla.TagMetric");
+
+/// Wire-compatible `xla.CompilerBuildInfo` (`xla/service/metrics.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct CompilerBuildInfoProto {
+    /// Changelist number of the compiler binary (field `1`).
+    #[prost(int64, tag = "1")]
+    pub compiler_changelist: i64,
+    /// Build label of the compiler binary (field `2`).
+    #[prost(string, tag = "2")]
+    pub compiler_build_label: String,
+    /// Baseline changelist number (field `3`).
+    #[prost(int64, tag = "3")]
+    pub baseline_changelist: i64,
+    /// Client status enum (`0` = Unknown, `1` = Mint, `2` = Modified, field `4`).
+    #[prost(int32, tag = "4")]
+    pub client_status: i32,
+}
+
+impl_proto_schema_message!(CompilerBuildInfoProto, "xla.CompilerBuildInfo");
+
+/// Wire-compatible `xla.CompilationLogEntry` (`xla/service/metrics.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct CompilationLogEntryProto {
+    /// Event timestamp (field `1`).
+    #[prost(message, optional, tag = "1")]
+    pub timestamp: Option<prost_types::Timestamp>,
+    /// Compilation stage enum (`CompilationStage`, field `2`).
+    #[prost(int32, tag = "2")]
+    pub stage: i32,
+    /// Stage duration (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub duration: Option<prost_types::Duration>,
+    /// Task index (`-1` if unknown, field `4`).
+    #[prost(int32, tag = "4")]
+    pub task_index: i32,
+    /// Per-pass metrics (field `5`).
+    #[prost(message, repeated, tag = "5")]
+    pub pass_metrics: Vec<PassMetricsProto>,
+    /// Module IDs compiled during this stage (field `6`).
+    #[prost(uint64, repeated, packed = "true", tag = "6")]
+    pub module_ids: Vec<u64>,
+    /// Job metadata (field `7`).
+    #[prost(message, optional, tag = "7")]
+    pub job_info: Option<JobInfoProto>,
+    /// HLO module name (field `8`).
+    #[prost(string, tag = "8")]
+    pub hlo_module_name: String,
+    /// Metadata filter tags (field `9`).
+    #[prost(message, repeated, tag = "9")]
+    pub tag: Vec<TagMetricProto>,
+    /// Compiler binary build information (field `10`).
+    #[prost(message, optional, tag = "10")]
+    pub compiler_build_info: Option<CompilerBuildInfoProto>,
+}
+
+impl_proto_schema_message!(CompilationLogEntryProto, "xla.CompilationLogEntry");
+
+/// Wire-compatible `xla.CompilerPerfStats` (`xla/service/xla_compile_result.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct CompilerPerfStatsProto {
+    /// Compiler initialization duration (field `1`).
+    #[prost(message, optional, tag = "1")]
+    pub init_duration: Option<prost_types::Duration>,
+    /// HLO verification duration (field `2`).
+    #[prost(message, optional, tag = "2")]
+    pub hlo_verification_duration: Option<prost_types::Duration>,
+    /// Compilation prologue duration (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub compilation_prologue_duration: Option<prost_types::Duration>,
+    /// Main compilation duration (field `4`).
+    #[prost(message, optional, tag = "4")]
+    pub compilation_duration: Option<prost_types::Duration>,
+    /// Total end-to-end compilation duration (field `5`).
+    #[prost(message, optional, tag = "5")]
+    pub total_duration: Option<prost_types::Duration>,
+}
+
+impl_proto_schema_message!(CompilerPerfStatsProto, "xla.CompilerPerfStats");
+
+/// Wire-compatible `xla.ProgramMemoryMetadata` (`xla/service/xla_compile_result.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ProgramMemoryMetadataProto {
+    /// Reserved HBM stack usage in bytes (field `1`).
+    #[prost(int64, optional, tag = "1")]
+    pub reserved_hbm_usage_bytes: Option<i64>,
+}
+
+impl_proto_schema_message!(ProgramMemoryMetadataProto, "xla.ProgramMemoryMetadata");
+
+/// Wire-compatible `xla.CompilationResult` (`xla/service/xla_compile_result.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct XlaCompilationResultProto {
+    /// Compiled `HloModuleProto` (field `1`).
+    #[prost(message, optional, tag = "1")]
+    pub hlo_module: Option<HloModuleProto>,
+    /// Compilation timing breakdown (field `2`).
+    #[prost(message, optional, tag = "2")]
+    pub perf_stats: Option<CompilerPerfStatsProto>,
+    /// Compilation status (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub status: Option<crate::proto::megascale::StatusProto>,
+    /// Collected compilation counters (field `4`).
+    #[prost(btree_map = "string, int64", tag = "4")]
+    pub counters: std::collections::BTreeMap<String, i64>,
+    /// Program memory metadata (field `5`).
+    #[prost(message, optional, tag = "5")]
+    pub program_memory_metadata: Option<ProgramMemoryMetadataProto>,
+}
+
+impl_proto_schema_message!(XlaCompilationResultProto, "xla.CompilationResult");
+
+/// Wire-compatible `xla.ExecutionOptions` (`xla/xla.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct XlaExecutionOptionsProto {
+    /// Number of replicas (field `1`).
+    #[prost(int32, tag = "1")]
+    pub num_replicas: i32,
+    /// Number of partitions (field `2`).
+    #[prost(int32, tag = "2")]
+    pub num_partitions: i32,
+}
+
+impl_proto_schema_message!(XlaExecutionOptionsProto, "xla.ExecutionOptions");
+
+/// Wire-compatible `xla.HloInstructionProfile` (`hlo_profile_printer_data.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct HloInstructionProfileProto {
+    /// Unique HLO instruction identifier (field `1`).
+    #[prost(int64, tag = "1")]
+    pub instruction_id: i64,
+    /// HLO instruction mnemonic name (field `2`).
+    #[prost(string, tag = "2")]
+    pub instruction_name: String,
+    /// Enclosing HLO computation name (field `3`).
+    #[prost(string, tag = "3")]
+    pub computation_name: String,
+    /// Instruction execution category (e.g., `"convolution"`, `"dot"`, field `4`).
+    #[prost(string, tag = "4")]
+    pub category: String,
+    /// Floating-point operation count (field `5`).
+    #[prost(int64, tag = "5")]
+    pub flop_count: i64,
+    /// Transcendental operation count (field `6`).
+    #[prost(int64, tag = "6")]
+    pub transcendental_count: i64,
+    /// Total memory bytes accessed (field `7`).
+    #[prost(int64, tag = "7")]
+    pub bytes_accessed: i64,
+    /// Roofline optimal execution duration in seconds (field `8`).
+    #[prost(double, tag = "8")]
+    pub optimal_seconds: f64,
+    /// Measured or simulated hardware clock cycles (field `9`).
+    #[prost(int64, tag = "9")]
+    pub clock_cycles: i64,
+}
+
+impl_proto_schema_message!(HloInstructionProfileProto, "xla.HloInstructionProfile");
+
+/// Wire-compatible `xla.HloComputationProfile` (`hlo_profile_printer_data.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct HloComputationProfileProto {
+    /// Unique HLO computation identifier (field `1`).
+    #[prost(int64, tag = "1")]
+    pub computation_id: i64,
+    /// HLO computation name (field `2`).
+    #[prost(string, tag = "2")]
+    pub computation_name: String,
+    /// Whether this computation is the module entry computation (field `3`).
+    #[prost(bool, tag = "3")]
+    pub is_entry_computation: bool,
+    /// Per-instruction profile entries (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub instructions: Vec<HloInstructionProfileProto>,
+    /// Total hardware clock cycles spent in this computation (field `5`).
+    #[prost(int64, tag = "5")]
+    pub total_cycles: i64,
+}
+
+impl_proto_schema_message!(HloComputationProfileProto, "xla.HloComputationProfile");
+
+/// Wire-compatible `xla.HloProfilePrinterData` (`hlo_profile_printer_data.proto`).
+#[derive(Clone, PartialEq, Message)]
+pub struct HloProfilePrinterDataProto {
+    /// Per-computation hardware profile records (field `1`).
+    #[prost(message, repeated, tag = "1")]
+    pub computation_profiles: Vec<HloComputationProfileProto>,
+    /// Total number of hardware profile counters (field `2`).
+    #[prost(int64, tag = "2")]
+    pub profile_counters_size: i64,
+    /// Extra named profile counter values (field `3`).
+    #[prost(btree_map = "string, int64", tag = "3")]
+    pub extra_metrics: std::collections::BTreeMap<String, i64>,
+    /// Entry computation name (field `4`).
+    #[prost(string, tag = "4")]
+    pub entry_computation: String,
+}
+
+impl_proto_schema_message!(HloProfilePrinterDataProto, "xla.HloProfilePrinterData");

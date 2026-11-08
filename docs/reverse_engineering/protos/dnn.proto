@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: xla/stream_executor/dnn.proto
+
+syntax = "proto3";
+
+package stream_executor.dnn;
+
+message AlgorithmProto {
+  int64 algo_id = 1;
+  bool math_type = 2;
+  uint64 workspace_size = 5;
+}
+
+message AlgorithmConfigProto {
+  AlgorithmProto algorithm = 1;
+  AlgorithmProto algorithm_no_scratch = 2;
+  int64 scratch_size = 3;
+}
+
+message ConvolutionDescriptorProto {
+  repeated int64 paddings = 1;
+  repeated int64 strides = 2;
+  repeated int64 dilations = 3;
+  int32 group_count = 6;
+}
+
+message TensorDescriptorProto {
+  repeated int64 dimensions = 1;
+  int32 data_type = 2;
+}
