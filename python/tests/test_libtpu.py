@@ -151,6 +151,7 @@ def test_client_buffer_executable_and_profiler() -> None:
         assert dt.bit_size() >= 0
         assert dt.byte_size_for_elements(4) >= 0
         assert len(dt.numpy_typestr()) >= 3
+        assert 0 <= dt.dlpack_type_code() <= 6
 
     bf16_buf = client.buffer_from_bytes(
         0, libtpu.DataType.BF16, b"\x80\x3f\x00\x40\x40\x40\x80\x40", [2, 2]
@@ -951,6 +952,51 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     assert "hbm_bytes=" in libtpu.query_chip_config_summary()
     assert libtpu.compute_ici_route(0, 0, 0, 3, 0, 0, True) == 1
     assert libtpu.compute_ici_route(0, 0, 0, 3, 0, 0, False) == 3
+    with pytest.raises(libtpu.TpuError):
+        libtpu.register_custom_call_target("", 0)
+    libtpu.register_custom_call_target("py_custom_op", int(pjrt_words[5]))
+    ba_src = (
+        "module @ba { func.func @main(%a: tensor<4xf32>, %b: tensor<4xf32>) -> tensor<4xf32> {"
+        " %0 = stablehlo.add %a, %b : tensor<4xf32> func.return %0 : tensor<4xf32> } }"
+    )
+    with libtpu.TpuClient() as ba_client, ba_client.compile(ba_src) as ba_exec:
+        ba_pb = tpuz.inspect_executable_buffer_assignment(ba_exec)
+        assert len(ba_pb) > 0
+    csr_off = libtpu.lookup_csr_by_path("tc_0.tcs_core_state.RUN_STATUS")
+    assert csr_off is not None
+    assert libtpu.lookup_csr_by_offset(csr_off) is not None
+    assert libtpu.lookup_csr_by_path("nonexistent.csr.reg") is None
+    assert libtpu.lookup_csr_by_offset(0xDEAD_BEEF_FFFF) is None
+    assert b"traceEvents" in tpuz.collect_profiler_tool_data("trace_viewer.json")
+    assert len(libtpu.collect_profiler_tool_data("input_pipeline.pb")) > 0
+    assert libtpu.verify_protodesc_293_catalog() == 293
+    assert debug.verify_protodesc_cold_293() == 293
+    assert diagnostics.protodesc_cold_file_count() == 293
+    assert diagnostics.compute_torus_route_hops(0, 0, 0, 3, 0, 0, True) == 1
+    assert diagnostics.compute_torus_route_hops(0, 0, 0, 3, 0, 0, False) == 3
+    grpc_res = diagnostics.invoke_coordination_grpc(
+        "/tensorflow.CoordinationService/RegisterTask",
+        b"",
+        False,
+    )
+    assert len(grpc_res) >= 5
+    with pytest.raises(ValueError, match="method_path must not be empty"):
+        diagnostics.invoke_coordination_grpc("", b"")
+    with pytest.raises(ValueError, match="CoordinationService gRPC call failed"):
+        diagnostics.invoke_coordination_grpc("UnknownMethod", b"")
+    llo_sample = (
+        "[pc=0000 gen=v5 stall=0] { S0(op=1, $s0 <- $s0, $s0, imm=0)"
+        " | V0(AddF32, $v0 <- $v0, $v1, $v0) }"
+    )
+    imem_bin = debug.assemble_llo_vliw(llo_sample)
+    assert len(imem_bin) == 64
+    assert "pc=0000" in debug.disassemble_llo_vliw(imem_bin)
+    assert debug.disassemble_llo_vliw(b"short") == ""
+    with pytest.raises(libtpu.TpuError):
+        debug.assemble_llo_vliw("invalid_llo_line")
+    assert libtpu.service_host_command(b"\x08\x01\x10\x05") == 7
+    with pytest.raises(libtpu.TpuError):
+        libtpu.service_host_command(b"\xff\xff\xff")
 
     # Verify all 138 PJRT_Api slots against golden_struct_layouts.json min_struct_size
     golden_path = (

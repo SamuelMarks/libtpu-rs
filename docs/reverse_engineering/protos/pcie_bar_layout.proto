@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: asic_sw/driver/pcie_bar_layout.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package asic_sw.driver;
+
+message PcieBarRegionProto {
+  uint32 bar_index = 1;
+  uint64 region_offset = 2;
+  uint64 size_bytes = 3;
+  bool is_prefetchable = 4;
+}
+
+message PcieBarLayoutProto {
+  uint32 vendor_id = 1;
+  uint32 device_id = 2;
+  repeated PcieBarRegionProto bar_regions = 3;
+}

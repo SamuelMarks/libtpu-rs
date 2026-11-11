@@ -101,6 +101,23 @@ pub enum CsrAccessPermission {
     WriteOneToClear,
 }
 
+impl CsrAccessPermission {
+    /// Parses a symbolic access permission code (`"RO"`, `"RW"`, `"WO"`, `"W1C"`) into a [`CsrAccessPermission`].
+    ///
+    /// # Arguments
+    ///
+    /// * `code` - Access string from `csr_register_map.json`.
+    #[must_use]
+    pub fn from_str_code(code: &str) -> Self {
+        match code {
+            "RO" => Self::ReadOnly,
+            "WO" => Self::WriteOnly,
+            "W1C" => Self::WriteOneToClear,
+            _ => Self::ReadWrite,
+        }
+    }
+}
+
 /// Architectural CSR bitfield specification (`CsrBitfieldSpec`) within a 64-bit `DeepSea` CSR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CsrBitfieldSpec {
@@ -148,6 +165,99 @@ impl CsrBitfieldSpec {
         let shifted_mask = mask << self.lsb;
         (reg_value & !shifted_mask) | ((field_value & mask) << self.lsb)
     }
+}
+
+/// Embedded raw JSON string of `docs/reverse_engineering/csr_register_map.json` containing
+/// the full 8-generation `DeepSea` hardware CSR catalog extracted from `*_pf_csrs.br`.
+pub const EMBEDDED_CSR_REGISTER_MAP_JSON: &str =
+    include_str!("../../../../docs/reverse_engineering/csr_register_map.json");
+
+/// Parsed entry from the global `csr_register_map.json` catalog (`CsrCatalogEntry`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CsrCatalogEntry {
+    /// Cloud TPU hardware generation (`V2..=V7x`).
+    pub generation: TpuGeneration,
+    /// Full hierarchical register name from `*_pf_csrs.br` (e.g., `"pxc_tc_0_tcs_core_state.PC"`).
+    pub full_path: &'static str,
+    /// Physical BAR0 MMIO byte offset (`CsrAddress`).
+    pub byte_offset: u64,
+    /// Register width in bits (`32` or `64`).
+    pub width_bits: u32,
+    /// Hardware access permission (`RO`, `RW`, `WO`, `W1C`).
+    pub access: CsrAccessPermission,
+}
+
+impl CsrCatalogEntry {
+    /// Converts this [`CsrCatalogEntry`] into a [`CsrRegisterDescriptor`] with architectural bitfields
+    /// selected from the register's leaf name and access mode.
+    #[must_use]
+    pub fn to_descriptor(self) -> CsrRegisterDescriptor {
+        let bitfields = ChipRegisterMap::bitfields_for_register_path(self.full_path, self.access);
+        let reset_value = u64::from(self.full_path.ends_with("RUN_STATUS"));
+        CsrRegisterDescriptor {
+            full_path: self.full_path,
+            byte_offset: self.byte_offset,
+            access: self.access,
+            reset_value,
+            bitfields,
+        }
+    }
+}
+
+/// Global lazy-initialized catalog of all CSR registers parsed from [`EMBEDDED_CSR_REGISTER_MAP_JSON`].
+static GLOBAL_CSR_CATALOG: std::sync::OnceLock<Vec<CsrCatalogEntry>> = std::sync::OnceLock::new();
+
+/// Parses [`EMBEDDED_CSR_REGISTER_MAP_JSON`] into a flat slice of [`CsrCatalogEntry`] records
+/// covering all 8 Cloud TPU generations (`V2`, `V3`, `V4`, `V4Lite`, `V5e`, `V5p`, `V6e`, `V7x`).
+#[must_use]
+pub fn global_csr_register_catalog() -> &'static [CsrCatalogEntry] {
+    GLOBAL_CSR_CATALOG.get_or_init(|| {
+        let mut entries = Vec::with_capacity(2700);
+        let mut current_gen = TpuGeneration::V4;
+        let mut pending_name: &'static str = "";
+        let mut pending_offset: u64 = 0;
+        let mut pending_width: u32 = 64;
+        for raw_line in EMBEDDED_CSR_REGISTER_MAP_JSON.lines() {
+            let trimmed = raw_line.trim();
+            if trimmed.starts_with("\"V2\":") {
+                current_gen = TpuGeneration::V2;
+            } else if trimmed.starts_with("\"V3\":") {
+                current_gen = TpuGeneration::V3;
+            } else if trimmed.starts_with("\"V4\":") {
+                current_gen = TpuGeneration::V4;
+            } else if trimmed.starts_with("\"V4Lite\":") {
+                current_gen = TpuGeneration::V4Lite;
+            } else if trimmed.starts_with("\"V5e\":") {
+                current_gen = TpuGeneration::V5e;
+            } else if trimmed.starts_with("\"V5p\":") {
+                current_gen = TpuGeneration::V5p;
+            } else if trimmed.starts_with("\"V6e\":") {
+                current_gen = TpuGeneration::V6e;
+            } else if trimmed.starts_with("\"V7x\":") {
+                current_gen = TpuGeneration::V7x;
+            } else if let Some(rest) = trimmed.strip_prefix("\"name\": \"") {
+                pending_name = rest.trim_end_matches("\",");
+            } else if let Some(rest) = trimmed.strip_prefix("\"offset\": \"") {
+                let val = rest.trim_end_matches("\",");
+                let hex = val.strip_prefix("0x").unwrap_or(val);
+                pending_offset = u64::from_str_radix(hex, 16).unwrap_or(0);
+            } else if let Some(rest) = trimmed.strip_prefix("\"width_bits\": ") {
+                let num_str = rest.trim_end_matches(',');
+                pending_width = num_str.parse::<u32>().unwrap_or(64);
+            } else if let Some(rest) = trimmed.strip_prefix("\"access\": \"") {
+                let val = rest.trim_end_matches('"');
+                let access = CsrAccessPermission::from_str_code(val);
+                entries.push(CsrCatalogEntry {
+                    generation: current_gen,
+                    full_path: pending_name,
+                    byte_offset: pending_offset,
+                    width_bits: pending_width,
+                    access,
+                });
+            }
+        }
+        entries
+    })
 }
 
 /// Complete `asic_sw.tools.RegisterTranslatorData` register node descriptor (`CsrRegisterDescriptor`).
@@ -429,6 +539,148 @@ impl ChipRegisterMap {
         },
     ];
 
+    /// Program Counter (`PC` / `PROGRAM_LOCATION`) bitfield slice (`BUNDLE_INDEX`, `SUBCORE_ID`).
+    const PC_BITFIELDS: [CsrBitfieldSpec; 2] = [
+        CsrBitfieldSpec {
+            name: "BUNDLE_INDEX",
+            lsb: 0,
+            msb: 47,
+            access: CsrAccessPermission::ReadWrite,
+        },
+        CsrBitfieldSpec {
+            name: "SUBCORE_ID",
+            lsb: 48,
+            msb: 63,
+            access: CsrAccessPermission::ReadOnly,
+        },
+    ];
+
+    /// Vector wait / sync flag status (`VWAIT_STATE`) bitfield slice (`WAITING`, `FLAG_ID`, `TARGET_COUNT`).
+    const VWAIT_STATE_BITFIELDS: [CsrBitfieldSpec; 3] = [
+        CsrBitfieldSpec {
+            name: "WAITING",
+            lsb: 0,
+            msb: 0,
+            access: CsrAccessPermission::ReadOnly,
+        },
+        CsrBitfieldSpec {
+            name: "FLAG_ID",
+            lsb: 4,
+            msb: 15,
+            access: CsrAccessPermission::ReadOnly,
+        },
+        CsrBitfieldSpec {
+            name: "TARGET_COUNT",
+            lsb: 16,
+            msb: 31,
+            access: CsrAccessPermission::ReadOnly,
+        },
+    ];
+
+    /// Async DMA ring / queue status (`DMA_STATUS`) bitfield slice (`QUEUE_INDEX`, `RING_FULL`, `ERR_CODE`).
+    const DMA_STATUS_BITFIELDS: [CsrBitfieldSpec; 3] = [
+        CsrBitfieldSpec {
+            name: "QUEUE_INDEX",
+            lsb: 0,
+            msb: 15,
+            access: CsrAccessPermission::ReadWrite,
+        },
+        CsrBitfieldSpec {
+            name: "RING_FULL",
+            lsb: 16,
+            msb: 16,
+            access: CsrAccessPermission::ReadOnly,
+        },
+        CsrBitfieldSpec {
+            name: "ERR_CODE",
+            lsb: 24,
+            msb: 31,
+            access: CsrAccessPermission::WriteOneToClear,
+        },
+    ];
+
+    /// Inter-Chip Interconnect (`ICI`) router link status bitfield slice (`LINK_UP_MASK`, `LANE_DEGRADED`, `CRC_FAULT`).
+    const ICI_LINK_STATE_BITFIELDS: [CsrBitfieldSpec; 3] = [
+        CsrBitfieldSpec {
+            name: "LINK_UP_MASK",
+            lsb: 0,
+            msb: 15,
+            access: CsrAccessPermission::ReadOnly,
+        },
+        CsrBitfieldSpec {
+            name: "LANE_DEGRADED",
+            lsb: 16,
+            msb: 23,
+            access: CsrAccessPermission::ReadOnly,
+        },
+        CsrBitfieldSpec {
+            name: "CRC_FAULT",
+            lsb: 24,
+            msb: 31,
+            access: CsrAccessPermission::WriteOneToClear,
+        },
+    ];
+
+    /// HBM memory controller ECC fault / counter bitfield slice (`COUNT`, `CHANNEL_ID`, `OVERFLOW`).
+    const HBM_ECC_BITFIELDS: [CsrBitfieldSpec; 3] = [
+        CsrBitfieldSpec {
+            name: "COUNT",
+            lsb: 0,
+            msb: 31,
+            access: CsrAccessPermission::WriteOneToClear,
+        },
+        CsrBitfieldSpec {
+            name: "CHANNEL_ID",
+            lsb: 32,
+            msb: 39,
+            access: CsrAccessPermission::ReadOnly,
+        },
+        CsrBitfieldSpec {
+            name: "OVERFLOW",
+            lsb: 63,
+            msb: 63,
+            access: CsrAccessPermission::WriteOneToClear,
+        },
+    ];
+
+    /// Power / thermal sensor telemetry bitfield slice (`SENSOR_VALUE`, `THROTTLE_ACTIVE`).
+    const THERMAL_BITFIELDS: [CsrBitfieldSpec; 2] = [
+        CsrBitfieldSpec {
+            name: "SENSOR_VALUE",
+            lsb: 0,
+            msb: 31,
+            access: CsrAccessPermission::ReadOnly,
+        },
+        CsrBitfieldSpec {
+            name: "THROTTLE_ACTIVE",
+            lsb: 32,
+            msb: 32,
+            access: CsrAccessPermission::ReadOnly,
+        },
+    ];
+
+    /// `SparseCore` (`Barnacore`) status bitfield slice (`STATE`, `ACTIVE_LANES`, `FAULT_CODE`).
+    const SPARSECORE_STATUS_BITFIELDS: [CsrBitfieldSpec; 3] = [
+        CsrBitfieldSpec {
+            name: "STATE",
+            lsb: 0,
+            msb: 3,
+            access: CsrAccessPermission::ReadOnly,
+        },
+        CsrBitfieldSpec {
+            name: "FAULT_CODE",
+            lsb: 4,
+            msb: 15,
+            access: CsrAccessPermission::WriteOneToClear,
+        },
+        CsrBitfieldSpec {
+            name: "ACTIVE_LANES",
+            lsb: 16,
+            msb: 31,
+            access: CsrAccessPermission::ReadOnly,
+        },
+    ];
+
     /// Standard 64-bit full-width value bitfield slice.
     const VALUE64_BITFIELDS: [CsrBitfieldSpec; 1] = [CsrBitfieldSpec {
         name: "VALUE",
@@ -436,6 +688,60 @@ impl ChipRegisterMap {
         msb: 63,
         access: CsrAccessPermission::ReadWrite,
     }];
+
+    /// Standard 64-bit full-width write-only doorbell bitfield slice.
+    const DOORBELL64_BITFIELDS: [CsrBitfieldSpec; 1] = [CsrBitfieldSpec {
+        name: "VALUE",
+        lsb: 0,
+        msb: 63,
+        access: CsrAccessPermission::WriteOnly,
+    }];
+
+    /// Standard 64-bit full-width write-1-to-clear fault bitfield slice.
+    const W1C64_BITFIELDS: [CsrBitfieldSpec; 1] = [CsrBitfieldSpec {
+        name: "VALUE",
+        lsb: 0,
+        msb: 63,
+        access: CsrAccessPermission::WriteOneToClear,
+    }];
+
+    /// Selects the architectural [`CsrBitfieldSpec`] slice for a register path and access mode.
+    ///
+    /// # Arguments
+    ///
+    /// * `full_path` - Hierarchical CSR register path from `csr_register_map.json`.
+    /// * `access` - Register access permission (`RO`, `RW`, `WO`, `W1C`).
+    #[must_use]
+    pub fn bitfields_for_register_path(
+        full_path: &str,
+        access: CsrAccessPermission,
+    ) -> &'static [CsrBitfieldSpec] {
+        if full_path.contains("scs_core_state") {
+            &Self::SPARSECORE_STATUS_BITFIELDS
+        } else if full_path.contains("DMA") {
+            &Self::DMA_STATUS_BITFIELDS
+        } else if full_path.contains("ICI") {
+            &Self::ICI_LINK_STATE_BITFIELDS
+        } else if full_path.contains("ECC") {
+            &Self::HBM_ECC_BITFIELDS
+        } else if full_path.contains("THERMAL") {
+            &Self::THERMAL_BITFIELDS
+        } else if full_path.ends_with("STATUS") {
+            &Self::RUN_STATUS_BITFIELDS
+        } else if full_path.ends_with("PC") {
+            &Self::PC_BITFIELDS
+        } else if full_path.contains("VWAIT") {
+            &Self::VWAIT_STATE_BITFIELDS
+        } else {
+            match access {
+                CsrAccessPermission::WriteOnly => &Self::DOORBELL64_BITFIELDS,
+                CsrAccessPermission::WriteOneToClear => &Self::W1C64_BITFIELDS,
+                CsrAccessPermission::ReadOnly | CsrAccessPermission::ReadWrite => {
+                    &Self::VALUE64_BITFIELDS
+                }
+            }
+        }
+    }
 
     /// Returns the BAR0 MMIO byte offset of `TensorCore` 1 `tcs_core_state.RUN_STATUS` (`tc_1.tcs_core_state.RUN_STATUS`).
     #[must_use]
@@ -635,6 +941,62 @@ impl ChipRegisterMap {
                 reset_value: 0,
                 bitfields: &Self::VALUE64_BITFIELDS,
             },
+            CsrRegisterDescriptor {
+                full_path: "gasket_att.ATT_BASE",
+                byte_offset: BAR0_CSR_GASKET_ATT_BASE,
+                access: CsrAccessPermission::ReadWrite,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "gasket_att.EXTENDED_ATT_BASE",
+                byte_offset: BAR0_CSR_GASKET_EXTENDED_ATT_BASE,
+                access: CsrAccessPermission::ReadWrite,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "gasket_irq.MSI_X_TABLE",
+                byte_offset: BAR0_CSR_GASKET_EXTENDED_ATT_BASE.wrapping_add(0x1000),
+                access: CsrAccessPermission::ReadWrite,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "gasket_irq.INTERRUPT_MASK",
+                byte_offset: BAR0_CSR_GASKET_EXTENDED_ATT_BASE.wrapping_add(0x1008),
+                access: CsrAccessPermission::ReadWrite,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "gasket_irq.INTERRUPT_STATUS",
+                byte_offset: BAR0_CSR_GASKET_EXTENDED_ATT_BASE.wrapping_add(0x1010),
+                access: CsrAccessPermission::WriteOneToClear,
+                reset_value: 0,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "telemetry.THERMAL_MILLICELSIUS",
+                byte_offset: BAR0_CSR_THERMAL_MILLICELSIUS,
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 42_000,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "telemetry.POWER_MILLIWATTS",
+                byte_offset: BAR0_CSR_POWER_MILLIWATTS,
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 195_000,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
+            CsrRegisterDescriptor {
+                full_path: "telemetry.DUTY_CYCLE_PCT",
+                byte_offset: BAR0_CSR_POWER_MILLIWATTS.wrapping_add(8),
+                access: CsrAccessPermission::ReadOnly,
+                reset_value: 95,
+                bitfields: &Self::VALUE64_BITFIELDS,
+            },
         ]);
         if self.sc0_run_status_csr != 0 {
             let sc0_base = self.sc0_run_status_csr & !0xFF_u64;
@@ -693,7 +1055,46 @@ impl ChipRegisterMap {
         list
     }
 
-    /// Looks up a hardware [`CsrRegisterDescriptor`] on this [`ChipRegisterMap`] by full or leaf symbolic name.
+    /// Converts this [`ChipRegisterMap`]'s full CSR descriptor tree into a wire-compatible
+    /// [`crate::proto::RegisterTranslatorDataProto`].
+    #[must_use]
+    pub fn to_register_translator_proto(&self) -> crate::proto::RegisterTranslatorDataProto {
+        let registers = self
+            .csr_descriptors()
+            .into_iter()
+            .map(|d| crate::proto::RegisterTranslatorEntryProto {
+                full_path: String::from(d.full_path),
+                byte_offset: d.byte_offset,
+                width_bits: 64,
+                access_mode: String::from(match d.access {
+                    CsrAccessPermission::ReadOnly => "RO",
+                    CsrAccessPermission::ReadWrite => "RW",
+                    CsrAccessPermission::WriteOnly => "WO",
+                    CsrAccessPermission::WriteOneToClear => "W1C",
+                }),
+                reset_value: d.reset_value,
+            })
+            .collect();
+        crate::proto::RegisterTranslatorDataProto {
+            chip_codename: String::from(self.chip_codename),
+            tpu_version: self.generation as i32,
+            hardware_abi_version: self.hardware_abi_version,
+            registers,
+        }
+    }
+
+    /// Returns all [`CsrCatalogEntry`] records for this chip generation from [`global_csr_register_catalog`].
+    #[must_use]
+    pub fn catalog_entries(&self) -> Vec<CsrCatalogEntry> {
+        global_csr_register_catalog()
+            .iter()
+            .copied()
+            .filter(|e| e.generation == self.generation)
+            .collect()
+    }
+
+    /// Looks up a hardware [`CsrRegisterDescriptor`] on this [`ChipRegisterMap`] by full or leaf symbolic name,
+    /// searching both core architectural CSRs and the full [`global_csr_register_catalog`].
     ///
     /// # Arguments
     ///
@@ -701,25 +1102,47 @@ impl ChipRegisterMap {
     #[must_use]
     pub fn lookup_by_name(&self, query_name: &str) -> Option<CsrRegisterDescriptor> {
         let trimmed = query_name.trim();
-        self.csr_descriptors().into_iter().find(|desc| {
+        if let Some(core_desc) = self.csr_descriptors().into_iter().find(|desc| {
             desc.full_path == trimmed
                 || desc
                     .full_path
                     .rsplit_once('.')
                     .is_some_and(|(_, leaf)| leaf == trimmed)
-        })
+        }) {
+            return Some(core_desc);
+        }
+        global_csr_register_catalog()
+            .iter()
+            .find(|entry| {
+                entry.generation == self.generation
+                    && (entry.full_path == trimmed
+                        || entry
+                            .full_path
+                            .rsplit_once('.')
+                            .is_some_and(|(_, leaf)| leaf == trimmed))
+            })
+            .map(|e| e.to_descriptor())
     }
 
-    /// Looks up a hardware [`CsrRegisterDescriptor`] on this [`ChipRegisterMap`] by physical BAR0 MMIO byte offset.
+    /// Looks up a hardware [`CsrRegisterDescriptor`] on this [`ChipRegisterMap`] by physical BAR0 MMIO byte offset,
+    /// searching both core architectural CSRs and the full [`global_csr_register_catalog`].
     ///
     /// # Arguments
     ///
     /// * `byte_offset` - Physical BAR0 MMIO byte offset.
     #[must_use]
     pub fn lookup_by_offset(&self, byte_offset: u64) -> Option<CsrRegisterDescriptor> {
-        self.csr_descriptors()
+        if let Some(core_desc) = self
+            .csr_descriptors()
             .into_iter()
             .find(|desc| desc.byte_offset == byte_offset)
+        {
+            return Some(core_desc);
+        }
+        global_csr_register_catalog()
+            .iter()
+            .find(|entry| entry.generation == self.generation && entry.byte_offset == byte_offset)
+            .map(|e| e.to_descriptor())
     }
 
     /// Looks up a hardware [`CsrRegisterDescriptor`] by full or suffix symbolic name
@@ -750,6 +1173,59 @@ impl ChipRegisterMap {
     ) -> Option<CsrRegisterDescriptor> {
         Self::for_generation(generation).lookup_by_offset(byte_offset)
     }
+
+    /// Resolves a hierarchical `asic_sw` CSR path (including `csr_register_map.json` paths such as
+    /// `"tile0.tensor_core0.pxc.run_status"`, `"ici.router.link_status_0"`, `"sparse_core0.scs.status"`,
+    /// `"hbm.mc0.ecc_corr_count"`) to its [`CsrRegisterDescriptor`] on this [`ChipRegisterMap`].
+    ///
+    /// # Arguments
+    ///
+    /// * `hierarchical_path` - Hierarchical CSR register path string.
+    #[must_use]
+    pub fn resolve_hierarchical_csr_path(
+        &self,
+        hierarchical_path: &str,
+    ) -> Option<CsrRegisterDescriptor> {
+        if let Some(exact) = self.lookup_by_name(hierarchical_path) {
+            return Some(exact);
+        }
+        let lower = hierarchical_path.trim().to_ascii_lowercase();
+        if let Some(cat_match) = global_csr_register_catalog().iter().find(|entry| {
+            entry.generation == self.generation && entry.full_path.to_ascii_lowercase() == lower
+        }) {
+            return Some(cat_match.to_descriptor());
+        }
+        let mapped_name = if lower.contains("tensor_core1") {
+            if lower.contains("pc") {
+                "tc_1.tcs_core_state.PC"
+            } else if lower.contains("program_location") {
+                "tc_1.tcs_core_state.PROGRAM_LOCATION"
+            } else {
+                "tc_1.tcs_core_state.RUN_STATUS"
+            }
+        } else if lower.contains("sparse_core") {
+            if lower.contains("pc") {
+                "sc_0.scs_core_state.PC"
+            } else {
+                "sc_0.scs_core_state.RUN_STATUS"
+            }
+        } else if lower.contains("ici") {
+            "ici_router.ICI_ROUTER_LINK_STATUS_0"
+        } else if lower.contains("ecc_corr") {
+            "hbm_mc.HBM_MC_ECC_CORR_COUNT"
+        } else if lower.contains("ecc_uncorr") {
+            "hbm_mc.HBM_MC_ECC_UNCORR_COUNT"
+        } else if lower.contains("thermal") {
+            "telemetry.THERMAL_MILLICELSIUS"
+        } else if lower.contains("power") {
+            "telemetry.POWER_MILLIWATTS"
+        } else if lower.contains("run_status") {
+            "tc_0.tcs_core_state.RUN_STATUS"
+        } else {
+            return None;
+        };
+        self.lookup_by_name(mapped_name)
+    }
 }
 
 /// `PCIe` BAR0 MMIO register offset for `TensorCore` 0 Run Control CSR.
@@ -769,6 +1245,12 @@ pub const BAR0_CSR_SYNC_FLAG_BASE: u64 = 0x0000_2000;
 
 /// `PCIe` BAR0 MMIO register offset for `SparseCore` 0 Run Control CSR (`0x4000`).
 pub const BAR0_CSR_SPARSECORE_RUN_CONTROL: u64 = 0x0000_4000;
+
+/// `PCIe` BAR0 MMIO register offset for Gasket simple Address Translation Table (ATT) base (`0x5000`).
+pub const BAR0_CSR_GASKET_ATT_BASE: u64 = 0x0000_5000;
+
+/// `PCIe` BAR0 MMIO register offset for Gasket 2-level extended Address Translation Table (ATT) base (`0x6000`).
+pub const BAR0_CSR_GASKET_EXTENDED_ATT_BASE: u64 = 0x0000_6000;
 
 /// `PCIe` BAR0 MMIO register offset for HBM DMA descriptor ring head pointer (`0x8000`).
 pub const BAR0_CSR_HBM_DMA_RING_HEAD: u64 = 0x0000_8000;
@@ -875,6 +1357,32 @@ pub struct VfioIrqSetIoctl {
     /// Eventfd file descriptor payload.
     pub event_fd: i32,
 }
+
+/// VFIO 32-byte `PCIe` BAR region descriptor (`vfio_region_info`, `VFIO_DEVICE_GET_REGION_INFO = 0x3b6c`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Pod, Zeroable)]
+pub struct VfioRegionInfoIoctl {
+    /// Structure size (`32` bytes).
+    pub argsz: u32,
+    /// Region capability flags (`0x1 = READ`, `0x2 = WRITE`, `0x4 = MMAP`).
+    pub flags: u32,
+    /// Region BAR index (`0` = BAR0 CSRs, `2` = BAR2 HBM/VMEM aperture).
+    pub index: u32,
+    /// Offset of extended capability chain (`0`).
+    pub cap_offset: u32,
+    /// Region size in bytes.
+    pub size: u64,
+    /// File offset within the VFIO device file descriptor for `mmap`.
+    pub offset: u64,
+}
+
+const _: () = assert!(size_of::<VfioRegionInfoIoctl>() == 32);
+const _: () = assert!(std::mem::offset_of!(VfioRegionInfoIoctl, argsz) == 0);
+const _: () = assert!(std::mem::offset_of!(VfioRegionInfoIoctl, flags) == 4);
+const _: () = assert!(std::mem::offset_of!(VfioRegionInfoIoctl, index) == 8);
+const _: () = assert!(std::mem::offset_of!(VfioRegionInfoIoctl, cap_offset) == 12);
+const _: () = assert!(std::mem::offset_of!(VfioRegionInfoIoctl, size) == 16);
+const _: () = assert!(std::mem::offset_of!(VfioRegionInfoIoctl, offset) == 24);
 
 const _: () = assert!(size_of::<GasketPageTableIoctl>() == 32);
 const _: () = assert!(std::mem::offset_of!(GasketPageTableIoctl, page_table_index) == 0);

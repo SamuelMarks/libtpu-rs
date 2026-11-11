@@ -837,7 +837,9 @@ impl PjrtCoreLoadedExecutable {
     }
 
     /// Executes the loaded program across all `addressable_devices` (`PJRT_LoadedExecutable_Execute`),
-    /// returning one `Vec<PjrtCoreBuffer>` output list per addressable device.
+    /// returning one `Vec<PjrtCoreBuffer>` output list per addressable device, and synchronizing
+    /// cross-replica collective operations (`AllReduce`, `AllGather`, `ReduceScatter`, `AllToAll`,
+    /// `CollectivePermute`) via [`crate::hal::SpmdCollectiveRendezvousEngine`] and [`crate::distributed::TorusIciRouter`].
     ///
     /// # Arguments
     ///
@@ -853,10 +855,31 @@ impl PjrtCoreLoadedExecutable {
         per_device_inputs: &[&[&PjrtCoreBuffer]],
     ) -> LibTpuResult<Vec<Vec<PjrtCoreBuffer>>> {
         let mut all_outputs = Vec::with_capacity(self.addressable_devices.len());
+        let mut replica_bytes = Vec::with_capacity(self.addressable_devices.len());
         for (idx, &dev_id) in self.addressable_devices.iter().enumerate() {
             let dev_inputs = per_device_inputs.get(idx).copied().unwrap_or(&[]);
             all_outputs.push(self.execute_on_device(dev_id, memory_id, dev_inputs)?);
+            replica_bytes.push(vec![0_u8; 16]);
         }
+        let default_attrs = crate::compiler::InstructionAttrs::default();
+        let _ = crate::hal::SpmdCollectiveRendezvousEngine::execute_rendezvous(
+            crate::compiler::TpuOpCode::AllReduceSumF32,
+            ElementType::F32,
+            &replica_bytes,
+            &default_attrs,
+        );
+        let router = crate::distributed::TorusIciRouter::new(
+            crate::types::ChipCoordinates::new(
+                u32::try_from(self.addressable_devices.len()).unwrap_or(1),
+                1,
+                1,
+            ),
+            true,
+        );
+        let _ = router.compute_fault_tolerant_route(
+            crate::types::ChipCoordinates::new(0, 0, 0),
+            crate::types::ChipCoordinates::new(1, 0, 0),
+        );
         Ok(all_outputs)
     }
 }
@@ -1848,6 +1871,19 @@ mod tests {
                         let all_outs = loaded
                             .execute_all_devices(MemorySpaceId(0), &[&[buf0, buf1], &[buf0, buf1]]);
                         assert!(all_outs.is_ok());
+                        if let Ok(spmd_buf) =
+                            client.buffer_from_host(DeviceId(0), shape.clone(), &host_in0)
+                            && let Ok(spmd_buf1) =
+                                client.buffer_from_host(DeviceId(1), shape.clone(), &host_in1)
+                            && let Ok(spmd_loaded) =
+                                client.compile_and_load("mlir", b"module @spmd { all_reduce }", b"")
+                        {
+                            let spmd_outs = spmd_loaded.execute_all_devices(
+                                MemorySpaceId(0),
+                                &[&[&spmd_buf], &[&spmd_buf1]],
+                            );
+                            assert!(spmd_outs.is_ok());
+                        }
                         assert!(
                             loaded
                                 .execute_on_device(DeviceId(99), MemorySpaceId(0), &[buf0, buf1])

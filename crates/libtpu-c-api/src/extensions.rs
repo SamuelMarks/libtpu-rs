@@ -134,10 +134,14 @@ pub struct ExtensionRuntimeState {
     pub megascale_barriers: usize,
     /// Number of registered Megascale error handlers.
     pub megascale_error_handlers: usize,
+    /// Optional registered Megascale C error callback function pointer (`void (*)(*mut c_void)`).
+    pub megascale_error_callback_fn: usize,
     /// Configured Megascale transport type (`0` = Default/ICI, `1` = DCN).
     pub megascale_transport_type: usize,
     /// Number of configured `TpuCompilationEnvironmentProto` field overrides.
     pub tpu_compilation_env_overrides: usize,
+    /// Active mutable [`libtpu_core::proto::TpuCompilationEnvironmentProto`] instance.
+    pub tpu_compilation_env: libtpu_core::proto::TpuCompilationEnvironmentProto,
     /// Number of registered `PJRT_Callback_Extension` callbacks.
     pub registered_callbacks: usize,
     /// Registered callback function pointer and user context per callback type.
@@ -146,6 +150,10 @@ pub struct ExtensionRuntimeState {
     pub phase_compilers: usize,
     /// Number of completed cross-host buffer transfers.
     pub cross_host_transfers: usize,
+    /// Keyed cross-host tensor payload mailboxes (`tag -> bytes`) for `PJRT_CrossHostTransfers_Extension`.
+    pub cross_host_mailboxes: std::collections::BTreeMap<usize, Vec<u8>>,
+    /// Set of cancelled cross-host transfer tags and their status codes.
+    pub cross_host_cancelled_tags: std::collections::BTreeMap<usize, i32>,
     /// Number of active `PJRT_RawBuffer` alias handles.
     pub raw_buffers: usize,
     /// Whether the active TPU topology is a subslice topology.
@@ -2435,6 +2443,219 @@ mod tests {
             );
             assert_eq!(subslice_origin, [0, 0, 0]);
             assert_ne!(format!("{slice_cfg_c:?}{comp_subslice:?}"), "");
+
+            // Test pointer out-parameter modes on PJRT_TpuTopology_* and Megascale C error callbacks
+            let mut proc_ids_buf = [-1_i32; 4];
+            let mut proc_ids_args = PJRT_TpuTopology_ProcessIds_Args {
+                struct_size: size_of::<PJRT_TpuTopology_ProcessIds_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                out_value: proc_ids_buf.as_mut_ptr() as usize,
+            };
+            assert!(PJRT_TpuTopology_ProcessIds(ptr::addr_of_mut!(proc_ids_args).cast()).is_null());
+            assert_eq!(proc_ids_buf[0], 0);
+
+            let mut dev_ids_buf = [-1_i32; 8];
+            let mut dev_ids_args = PJRT_TpuTopology_LogiDeviceIdsOnProcess_Args {
+                struct_size: size_of::<PJRT_TpuTopology_LogiDeviceIdsOnProcess_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                out_value: dev_ids_buf.as_mut_ptr() as usize,
+            };
+            assert!(
+                PJRT_TpuTopology_LogiDeviceIdsOnProcess(ptr::addr_of_mut!(dev_ids_args).cast())
+                    .is_null()
+            );
+            assert_eq!(dev_ids_buf[0], 0);
+
+            let mut proc_for_dev_args = PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice_Args {
+                struct_size: size_of::<PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                device_id: 1,
+                out_proc_id: 0,
+                out_idx_on_proc: 0,
+            };
+            assert!(
+                PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice(
+                    ptr::addr_of_mut!(proc_for_dev_args).cast()
+                )
+                .is_null()
+            );
+            assert_eq!(proc_for_dev_args.out_idx_on_proc, 1);
+
+            let mut coords3 = [-1_i32; 3];
+            let mut pcoord_args = PJRT_TpuTopology_ProcessCoordFromId_Args {
+                struct_size: size_of::<PJRT_TpuTopology_ProcessCoordFromId_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                process_id: 0,
+                out_first: coords3.as_mut_ptr() as usize,
+                out_second: 0,
+            };
+            assert!(
+                PJRT_TpuTopology_ProcessCoordFromId(ptr::addr_of_mut!(pcoord_args).cast())
+                    .is_null()
+            );
+            assert_eq!(coords3, [0, 0, 0]);
+
+            let in_coords3 = [1_i32, 1, 0];
+            let mut chip_from_coord = PJRT_TpuTopology_ChipIdFromCoord_Args {
+                struct_size: size_of::<PJRT_TpuTopology_ChipIdFromCoord_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                coord_or_ptr: in_coords3.as_ptr() as usize,
+                out_first: 0,
+                out_second: 0,
+            };
+            assert!(
+                PJRT_TpuTopology_ChipIdFromCoord(ptr::addr_of_mut!(chip_from_coord).cast())
+                    .is_null()
+            );
+            assert!(chip_from_coord.out_first >= 1);
+
+            let mut logi_from_coord = PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx_Args {
+                struct_size: size_of::<PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                param0: in_coords3.as_ptr() as usize,
+                out_first: 0,
+                out_second: 0,
+            };
+            assert!(
+                PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx(
+                    ptr::addr_of_mut!(logi_from_coord).cast()
+                )
+                .is_null()
+            );
+            logi_from_coord.topology = ptr::null();
+            assert!(
+                PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx(
+                    ptr::addr_of_mut!(logi_from_coord).cast()
+                )
+                .is_null()
+            );
+
+            let mut coord_for_logi = PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice_Args {
+                struct_size: size_of::<PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                device_id: 0,
+                out_first: coords3.as_mut_ptr() as usize,
+                out_second: 99,
+            };
+            assert!(
+                PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice(
+                    ptr::addr_of_mut!(coord_for_logi).cast()
+                )
+                .is_null()
+            );
+            assert_eq!(coord_for_logi.out_second, 0);
+
+            let mut cbounds_args = PJRT_TpuTopology_ChipBounds_Args {
+                struct_size: size_of::<PJRT_TpuTopology_ChipBounds_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                out_first: coords3.as_mut_ptr() as usize,
+                out_second: 0,
+            };
+            assert!(PJRT_TpuTopology_ChipBounds(ptr::addr_of_mut!(cbounds_args).cast()).is_null());
+            assert_eq!(cbounds_args.out_second, 3);
+
+            let mut pbounds_args = PJRT_TpuTopology_ProcessBounds_Args {
+                struct_size: size_of::<PJRT_TpuTopology_ProcessBounds_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                out_first: coords3.as_mut_ptr() as usize,
+                out_second: 0,
+            };
+            assert!(
+                PJRT_TpuTopology_ProcessBounds(ptr::addr_of_mut!(pbounds_args).cast()).is_null()
+            );
+            assert_eq!(pbounds_args.out_second, 3);
+
+            let mut route_args = PJRT_TpuTopology_GetRoutingStrategy_Args {
+                struct_size: size_of::<PJRT_TpuTopology_GetRoutingStrategy_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                routing_strategy: 99,
+            };
+            assert!(
+                PJRT_TpuTopology_GetRoutingStrategy(ptr::addr_of_mut!(route_args).cast()).is_null()
+            );
+            assert_eq!(route_args.routing_strategy, 0);
+
+            let mut slice_cfg_out = PJRT_TpuTopology_SliceConfig {
+                name: ptr::null(),
+                name_len: 0,
+                dimensions: [0; 4],
+                wraps: [false; 4],
+                num_dimensions: 0,
+                twist: false,
+                pad: [0; 7],
+            };
+            let mut get_sc_args = PJRT_TpuTopology_GetSliceConfig_Args {
+                struct_size: size_of::<PJRT_TpuTopology_GetSliceConfig_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                out_value: ptr::addr_of_mut!(slice_cfg_out) as usize,
+            };
+            assert!(
+                PJRT_TpuTopology_GetSliceConfig(ptr::addr_of_mut!(get_sc_args).cast()).is_null()
+            );
+            assert_eq!(slice_cfg_out.num_dimensions, 3);
+            let mut get_scs_args = PJRT_TpuTopology_GetSliceConfigs_Args {
+                struct_size: size_of::<PJRT_TpuTopology_GetSliceConfigs_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                out_value: ptr::addr_of_mut!(slice_cfg_out) as usize,
+            };
+            assert!(
+                PJRT_TpuTopology_GetSliceConfigs(ptr::addr_of_mut!(get_scs_args).cast()).is_null()
+            );
+            assert_eq!(slice_cfg_out.name_len, 5);
+
+            unsafe extern "C" fn megascale_err_cb(arg: *mut std::ffi::c_void) {
+                if !arg.is_null() {
+                    // SAFETY: `arg` points to `ms_err_hits` in the test frame.
+                    unsafe {
+                        *arg.cast::<usize>() += 1;
+                    }
+                }
+            }
+            let mut ms_err_hits: usize = 0;
+            let ms_cb_ptr: unsafe extern "C" fn(*mut std::ffi::c_void) = megascale_err_cb;
+            let mut reg_ms_err = PJRT_Megascale_RegisterErrorHandler_Args {
+                struct_size: size_of::<PJRT_Megascale_RegisterErrorHandler_Args>(),
+                extension_start: ptr::null_mut(),
+                callback_fn: ms_cb_ptr as usize,
+                handler_id_out: 0,
+            };
+            assert!(
+                PJRT_Megascale_RegisterErrorHandler(ptr::addr_of_mut!(reg_ms_err).cast()).is_null()
+            );
+            let mut log_ms_err = PJRT_Megascale_LogError_Args {
+                struct_size: size_of::<PJRT_Megascale_LogError_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: ptr::addr_of_mut!(ms_err_hits).cast(),
+            };
+            assert!(PJRT_Megascale_LogError(ptr::addr_of_mut!(log_ms_err).cast()).is_null());
+            let mut abort_ms = PJRT_Megascale_AbortCollectives_Args {
+                struct_size: size_of::<PJRT_Megascale_AbortCollectives_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: ptr::addr_of_mut!(ms_err_hits).cast(),
+            };
+            assert!(PJRT_Megascale_AbortCollectives(ptr::addr_of_mut!(abort_ms).cast()).is_null());
+            assert_eq!(ms_err_hits, 2);
+            let mut unreg_ms_err = PJRT_Megascale_UnregisterErrorHandler_Args {
+                struct_size: size_of::<PJRT_Megascale_UnregisterErrorHandler_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: ptr::null_mut(),
+            };
+            for _ in 0..8 {
+                let _ =
+                    PJRT_Megascale_UnregisterErrorHandler(ptr::addr_of_mut!(unreg_ms_err).cast());
+            }
 
             unsafe extern "C" fn sample_ext_cb(
                 payload: *mut std::ffi::c_void,

@@ -110,3 +110,42 @@ unregister_callback = unregister_debug_callback
 def trigger_fault_injection() -> None:
     """Triggers registered diagnostic debug callbacks (`_trigger_debug_callback_for_test`)."""
     _trigger_debug_callback_for_test()
+
+
+def assemble_llo_vliw(listing: str) -> bytes:
+    """Assembles a multi-line `DeepSea` LLO VLIW text listing into 64-byte `IMEM` binary words.
+
+    Args:
+        listing: Multi-line `DeepSea` LLO VLIW assembly text.
+
+    Returns:
+        Assembled 64-byte-aligned `IMEM` binary words.
+    """
+    import libtpu
+
+    return libtpu.assemble_llo_vliw(listing)
+
+
+def disassemble_llo_vliw(imem_bytes: bytes) -> str:
+    """Disassembles 64-byte `IMEM` binary words into a canonical `DeepSea` LLO VLIW listing.
+
+    Args:
+        imem_bytes: Raw 64-byte-aligned `IMEM` bundle words.
+
+    Returns:
+        Multi-line `DeepSea` LLO VLIW text listing.
+    """
+    import libtpu
+
+    return libtpu.disassemble_llo_vliw(imem_bytes)
+
+
+def verify_protodesc_cold_293() -> int:
+    """Verifies all 293 embedded `protodesc_cold` descriptor catalog entries.
+
+    Returns:
+        Number of verified embedded `.proto` descriptor catalog entries (`293`).
+    """
+    import libtpu
+
+    return libtpu.verify_protodesc_cold_293()

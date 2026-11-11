@@ -41,6 +41,7 @@ impl_proto_schema_message!(
 );
 
 /// Wire-compatible `xla.DebugOptions` (`xla/xla.proto`).
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct DebugOptionsProto {
     /// Directory path to dump HLO / LLO artifacts (field `1`).
@@ -52,9 +53,54 @@ pub struct DebugOptionsProto {
     /// Whether to dump HLO modules as protobuf (field `3`).
     #[prost(bool, tag = "3")]
     pub xla_dump_hlo_as_proto: bool,
+    /// Regex filter of HLO passes to dump (field `4`).
+    #[prost(string, tag = "4")]
+    pub xla_dump_hlo_pass_re: String,
+    /// Regex filter of HLO modules to dump (field `5`).
+    #[prost(string, tag = "5")]
+    pub xla_dump_hlo_module_re: String,
+    /// Whether to dump `HloSnapshot` inputs/outputs on execution (field `6`).
+    #[prost(bool, tag = "6")]
+    pub xla_dump_hlo_snapshots: bool,
     /// Backend optimization level (field `31`).
     #[prost(int32, tag = "31")]
     pub xla_backend_optimization_level: i32,
+    /// HLO pass names explicitly disabled during compilation (field `32`).
+    #[prost(string, repeated, tag = "32")]
+    pub xla_disable_hlo_passes: Vec<String>,
+    /// HLO pass names explicitly enabled exclusively during compilation (field `33`).
+    #[prost(string, repeated, tag = "33")]
+    pub xla_enable_hlo_passes_only: Vec<String>,
+    /// Enable hardware NaN trap detection on Cloud TPU (field `64`).
+    #[prost(bool, tag = "64")]
+    pub xla_tpu_detect_nan: bool,
+    /// Enable hardware Inf trap detection on Cloud TPU (field `65`).
+    #[prost(bool, tag = "65")]
+    pub xla_tpu_detect_inf: bool,
+    /// Enable fast approximate math optimizations (field `66`).
+    #[prost(bool, tag = "66")]
+    pub xla_enable_fast_math: bool,
+    /// Enable Triton GEMM emitter (field `67`).
+    #[prost(bool, tag = "67")]
+    pub xla_gpu_enable_triton_gemm: bool,
+    /// Enable TPU asynchronous collective fusion (field `68`).
+    #[prost(bool, tag = "68")]
+    pub xla_tpu_enable_async_collective_fusion: bool,
+    /// Enable TPU all-gather backward pipelining (field `69`).
+    #[prost(bool, tag = "69")]
+    pub xla_tpu_enable_ag_backward_pipelining: bool,
+    /// Enable TPU reduce-scatter forward pipelining (field `70`).
+    #[prost(bool, tag = "70")]
+    pub xla_tpu_enable_rs_forward_pipelining: bool,
+    /// Overlap `TensorCore` compute with ICI/DCN collectives (field `71`).
+    #[prost(bool, tag = "71")]
+    pub xla_tpu_overlap_compute_collective_tc: bool,
+    /// Enable `OpenXLA` Shardy (`sdy`) SPMD partitioner on TPU (field `72`).
+    #[prost(bool, tag = "72")]
+    pub xla_tpu_use_shardy_partitioner: bool,
+    /// Latency-hiding scheduler memory limit in bytes (field `73`).
+    #[prost(int64, tag = "73")]
+    pub xla_latency_hiding_scheduler_limit: i64,
 }
 
 impl_proto_schema_message!(DebugOptionsProto, "xla.DebugOptions");
@@ -1169,3 +1215,184 @@ pub struct GlobalTopologyProto {
 }
 
 impl_proto_schema_message!(GlobalTopologyProto, "xla.GlobalTopologyProto");
+
+/// Wire-compatible `vhlo.VhloDialectVersionProto` (`vhlo_ops.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct VhloDialectVersionProto {
+    /// Major dialect version (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub major: u32,
+    /// Minor dialect version (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub minor: u32,
+    /// Patch dialect version (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub patch: u32,
+    /// Formatted target version string (e.g., `"1.9.0"`, field `4`).
+    #[prost(string, tag = "4")]
+    pub target_version_string: String,
+}
+
+impl_proto_schema_message!(VhloDialectVersionProto, "vhlo.VhloDialectVersionProto");
+
+/// Wire-compatible `vhlo.StableHloPortableArtifactMetadataProto` (`vhlo_ops.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct StableHloPortableArtifactMetadataProto {
+    /// Portable artifact module name (field `1`).
+    #[prost(string, tag = "1")]
+    pub artifact_name: String,
+    /// Negotiated `VHLO` dialect version (field `2`).
+    #[prost(message, optional, tag = "2")]
+    pub vhlo_version: Option<VhloDialectVersionProto>,
+    /// Producer MLIR/StableHLO compiler version string (field `3`).
+    #[prost(string, tag = "3")]
+    pub producer_mlir_version: String,
+    /// Total bytecode size in bytes (field `4`).
+    #[prost(uint64, tag = "4")]
+    pub bytecode_size_bytes: u64,
+    /// 32-character SHA-256 fingerprint of the portable artifact (field `5`).
+    #[prost(string, tag = "5")]
+    pub sha256_fingerprint: String,
+}
+
+impl_proto_schema_message!(
+    StableHloPortableArtifactMetadataProto,
+    "vhlo.StableHloPortableArtifactMetadataProto"
+);
+
+/// Wire-compatible `sdy.ShardyMeshAxisProto` (`shardy_mesh.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ShardyMeshAxisProto {
+    /// Logical mesh axis identifier (e.g., `"x"`, `"y"`, `"data"`, field `1`).
+    #[prost(string, tag = "1")]
+    pub name: String,
+    /// Axis size (number of partitions along this axis, field `2`).
+    #[prost(int64, tag = "2")]
+    pub size: i64,
+}
+
+impl_proto_schema_message!(ShardyMeshAxisProto, "sdy.ShardyMeshAxisProto");
+
+/// Wire-compatible `sdy.ShardySubAxisInfoProto` (`shardy_mesh.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ShardySubAxisInfoProto {
+    /// Product of sub-axes prior to this sub-axis (field `1`).
+    #[prost(int64, tag = "1")]
+    pub pre_size: i64,
+    /// Size of this sub-axis factor (field `2`).
+    #[prost(int64, tag = "2")]
+    pub size: i64,
+}
+
+impl_proto_schema_message!(ShardySubAxisInfoProto, "sdy.ShardySubAxisInfoProto");
+
+/// Wire-compatible `sdy.ShardyAxisRefProto` (`shardy_mesh.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ShardyAxisRefProto {
+    /// Referenced mesh axis name (field `1`).
+    #[prost(string, tag = "1")]
+    pub name: String,
+    /// Optional sub-axis slicing descriptor (field `2`).
+    #[prost(message, optional, tag = "2")]
+    pub sub_axis_info: Option<ShardySubAxisInfoProto>,
+}
+
+impl_proto_schema_message!(ShardyAxisRefProto, "sdy.ShardyAxisRefProto");
+
+/// Wire-compatible `sdy.ShardyDimensionShardingProto` (`shardy_mesh.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ShardyDimensionShardingProto {
+    /// Ordered mesh axes sharding this tensor dimension (field `1`).
+    #[prost(message, repeated, tag = "1")]
+    pub axes: Vec<ShardyAxisRefProto>,
+    /// Whether this dimension is closed to further sharding propagation (field `2`).
+    #[prost(bool, tag = "2")]
+    pub is_closed: bool,
+    /// Optional propagation priority (`p0`, `p1`, ..., field `3`).
+    #[prost(int64, tag = "3")]
+    pub priority: i64,
+}
+
+impl_proto_schema_message!(
+    ShardyDimensionShardingProto,
+    "sdy.ShardyDimensionShardingProto"
+);
+
+/// Wire-compatible `sdy.ShardyTensorShardingProto` (`shardy_mesh.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ShardyTensorShardingProto {
+    /// Target `sdy.mesh` symbol name (field `1`).
+    #[prost(string, tag = "1")]
+    pub mesh_name: String,
+    /// Per-dimension sharding specifications (field `2`).
+    #[prost(message, repeated, tag = "2")]
+    pub dim_shardings: Vec<ShardyDimensionShardingProto>,
+    /// Explicitly replicated mesh axes (field `3`).
+    #[prost(message, repeated, tag = "3")]
+    pub replicated_axes: Vec<ShardyAxisRefProto>,
+    /// Unreduced mesh axes requiring deferred all-reduce (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub unreduced_axes: Vec<ShardyAxisRefProto>,
+}
+
+impl_proto_schema_message!(ShardyTensorShardingProto, "sdy.ShardyTensorShardingProto");
+
+/// Wire-compatible `sdy.ShardyMeshProto` (`shardy_mesh.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct ShardyMeshProto {
+    /// Mesh symbol name (field `1`).
+    #[prost(string, tag = "1")]
+    pub name: String,
+    /// Ordered mesh axis definitions (field `2`).
+    #[prost(message, repeated, tag = "2")]
+    pub axes: Vec<ShardyMeshAxisProto>,
+    /// Optional explicit logical device ID ordering (field `3`).
+    #[prost(int64, repeated, packed = "true", tag = "3")]
+    pub device_ids: Vec<i64>,
+}
+
+impl_proto_schema_message!(ShardyMeshProto, "sdy.ShardyMeshProto");
+
+/// Wire-compatible `xla.ffi.XlaFfiTypeIdRegistrationProto` (`xla_ffi_metadata.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct XlaFfiTypeIdRegistrationProto {
+    /// Registered custom C++/Rust type name (field `1`).
+    #[prost(string, tag = "1")]
+    pub type_name: String,
+    /// Assigned unique `XLA_FFI_TypeId` value (field `2`).
+    #[prost(int64, tag = "2")]
+    pub type_id: i64,
+    /// Size of the custom type in bytes (field `3`).
+    #[prost(uint64, tag = "3")]
+    pub type_size_bytes: u64,
+    /// Alignment of the custom type in bytes (field `4`).
+    #[prost(uint64, tag = "4")]
+    pub type_align_bytes: u64,
+}
+
+impl_proto_schema_message!(
+    XlaFfiTypeIdRegistrationProto,
+    "xla.ffi.XlaFfiTypeIdRegistrationProto"
+);
+
+/// Wire-compatible `xla.ffi.XlaFfiExecutionContextMetadataProto` (`xla_ffi_metadata.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct XlaFfiExecutionContextMetadataProto {
+    /// Execution run identifier (field `1`).
+    #[prost(int32, tag = "1")]
+    pub run_id: i32,
+    /// Target device ordinal (field `2`).
+    #[prost(int32, tag = "2")]
+    pub device_ordinal: i32,
+    /// Hardware stream/queue handle (field `3`).
+    #[prost(uint64, tag = "3")]
+    pub stream_handle: u64,
+    /// Registered custom type descriptors in this execution context (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub registered_types: Vec<XlaFfiTypeIdRegistrationProto>,
+}
+
+impl_proto_schema_message!(
+    XlaFfiExecutionContextMetadataProto,
+    "xla.ffi.XlaFfiExecutionContextMetadataProto"
+);

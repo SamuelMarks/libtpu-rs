@@ -60,6 +60,16 @@ message IsaProgramProto {
   repeated IsaCoreProgramHeaderProto core_programs = 3;
   repeated IsaSymbolTableEntryProto symbols = 4;
   uint64 fingerprint = 5;
+  int64 smem_size_bytes = 6;
+  int64 vmem_size_bytes = 7;
+  int64 cmem_size_bytes = 8;
+  int64 imem_size_bytes = 9;
+  int64 stack_frame_size_bytes = 10;
+  int32 sync_flag_count = 11;
+  string xla_compiler_version = 12;
+  uint64 llo_schedule_fingerprint = 13;
+  int32 predication_mode = 14;
+  int32 bundle_compression_kind = 15;
   uint64 compilation_id = 20;
   int64 scs_start_bundle = 23;
   int64 tile_start_bundle = 24;

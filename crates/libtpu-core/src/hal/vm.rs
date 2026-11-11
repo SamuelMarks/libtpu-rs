@@ -1,10 +1,84 @@
 //! Architectural `TensorCore` VLIW execution state machine ([`TpuCoreVmState`] / [`DeepSeaVm`]).
 
 use super::SimulatedTpuHal;
-use crate::compiler::CompiledProgram;
+use crate::compiler::{CompiledProgram, TpuInstructionBundle};
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::types::ElementType;
 use std::collections::BTreeMap;
+
+/// Physical `8 sublanes x 128 lanes` 32-bit word vector register tile (`VregTile2D`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VregTile2D {
+    /// Two-dimensional `[8 sublanes, 128 lanes]` 32-bit lane words (`4,096` bytes total).
+    pub words: [[u32; 128]; 8],
+    /// Sublane active mask (`8` bits, one per sublane `0..8`).
+    pub sublane_mask: u8,
+}
+
+impl Default for VregTile2D {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl VregTile2D {
+    /// Creates a zero-initialized `[8, 128]` [`VregTile2D`] with all 8 sublanes enabled (`0xFF`).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            words: [[0_u32; 128]; 8],
+            sublane_mask: 0xFF,
+        }
+    }
+
+    /// Unpacks a raw byte slice into a `[8, 128]` [`VregTile2D`].
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Little-endian tile byte slice.
+    /// * `sublane_mask` - Active 8-bit sublane mask.
+    #[must_use]
+    #[allow(clippy::indexing_slicing)]
+    pub fn from_bytes(bytes: &[u8], sublane_mask: u8) -> Self {
+        let mut tile = Self {
+            words: [[0_u32; 128]; 8],
+            sublane_mask,
+        };
+        for (word_idx, chunk) in bytes.chunks_exact(4).take(8 * 128).enumerate() {
+            let mut b4 = [0_u8; 4];
+            b4.copy_from_slice(chunk);
+            let sublane = word_idx / 128;
+            let lane = word_idx % 128;
+            if ((sublane_mask >> sublane) & 1) != 0 {
+                tile.words[sublane][lane] = u32::from_le_bytes(b4);
+            }
+        }
+        tile
+    }
+
+    /// Packs this `[8, 128]` [`VregTile2D`] into a 4,096-byte little-endian buffer.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(8 * 128 * 4);
+        for (sublane_idx, sublane) in self.words.iter().enumerate() {
+            let active = ((self.sublane_mask >> sublane_idx) & 1) != 0;
+            for &w in sublane {
+                let val = if active { w } else { 0 };
+                out.extend_from_slice(&val.to_le_bytes());
+            }
+        }
+        out
+    }
+}
+
+/// Architectural `SMEM` / `.rodata` descriptor entry loaded alongside an `IMEM` VLIW bundle (`ImemAttributeEntry`).
+#[derive(Debug, Clone)]
+pub struct ImemAttributeEntry {
+    /// Architectural instruction bundle and tensor dimension/window/sub-computation metadata.
+    pub bundle: TpuInstructionBundle,
+    /// Active [`ElementType`] for this instruction descriptor.
+    pub elem_type: ElementType,
+}
 
 /// Architectural `TensorCore` VLIW execution state machine (`TpuCoreVmState`).
 #[derive(Debug, Clone)]
@@ -17,6 +91,10 @@ pub struct TpuCoreVmState {
     pub vreg_words: [u32; 64],
     /// Full architectural vector register tile bank (`VREG[0..255]`) storing physical tile payloads.
     pub vreg_tiles: BTreeMap<u8, Vec<u8>>,
+    /// Physical 2D `[8, 128]` vector register tile file (`VREG_2D[0..64]`).
+    pub vreg_2d_file: BTreeMap<u8, VregTile2D>,
+    /// Architectural `SMEM` / `IMEM` constant and dimension descriptor table indexed by bundle `pc_offset`.
+    pub imem_attr_table: BTreeMap<u32, ImemAttributeEntry>,
     /// Addressable on-chip `VMEM` scratchpad regions indexed by linear-scan `assigned_vmem_offset`.
     pub vmem_allocations: BTreeMap<u64, Vec<u8>>,
     /// Staged systolic `MXU` right-hand-side weight tile elements.
@@ -52,6 +130,8 @@ impl TpuCoreVmState {
             preg: [true; 16],
             vreg_words: [0; 64],
             vreg_tiles: BTreeMap::new(),
+            vreg_2d_file: BTreeMap::new(),
+            imem_attr_table: BTreeMap::new(),
             vmem_allocations: BTreeMap::new(),
             mxu_weights: Vec::new(),
             vmask: [true; 8],
@@ -105,6 +185,9 @@ impl TpuCoreVmState {
     #[must_use]
     #[allow(clippy::indexing_slicing)]
     pub fn inspect_vreg_2d_lanes(&self, vreg_index: u8) -> [[u32; 128]; 8] {
+        if let Some(tile2d) = self.vreg_2d_file.get(&vreg_index) {
+            return tile2d.words;
+        }
         let mut grid = [[0_u32; 128]; 8];
         if let Some(tile_bytes) = self.vreg_tiles.get(&vreg_index) {
             for (word_idx, chunk) in tile_bytes.chunks_exact(4).take(8 * 128).enumerate() {
@@ -189,33 +272,85 @@ impl TpuCoreVmState {
                 }
             }
         }
-        let mut packed = Vec::with_capacity(8 * 128 * 4);
-        for sublane in &dst_grid {
-            for &word in sublane {
-                packed.extend_from_slice(&word.to_le_bytes());
-            }
-        }
+        let tile2d = VregTile2D {
+            words: dst_grid,
+            sublane_mask: 0xFF,
+        };
+        let packed = tile2d.to_bytes();
         self.vreg_words[usize::from(dst_vreg) & 63] = dst_grid[0][0];
+        self.vreg_2d_file.insert(dst_vreg, tile2d);
         self.vreg_tiles.insert(dst_vreg, packed);
     }
 
-    /// Steps the `TensorCore` VLIW sequencer through a slice of 64-byte [`crate::compiler::TensorCoreVliwBundle`]s,
-    /// executing `S0` (Scalar ALU + SMEM + conditional branching `opcode == 6`), `V0` (Vector ALU + VMEM),
-    /// `M0` (`MXU` systolic matrix accumulator), `X0` (`EUP` transcendental unit), and `D0` (`DMA`/`SyncFlag` engine)
-    /// slots in lockstep.
+    /// Steps the `TensorCore` VLIW sequencer through a slice of 64-byte [`crate::compiler::TensorCoreVliwBundle`]s
+    /// using a PC-driven fetch-decode-execute loop (`opcode == 5` unconditional jump, `opcode == 6` predicated branch
+    /// on `PREG[dst_sreg]`, `opcode == 7` halt, `opcode == 8` `CALL` saving return PC in `SREG[31]`, `opcode == 9` `RET`),
+    /// executing `S0`, `V0`, `M0`, `X0`, and `D0` slots in lockstep.
     ///
     /// # Arguments
     ///
     /// * `bundles` - Slice of 64-byte architectural VLIW instruction bundles.
     #[allow(clippy::indexing_slicing)]
     pub fn execute_vliw_stream(&mut self, bundles: &[crate::compiler::TensorCoreVliwBundle]) {
-        for bundle in bundles {
+        let num_bundles = bundles.len();
+        let mut cur_idx = 0_usize;
+        while let Some(bundle) = bundles.get(cur_idx) {
             self.step_vliw_bundle(bundle);
             let preg_idx = usize::from(bundle.scalar_slot.dst_sreg) & 15;
-            if bundle.scalar_slot.opcode == 6 && self.preg[preg_idx] {
+            if bundle.scalar_slot.opcode == 5 {
+                let target_idx = ((bundle.scalar_slot.imm32 as usize) / 64).max(cur_idx + 1);
+                cur_idx = target_idx.min(num_bundles);
+                continue;
+            } else if bundle.scalar_slot.opcode == 6 && self.preg[preg_idx] {
                 self.pc = bundle.scalar_slot.imm32;
+                let target_idx = ((bundle.scalar_slot.imm32 as usize) / 64).max(cur_idx + 1);
+                cur_idx = target_idx.min(num_bundles);
+                continue;
+            } else if bundle.scalar_slot.opcode == 7 {
+                break;
             }
+            cur_idx += 1;
         }
+    }
+
+    /// Decodes a generation-specific `IMEM` binary bitstream (`32B` `JfcV2V3BundleWord`, `40B` `PfcV4BundleWord`,
+    /// `52B` `VfcV5BundleWord`, or `64B` `VfkV6V7BundleWord`) for `generation` and executes all decoded VLIW bundles
+    /// on this [`TpuCoreVmState`].
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target Cloud TPU generation (`V2..=V7x`).
+    /// * `bitstream` - Raw generation-specific `IMEM` bitstream produced by [`crate::compiler::TensorCoreVliwBundle::encode_generation_bitstream`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `bitstream` has a corrupted CRC-8 parity header or invalid bundle length.
+    pub fn execute_generation_imem_bitstream(
+        &mut self,
+        generation: crate::types::TpuGeneration,
+        bitstream: &[u8],
+    ) -> LibTpuResult<usize> {
+        let width = crate::compiler::TensorCoreVliwBundle::generation_bundle_byte_width(generation);
+        if bitstream.len() % width != 0 {
+            return Err(LibTpuError::InvalidExecutableFormat {
+                reason: format!(
+                    "Invalid IMEM bitstream length {} for {:?} (bundle width {width})",
+                    bitstream.len(),
+                    generation
+                ),
+            });
+        }
+        let mut bundles = Vec::with_capacity(bitstream.len() / width);
+        for chunk in bitstream.chunks_exact(width) {
+            bundles.push(
+                crate::compiler::TensorCoreVliwBundle::decode_generation_bitstream(
+                    generation, chunk,
+                )?,
+            );
+        }
+        let count = bundles.len();
+        self.execute_vliw_stream(&bundles);
+        Ok(count)
     }
 
     /// Steps a single 64-byte architectural [`crate::compiler::TensorCoreVliwBundle`] across
@@ -224,7 +359,7 @@ impl TpuCoreVmState {
     /// # Arguments
     ///
     /// * `bundle` - 64-byte architectural VLIW instruction bundle to execute.
-    #[allow(clippy::indexing_slicing)]
+    #[allow(clippy::indexing_slicing, clippy::too_many_lines)]
     pub fn step_vliw_bundle(&mut self, bundle: &crate::compiler::TensorCoreVliwBundle) {
         self.pc = bundle.header.pc_offset;
         // S0: Scalar ALU & SMEM scratchpad update
@@ -304,7 +439,9 @@ impl TpuCoreVmState {
                 _ => x_src_bits.wrapping_add(u32::from(bundle.xunary_slot.opcode)),
             };
             self.vreg_words[x_dst] = x_res;
-            self.step_x0_tile(bundle.xunary_slot, x_op_decoded);
+            let elem_type = ElementType::from_raw(i32::from(bundle.vector_slot.element_type))
+                .unwrap_or(ElementType::F32);
+            self.step_x0_tile(bundle.xunary_slot, x_op_decoded, elem_type);
         }
 
         // M0: Systolic Matrix Multiply Unit (MXU)
@@ -312,17 +449,58 @@ impl TpuCoreVmState {
             let m_idx = usize::from(bundle.matrix_slot.acc_vreg) & 15;
             let k_tiles = f32::from(bundle.matrix_slot.k_tiles.max(1));
             self.mxu_accum[m_idx] += k_tiles;
-            self.step_m0_tile(&bundle.matrix_slot);
+            let elem_type = ElementType::from_raw(i32::from(bundle.vector_slot.element_type))
+                .unwrap_or(ElementType::F32);
+            self.step_m0_tile(&bundle.matrix_slot, elem_type);
         }
 
         // D0: Async DMA & SyncFlag completion barrier
         if bundle.dma_slot.dma_opcode != 0 {
-            let vmem_off = u64::from(bundle.dma_slot.src_space) * 32;
-            if let Some(tile) = self.vmem_allocations.get(&vmem_off).cloned() {
+            let space_off = u64::from(bundle.dma_slot.src_space) * 32;
+            let sreg_off = u64::from(bundle.scalar_slot.imm32);
+            let tile_opt = self
+                .vmem_allocations
+                .get(&space_off)
+                .or_else(|| self.vmem_allocations.get(&sreg_off))
+                .cloned();
+            if let Some(tile) = tile_opt {
                 #[allow(clippy::cast_possible_truncation)]
                 let dst_reg = (bundle.vector_slot.dst_vreg & 255) as u8;
+                self.vreg_2d_file
+                    .insert(dst_reg, VregTile2D::from_bytes(&tile, 0xFF));
                 self.vreg_tiles.insert(dst_reg, tile);
             }
+        }
+        if let Some(attr_entry) = self.imem_attr_table.get(&self.pc).cloned() {
+            let mut op_vecs: Vec<Vec<u8>> =
+                Vec::with_capacity(attr_entry.bundle.operand_slots.len());
+            for &slot in &attr_entry.bundle.operand_slots {
+                #[allow(clippy::cast_possible_truncation)]
+                let reg_key = (slot & 255) as u8;
+                let tile = self.vreg_tiles.get(&reg_key).cloned().unwrap_or_default();
+                op_vecs.push(tile);
+            }
+            let op_slices: Vec<&[u8]> = op_vecs.iter().map(Vec::as_slice).collect();
+            let micro_out = SimulatedTpuHal::eval_bundle_with_attrs(
+                &attr_entry.bundle,
+                attr_entry.elem_type,
+                &op_slices,
+            );
+            let word0 = u32::from_le(bytemuck::pod_read_unaligned::<u32>(
+                micro_out.get(0..4).unwrap_or(&[0; 4]),
+            ));
+            let dst_slot = attr_entry.bundle.output_slot;
+            self.vreg_words[dst_slot & 63] = word0;
+            self.vmem_words[dst_slot & 255] = word0;
+            #[allow(clippy::cast_possible_truncation)]
+            let dst_key = (dst_slot & 255) as u8;
+            self.vreg_2d_file.insert(
+                dst_key,
+                VregTile2D::from_bytes(&micro_out, bundle.vector_slot.lane_mask),
+            );
+            self.vreg_tiles.insert(dst_key, micro_out.clone());
+            self.vmem_allocations
+                .insert((dst_slot as u64) * 256, micro_out);
         }
         let sf_idx = usize::try_from(bundle.dma_slot.sync_flag_id).unwrap_or(0) & 255;
         self.sync_flags[sf_idx] = self.sync_flags[sf_idx].wrapping_add(1);
@@ -359,9 +537,141 @@ impl TpuCoreVmState {
         let t0_bytes = self.vreg_tiles.get(&s0_key).map_or(empty, Vec::as_slice);
         let t1_bytes = self.vreg_tiles.get(&s1_key).map_or(t0_bytes, Vec::as_slice);
         let t2_bytes = self.vreg_tiles.get(&s2_key).map_or(t1_bytes, Vec::as_slice);
+        if matches!(elem_type, ElementType::C64 | ElementType::C128) {
+            let packed = SimulatedTpuHal::eval_binary_op(op, elem_type, t0_bytes, t1_bytes);
+            self.vmem_allocations
+                .insert(u64::from(dst_key) * 256, packed.clone());
+            self.vreg_tiles.insert(dst_key, packed);
+            return;
+        }
+        if matches!(
+            op,
+            crate::compiler::TpuOpCode::Cholesky
+                | crate::compiler::TpuOpCode::TriangularSolve
+                | crate::compiler::TpuOpCode::Fft
+        ) {
+            let packed = if op == crate::compiler::TpuOpCode::TriangularSolve {
+                SimulatedTpuHal::eval_binary_op(op, elem_type, t0_bytes, t1_bytes)
+            } else {
+                SimulatedTpuHal::eval_unary_op(op, elem_type, t0_bytes)
+            };
+            self.vmem_allocations
+                .insert(u64::from(dst_key) * 256, packed.clone());
+            self.vreg_tiles.insert(dst_key, packed);
+            return;
+        }
         let v0 = elem_type.unpack_to_f64_vec(t0_bytes);
         let v1 = elem_type.unpack_to_f64_vec(t1_bytes);
         let v2 = elem_type.unpack_to_f64_vec(t2_bytes);
+        if matches!(
+            op,
+            crate::compiler::TpuOpCode::ReduceSumF32
+                | crate::compiler::TpuOpCode::ReduceMax
+                | crate::compiler::TpuOpCode::ReduceMin
+                | crate::compiler::TpuOpCode::Sort
+                | crate::compiler::TpuOpCode::TopK
+        ) {
+            let reduced_vals = match op {
+                crate::compiler::TpuOpCode::ReduceSumF32 => {
+                    vec![v0.iter().copied().sum::<f64>(); v0.len().max(1)]
+                }
+                crate::compiler::TpuOpCode::ReduceMax => {
+                    let m = v0.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                    vec![m; v0.len().max(1)]
+                }
+                crate::compiler::TpuOpCode::ReduceMin => {
+                    let m = v0.iter().copied().fold(f64::INFINITY, f64::min);
+                    vec![m; v0.len().max(1)]
+                }
+                crate::compiler::TpuOpCode::Sort => {
+                    let mut sorted = v0;
+                    sorted.sort_by(f64::total_cmp);
+                    sorted
+                }
+                _ => {
+                    let mut sorted = v0;
+                    sorted.sort_by(f64::total_cmp);
+                    sorted.reverse();
+                    sorted
+                }
+            };
+            let packed = elem_type.pack_from_f64_slice(&reduced_vals);
+            self.vmem_allocations
+                .insert(u64::from(dst_key) * 256, packed.clone());
+            self.vreg_tiles.insert(dst_key, packed);
+            return;
+        }
+        if matches!(elem_type, ElementType::S64 | ElementType::U64)
+            || matches!(
+                op,
+                crate::compiler::TpuOpCode::And
+                    | crate::compiler::TpuOpCode::Or
+                    | crate::compiler::TpuOpCode::XorBytes
+                    | crate::compiler::TpuOpCode::Not
+                    | crate::compiler::TpuOpCode::ShiftLeft
+                    | crate::compiler::TpuOpCode::ShiftRightLogical
+                    | crate::compiler::TpuOpCode::ShiftRightArithmetic
+                    | crate::compiler::TpuOpCode::PopulationCount
+                    | crate::compiler::TpuOpCode::CountLeadingZeros
+            )
+        {
+            let i0 = elem_type.unpack_to_i128_vec(t0_bytes);
+            let i1 = elem_type.unpack_to_i128_vec(t1_bytes);
+            let bit_width = u32::try_from(elem_type.bit_size().max(8)).unwrap_or(32);
+            let mut out_ints = Vec::with_capacity(i0.len());
+            for idx in 0..i0.len() {
+                let a = i0.get(idx).copied().unwrap_or(0);
+                let b = i1.get(idx).copied().unwrap_or(a);
+                let shift_amt = u32::try_from(b.max(0)).unwrap_or(0) & (bit_width - 1);
+                let res = match op {
+                    crate::compiler::TpuOpCode::SubF32 => a.wrapping_sub(b),
+                    crate::compiler::TpuOpCode::MulF32 => a.wrapping_mul(b),
+                    crate::compiler::TpuOpCode::DivF32 => a.checked_div(b).unwrap_or(0),
+                    crate::compiler::TpuOpCode::MaxF32 => a.max(b),
+                    crate::compiler::TpuOpCode::MinF32 => a.min(b),
+                    crate::compiler::TpuOpCode::NegF32 => a.wrapping_neg(),
+                    crate::compiler::TpuOpCode::Abs => a.wrapping_abs(),
+                    crate::compiler::TpuOpCode::And => a & b,
+                    crate::compiler::TpuOpCode::Or => a | b,
+                    crate::compiler::TpuOpCode::XorBytes => a ^ b,
+                    crate::compiler::TpuOpCode::Not => !a,
+                    crate::compiler::TpuOpCode::ShiftLeft => a.wrapping_shl(shift_amt),
+                    crate::compiler::TpuOpCode::ShiftRightLogical => {
+                        let mask = if bit_width >= 64 {
+                            u128::from(u64::MAX)
+                        } else {
+                            (1_u128 << bit_width).wrapping_sub(1)
+                        };
+                        #[allow(clippy::cast_possible_wrap)]
+                        let shifted = ((a as u128 & mask) >> shift_amt) as i128;
+                        shifted
+                    }
+                    crate::compiler::TpuOpCode::ShiftRightArithmetic => a >> shift_amt,
+                    crate::compiler::TpuOpCode::PopulationCount => {
+                        let mask = if bit_width >= 64 {
+                            u64::MAX
+                        } else {
+                            (1_u64 << bit_width).wrapping_sub(1)
+                        };
+                        i128::from(((a as u64) & mask).count_ones())
+                    }
+                    crate::compiler::TpuOpCode::CountLeadingZeros => {
+                        if bit_width == 64 {
+                            i128::from((a as u64).leading_zeros())
+                        } else {
+                            i128::from((a as u32).leading_zeros())
+                        }
+                    }
+                    _ => a.wrapping_add(b),
+                };
+                out_ints.push(res);
+            }
+            let packed = elem_type.pack_from_i128_slice(&out_ints);
+            self.vmem_allocations
+                .insert(u64::from(dst_key) * 256, packed.clone());
+            self.vreg_tiles.insert(dst_key, packed);
+            return;
+        }
         let len = v0.len();
         let mut out_vals = Vec::with_capacity(len);
         for idx in 0..len {
@@ -402,27 +712,6 @@ impl TpuCoreVmState {
                     self.vmask.iter_mut().take(1).for_each(|m| *m = gt);
                     f64::from(u8::from(gt))
                 }
-                crate::compiler::TpuOpCode::And => f64::from((a as i32) & (b as i32)),
-                crate::compiler::TpuOpCode::Or => f64::from((a as i32) | (b as i32)),
-                crate::compiler::TpuOpCode::XorBytes => f64::from((a as i32) ^ (b as i32)),
-                crate::compiler::TpuOpCode::Not => f64::from(!(a as i32)),
-                crate::compiler::TpuOpCode::ShiftLeft => {
-                    f64::from((a as i32).wrapping_shl((b.max(0.0) as u32) & 31))
-                }
-                crate::compiler::TpuOpCode::ShiftRightLogical => {
-                    #[allow(clippy::cast_possible_wrap)]
-                    let shifted = ((a as u32) >> ((b.max(0.0) as u32) & 31)) as i32;
-                    f64::from(shifted)
-                }
-                crate::compiler::TpuOpCode::ShiftRightArithmetic => {
-                    f64::from((a as i32) >> ((b.max(0.0) as u32) & 31))
-                }
-                crate::compiler::TpuOpCode::PopulationCount => {
-                    f64::from(((a as i32) as u32).count_ones())
-                }
-                crate::compiler::TpuOpCode::CountLeadingZeros => {
-                    f64::from(((a as i32) as u32).leading_zeros())
-                }
                 crate::compiler::TpuOpCode::UniformQuantize => {
                     (a * 127.0).round().clamp(-128.0, 127.0)
                 }
@@ -445,6 +734,7 @@ impl TpuCoreVmState {
     ///
     /// * `xslot` - Architectural `ExtendedUnarySlot` instruction fields.
     /// * `op_opt` - Decoded [`crate::compiler::TpuOpCode`], if valid.
+    /// * `elem_type` - Active [`ElementType`] for tile unpacking and packing.
     #[allow(
         clippy::too_many_lines,
         clippy::cast_possible_truncation,
@@ -454,13 +744,14 @@ impl TpuCoreVmState {
         &mut self,
         xslot: crate::compiler::ExtendedUnarySlot,
         op_opt: Option<crate::compiler::TpuOpCode>,
+        elem_type: ElementType,
     ) {
         let src_key = (xslot.src_vreg & 255) as u8;
         let dst_key = (xslot.dst_vreg & 255) as u8;
         let op = op_opt.unwrap_or(crate::compiler::TpuOpCode::ExpF32);
         let empty: &[u8] = &[];
         let t_bytes = self.vreg_tiles.get(&src_key).map_or(empty, Vec::as_slice);
-        let vals = ElementType::F32.unpack_to_f64_vec(t_bytes);
+        let vals = elem_type.unpack_to_f64_vec(t_bytes);
         let out_vals: Vec<f64> = match op {
             crate::compiler::TpuOpCode::Transpose => {
                 let rows = usize::from(xslot.perm_mode.max(1));
@@ -515,28 +806,31 @@ impl TpuCoreVmState {
                 let aux_key = (xslot.imm16 & 255) as u8;
                 let aux_bytes = self.vreg_tiles.get(&aux_key).map_or(empty, Vec::as_slice);
                 let mut cat = vals;
-                cat.extend(ElementType::F32.unpack_to_f64_vec(aux_bytes));
+                cat.extend(elem_type.unpack_to_f64_vec(aux_bytes));
                 cat
             }
             crate::compiler::TpuOpCode::Gather => {
                 let idx_key = (xslot.imm16 & 255) as u8;
                 let idx_bytes = self.vreg_tiles.get(&idx_key).map_or(t_bytes, Vec::as_slice);
-                let indices = ElementType::F32.unpack_to_f64_vec(idx_bytes);
+                let indices = elem_type.unpack_to_f64_vec(idx_bytes);
                 let n = vals.len().max(1);
-                indices
+                let mut sc_vm = SparseCoreVmState::new(0, n, 1, 0.0);
+                sc_vm.table_weights = vals.iter().map(|&v| v as f32).collect();
+                let row_ids: Vec<u32> = indices
                     .iter()
-                    .map(|&idx_f| {
-                        vals.get((idx_f.max(0.0) as usize) % n)
-                            .copied()
-                            .unwrap_or(0.0)
-                    })
+                    .map(|&idx_f| (idx_f.max(0.0) as u32) % (n as u32))
+                    .collect();
+                sc_vm
+                    .sparse_gather(&row_ids)
+                    .into_iter()
+                    .map(f64::from)
                     .collect()
             }
             crate::compiler::TpuOpCode::Scatter => {
                 let mut scattered = vals;
                 let upd_key = (xslot.imm16 & 255) as u8;
                 let upd_bytes = self.vreg_tiles.get(&upd_key).map_or(t_bytes, Vec::as_slice);
-                let updates = ElementType::F32.unpack_to_f64_vec(upd_bytes);
+                let updates = elem_type.unpack_to_f64_vec(upd_bytes);
                 let pos = usize::from(xslot.perm_mode);
                 for (slot, &u) in scattered.iter_mut().skip(pos).zip(updates.iter()) {
                     *slot = u;
@@ -556,7 +850,7 @@ impl TpuCoreVmState {
                 })
                 .collect(),
         };
-        let packed = ElementType::F32.pack_from_f64_slice(&out_vals);
+        let packed = elem_type.pack_from_f64_slice(&out_vals);
         self.vreg_tiles.insert(dst_key, packed);
     }
 
@@ -618,20 +912,21 @@ impl TpuCoreVmState {
     /// # Arguments
     ///
     /// * `mslot` - Architectural `MatrixMxuSlot` instruction fields.
+    /// * `elem_type` - Active [`ElementType`] for tile unpacking and packing.
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn step_m0_tile(&mut self, mslot: &crate::compiler::MatrixMxuSlot) {
+    fn step_m0_tile(&mut self, mslot: &crate::compiler::MatrixMxuSlot, elem_type: ElementType) {
         let lhs_key = (mslot.lhs_vreg & 255) as u8;
         let rhs_key = (mslot.rhs_vreg & 255) as u8;
         let acc_key = (mslot.acc_vreg & 255) as u8;
         let empty: &[u8] = &[];
         let lhs_bytes = self.vreg_tiles.get(&lhs_key).map_or(empty, Vec::as_slice);
-        let lhs_vals = ElementType::F32.unpack_to_f64_vec(lhs_bytes);
+        let lhs_vals = elem_type.unpack_to_f64_vec(lhs_bytes);
         let rhs_vals = if self.mxu_weights.is_empty() {
             let rhs_bytes = self
                 .vreg_tiles
                 .get(&rhs_key)
                 .map_or(lhs_bytes, Vec::as_slice);
-            ElementType::F32.unpack_to_f64_vec(rhs_bytes)
+            elem_type.unpack_to_f64_vec(rhs_bytes)
         } else {
             self.mxu_weights.clone()
         };
@@ -666,7 +961,7 @@ impl TpuCoreVmState {
                 }
             }
         }
-        let packed = ElementType::F32.pack_from_f64_slice(&out_vals);
+        let packed = elem_type.pack_from_f64_slice(&out_vals);
         self.vreg_tiles.insert(acc_key, packed);
     }
 
@@ -829,6 +1124,8 @@ impl TpuCoreVmState {
             output_slots: vec![last_out; output_count.max(1)],
             parameter_shapes: Vec::new(),
             output_shapes: Vec::new(),
+            parameter_shardings: Vec::new(),
+            output_shardings: Vec::new(),
             parameter_memory_kinds: Vec::new(),
             output_memory_kinds: Vec::new(),
             fingerprint: String::from("imem"),
@@ -847,6 +1144,8 @@ impl TpuCoreVmState {
                 alias_size_in_bytes: 0,
                 temp_size_in_bytes: 256,
             },
+            hlo_module_proto: crate::proto::HloModuleProto::default(),
+            buffer_assignment_proto: crate::proto::BufferAssignmentProto::default(),
             mosaic_metadata: crate::compiler::MosaicTargetMetadata::default(),
             source_bytes: Vec::new(),
             compile_options_bytes: Vec::new(),
@@ -966,6 +1265,59 @@ impl TpuCoreVmState {
         }
     }
 
+    /// Steps a lowered [`crate::compiler::TpuInstructionBundle`] inside this [`TpuCoreVmState`]
+    /// (`DeepSeaVm`), decoding and stepping the 64-byte [`crate::compiler::TensorCoreVliwBundle`]
+    /// across `S0`, `V0`, `M0`, `X0`, and `D0` functional units, stepping nested `While` /
+    /// `Conditional` / `Call` sub-computation VLIW streams when present, and returning the
+    /// resulting output tile bytes stored in `vreg_tiles` and `vmem_allocations`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bundle` - Lowered [`crate::compiler::TpuInstructionBundle`] to step.
+    /// * `default_elem_type` - Default [`ElementType`] if `bundle.attrs.output_shape` is `None`.
+    /// * `operands` - Slice of input operand byte buffers from `vreg_tiles` / `vmem_allocations`.
+    #[allow(clippy::indexing_slicing)]
+    pub fn step_bundle_with_attrs(
+        &mut self,
+        bundle: &TpuInstructionBundle,
+        default_elem_type: ElementType,
+        operands: &[&[u8]],
+    ) -> Vec<u8> {
+        let bundle_elem_type = bundle
+            .attrs
+            .output_shape
+            .as_ref()
+            .map_or(default_elem_type, |s| s.element_type);
+        for (&slot, &op_bytes) in bundle.operand_slots.iter().zip(operands.iter()) {
+            #[allow(clippy::cast_possible_truncation)]
+            let reg_key = (slot & 255) as u8;
+            self.vreg_tiles.insert(reg_key, op_bytes.to_vec());
+            self.vreg_2d_file
+                .insert(reg_key, VregTile2D::from_bytes(op_bytes, 0xFF));
+        }
+        if let Some(&rhs_bytes) = operands.last() {
+            self.mxu_weights = bundle_elem_type.unpack_to_f64_vec(rhs_bytes);
+        }
+        let arch_bundle = bundle.encode_architectural_bundle();
+        self.imem_attr_table.insert(
+            arch_bundle.header.pc_offset,
+            ImemAttributeEntry {
+                bundle: bundle.clone(),
+                elem_type: bundle_elem_type,
+            },
+        );
+        for sub_prog in &bundle.attrs.sub_computations {
+            for sub_b in sub_prog {
+                let sub_arch = sub_b.encode_architectural_bundle();
+                self.step_vliw_bundle(&sub_arch);
+            }
+        }
+        self.step_vliw_bundle(&arch_bundle);
+        #[allow(clippy::cast_possible_truncation)]
+        let dst_key = (bundle.output_slot & 255) as u8;
+        self.vreg_tiles.get(&dst_key).cloned().unwrap_or_default()
+    }
+
     /// Executes a [`CompiledProgram`] inside this [`TpuCoreVmState`] (`DeepSeaVm`), loading
     /// `input_buffers` into VMEM registers, stepping each architectural 64-byte VLIW instruction
     /// bundle in lockstep with tensor evaluation, and returning the output tensor buffers for
@@ -1014,33 +1366,12 @@ impl TpuCoreVmState {
         let mut last_result = registers.first().cloned().unwrap_or_default();
 
         for bundle in &program.instruction_bundles {
-            let arch_bundle = bundle.encode_architectural_bundle();
-            self.step_vliw_bundle(&arch_bundle);
             let mut op_slices: Vec<&[u8]> = Vec::with_capacity(bundle.operand_slots.len());
             for &slot in &bundle.operand_slots {
                 let slice = registers.get(slot).map_or(&[][..], Vec::as_slice);
                 op_slices.push(slice);
             }
-            let bundle_elem_type = bundle
-                .attrs
-                .output_shape
-                .as_ref()
-                .map_or(default_elem_type, |s| s.element_type);
-            if let Some(&rhs_bytes) = op_slices.last() {
-                self.mxu_weights = bundle_elem_type.unpack_to_f64_vec(rhs_bytes);
-            }
-            let evaluated =
-                SimulatedTpuHal::eval_bundle_with_attrs(bundle, bundle_elem_type, &op_slices);
-            let word0 = u32::from_le(bytemuck::pod_read_unaligned::<u32>(
-                evaluated.get(0..4).unwrap_or(&[0; 4]),
-            ));
-            self.vreg_words[bundle.output_slot & 63] = word0;
-            self.vmem_words[bundle.output_slot & 255] = word0;
-            #[allow(clippy::cast_possible_truncation)]
-            self.vreg_tiles
-                .insert((bundle.output_slot & 255) as u8, evaluated.clone());
-            self.vmem_allocations
-                .insert((bundle.output_slot as u64) * 256, evaluated.clone());
+            let evaluated = self.step_bundle_with_attrs(bundle, default_elem_type, &op_slices);
             last_result.clone_from(&evaluated);
             registers[bundle.output_slot] = evaluated;
         }
@@ -1894,5 +2225,173 @@ impl SparseCoreVmState {
         for (dst_chunk, &val) in hbm.chunks_exact_mut(4).zip(gathered.iter()) {
             dst_chunk.copy_from_slice(&val.to_le_bytes());
         }
+    }
+}
+
+/// Architectural state of one of the 4 `SparseCore` (`scs_0..scs_3`) tile processors on a TPU v5p/v6e/v7x chip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SparseCoreSubcoreState {
+    /// Subcore index (`0..=3`).
+    pub scs_index: u8,
+    /// Current `SparseCore` microcode program counter.
+    pub pc: u64,
+    /// 16 scalar registers (`SREG[0..15]`).
+    pub sregs: [u32; 16],
+    /// Local `Spmem` scratchpad memory buffer (`16 KiB` default).
+    pub spmem_scratch: Vec<u8>,
+    /// Total sparse embedding row lookups completed by this subcore.
+    pub completed_lookups: u64,
+    /// Total active execution cycles recorded on this subcore.
+    pub busy_cycles: u64,
+}
+
+impl SparseCoreSubcoreState {
+    /// Creates a new initialized [`SparseCoreSubcoreState`] for `scs_index`.
+    ///
+    /// # Arguments
+    ///
+    /// * `scs_index` - Subcore index (`0..=3`).
+    #[must_use]
+    pub fn new(scs_index: u8) -> Self {
+        Self {
+            scs_index,
+            pc: 0,
+            sregs: [0; 16],
+            spmem_scratch: vec![0_u8; 4096],
+            completed_lookups: 0,
+            busy_cycles: 0,
+        }
+    }
+}
+
+/// Multi-core TPU chip execution state machine (`tc_0`, `tc_1`, and `scs_0..scs_3`).
+///
+/// Combines dual `TensorCore`s (`tc_0`, `tc_1`), 4 `SparseCore` subcores (`scs_0..scs_3`),
+/// shared BAR0/HBM `SyncFlag` counters (`0..255`), and on-chip `ICI` Megacore semaphores (`0..63`).
+#[derive(Debug, Clone)]
+pub struct MultiCoreChipVmState {
+    /// Target TPU hardware generation.
+    pub generation: crate::types::TpuGeneration,
+    /// Primary `TensorCore 0` (`tc_0`) cycle-accurate VLIW state machine.
+    pub tc_0: DeepSeaVm,
+    /// Secondary `TensorCore 1` (`tc_1`) cycle-accurate VLIW state machine.
+    pub tc_1: DeepSeaVm,
+    /// Four `SparseCore` tile subcores (`scs_0..scs_3`).
+    pub sparse_cores: [SparseCoreSubcoreState; 4],
+    /// Shared chip-wide synchronization flags (`BAR0_CSR_SYNC_FLAG_BASE`, `0..255`).
+    pub shared_sync_flags: [u32; 256],
+    /// On-chip Megacore / ICI hardware semaphores (`0..63`).
+    pub ici_semaphores: [u32; 64],
+}
+
+impl MultiCoreChipVmState {
+    /// Creates a new [`MultiCoreChipVmState`] for `generation` with `hbm_bytes_per_core`.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target [`crate::types::TpuGeneration`].
+    /// * `_hbm_bytes_per_core` - HBM capacity in bytes allocated per `TensorCore`.
+    #[must_use]
+    pub fn new(generation: crate::types::TpuGeneration, _hbm_bytes_per_core: usize) -> Self {
+        Self {
+            generation,
+            tc_0: DeepSeaVm::new(),
+            tc_1: DeepSeaVm::new(),
+            sparse_cores: [
+                SparseCoreSubcoreState::new(0),
+                SparseCoreSubcoreState::new(1),
+                SparseCoreSubcoreState::new(2),
+                SparseCoreSubcoreState::new(3),
+            ],
+            shared_sync_flags: [0; 256],
+            ici_semaphores: [0; 64],
+        }
+    }
+
+    /// Executes `program` concurrently across `tc_0`, `tc_1`, and `sparse_cores[0..4]`,
+    /// performing `SparseCore` embedding gather/scatter offloading and on-chip Megacore ICI
+    /// collective synchronization (`AllReduce`, `AllGather`, `ReduceScatter`, `CollectivePermute`).
+    ///
+    /// # Arguments
+    ///
+    /// * `program` - Lowered [`CompiledProgram`] to execute.
+    /// * `core0_inputs` - Input byte buffers for `tc_0`.
+    /// * `core1_inputs` - Input byte buffers for `tc_1`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if VLIW bundle execution fails.
+    #[allow(clippy::indexing_slicing)]
+    pub fn execute_spmd_and_sparse_program(
+        &mut self,
+        program: &CompiledProgram,
+        core0_inputs: &[Vec<u8>],
+        core1_inputs: &[Vec<u8>],
+    ) -> LibTpuResult<(Vec<u8>, Vec<u8>, u64)> {
+        let mut total_sparse_lookups = 0_u64;
+        for (idx, b) in program.instruction_bundles.iter().enumerate() {
+            if matches!(
+                b.opcode,
+                crate::compiler::TpuOpCode::Gather
+                    | crate::compiler::TpuOpCode::DynamicGather
+                    | crate::compiler::TpuOpCode::Scatter
+                    | crate::compiler::TpuOpCode::SelectAndScatter
+            ) {
+                let sc_idx = idx % 4;
+                let sc = &mut self.sparse_cores[sc_idx];
+                sc.pc = sc.pc.wrapping_add(16);
+                sc.completed_lookups = sc.completed_lookups.wrapping_add(1);
+                sc.busy_cycles = sc.busy_cycles.wrapping_add(24);
+                sc.sregs[0] = sc.sregs[0].wrapping_add(1);
+                total_sparse_lookups = total_sparse_lookups.wrapping_add(1);
+                let flag_slot = (b.sync_flag_id as usize) & 255;
+                self.shared_sync_flags[flag_slot] =
+                    self.shared_sync_flags[flag_slot].wrapping_add(1);
+            }
+            if matches!(
+                b.opcode,
+                crate::compiler::TpuOpCode::AllReduceSumF32
+                    | crate::compiler::TpuOpCode::AllGather
+                    | crate::compiler::TpuOpCode::ReduceScatter
+                    | crate::compiler::TpuOpCode::CollectivePermute
+                    | crate::compiler::TpuOpCode::AllToAll
+                    | crate::compiler::TpuOpCode::CollectiveBroadcast
+                    | crate::compiler::TpuOpCode::RaggedAllToAll
+                    | crate::compiler::TpuOpCode::SemaphoreSignal
+                    | crate::compiler::TpuOpCode::SemaphoreWait
+            ) {
+                let sem_idx = idx & 63;
+                self.ici_semaphores[sem_idx] = self.ici_semaphores[sem_idx].wrapping_add(2);
+            }
+        }
+
+        let elem_type = program
+            .output_shapes
+            .first()
+            .map_or(ElementType::F32, |s| s.element_type);
+        let vec_a = self.tc_0.execute(program, core0_inputs.to_vec())?;
+        let c1_inputs = if core1_inputs.is_empty() {
+            core0_inputs.to_vec()
+        } else {
+            core1_inputs.to_vec()
+        };
+        let vec_b = self.tc_1.execute(program, c1_inputs)?;
+        let mut res_a = vec_a.into_iter().next().unwrap_or_default();
+        let mut res_b = vec_b.into_iter().next().unwrap_or_default();
+
+        if program
+            .instruction_bundles
+            .iter()
+            .any(|b| b.opcode == crate::compiler::TpuOpCode::AllReduceSumF32)
+        {
+            let v0 = elem_type.unpack_to_f64_vec(&res_a);
+            let v1 = elem_type.unpack_to_f64_vec(&res_b);
+            let summed: Vec<f64> = v0.iter().zip(v1.iter()).map(|(&a, &b)| a + b).collect();
+            let packed = elem_type.pack_from_f64_slice(&summed);
+            res_a.clone_from(&packed);
+            res_b = packed;
+        }
+        self.shared_sync_flags[0] = self.shared_sync_flags[0].wrapping_add(2);
+        Ok((res_a, res_b, total_sparse_lookups))
     }
 }

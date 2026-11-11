@@ -144,6 +144,7 @@ impl_proto_schema_message!(
 );
 
 /// Wire-compatible `xla.HloInstructionProto` (`xla/service/hlo.proto`).
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, PartialEq, Message)]
 pub struct HloInstructionProto {
     /// Instruction name (field `1`).
@@ -248,15 +249,27 @@ pub struct HloInstructionProto {
     /// SPMD sharding annotation (field `40`).
     #[prost(message, optional, tag = "40")]
     pub sharding: Option<OpShardingProto>,
+    /// Per-operand shapes with layout constraints (field `41`).
+    #[prost(message, repeated, tag = "41")]
+    pub operand_shapes_with_layout: Vec<ShapeProto>,
+    /// Whether physical layout constraints are enforced on this instruction (field `42`).
+    #[prost(bool, tag = "42")]
+    pub constrain_layout: bool,
     /// Backend-specific configuration payload (field `43`).
     #[prost(bytes = "vec", tag = "43")]
     pub backend_config: Vec<u8>,
+    /// Unique `all-reduce` correlation identifier (field `44`).
+    #[prost(int64, tag = "44")]
+    pub all_reduce_id: i64,
     /// Triangular solve options (`opcode == "triangular-solve"`, field `45`).
     #[prost(message, optional, tag = "45")]
     pub triangular_solve_options: Option<TriangularSolveOptions>,
     /// Cholesky decomposition options (`opcode == "cholesky"`, field `46`).
     #[prost(message, optional, tag = "46")]
     pub cholesky_options: Option<CholeskyOptions>,
+    /// Custom-call API version (`0` = Unspecified, `1` = Original, `2` = `StatusReturning`, `3` = `StatusReturningUnified`, `4` = `TypedFfi`, field `47`).
+    #[prost(int32, tag = "47")]
+    pub custom_call_api_version: i32,
     /// Scatter dimension numbers (field `48`).
     #[prost(message, optional, tag = "48")]
     pub scatter_dimension_numbers: Option<ScatterDimensionNumbers>,
@@ -272,27 +285,84 @@ pub struct HloInstructionProto {
     /// Collective-permute source/target pairs (field `52`).
     #[prost(message, repeated, tag = "52")]
     pub source_target_pairs: Vec<SourceTarget>,
+    /// Custom-call output-to-operand buffer aliasing table (field `53`).
+    #[prost(message, optional, tag = "53")]
+    pub output_to_operand_aliasing: Option<HloInputOutputAliasProto>,
+    /// Whether this custom-call has side effects (field `54`).
+    #[prost(bool, tag = "54")]
+    pub custom_call_has_side_effect: bool,
     /// Convolution batch group count (field `58`).
     #[prost(int64, tag = "58")]
     pub batch_group_count: i64,
+    /// Custom-call scheduling constraint (`0` = None, `1` = Latest, `2` = Earliest, field `59`).
+    #[prost(int32, tag = "59")]
+    pub custom_call_schedule: i32,
     /// Whether `sort` is stable (field `60`).
     #[prost(bool, tag = "60")]
     pub is_stable: bool,
     /// Parameter replication descriptor across data-parallel replicas (field `61`).
     #[prost(message, optional, tag = "61")]
     pub parameter_replication: Option<ParameterReplicationProto>,
+    /// Counter-based PRNG algorithm (`0` = Default, `1` = `ThreeFry`, `2` = Philox, field `62`).
+    #[prost(int32, tag = "62")]
+    pub rng_algorithm: i32,
     /// Comparison direction (`"EQ"`, `"NE"`, `"LT"`, `"LE"`, `"GT"`, `"GE"`, field `63`).
     #[prost(string, tag = "63")]
     pub comparison_direction: String,
+    /// Whether this copy instruction is a cross-program prefetch (field `64`).
+    #[prost(bool, tag = "64")]
+    pub is_cross_program_prefetch: bool,
+    /// Convolution padding type (`0` = Invalid, `1` = Valid, `2` = Same, field `65`).
+    #[prost(int32, tag = "65")]
+    pub padding_type: i32,
     /// Frontend attributes map (field `68`).
     #[prost(message, optional, tag = "68")]
     pub frontend_attributes: Option<FrontendAttributes>,
     /// Whether replica group IDs represent global device IDs (field `71`).
     #[prost(bool, tag = "71")]
     pub use_global_device_ids: bool,
+    /// Named collective or host-transfer channel identifier (field `72`).
+    #[prost(string, tag = "72")]
+    pub channel_name: String,
+    /// Estimated execution cost in nanoseconds (field `73`).
+    #[prost(int64, tag = "73")]
+    pub cost_estimate_ns: i64,
+    /// Domain entry SPMD sharding annotation (field `74`).
+    #[prost(message, optional, tag = "74")]
+    pub domain_entry_sharding: Option<OpShardingProto>,
+    /// Domain exit SPMD sharding annotation (field `75`).
+    #[prost(message, optional, tag = "75")]
+    pub domain_exit_sharding: Option<OpShardingProto>,
+    /// RNG state increment delta (field `76`).
+    #[prost(int64, tag = "76")]
+    pub delta: i64,
+    /// Cross-program alternate-memory prefetch index (field `77`).
+    #[prost(int32, tag = "77")]
+    pub cross_program_prefetch_index: i32,
+    /// Outer dimension partition counts (field `78`).
+    #[prost(int64, repeated, packed = "true", tag = "78")]
+    pub outer_dimension_partitions: Vec<i64>,
+    /// Asynchronous collective scheduling group ID (field `79`).
+    #[prost(int64, tag = "79")]
+    pub async_group_id: i64,
+    /// Asynchronous execution thread name (field `80`).
+    #[prost(string, tag = "80")]
+    pub async_execution_thread: String,
     /// Visualization statistics for HLO graph rendering (field `82`).
     #[prost(message, optional, tag = "82")]
     pub statistics_viz: Option<StatisticsViz>,
+    /// Whether this instruction is a composite call (field `83`).
+    #[prost(bool, tag = "83")]
+    pub is_composite: bool,
+    /// Sub-program identifier (field `84`).
+    #[prost(int64, tag = "84")]
+    pub program_id: i64,
+    /// Explicit collective device ID list (field `85`).
+    #[prost(int64, repeated, packed = "true", tag = "85")]
+    pub collective_device_list: Vec<i64>,
+    /// Original unoptimized HLO value identifier string (field `86`).
+    #[prost(string, tag = "86")]
+    pub original_value: String,
 }
 
 impl_proto_schema_message!(HloInstructionProto, "xla.HloInstructionProto");
@@ -324,6 +394,60 @@ pub struct HloComputationProto {
 }
 
 impl_proto_schema_message!(HloComputationProto, "xla.HloComputationProto");
+
+/// Wire-compatible `xla.StackFrameIndexProto.FileLocation` (`xla/service/hlo.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct StackFrameFileLocationProto {
+    /// 1-based index into `StackFrameIndexProto.file_names` (field `1`).
+    #[prost(int32, tag = "1")]
+    pub file_name_id: i32,
+    /// 1-based index into `StackFrameIndexProto.function_names` (field `2`).
+    #[prost(int32, tag = "2")]
+    pub function_name_id: i32,
+    /// Source line number (field `3`).
+    #[prost(int32, tag = "3")]
+    pub line: i32,
+    /// Source column number (field `4`).
+    #[prost(int32, tag = "4")]
+    pub column: i32,
+}
+
+impl_proto_schema_message!(
+    StackFrameFileLocationProto,
+    "xla.StackFrameIndexProto.FileLocation"
+);
+
+/// Wire-compatible `xla.StackFrameIndexProto.StackFrame` (`xla/service/hlo.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct StackFrameEntryProto {
+    /// 1-based index into `StackFrameIndexProto.file_locations` (field `1`).
+    #[prost(int32, tag = "1")]
+    pub file_location_id: i32,
+    /// 1-based index into `StackFrameIndexProto.stack_frames` for the caller frame (field `2`).
+    #[prost(int32, tag = "2")]
+    pub parent_frame_id: i32,
+}
+
+impl_proto_schema_message!(StackFrameEntryProto, "xla.StackFrameIndexProto.StackFrame");
+
+/// Wire-compatible `xla.StackFrameIndexProto` (`xla/service/hlo.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct StackFrameIndexProto {
+    /// Deduplicated source file names (field `1`).
+    #[prost(string, repeated, tag = "1")]
+    pub file_names: Vec<String>,
+    /// Deduplicated source function names (field `2`).
+    #[prost(string, repeated, tag = "2")]
+    pub function_names: Vec<String>,
+    /// Deduplicated file location entries (field `3`).
+    #[prost(message, repeated, tag = "3")]
+    pub file_locations: Vec<StackFrameFileLocationProto>,
+    /// Deduplicated stack frame chain entries (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub stack_frames: Vec<StackFrameEntryProto>,
+}
+
+impl_proto_schema_message!(StackFrameIndexProto, "xla.StackFrameIndexProto");
 
 /// Wire-compatible `xla.HloModuleProto` (`xla/service/hlo.proto`).
 #[derive(Clone, PartialEq, Message)]
@@ -376,6 +500,9 @@ pub struct HloModuleProto {
     /// Module-level frontend attributes (field `19`).
     #[prost(message, optional, tag = "19")]
     pub frontend_attributes: Option<FrontendAttributes>,
+    /// Deduplicated source stack frame index table (field `20`).
+    #[prost(message, optional, tag = "20")]
+    pub stack_frame_index: Option<StackFrameIndexProto>,
     /// Target device type string (field `21`).
     #[prost(string, tag = "21")]
     pub device_type: String,
@@ -426,18 +553,27 @@ pub struct HloModuleConfigProto {
     /// Target device type identifier (field `13`).
     #[prost(string, tag = "13")]
     pub device_type: String,
+    /// Compiler debug options (field `14`).
+    #[prost(message, optional, tag = "14")]
+    pub debug_options: Option<crate::proto::pjrt::DebugOptionsProto>,
     /// Static device assignment (field `15`).
     #[prost(message, optional, tag = "15")]
     pub static_device_assignment: Option<DeviceAssignmentProto>,
     /// Alias passthrough parameters flag (field `17`).
     #[prost(bool, tag = "17")]
     pub alias_passthrough_params: bool,
+    /// Per-output SPMD sharding propagation flags (field `23`).
+    #[prost(bool, repeated, packed = "true", tag = "23")]
+    pub allow_spmd_sharding_propagation_to_output: Vec<bool>,
     /// Matrix unit operand precision (`xla.PrecisionConfig.Precision`, field `29`).
     #[prost(int32, tag = "29")]
     pub matrix_unit_operand_precision: i32,
     /// Available device memory size in bytes (field `32`).
     #[prost(int64, tag = "32")]
     pub device_memory_size: i64,
+    /// Per-parameter SPMD sharding propagation flags (field `33`).
+    #[prost(bool, repeated, packed = "true", tag = "33")]
+    pub allow_spmd_sharding_propagation_to_parameters: Vec<bool>,
     /// Whether the Shardy (`sdy`) partitioner is enabled (field `34`).
     #[prost(bool, tag = "34")]
     pub use_shardy_partitioner: bool,
@@ -480,6 +616,104 @@ impl_proto_schema_message!(
     "xla.buffer_assignment.BufferAllocationSliceProto"
 );
 
+/// Wire-compatible `xla.LogicalBufferProto.Location` (`xla/service/hlo.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct LogicalBufferLocationProto {
+    /// Computation name where the buffer is defined (field `1`).
+    #[prost(string, tag = "1")]
+    pub computation_name: String,
+    /// Instruction name where the buffer is defined (field `2`).
+    #[prost(string, tag = "2")]
+    pub instruction_name: String,
+    /// Tuple shape index within the defining instruction's output (field `3`).
+    #[prost(int64, repeated, packed = "true", tag = "3")]
+    pub shape_index: Vec<i64>,
+    /// Defining instruction ID (field `4`).
+    #[prost(int64, tag = "4")]
+    pub instruction_id: i64,
+}
+
+impl_proto_schema_message!(
+    LogicalBufferLocationProto,
+    "xla.LogicalBufferProto.Location"
+);
+
+/// Wire-compatible `xla.LogicalBufferProto` (`xla/service/hlo.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct LogicalBufferProto {
+    /// Unique logical buffer ID (field `1`).
+    #[prost(int64, tag = "1")]
+    pub id: i64,
+    /// Size of the logical buffer in bytes (field `2`).
+    #[prost(int64, tag = "2")]
+    pub size: i64,
+    /// Defining HLO instruction and tuple index location (field `3`).
+    #[prost(message, optional, tag = "3")]
+    pub defined_at: Option<LogicalBufferLocationProto>,
+    /// Memory space color (`0` = HBM, `1` = VMEM, `2` = SMEM, `3` = CMEM, field `4`).
+    #[prost(int64, tag = "4")]
+    pub color: i64,
+}
+
+impl_proto_schema_message!(LogicalBufferProto, "xla.LogicalBufferProto");
+
+/// Wire-compatible `xla.HeapSimulatorTrace.Event` (`xla/service/hlo.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct HeapSimulatorTraceEventProto {
+    /// Event kind (`0 = ALLOC`, `1 = FREE`, `2 = SHARE_WITH`, field `1`).
+    #[prost(int32, tag = "1")]
+    pub kind: i32,
+    /// Target logical buffer ID (field `2`).
+    #[prost(int64, tag = "2")]
+    pub buffer_id: i64,
+    /// Computation name where the event occurred (field `3`).
+    #[prost(string, tag = "3")]
+    pub computation_name: String,
+    /// Instruction name where the event occurred (field `4`).
+    #[prost(string, tag = "4")]
+    pub instruction_name: String,
+    /// Canonical logical buffer ID shared with when `kind == SHARE_WITH` (field `5`).
+    #[prost(int64, tag = "5")]
+    pub share_with_canonical_id: i64,
+}
+
+impl_proto_schema_message!(HeapSimulatorTraceEventProto, "xla.HeapSimulatorTrace.Event");
+
+/// Wire-compatible `xla.HeapSimulatorTrace` (`xla/service/hlo.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct HeapSimulatorTraceProto {
+    /// Ordered sequence of allocation, free, and sharing events (field `1`).
+    #[prost(message, repeated, tag = "1")]
+    pub events: Vec<HeapSimulatorTraceEventProto>,
+    /// Whether the simulation covered the whole module rather than a single computation (field `2`).
+    #[prost(bool, tag = "2")]
+    pub whole_module_simulation: bool,
+    /// Associated `BufferAllocationProto` index (field `3`).
+    #[prost(int64, tag = "3")]
+    pub buffer_allocation_index: i64,
+}
+
+impl_proto_schema_message!(HeapSimulatorTraceProto, "xla.HeapSimulatorTrace");
+
+/// Wire-compatible `xla.BufferAllocationProto.Assigned` (`xla/service/hlo.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct BufferAllocationAssignedProto {
+    /// Assigned logical buffer ID (field `1`).
+    #[prost(int64, tag = "1")]
+    pub logical_buffer_id: i64,
+    /// Byte offset within the parent `BufferAllocationProto` (field `2`).
+    #[prost(int64, tag = "2")]
+    pub offset: i64,
+    /// Size of the logical buffer slice in bytes (field `3`).
+    #[prost(int64, tag = "3")]
+    pub size: i64,
+}
+
+impl_proto_schema_message!(
+    BufferAllocationAssignedProto,
+    "xla.BufferAllocationProto.Assigned"
+);
+
 /// Wire-compatible `xla.BufferAllocationProto` (`xla/service/hlo.proto`).
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, PartialEq, Eq, Message)]
@@ -508,6 +742,9 @@ pub struct BufferAllocationProto {
     /// Assigned slices within this allocation (field `9`).
     #[prost(message, repeated, tag = "9")]
     pub assigned: Vec<BufferAllocationSliceProto>,
+    /// Assigned logical buffer intervals within this allocation (field `10`).
+    #[prost(message, repeated, tag = "10")]
+    pub assigned_logical_buffers: Vec<BufferAllocationAssignedProto>,
     /// Whether this allocation is a tuple buffer (field `11`).
     #[prost(bool, tag = "11")]
     pub is_tuple: bool,
@@ -521,9 +758,15 @@ impl_proto_schema_message!(BufferAllocationProto, "xla.BufferAllocationProto");
 /// Wire-compatible `xla.BufferAssignmentProto` (`xla/service/hlo.proto`).
 #[derive(Clone, PartialEq, Eq, Message)]
 pub struct BufferAssignmentProto {
+    /// Logical buffers defined across the HLO module (field `1`).
+    #[prost(message, repeated, tag = "1")]
+    pub logical_buffers: Vec<LogicalBufferProto>,
     /// Physical buffer allocations across HBM, VMEM, SMEM, and CMEM (field `3`).
     #[prost(message, repeated, tag = "3")]
     pub buffer_allocations: Vec<BufferAllocationProto>,
+    /// Heap simulator allocation traces (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub heap_simulator_traces: Vec<HeapSimulatorTraceProto>,
 }
 
 impl_proto_schema_message!(BufferAssignmentProto, "xla.BufferAssignmentProto");

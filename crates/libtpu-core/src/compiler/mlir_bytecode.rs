@@ -5,6 +5,33 @@ use crate::error::{LibTpuError, LibTpuResult};
 /// Magic 4-byte header identifying an MLIR bytecode payload (`b"ML\xefR"`).
 pub const MLIR_BYTECODE_MAGIC: &[u8; 4] = b"ML\xefR";
 
+/// MLIR bytecode Section `0`: string table (`kString`).
+pub const SECTION_STRING: u8 = 0;
+
+/// MLIR bytecode Section `1`: dialect table (`kDialect`).
+pub const SECTION_DIALECT: u8 = 1;
+
+/// MLIR bytecode Section `2`: attribute and type payload table (`kAttrType`).
+pub const SECTION_ATTR_TYPE: u8 = 2;
+
+/// MLIR bytecode Section `3`: attribute and type byte offset table (`kAttrTypeOffset`).
+pub const SECTION_ATTR_TYPE_OFFSET: u8 = 3;
+
+/// MLIR bytecode Section `4`: IR operation and region stream (`kIR`).
+pub const SECTION_IR: u8 = 4;
+
+/// MLIR bytecode Section `5`: external resource blob payloads (`kResource`).
+pub const SECTION_RESOURCE: u8 = 5;
+
+/// MLIR bytecode Section `6`: external resource blob byte offsets (`kResourceOffset`).
+pub const SECTION_RESOURCE_OFFSET: u8 = 6;
+
+/// MLIR bytecode Section `7`: dialect version metadata (`kDialectVersions`).
+pub const SECTION_DIALECT_VERSIONS: u8 = 7;
+
+/// MLIR bytecode Section `8`: MLIR v5/v6 inline operation property table (`kProperties`).
+pub const SECTION_PROPERTIES: u8 = 8;
+
 /// Decodes an MLIR `PrefixVarInt` from the front of `cursor` and advances `cursor`.
 ///
 /// MLIR bytecode encodes variable-length unsigned integers using the number of trailing zero
@@ -230,6 +257,40 @@ pub enum BinaryAttrTypeEntry {
         /// Child location attribute index in Section `2` (`kAttrType`).
         child_loc_index: u32,
     },
+    /// `vhlo::ComparisonDirectionV1Attr` (`#vhlo.comparison_direction_v1<...>`, `tag = 20`).
+    VhloComparisonDirectionV1(super::ast::ComparisonDirection),
+    /// `vhlo::ComparisonTypeV1Attr` (`#vhlo.comparison_type_v1<...>`, `tag = 21`).
+    VhloComparisonTypeV1(super::ast::ComparisonType),
+    /// `vhlo::PrecisionV1Attr` array (`[#vhlo.precision_v1<...>]`, `tag = 22`).
+    VhloPrecisionConfigV1(Vec<super::ast::PrecisionLevel>),
+    /// `vhlo::TransposeV1Attr` (`#vhlo.transpose_v1<...>`, `tag = 23`).
+    VhloTransposeV1(super::ast::TransposeMode),
+    /// `vhlo::ConvDimensionNumbersV1Attr` (`#vhlo.conv_v1<...>`, `tag = 24`).
+    VhloConvDimensionNumbersV1(super::ast::ConvDimensionNumbersAttr),
+    /// `vhlo::GatherDimensionNumbersV1Attr` (`#vhlo.gather_v1<...>`, `tag = 25`).
+    VhloGatherDimensionNumbersV1(super::ast::GatherDimensionNumbersAttr),
+    /// `vhlo::ScatterDimensionNumbersV1Attr` (`#vhlo.scatter_v1<...>`, `tag = 26`).
+    VhloScatterDimensionNumbersV1(super::ast::ScatterDimensionNumbersAttr),
+    /// `vhlo::ChannelHandleV1Attr` (`#vhlo.channel_handle_v1<...>`, `tag = 27`).
+    VhloChannelHandleV1 {
+        /// Cross-device communication channel ID.
+        handle: i64,
+        /// Communication channel kind (`1` = `DeviceToDevice`, `2` = `DeviceToHost`, `3` = `HostToDevice`).
+        channel_type: i64,
+    },
+    /// `vhlo::FftTypeV1Attr` (`#vhlo.fft_type_v1<...>`, `tag = 28`).
+    VhloFftTypeV1(super::ast::FftKind),
+    /// `vhlo::CustomCallApiVersionV1Attr` (`#vhlo.custom_call_api_version_v1<...>`, `tag = 29`).
+    VhloCustomCallApiVersionV1(i32),
+    /// `vhlo::OutputOperandAliasV1Attr` (`#vhlo.output_operand_alias_v1<...>`, `tag = 30`).
+    VhloOutputOperandAliasV1 {
+        /// Output tuple index path.
+        output_tuple_indices: Vec<i64>,
+        /// Aliased input operand index.
+        operand_index: i64,
+        /// Input operand tuple index path.
+        operand_tuple_indices: Vec<i64>,
+    },
 }
 
 impl BinaryAttrTypeEntry {
@@ -253,6 +314,36 @@ impl BinaryAttrTypeEntry {
     #[allow(clippy::cast_possible_wrap)]
     pub const fn zigzag_decode(raw: u64) -> i64 {
         ((raw >> 1) as i64) ^ -((raw & 1) as i64)
+    }
+
+    /// Serializes this [`BinaryAttrTypeEntry`] into a standard upstream MLIR/VHLO `PrefixVarInt`
+    /// `kAttrType` payload **without** the custom [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`] (`0xFE`) prefix.
+    #[must_use]
+    pub fn encode_standard_upstream(&self) -> Vec<u8> {
+        let with_prefix = self.encode_binary();
+        with_prefix
+            .strip_prefix(&[BINARY_CUSTOM_ATTR_TYPE_MAGIC])
+            .unwrap_or(&with_prefix)
+            .to_vec()
+    }
+
+    /// Alias for [`Self::encode_standard_upstream`] encoding this [`BinaryAttrTypeEntry`] without `0xFE`.
+    #[must_use]
+    pub fn encode_upstream_unprefixed(&self) -> Vec<u8> {
+        self.encode_standard_upstream()
+    }
+
+    /// Decodes an unprefixed standard upstream [`BinaryAttrTypeEntry`] from `bytes`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Raw byte slice of a single `kAttrType` entry without `0xFE` prefix.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::MlirBytecodeDecodeError`] if `bytes` is empty, truncated, or invalid.
+    pub fn decode_upstream_unprefixed(bytes: &[u8]) -> LibTpuResult<Self> {
+        Self::decode_binary(bytes)
     }
 
     /// Serializes this [`BinaryAttrTypeEntry`] into a binary custom-encoding byte payload
@@ -444,6 +535,146 @@ impl BinaryAttrTypeEntry {
                 out.extend_from_slice(&encode_mlir_prefix_varint(19));
                 out.extend_from_slice(&encode_mlir_prefix_varint(u64::from(*name_string_index)));
                 out.extend_from_slice(&encode_mlir_prefix_varint(u64::from(*child_loc_index)));
+            }
+            Self::VhloComparisonDirectionV1(dir) => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(20));
+                let code = match dir {
+                    super::ast::ComparisonDirection::Eq => 0,
+                    super::ast::ComparisonDirection::Ne => 1,
+                    super::ast::ComparisonDirection::Ge => 2,
+                    super::ast::ComparisonDirection::Gt => 3,
+                    super::ast::ComparisonDirection::Le => 4,
+                    super::ast::ComparisonDirection::Lt => 5,
+                };
+                out.extend_from_slice(&encode_mlir_prefix_varint(code));
+            }
+            Self::VhloComparisonTypeV1(ct) => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(21));
+                let code = match ct {
+                    super::ast::ComparisonType::Float => 0,
+                    super::ast::ComparisonType::TotalOrder => 1,
+                    super::ast::ComparisonType::Signed => 2,
+                    super::ast::ComparisonType::Unsigned => 3,
+                };
+                out.extend_from_slice(&encode_mlir_prefix_varint(code));
+            }
+            Self::VhloPrecisionConfigV1(levels) => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(22));
+                out.extend_from_slice(&encode_mlir_prefix_varint(levels.len() as u64));
+                for lvl in levels {
+                    let code = match lvl {
+                        super::ast::PrecisionLevel::Default => 0,
+                        super::ast::PrecisionLevel::High => 1,
+                        super::ast::PrecisionLevel::Highest => 2,
+                    };
+                    out.extend_from_slice(&encode_mlir_prefix_varint(code));
+                }
+            }
+            Self::VhloTransposeV1(mode) => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(23));
+                let code = match mode {
+                    super::ast::TransposeMode::NoTranspose => 0,
+                    super::ast::TransposeMode::Transpose => 1,
+                    super::ast::TransposeMode::Adjoint => 2,
+                };
+                out.extend_from_slice(&encode_mlir_prefix_varint(code));
+            }
+            Self::VhloConvDimensionNumbersV1(conv) => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(24));
+                for scalar in [
+                    conv.input_batch_dimension,
+                    conv.input_feature_dimension,
+                    conv.kernel_input_feature_dimension,
+                    conv.kernel_output_feature_dimension,
+                    conv.output_batch_dimension,
+                    conv.output_feature_dimension,
+                ] {
+                    out.extend_from_slice(&encode_mlir_prefix_varint(scalar as u64));
+                }
+                for list in [
+                    &conv.input_spatial_dimensions,
+                    &conv.kernel_spatial_dimensions,
+                    &conv.output_spatial_dimensions,
+                ] {
+                    out.extend_from_slice(&encode_mlir_prefix_varint(list.len() as u64));
+                    for &ax in list {
+                        out.extend_from_slice(&encode_mlir_prefix_varint(ax as u64));
+                    }
+                }
+            }
+            Self::VhloGatherDimensionNumbersV1(g) => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(25));
+                out.extend_from_slice(&encode_mlir_prefix_varint(g.index_vector_dim as u64));
+                for list in [
+                    &g.offset_dims,
+                    &g.collapsed_slice_dims,
+                    &g.operand_batching_dims,
+                    &g.start_indices_batching_dims,
+                    &g.start_index_map,
+                ] {
+                    out.extend_from_slice(&encode_mlir_prefix_varint(list.len() as u64));
+                    for &ax in list {
+                        out.extend_from_slice(&encode_mlir_prefix_varint(ax as u64));
+                    }
+                }
+            }
+            Self::VhloScatterDimensionNumbersV1(sc) => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(26));
+                out.extend_from_slice(&encode_mlir_prefix_varint(sc.index_vector_dim as u64));
+                for list in [
+                    &sc.update_window_dims,
+                    &sc.inserted_window_dims,
+                    &sc.input_batching_dims,
+                    &sc.scatter_indices_batching_dims,
+                    &sc.scatter_dims_to_operand_dims,
+                ] {
+                    out.extend_from_slice(&encode_mlir_prefix_varint(list.len() as u64));
+                    for &ax in list {
+                        out.extend_from_slice(&encode_mlir_prefix_varint(ax as u64));
+                    }
+                }
+            }
+            Self::VhloChannelHandleV1 {
+                handle,
+                channel_type,
+            } => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(27));
+                out.extend_from_slice(&encode_mlir_prefix_varint(Self::zigzag_encode(*handle)));
+                out.extend_from_slice(&encode_mlir_prefix_varint(Self::zigzag_encode(
+                    *channel_type,
+                )));
+            }
+            Self::VhloFftTypeV1(kind) => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(28));
+                let code = match kind {
+                    super::ast::FftKind::Fft => 0,
+                    super::ast::FftKind::Ifft => 1,
+                    super::ast::FftKind::Rfft => 2,
+                    super::ast::FftKind::Irfft => 3,
+                };
+                out.extend_from_slice(&encode_mlir_prefix_varint(code));
+            }
+            Self::VhloCustomCallApiVersionV1(ver) => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(29));
+                out.extend_from_slice(&encode_mlir_prefix_varint(Self::zigzag_encode(i64::from(
+                    *ver,
+                ))));
+            }
+            Self::VhloOutputOperandAliasV1 {
+                output_tuple_indices,
+                operand_index,
+                operand_tuple_indices,
+            } => {
+                out.extend_from_slice(&encode_mlir_prefix_varint(30));
+                out.extend_from_slice(&encode_mlir_prefix_varint(Self::zigzag_encode(
+                    *operand_index,
+                )));
+                for list in [output_tuple_indices, operand_tuple_indices] {
+                    out.extend_from_slice(&encode_mlir_prefix_varint(list.len() as u64));
+                    for &idx in list {
+                        out.extend_from_slice(&encode_mlir_prefix_varint(Self::zigzag_encode(idx)));
+                    }
+                }
             }
         }
         out
@@ -717,6 +948,194 @@ impl BinaryAttrTypeEntry {
                     child_loc_index,
                 })
             }
+            20 => {
+                let code = decode_mlir_prefix_varint(&mut cursor)?;
+                let dir = match code {
+                    1 => super::ast::ComparisonDirection::Ne,
+                    2 => super::ast::ComparisonDirection::Ge,
+                    3 => super::ast::ComparisonDirection::Gt,
+                    4 => super::ast::ComparisonDirection::Le,
+                    5 => super::ast::ComparisonDirection::Lt,
+                    _ => super::ast::ComparisonDirection::Eq,
+                };
+                Ok(Self::VhloComparisonDirectionV1(dir))
+            }
+            21 => {
+                let code = decode_mlir_prefix_varint(&mut cursor)?;
+                let ct = match code {
+                    1 => super::ast::ComparisonType::TotalOrder,
+                    2 => super::ast::ComparisonType::Signed,
+                    3 => super::ast::ComparisonType::Unsigned,
+                    _ => super::ast::ComparisonType::Float,
+                };
+                Ok(Self::VhloComparisonTypeV1(ct))
+            }
+            22 => {
+                let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                let mut levels = Vec::with_capacity(n);
+                for _ in 0..n {
+                    let code = decode_mlir_prefix_varint(&mut cursor)?;
+                    let lvl = match code {
+                        1 => super::ast::PrecisionLevel::High,
+                        2 => super::ast::PrecisionLevel::Highest,
+                        _ => super::ast::PrecisionLevel::Default,
+                    };
+                    levels.push(lvl);
+                }
+                Ok(Self::VhloPrecisionConfigV1(levels))
+            }
+            23 => {
+                let code = decode_mlir_prefix_varint(&mut cursor)?;
+                let mode = match code {
+                    1 => super::ast::TransposeMode::Transpose,
+                    2 => super::ast::TransposeMode::Adjoint,
+                    _ => super::ast::TransposeMode::NoTranspose,
+                };
+                Ok(Self::VhloTransposeV1(mode))
+            }
+            24 => {
+                let input_batch_dimension =
+                    usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                let input_feature_dimension =
+                    usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                let kernel_input_feature_dimension =
+                    usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                let kernel_output_feature_dimension =
+                    usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                let output_batch_dimension =
+                    usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                let output_feature_dimension =
+                    usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                let mut lists: [Vec<usize>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+                for list in &mut lists {
+                    let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                    for _ in 0..n {
+                        list.push(
+                            usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0),
+                        );
+                    }
+                }
+                let [
+                    input_spatial_dimensions,
+                    kernel_spatial_dimensions,
+                    output_spatial_dimensions,
+                ] = lists;
+                Ok(Self::VhloConvDimensionNumbersV1(
+                    super::ast::ConvDimensionNumbersAttr {
+                        input_batch_dimension,
+                        input_feature_dimension,
+                        input_spatial_dimensions,
+                        kernel_input_feature_dimension,
+                        kernel_output_feature_dimension,
+                        kernel_spatial_dimensions,
+                        output_batch_dimension,
+                        output_feature_dimension,
+                        output_spatial_dimensions,
+                    },
+                ))
+            }
+            25 => {
+                let index_vector_dim =
+                    usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                let mut lists: [Vec<usize>; 5] =
+                    [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+                for list in &mut lists {
+                    let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                    for _ in 0..n {
+                        list.push(
+                            usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0),
+                        );
+                    }
+                }
+                let [
+                    offset_dims,
+                    collapsed_slice_dims,
+                    operand_batching_dims,
+                    start_indices_batching_dims,
+                    start_index_map,
+                ] = lists;
+                Ok(Self::VhloGatherDimensionNumbersV1(
+                    super::ast::GatherDimensionNumbersAttr {
+                        offset_dims,
+                        collapsed_slice_dims,
+                        operand_batching_dims,
+                        start_indices_batching_dims,
+                        start_index_map,
+                        index_vector_dim,
+                    },
+                ))
+            }
+            26 => {
+                let index_vector_dim =
+                    usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                let mut lists: [Vec<usize>; 5] =
+                    [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+                for list in &mut lists {
+                    let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                    for _ in 0..n {
+                        list.push(
+                            usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0),
+                        );
+                    }
+                }
+                let [
+                    update_window_dims,
+                    inserted_window_dims,
+                    input_batching_dims,
+                    scatter_indices_batching_dims,
+                    scatter_dims_to_operand_dims,
+                ] = lists;
+                Ok(Self::VhloScatterDimensionNumbersV1(
+                    super::ast::ScatterDimensionNumbersAttr {
+                        update_window_dims,
+                        inserted_window_dims,
+                        input_batching_dims,
+                        scatter_indices_batching_dims,
+                        scatter_dims_to_operand_dims,
+                        index_vector_dim,
+                    },
+                ))
+            }
+            27 => {
+                let handle = Self::zigzag_decode(decode_mlir_prefix_varint(&mut cursor)?);
+                let channel_type = Self::zigzag_decode(decode_mlir_prefix_varint(&mut cursor)?);
+                Ok(Self::VhloChannelHandleV1 {
+                    handle,
+                    channel_type,
+                })
+            }
+            28 => {
+                let code = decode_mlir_prefix_varint(&mut cursor)?;
+                let kind = match code {
+                    1 => super::ast::FftKind::Ifft,
+                    2 => super::ast::FftKind::Rfft,
+                    3 => super::ast::FftKind::Irfft,
+                    _ => super::ast::FftKind::Fft,
+                };
+                Ok(Self::VhloFftTypeV1(kind))
+            }
+            29 => {
+                let ver_i64 = Self::zigzag_decode(decode_mlir_prefix_varint(&mut cursor)?);
+                #[allow(clippy::cast_possible_truncation)]
+                let ver = ver_i64 as i32;
+                Ok(Self::VhloCustomCallApiVersionV1(ver))
+            }
+            30 => {
+                let operand_index = Self::zigzag_decode(decode_mlir_prefix_varint(&mut cursor)?);
+                let mut lists: [Vec<i64>; 2] = [Vec::new(), Vec::new()];
+                for list in &mut lists {
+                    let n = usize::try_from(decode_mlir_prefix_varint(&mut cursor)?).unwrap_or(0);
+                    for _ in 0..n {
+                        list.push(Self::zigzag_decode(decode_mlir_prefix_varint(&mut cursor)?));
+                    }
+                }
+                let [output_tuple_indices, operand_tuple_indices] = lists;
+                Ok(Self::VhloOutputOperandAliasV1 {
+                    output_tuple_indices,
+                    operand_index,
+                    operand_tuple_indices,
+                })
+            }
             _ => Err(LibTpuError::MlirBytecodeDecodeError {
                 section_id: 2,
                 offset: 1,
@@ -738,6 +1157,8 @@ impl BinaryAttrTypeEntry {
         let fmt_et = |et: ElementType| -> &'static str {
             match et {
                 ElementType::Pred => "i1",
+                ElementType::S2 => "s2",
+                ElementType::U2 => "u2",
                 ElementType::S4 => "s4",
                 ElementType::U4 => "u4",
                 ElementType::S8 => "i8",
@@ -751,8 +1172,16 @@ impl BinaryAttrTypeEntry {
                 ElementType::F16 => "f16",
                 ElementType::Bf16 => "bf16",
                 ElementType::F64 => "f64",
+                ElementType::F4E2M1Fn => "f4E2M1FN",
                 ElementType::F8E4M3Fn => "f8E4M3FN",
+                ElementType::F8E4M3Fnuz => "f8E4M3FNUZ",
+                ElementType::F8E4M3B11Fnuz => "f8E4M3B11FNUZ",
                 ElementType::F8E5M2 => "f8E5M2",
+                ElementType::F8E5M2Fnuz => "f8E5M2FNUZ",
+                ElementType::F8E8M0Fnu => "f8E8M0FNU",
+                ElementType::C64 => "complex<f32>",
+                ElementType::C128 => "complex<f64>",
+                ElementType::Token => "!stablehlo.token",
                 _ => "f32",
             }
         };
@@ -911,6 +1340,88 @@ impl BinaryAttrTypeEntry {
                     .map_or("op", String::as_str);
                 format!("loc(\"{nm}\"(#loc{child_loc_index}))")
             }
+            Self::VhloComparisonDirectionV1(dir) => {
+                format!("#stablehlo<comparison_direction {}>", dir.as_str())
+            }
+            Self::VhloComparisonTypeV1(ct) => {
+                let s = match ct {
+                    super::ast::ComparisonType::Float => "FLOAT",
+                    super::ast::ComparisonType::TotalOrder => "TOTALORDER",
+                    super::ast::ComparisonType::Signed => "SIGNED",
+                    super::ast::ComparisonType::Unsigned => "UNSIGNED",
+                };
+                format!("#stablehlo<comparison_type {s}>")
+            }
+            Self::VhloPrecisionConfigV1(levels) => {
+                let parts: Vec<&str> = levels
+                    .iter()
+                    .map(|l| match l {
+                        super::ast::PrecisionLevel::Default => "#stablehlo<precision DEFAULT>",
+                        super::ast::PrecisionLevel::High => "#stablehlo<precision HIGH>",
+                        super::ast::PrecisionLevel::Highest => "#stablehlo<precision HIGHEST>",
+                    })
+                    .collect();
+                format!("[{}]", parts.join(", "))
+            }
+            Self::VhloTransposeV1(mode) => {
+                let s = match mode {
+                    super::ast::TransposeMode::NoTranspose => "NO_TRANSPOSE",
+                    super::ast::TransposeMode::Transpose => "TRANSPOSE",
+                    super::ast::TransposeMode::Adjoint => "ADJOINT",
+                };
+                format!("#stablehlo<transpose {s}>")
+            }
+            Self::VhloConvDimensionNumbersV1(c) => format!(
+                "#stablehlo.conv<input_batch_dimension = {}, input_feature_dimension = {}, input_spatial_dimensions = {:?}, kernel_input_feature_dimension = {}, kernel_output_feature_dimension = {}, kernel_spatial_dimensions = {:?}, output_batch_dimension = {}, output_feature_dimension = {}, output_spatial_dimensions = {:?}>",
+                c.input_batch_dimension,
+                c.input_feature_dimension,
+                c.input_spatial_dimensions,
+                c.kernel_input_feature_dimension,
+                c.kernel_output_feature_dimension,
+                c.kernel_spatial_dimensions,
+                c.output_batch_dimension,
+                c.output_feature_dimension,
+                c.output_spatial_dimensions
+            ),
+            Self::VhloGatherDimensionNumbersV1(g) => format!(
+                "#stablehlo.gather<offset_dims = {:?}, collapsed_slice_dims = {:?}, operand_batching_dims = {:?}, start_indices_batching_dims = {:?}, start_index_map = {:?}, index_vector_dim = {}>",
+                g.offset_dims,
+                g.collapsed_slice_dims,
+                g.operand_batching_dims,
+                g.start_indices_batching_dims,
+                g.start_index_map,
+                g.index_vector_dim
+            ),
+            Self::VhloScatterDimensionNumbersV1(sc) => format!(
+                "#stablehlo.scatter<update_window_dims = {:?}, inserted_window_dims = {:?}, input_batching_dims = {:?}, scatter_indices_batching_dims = {:?}, scatter_dims_to_operand_dims = {:?}, index_vector_dim = {}>",
+                sc.update_window_dims,
+                sc.inserted_window_dims,
+                sc.input_batching_dims,
+                sc.scatter_indices_batching_dims,
+                sc.scatter_dims_to_operand_dims,
+                sc.index_vector_dim
+            ),
+            Self::VhloChannelHandleV1 {
+                handle,
+                channel_type,
+            } => format!("#stablehlo.channel_handle<handle = {handle}, type = {channel_type}>"),
+            Self::VhloFftTypeV1(kind) => {
+                let s = match kind {
+                    super::ast::FftKind::Fft => "FFT",
+                    super::ast::FftKind::Ifft => "IFFT",
+                    super::ast::FftKind::Rfft => "RFFT",
+                    super::ast::FftKind::Irfft => "IRFFT",
+                };
+                format!("#stablehlo<fft_type {s}>")
+            }
+            Self::VhloCustomCallApiVersionV1(ver) => ver.to_string(),
+            Self::VhloOutputOperandAliasV1 {
+                output_tuple_indices,
+                operand_index,
+                operand_tuple_indices,
+            } => format!(
+                "#vhlo.output_operand_alias_v1<output_tuple_indices = {output_tuple_indices:?}, operand_index = {operand_index}, operand_tuple_indices = {operand_tuple_indices:?}>"
+            ),
         }
     }
 }
@@ -1030,6 +1541,10 @@ pub struct MlirBytecodeEncoder {
     /// Inline operation property records for Section `7`/`8` (`kProperties`).
     pub properties: Vec<u64>,
 }
+
+/// Dialect-grouped Section `3` (`kAttrTypeOffset`) table representation:
+/// `(dialect_index, Vec<(entry_length, has_custom_encoding)>)`.
+pub type DialectGroupedAttrTypeOffsets = Vec<(u32, Vec<(u64, bool)>)>;
 
 impl MlirBytecodeEncoder {
     /// Creates a new [`MlirBytecodeEncoder`] with the given `producer` version string.
@@ -1157,9 +1672,14 @@ impl MlirBytecodeEncoder {
         ir_bytes
     }
 
-    /// Serializes this module into a valid `ML\xefR` binary bytecode container.
+    /// Serializes this module into a valid `ML\xefR` binary bytecode container, optionally prefixing
+    /// Section `2` (`kAttrType`) binary entries with [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`] (`0xFE`).
+    ///
+    /// # Arguments
+    ///
+    /// * `use_magic_prefix` - When `true`, prefixes binary entries with `0xFE`; when `false`, emits unprefixed upstream entries.
     #[must_use]
-    pub fn encode_to_bytes(&self) -> Vec<u8> {
+    pub fn encode_with_attr_prefix(&self, use_magic_prefix: bool) -> Vec<u8> {
         let mut str_bytes = Vec::new();
         for s in &self.strings {
             str_bytes.extend_from_slice(s.as_bytes());
@@ -1180,7 +1700,11 @@ impl MlirBytecodeEncoder {
             }
         } else {
             for bin_entry in &self.binary_attr_types {
-                let encoded = bin_entry.encode_binary();
+                let encoded = if use_magic_prefix {
+                    bin_entry.encode_binary()
+                } else {
+                    bin_entry.encode_upstream_unprefixed()
+                };
                 attr_offsets.push(encoded.len() as u64);
                 attr_bytes.extend_from_slice(&encoded);
             }
@@ -1234,6 +1758,189 @@ impl MlirBytecodeEncoder {
         };
         hdr.encode()
     }
+
+    /// Serializes this module into a valid `ML\xefR` binary bytecode container.
+    #[must_use]
+    pub fn encode_to_bytes(&self) -> Vec<u8> {
+        self.encode_with_attr_prefix(true)
+    }
+
+    /// Serializes this module into a standard upstream `ML\xefR` binary bytecode container
+    /// where Section `2` (`kAttrType`) uses unprefixed `PrefixVarInt` dialect type/attribute codes
+    /// (without [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`]) and exact Section `3` (`kAttrTypeOffset`) lengths.
+    #[must_use]
+    pub fn encode_standard_upstream_to_bytes(&self) -> Vec<u8> {
+        self.encode_with_attr_prefix(false)
+    }
+
+    /// Encodes a grouped upstream Section `1` (`kDialect`) payload containing `(dialect_name_idx, num_ops, op_name_idx...)`.
+    #[must_use]
+    pub fn encode_upstream_dialect_section(&self) -> Vec<u8> {
+        let mut out = encode_mlir_prefix_varint(self.dialects.len() as u64);
+        for d in &self.dialects {
+            let d_idx = self.strings.iter().position(|s| s == d).unwrap_or(0) as u64;
+            out.extend_from_slice(&encode_mlir_prefix_varint(d_idx << 1));
+            let prefix = format!("{d}.");
+            let op_indices: Vec<u64> = self
+                .strings
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.starts_with(&prefix))
+                .map(|(idx, _)| idx as u64)
+                .collect();
+            out.extend_from_slice(&encode_mlir_prefix_varint(op_indices.len() as u64));
+            for op_idx in op_indices {
+                out.extend_from_slice(&encode_mlir_prefix_varint(op_idx));
+            }
+        }
+        out
+    }
+
+    /// Decodes a grouped upstream Section `1` (`kDialect`) payload back into [`MlirDialectDescriptor`] records.
+    ///
+    /// # Arguments
+    ///
+    /// * `sec_data` - Raw Section `1` byte slice encoded by [`Self::encode_upstream_dialect_section`].
+    /// * `string_table` - Section `0` (`kString`) string table.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidMlirBytecodeGrouping`] if the grouping header is truncated.
+    pub fn decode_upstream_dialect_section(
+        sec_data: &[u8],
+        string_table: &[String],
+    ) -> LibTpuResult<Vec<MlirDialectDescriptor>> {
+        let mut cur = sec_data;
+        let num_dialects = decode_mlir_prefix_varint(&mut cur).map_err(|_| {
+            LibTpuError::InvalidMlirBytecodeGrouping {
+                section_id: 1,
+                offset: 0,
+                reason: "truncated numDialects varint in Section 1",
+            }
+        })?;
+        let count = usize::try_from(num_dialects).unwrap_or(0);
+        let mut out = Vec::with_capacity(count.min(64));
+        for _ in 0..count {
+            let name_and_flag = decode_mlir_prefix_varint(&mut cur).map_err(|_| {
+                LibTpuError::InvalidMlirBytecodeGrouping {
+                    section_id: 1,
+                    offset: sec_data.len().saturating_sub(cur.len()),
+                    reason: "truncated dialect name index in Section 1",
+                }
+            })?;
+            let name_idx = usize::try_from(name_and_flag >> 1).unwrap_or(0);
+            let d_name = string_table
+                .get(name_idx)
+                .cloned()
+                .unwrap_or_else(|| format!("dialect_{name_idx}"));
+            let num_ops = decode_mlir_prefix_varint(&mut cur).map_err(|_| {
+                LibTpuError::InvalidMlirBytecodeGrouping {
+                    section_id: 1,
+                    offset: sec_data.len().saturating_sub(cur.len()),
+                    reason: "truncated numOps varint in Section 1",
+                }
+            })?;
+            let op_count = usize::try_from(num_ops).unwrap_or(0);
+            let mut registered_ops = Vec::with_capacity(op_count.min(256));
+            for _ in 0..op_count {
+                let op_idx = decode_mlir_prefix_varint(&mut cur).map_err(|_| {
+                    LibTpuError::InvalidMlirBytecodeGrouping {
+                        section_id: 1,
+                        offset: sec_data.len().saturating_sub(cur.len()),
+                        reason: "truncated op name index in Section 1",
+                    }
+                })?;
+                registered_ops.extend(
+                    string_table
+                        .get(usize::try_from(op_idx).unwrap_or(0))
+                        .cloned(),
+                );
+            }
+            out.push(MlirDialectDescriptor {
+                name: d_name,
+                version_bytes: Vec::new(),
+                registered_ops,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Encodes a dialect-grouped upstream Section `3` (`kAttrTypeOffset`) payload containing
+    /// `(dialect_index, group_count, (entry_length << 1 | has_custom_encoding)...)` records.
+    ///
+    /// # Arguments
+    ///
+    /// * `groups` - Slice of `(dialect_index, Vec<(entry_length, has_custom_encoding)>)` groups.
+    #[must_use]
+    pub fn encode_dialect_grouped_attr_type_offsets(groups: &[(u32, Vec<(u64, bool)>)]) -> Vec<u8> {
+        let mut out = encode_mlir_prefix_varint(groups.len() as u64);
+        for (dialect_idx, entries) in groups {
+            out.extend_from_slice(&encode_mlir_prefix_varint(u64::from(*dialect_idx)));
+            out.extend_from_slice(&encode_mlir_prefix_varint(entries.len() as u64));
+            for &(entry_len, has_custom) in entries {
+                let encoded_word = (entry_len << 1) | u64::from(has_custom);
+                out.extend_from_slice(&encode_mlir_prefix_varint(encoded_word));
+            }
+        }
+        out
+    }
+
+    /// Decodes a dialect-grouped upstream Section `3` (`kAttrTypeOffset`) payload produced by
+    /// [`Self::encode_dialect_grouped_attr_type_offsets`] back into `(dialect_index, Vec<(entry_length, has_custom_encoding)>)` groups.
+    ///
+    /// # Arguments
+    ///
+    /// * `sec_data` - Raw Section `3` byte slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidMlirBytecodeGrouping`] if any group header or offset varint is truncated.
+    pub fn decode_dialect_grouped_attr_type_offsets(
+        sec_data: &[u8],
+    ) -> LibTpuResult<DialectGroupedAttrTypeOffsets> {
+        let mut cur = sec_data;
+        let num_groups = decode_mlir_prefix_varint(&mut cur).map_err(|_| {
+            LibTpuError::InvalidMlirBytecodeGrouping {
+                section_id: 3,
+                offset: 0,
+                reason: "truncated numGroups varint in Section 3 (kAttrTypeOffset)",
+            }
+        })?;
+        let group_count = usize::try_from(num_groups).unwrap_or(0);
+        let mut groups = Vec::with_capacity(group_count.min(64));
+        for _ in 0..group_count {
+            let dialect_raw = decode_mlir_prefix_varint(&mut cur).map_err(|_| {
+                LibTpuError::InvalidMlirBytecodeGrouping {
+                    section_id: 3,
+                    offset: sec_data.len().saturating_sub(cur.len()),
+                    reason: "truncated dialect_index varint in Section 3 (kAttrTypeOffset)",
+                }
+            })?;
+            let group_len_raw = decode_mlir_prefix_varint(&mut cur).map_err(|_| {
+                LibTpuError::InvalidMlirBytecodeGrouping {
+                    section_id: 3,
+                    offset: sec_data.len().saturating_sub(cur.len()),
+                    reason: "truncated group_count varint in Section 3 (kAttrTypeOffset)",
+                }
+            })?;
+            let elem_count = usize::try_from(group_len_raw).unwrap_or(0);
+            let mut entries = Vec::with_capacity(elem_count.min(256));
+            for _ in 0..elem_count {
+                let word = decode_mlir_prefix_varint(&mut cur).map_err(|_| {
+                    LibTpuError::InvalidMlirBytecodeGrouping {
+                        section_id: 3,
+                        offset: sec_data.len().saturating_sub(cur.len()),
+                        reason: "truncated offset_and_custom_flag varint in Section 3 (kAttrTypeOffset)",
+                    }
+                })?;
+                entries.push((word >> 1, (word & 1) != 0));
+            }
+            #[allow(clippy::cast_possible_truncation)]
+            let dialect_idx = dialect_raw as u32;
+            groups.push((dialect_idx, entries));
+        }
+        Ok(groups)
+    }
 }
 
 /// Clean-room decoder for MLIR Bytecode (`ML\xefR`) payloads across Sections `0..=8`.
@@ -1267,7 +1974,8 @@ pub struct MlirBytecodeHeader {
 
 impl MlirBytecodeHeader {
     /// Reconciles Section `2` (`kAttrType`) with Section `3` (`kAttrTypeOffset`) when custom binary
-    /// entries prefixed with [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`] (`0xFE`) are present.
+    /// entries prefixed with [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`] (`0xFE`) or standard upstream unprefixed
+    /// `PrefixVarInt` dialect type/attribute records are present.
     fn reconcile_binary_attr_type_entries(&mut self) {
         let Some(sec2) = self
             .sections
@@ -1356,7 +2064,7 @@ impl MlirBytecodeHeader {
                     self.resource_offsets.push(off);
                 }
             }
-            7 => {
+            7 | 8 => {
                 let mut p_cur = sec_data;
                 while let Ok(prop) = decode_mlir_prefix_varint(&mut p_cur) {
                     self.properties.push(prop);
@@ -1565,6 +2273,93 @@ impl MlirBytecodeHeader {
             .map(|s| Self::legalize_vhlo_symbol(s))
     }
 
+    /// Resolves an upstream MLIR bytecode `(dialect_id, op_id)` pair into its canonical
+    /// legalized operation mnemonic when custom string-table entries are omitted.
+    ///
+    /// # Arguments
+    ///
+    /// * `dialect_id` - Numeric dialect index in Section `1` (`kDialect`).
+    /// * `op_id` - Numeric operation index within the dialect.
+    #[must_use]
+    pub fn lookup_upstream_dialect_op_name(&self, dialect_id: u32, op_id: u32) -> String {
+        let dial_name = self
+            .dialects
+            .get(dialect_id as usize)
+            .map_or("stablehlo", String::as_str);
+        let canonical_dial = Self::legalize_vhlo_symbol(dial_name);
+        let op_suffix = match (canonical_dial.as_str(), op_id) {
+            ("func", 0) => "func",
+            ("func", 1) => "return",
+            ("sdy", 0) => "mesh",
+            ("sdy", 1) => "manual_computation",
+            ("sdy", 2) => "sharding_constraint",
+            ("tpu", 0) => "matmul",
+            ("tpu", 1) => "vector_load",
+            ("tpu", 2) => "vector_store",
+            ("tpu", 3) => "enqueue_dma",
+            ("tpu", 4) => "wait_dma",
+            (_, 0) => "add",
+            (_, 1) => "subtract",
+            (_, 2) => "multiply",
+            (_, 3) => "divide",
+            (_, 4) => "dot_general",
+            (_, 5) => "convolution",
+            (_, 6) => "reduce",
+            (_, 7) => "gather",
+            (_, 8) => "scatter",
+            (_, 9) => "exponential",
+            (_, 10) => "tanh",
+            _ => "identity",
+        };
+        format!("{canonical_dial}.{op_suffix}")
+    }
+
+    /// Decodes an inline Section `8` (`kProperties`) word at `prop_index` into canonical
+    /// [`super::ast::MlirAttribute`] entries for `op_name`.
+    ///
+    /// # Arguments
+    ///
+    /// * `op_name` - Legalized operation name (e.g., `"stablehlo.compare"`, `"stablehlo.fft"`).
+    /// * `prop_index` - Index into `self.properties`.
+    /// * `attributes` - Mutable operation attribute dictionary to populate.
+    pub fn decode_op_properties_into_attrs(
+        &self,
+        op_name: &str,
+        prop_index: u32,
+        attributes: &mut std::collections::BTreeMap<String, super::ast::MlirAttribute>,
+    ) {
+        let Some(&prop_val) = self.properties.get(prop_index as usize) else {
+            return;
+        };
+        attributes
+            .entry(String::from("__mlir_property_word"))
+            .or_insert_with(|| super::ast::MlirAttribute::Integer {
+                value: i128::from(prop_val),
+                ty: None,
+            });
+        if op_name.ends_with("compare") {
+            let dir = match prop_val & 7 {
+                1 => "NE",
+                2 => "GE",
+                3 => "GT",
+                4 => "LE",
+                5 => "LT",
+                _ => "EQ",
+            };
+            attributes.insert(
+                String::from("comparison_direction"),
+                super::ast::MlirAttribute::String(String::from(dir)),
+            );
+        } else if op_name.ends_with("fft") {
+            attributes.insert(
+                String::from("fft_length"),
+                super::ast::MlirAttribute::DenseI64Array(vec![
+                    i64::try_from(prop_val.max(1)).unwrap_or(4),
+                ]),
+            );
+        }
+    }
+
     /// Reconstructs the registered operation names `(dialect, legalized_op_name)` from `string_table` and `dialects`.
     #[must_use]
     pub fn decode_dialect_op_names(&self) -> Vec<(String, String)> {
@@ -1685,6 +2480,7 @@ impl MlirBytecodeHeader {
             } else if trimmed.starts_with('#')
                 || trimmed.starts_with('{')
                 || trimmed.starts_with("dense<")
+                || trimmed.starts_with("dense_resource<")
                 || trimmed.starts_with("array<")
             {
                 let sp = super::lexer::HloLexer::tokenize_spanned(trimmed);
@@ -1731,6 +2527,34 @@ impl MlirBytecodeHeader {
         }
     }
 
+    /// Resolves a named external resource blob (e.g., `"res_0"`, `"__elided__"`, `"blob_1"`) from
+    /// Section `5` (`kResource`) and Section `6` (`kResourceOffset`).
+    ///
+    /// # Arguments
+    ///
+    /// * `resource_key` - Resource identifier string (such as `"res_0"`).
+    #[must_use]
+    pub fn resolve_named_resource_blob(&self, resource_key: &str) -> Option<Vec<u8>> {
+        let blobs = self.decode_resource_blobs();
+        let idx = resource_key
+            .trim()
+            .rsplit('_')
+            .next()
+            .and_then(|digits| digits.parse::<usize>().ok())
+            .unwrap_or(0);
+        blobs.get(idx).cloned()
+    }
+
+    /// Queries the decoded Section `7`/`8` (`kProperties`) inline property word at `property_index`.
+    ///
+    /// # Arguments
+    ///
+    /// * `property_index` - 0-based index into the `properties` table.
+    #[must_use]
+    pub fn decode_inline_property_word(&self, property_index: u32) -> Option<u64> {
+        self.properties.get(property_index as usize).copied()
+    }
+
     /// Encodes a parsed [`super::ast::AstModule`] into a spec-compliant `ML\xefR` binary bytecode container
     /// with an explicit bytecode format `version` (`1..=6`).
     ///
@@ -1772,10 +2596,12 @@ impl MlirBytecodeHeader {
     ///
     /// * `enc` - Mutable [`MlirBytecodeEncoder`] state.
     /// * `op` - [`super::ast::AstOperation`] to encode.
+    /// * `ssa_table` - Mutable SSA symbol-to-value-ID numbering map (`%arg0 -> 0`, `%query -> 1`, etc.).
     #[allow(clippy::too_many_lines)]
     fn encode_ast_op_to_node(
         enc: &mut MlirBytecodeEncoder,
         op: &super::ast::AstOperation,
+        ssa_table: &mut std::collections::BTreeMap<String, u32>,
     ) -> MlirBytecodeOpNode {
         for attr in op.attributes.values() {
             if let super::ast::MlirAttribute::DenseElements(de) = attr {
@@ -1787,16 +2613,21 @@ impl MlirBytecodeHeader {
         let name_index = enc.intern_string(&full_op_name);
         let mut operands = Vec::new();
         for opnd in &op.operands {
-            let parsed_idx = opnd
+            let num_fallback = opnd
                 .name
                 .trim_start_matches("%arg")
                 .trim_start_matches('%')
                 .parse::<u32>()
                 .unwrap_or(0);
-            operands.push(parsed_idx);
+            let resolved_idx = ssa_table.get(&opnd.name).copied().unwrap_or(num_fallback);
+            operands.push(resolved_idx);
         }
         if operands.is_empty() {
             operands.push(0);
+        }
+        for res in &op.results {
+            let next_id = u32::try_from(ssa_table.len()).unwrap_or(0);
+            ssa_table.entry(res.name.clone()).or_insert(next_id);
         }
         let mut result_type_indices = Vec::new();
         for sh in op
@@ -1822,14 +2653,42 @@ impl MlirBytecodeHeader {
             .regions
             .iter()
             .map(|reg| {
+                let mut child_ssa = ssa_table.clone();
+                for (i, arg) in (0_u32..).zip(reg.blocks.iter().flat_map(|blk| &blk.arguments)) {
+                    let _ = child_ssa.insert(arg.ssa_name.clone(), i);
+                }
                 reg.blocks
                     .iter()
                     .flat_map(|blk| &blk.operations)
-                    .map(|child_op| Self::encode_ast_op_to_node(enc, child_op))
+                    .map(|child_op| Self::encode_ast_op_to_node(enc, child_op, &mut child_ssa))
                     .collect()
             })
             .collect();
-        let region_block_arg_types = vec![Vec::new(); inline_regions.len()];
+        let region_block_arg_types: Vec<Vec<u32>> = op
+            .regions
+            .iter()
+            .map(|reg| {
+                reg.blocks
+                    .first()
+                    .map(|blk| {
+                        blk.arguments
+                            .iter()
+                            .filter_map(|a| a.ty.to_shape())
+                            .map(|sh| {
+                                let d = sh
+                                    .dims
+                                    .iter()
+                                    .map(i64::to_string)
+                                    .collect::<Vec<_>>()
+                                    .join("x");
+                                let e = sh.element_type.to_string().to_ascii_lowercase();
+                                enc.intern_attr_type(&format!("tensor<{d}x{e}>"))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
         let num_regions = u32::try_from(inline_regions.len()).unwrap_or(0);
         let region_bit = if num_regions > 0 { 0x10 } else { 0x00 };
         let (attr_bit, attr_dict_index) = if op.attributes.is_empty() {
@@ -1881,7 +2740,13 @@ impl MlirBytecodeHeader {
         enc.dialects.push(String::from("stablehlo"));
 
         for func in &module.functions {
+            let mut ssa_table = std::collections::BTreeMap::new();
+            for (arg_idx, arg) in func.arguments.iter().enumerate() {
+                let id = u32::try_from(arg_idx).unwrap_or(0);
+                ssa_table.insert(arg.ssa_name.clone(), id);
+            }
             let mut arg_ty_strs = Vec::with_capacity(func.arguments.len());
+            let mut arg_ty_indices = Vec::with_capacity(func.arguments.len());
             for sh in func.arguments.iter().filter_map(|arg| arg.ty.to_shape()) {
                 let dims_str = sh
                     .dims
@@ -1895,7 +2760,7 @@ impl MlirBytecodeHeader {
                 } else {
                     format!("tensor<{dims_str}x{elem_str}>")
                 };
-                let _ = enc.intern_attr_type(&ty_str);
+                arg_ty_indices.push(enc.intern_attr_type(&ty_str));
                 arg_ty_strs.push(ty_str);
             }
             let vis_str = match func.visibility {
@@ -1911,11 +2776,14 @@ impl MlirBytecodeHeader {
             );
             let _ = enc.intern_string(&func_sig_entry);
             for blk in &func.body.blocks {
-                for op in &blk.operations {
+                for (op_idx, op) in blk.operations.iter().enumerate() {
                     if matches!(op.op_kind, super::ast::AstOpKind::Return) {
                         continue;
                     }
-                    let node = Self::encode_ast_op_to_node(&mut enc, op);
+                    let mut node = Self::encode_ast_op_to_node(&mut enc, op, &mut ssa_table);
+                    if op_idx == 0 && node.region_block_arg_types.is_empty() {
+                        node.region_block_arg_types.push(arg_ty_indices.clone());
+                    }
                     enc.operations.push(node);
                 }
             }
@@ -1931,12 +2799,14 @@ impl MlirBytecodeHeader {
     /// # Arguments
     ///
     /// * `op_idx` - Operation index in the enclosing block.
+    /// * `num_func_args` - Number of function parameter SSA values preceding operation results.
     /// * `node` - Decoded [`MlirBytecodeOpNode`].
     /// * `decoded_attrs` - Decoded Section-2 attribute list.
     #[allow(clippy::too_many_lines)]
     fn decode_node_to_ast_op(
         &self,
         op_idx: usize,
+        num_func_args: usize,
         node: &MlirBytecodeOpNode,
         decoded_attrs: &[super::ast::MlirAttribute],
     ) -> super::ast::AstOperation {
@@ -1962,13 +2832,27 @@ impl MlirBytecodeHeader {
             None => (DialectKind::StableHlo, legalized_name.clone()),
         };
         let mut attributes = std::collections::BTreeMap::new();
-        for dict in node
+        for item in node
             .attr_dict_index
             .iter()
             .filter_map(|&idx| decoded_attrs.get(idx as usize))
         {
-            if let MlirAttribute::Dictionary(map) = dict {
-                attributes.clone_from(map);
+            match item {
+                MlirAttribute::Dictionary(map) => attributes.clone_from(map),
+                MlirAttribute::DenseResource(r_name) => {
+                    let blob = self.resolve_named_resource_blob(r_name).unwrap_or_default();
+                    let values_f64 = crate::types::ElementType::F32.unpack_to_f64_vec(&blob);
+                    attributes.insert(
+                        String::from("value"),
+                        MlirAttribute::DenseElements(super::ast::DenseElementsAttr {
+                            values_f64,
+                            raw_bytes: Some(blob),
+                            is_splat: false,
+                            tensor_type: None,
+                        }),
+                    );
+                }
+                _ => {}
             }
         }
         for attr_str in node
@@ -1977,16 +2861,14 @@ impl MlirBytecodeHeader {
             .filter_map(|&idx| self.attr_type_entries.get(idx as usize))
             .filter(|s| s.starts_with('{'))
         {
-            let synthetic_mlir = format!(
-                "module {{ func.func @f(%arg0: tensor<4xf32>) -> tensor<4xf32> {{ %0 = stablehlo.add %arg0, %arg0 {attr_str} : tensor<4xf32> return %0 : tensor<4xf32> }} }}"
-            );
-            super::parser::parse_mlir_ast_module(&synthetic_mlir)
-                .ok()
-                .and_then(|m| m.functions.into_iter().next())
-                .and_then(|f| f.body.blocks.into_iter().next())
-                .and_then(|b| b.operations.into_iter().next())
-                .into_iter()
-                .for_each(|op| attributes.clone_from(&op.attributes));
+            let sp = super::lexer::HloLexer::tokenize_spanned(attr_str);
+            let mut mp = super::parser::MlirModuleParser::new(&sp);
+            for (k, v) in mp.parse_attribute_dict().into_iter().flatten() {
+                let _ = attributes.insert(k, v);
+            }
+        }
+        if let Some(p_idx) = node.properties_index {
+            self.decode_op_properties_into_attrs(&legalized_name, p_idx, &mut attributes);
         }
         let res_ty = Self::shape_str_to_mlir_type(
             node.result_type_indices
@@ -2004,13 +2886,35 @@ impl MlirBytecodeHeader {
                 .inline_regions
                 .get(r_idx)
                 .map_or(&[][..], Vec::as_slice);
+            let blk_args: Vec<super::ast::AstBlockArg> = node
+                .region_block_arg_types
+                .get(r_idx)
+                .map(|tys| {
+                    tys.iter()
+                        .enumerate()
+                        .map(|(a_idx, &ty_idx)| super::ast::AstBlockArg {
+                            ssa_name: format!("%arg{a_idx}"),
+                            ty: Self::shape_str_to_mlir_type(
+                                self.attr_type_entries
+                                    .get(ty_idx as usize)
+                                    .map(String::as_str),
+                            ),
+                            attrs: std::collections::BTreeMap::new(),
+                            location: None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             let child_ops = child_nodes
                 .iter()
                 .enumerate()
-                .map(|(c_idx, cn)| self.decode_node_to_ast_op(c_idx, cn, decoded_attrs))
+                .map(|(c_idx, cn)| {
+                    self.decode_node_to_ast_op(c_idx, num_func_args, cn, decoded_attrs)
+                })
                 .collect();
             regions.push(AstRegion {
                 blocks: vec![AstBlock {
+                    arguments: blk_args,
                     operations: child_ops,
                     ..AstBlock::default()
                 }],
@@ -2031,9 +2935,10 @@ impl MlirBytecodeHeader {
             .iter()
             .map(|&b_idx| format!("^bb{b_idx}"))
             .collect();
+        let res_ssa_id = num_func_args.saturating_add(op_idx);
         AstOperation {
             results: vec![AstOpResult {
-                name: format!("%{op_idx}"),
+                name: format!("%arg{res_ssa_id}"),
                 count: node.result_type_indices.len().max(1),
             }],
             dialect: dial_kind,
@@ -2079,9 +2984,76 @@ impl MlirBytecodeHeader {
                 }
             }
         }
+        let inferred_arg_count = self
+            .string_table
+            .iter()
+            .find_map(|s| s.strip_prefix("__func_sig:"))
+            .map_or_else(
+                || explicit_arg_types.len().max(2),
+                |sig| {
+                    sig.splitn(3, ':')
+                        .nth(2)
+                        .map_or(0, |csv| csv.split(',').filter(|t| !t.is_empty()).count())
+                },
+            );
         let mut operations = Vec::with_capacity(decoded_nodes.len());
+        let mut parsed_funcs = Vec::new();
         for (op_idx, node) in decoded_nodes.iter().enumerate() {
-            operations.push(self.decode_node_to_ast_op(op_idx, node, &decoded_attrs));
+            let op = self.decode_node_to_ast_op(op_idx, inferred_arg_count, node, &decoded_attrs);
+            if op.dialect == super::ast::DialectKind::Func && op.mnemonic == "func" {
+                let fn_name = op
+                    .attributes
+                    .get("sym_name")
+                    .and_then(super::ast::MlirAttribute::as_str)
+                    .unwrap_or("main")
+                    .trim_start_matches('@');
+                let vis = match op
+                    .attributes
+                    .get("sym_visibility")
+                    .and_then(super::ast::MlirAttribute::as_str)
+                {
+                    Some("private") => Visibility::Private,
+                    Some("nested") => Visibility::Nested,
+                    _ => Visibility::Public,
+                };
+                let args: Vec<AstBlockArg> = node
+                    .region_block_arg_types
+                    .first()
+                    .map(|tys| {
+                        tys.iter()
+                            .enumerate()
+                            .map(|(idx, &ty_idx)| AstBlockArg {
+                                ssa_name: format!("%arg{idx}"),
+                                ty: Self::shape_str_to_mlir_type(
+                                    self.attr_type_entries
+                                        .get(ty_idx as usize)
+                                        .map(String::as_str),
+                                ),
+                                attrs: std::collections::BTreeMap::new(),
+                                location: None,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let body = op.regions.into_iter().next().unwrap_or_else(|| AstRegion {
+                    blocks: vec![AstBlock::default()],
+                    span: TokenSpan::default(),
+                });
+                parsed_funcs.push(AstFunction {
+                    name: String::from(fn_name),
+                    visibility: vis,
+                    arguments: args,
+                    results: vec![AstResultType {
+                        ty: default_tensor_ty.clone(),
+                        attrs: std::collections::BTreeMap::new(),
+                    }],
+                    function_attrs: op.attributes,
+                    body,
+                    span: TokenSpan::default(),
+                });
+            } else {
+                operations.push(op);
+            }
         }
         let mut mod_name = String::from("bytecode_module");
         for s in &self.string_table {
@@ -2090,50 +3062,51 @@ impl MlirBytecodeHeader {
                 break;
             }
         }
-        let mut parsed_funcs = Vec::new();
-        for sig_body in self
-            .string_table
-            .iter()
-            .filter_map(|s| s.strip_prefix("__func_sig:"))
-        {
-            let mut parts = sig_body.splitn(3, ':');
-            let fn_name = parts.next().unwrap_or("main");
-            let vis_raw = parts.next().unwrap_or("public");
-            let in_csv = parts.next().unwrap_or("");
-            let vis = match vis_raw {
-                "private" => Visibility::Private,
-                "nested" => Visibility::Nested,
-                _ => Visibility::Public,
-            };
-            let args: Vec<AstBlockArg> = in_csv
-                .split(',')
-                .filter(|t| !t.is_empty())
-                .enumerate()
-                .map(|(idx, t_str)| AstBlockArg {
-                    ssa_name: format!("%arg{idx}"),
-                    ty: Self::shape_str_to_mlir_type(Some(t_str)),
-                    attrs: std::collections::BTreeMap::new(),
-                    location: None,
-                })
-                .collect();
-            parsed_funcs.push(AstFunction {
-                name: String::from(fn_name),
-                visibility: vis,
-                arguments: args,
-                results: vec![AstResultType {
-                    ty: default_tensor_ty.clone(),
-                    attrs: std::collections::BTreeMap::new(),
-                }],
-                function_attrs: std::collections::BTreeMap::new(),
-                body: AstRegion {
-                    blocks: vec![AstBlock {
-                        operations: operations.clone(),
-                        ..AstBlock::default()
+        if parsed_funcs.is_empty() {
+            for sig_body in self
+                .string_table
+                .iter()
+                .filter_map(|s| s.strip_prefix("__func_sig:"))
+            {
+                let mut parts = sig_body.splitn(3, ':');
+                let fn_name = parts.next().unwrap_or("main");
+                let vis_raw = parts.next().unwrap_or("public");
+                let in_csv = parts.next().unwrap_or("");
+                let vis = match vis_raw {
+                    "private" => Visibility::Private,
+                    "nested" => Visibility::Nested,
+                    _ => Visibility::Public,
+                };
+                let args: Vec<AstBlockArg> = in_csv
+                    .split(',')
+                    .filter(|t| !t.is_empty())
+                    .enumerate()
+                    .map(|(idx, t_str)| AstBlockArg {
+                        ssa_name: format!("%arg{idx}"),
+                        ty: Self::shape_str_to_mlir_type(Some(t_str)),
+                        attrs: std::collections::BTreeMap::new(),
+                        location: None,
+                    })
+                    .collect();
+                parsed_funcs.push(AstFunction {
+                    name: String::from(fn_name),
+                    visibility: vis,
+                    arguments: args,
+                    results: vec![AstResultType {
+                        ty: default_tensor_ty.clone(),
+                        attrs: std::collections::BTreeMap::new(),
                     }],
+                    function_attrs: std::collections::BTreeMap::new(),
+                    body: AstRegion {
+                        blocks: vec![AstBlock {
+                            operations: operations.clone(),
+                            ..AstBlock::default()
+                        }],
+                        span: TokenSpan::default(),
+                    },
                     span: TokenSpan::default(),
-                },
-                span: TokenSpan::default(),
-            });
+                });
+            }
         }
         if parsed_funcs.is_empty() {
             let make_arg = |ssa_name: &str| AstBlockArg {
@@ -2613,6 +3586,7 @@ impl VhloDialectAttrTypeDecoder {
     /// * `entry` - Decoded [`BinaryAttrTypeEntry`] from Section `2` (`kAttrType`).
     /// * `string_table` - Section `0` (`kString`) string table.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn decode_vhlo_attribute(
         entry: &BinaryAttrTypeEntry,
         string_table: &[String],
@@ -2636,6 +3610,44 @@ impl VhloDialectAttrTypeDecoder {
                     rhs_contracting_dimensions: rhs_contracting.clone(),
                 },
             )),
+            BinaryAttrTypeEntry::VhloComparisonDirectionV1(dir) => {
+                Some(MlirAttribute::ComparisonDirection(*dir))
+            }
+            BinaryAttrTypeEntry::VhloComparisonTypeV1(ct) => {
+                Some(MlirAttribute::ComparisonType(*ct))
+            }
+            BinaryAttrTypeEntry::VhloPrecisionConfigV1(levels) => {
+                Some(MlirAttribute::PrecisionConfig(levels.clone()))
+            }
+            BinaryAttrTypeEntry::VhloTransposeV1(mode) => Some(MlirAttribute::TransposeKind(*mode)),
+            BinaryAttrTypeEntry::VhloConvDimensionNumbersV1(conv) => {
+                Some(MlirAttribute::ConvDimensionNumbers(conv.clone()))
+            }
+            BinaryAttrTypeEntry::VhloGatherDimensionNumbersV1(g) => {
+                Some(MlirAttribute::GatherDimensionNumbers(g.clone()))
+            }
+            BinaryAttrTypeEntry::VhloScatterDimensionNumbersV1(sc) => {
+                Some(MlirAttribute::ScatterDimensionNumbers(sc.clone()))
+            }
+            BinaryAttrTypeEntry::VhloChannelHandleV1 {
+                handle,
+                channel_type,
+            } => Some(MlirAttribute::ChannelHandle {
+                handle: *handle,
+                channel_type: *channel_type,
+            }),
+            BinaryAttrTypeEntry::VhloFftTypeV1(kind) => Some(MlirAttribute::FftType(*kind)),
+            BinaryAttrTypeEntry::VhloCustomCallApiVersionV1(ver) => Some(MlirAttribute::Integer {
+                value: i128::from(*ver),
+                ty: Some(crate::types::ElementType::S32),
+            }),
+            BinaryAttrTypeEntry::VhloOutputOperandAliasV1 {
+                output_tuple_indices,
+                operand_index,
+                operand_tuple_indices,
+            } => Some(MlirAttribute::String(format!(
+                "#vhlo.output_operand_alias_v1<output_tuple_indices = {output_tuple_indices:?}, operand_index = {operand_index}, operand_tuple_indices = {operand_tuple_indices:?}>"
+            ))),
             BinaryAttrTypeEntry::StringAttr { string_index } => {
                 let raw = string_table.get(*string_index as usize)?.trim();
                 if let Some(dir) = raw

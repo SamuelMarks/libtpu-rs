@@ -379,8 +379,13 @@ pub fn parse_mlir_element_type(raw: &str) -> Option<ElementType> {
         "c64" | "complex<f32>" => Some(ElementType::C64),
         "c128" | "complex<f64>" => Some(ElementType::C128),
         "f8e5m2" => Some(ElementType::F8E5M2),
+        "f8e5m2fnuz" => Some(ElementType::F8E5M2Fnuz),
         "f8e4m3fn" | "f8e4m3" => Some(ElementType::F8E4M3Fn),
-        "f8e4m3b11fnuz" | "f8e4m3fnuz" | "f8e5m2fnuz" => Some(ElementType::F8E4M3B11Fnuz),
+        "f8e4m3fnuz" => Some(ElementType::F8E4M3Fnuz),
+        "f8e4m3b11fnuz" => Some(ElementType::F8E4M3B11Fnuz),
+        "f8e8m0fnu" => Some(ElementType::F8E8M0Fnu),
+        "f4e2m1fn" | "f4" => Some(ElementType::F4E2M1Fn),
+        "token" | "!stablehlo.token" | "!vhlo.token_v1" => Some(ElementType::Token),
         "s4" | "i4" | "si4" => Some(ElementType::S4),
         "u4" | "ui4" => Some(ElementType::U4),
         "s2" | "i2" | "si2" => Some(ElementType::S2),
@@ -788,6 +793,38 @@ pub fn classify_ast_operation(
         "reduce_max" => AstOpKind::HardwareOp(TpuOpCode::ReduceMax),
         "reduce_min" => AstOpKind::HardwareOp(TpuOpCode::ReduceMin),
         "reduce_sum" => AstOpKind::HardwareOp(TpuOpCode::ReduceSumF32),
+        "next_after" | "next-after" => AstOpKind::HardwareOp(TpuOpCode::NextAfter),
+        "dynamic_gather" | "dynamic-gather" => AstOpKind::HardwareOp(TpuOpCode::DynamicGather),
+        "real_dynamic_slice" | "real-dynamic-slice" => {
+            AstOpKind::HardwareOp(TpuOpCode::RealDynamicSlice)
+        }
+        "ragged_all_to_all" | "ragged-all-to-all" => {
+            AstOpKind::HardwareOp(TpuOpCode::RaggedAllToAll)
+        }
+        "send_done" | "send-done" => AstOpKind::HardwareOp(TpuOpCode::SendDone),
+        "recv_done" | "recv-done" => AstOpKind::HardwareOp(TpuOpCode::RecvDone),
+        "conj" => AstOpKind::HardwareOp(TpuOpCode::Conj),
+        "acosh" => AstOpKind::HardwareOp(TpuOpCode::Acosh),
+        "asinh" => AstOpKind::HardwareOp(TpuOpCode::Asinh),
+        "atanh" => AstOpKind::HardwareOp(TpuOpCode::Atanh),
+        "sinh" => AstOpKind::HardwareOp(TpuOpCode::Sinh),
+        "cosh" => AstOpKind::HardwareOp(TpuOpCode::Cosh),
+        "acos" => AstOpKind::HardwareOp(TpuOpCode::Acos),
+        "asin" => AstOpKind::HardwareOp(TpuOpCode::Asin),
+        "atan" => AstOpKind::HardwareOp(TpuOpCode::Atan),
+        "erfc" => AstOpKind::HardwareOp(TpuOpCode::Erfc),
+        "lgamma" => AstOpKind::HardwareOp(TpuOpCode::Lgamma),
+        "digamma" => AstOpKind::HardwareOp(TpuOpCode::Digamma),
+        "bessel_i1e" | "bessel-i1e" => AstOpKind::HardwareOp(TpuOpCode::BesselI1e),
+        "reduce_precision" | "reduce-precision" => {
+            AstOpKind::HardwareOp(TpuOpCode::ReducePrecision)
+        }
+        "outbound_dma" => AstOpKind::HardwareOp(TpuOpCode::OutboundDma),
+        "wait_dma_op" => AstOpKind::HardwareOp(TpuOpCode::WaitDma),
+        "semaphore_signal_op" => AstOpKind::HardwareOp(TpuOpCode::SemaphoreSignal),
+        "semaphore_wait_op" => AstOpKind::HardwareOp(TpuOpCode::SemaphoreWait),
+        "broadcast_in_sublanes_op" => AstOpKind::HardwareOp(TpuOpCode::BroadcastInSublanes),
+        "rotate_sublanes" => AstOpKind::HardwareOp(TpuOpCode::RotateSublanes),
         "optimization_barrier"
         | "after_all"
         | "create_token"
@@ -2545,10 +2582,13 @@ fn legalize_chlo_operation(op: &mut AstOperation) {
     if let AstOpKind::ChloDecomposable(name) = &op.op_kind {
         let hw = match name.as_str() {
             "erfc" | "erf_inv" => TpuOpCode::Erf,
-            "lgamma" | "digamma" | "polygamma" | "zeta" | "bessel_i1e" => TpuOpCode::Log1p,
+            "lgamma" | "digamma" | "polygamma" | "zeta" | "bessel_i0e" | "bessel_i1e" => {
+                TpuOpCode::Log1p
+            }
             "acos" | "acosh" | "cosh" => TpuOpCode::Cosine,
             "asin" | "asinh" | "sinh" => TpuOpCode::Sine,
             "atan" | "atanh" => TpuOpCode::Tan,
+            "conj" => TpuOpCode::Complex,
             "next_after" => TpuOpCode::AddF32,
             _ => TpuOpCode::NegF32,
         };

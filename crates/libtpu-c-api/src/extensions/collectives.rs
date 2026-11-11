@@ -215,7 +215,7 @@ fn apply_elementwise_reduction(
     elem_type.pack_from_f64_slice(&reduced)
 }
 
-/// Strongly-typed handler for [`PJRT_Communicator_AllReduce`] and [`PJRT_Communicator_ReduceScatter`].
+/// Strongly-typed handler for [`PJRT_Communicator_AllReduce`].
 ///
 /// # Arguments
 ///
@@ -225,6 +225,23 @@ fn apply_elementwise_reduction(
 ///
 /// `args` must be a valid [`PJRT_Communicator_AllReduce_Args`].
 unsafe fn handle_communicator_all_reduce(args: &mut PJRT_Communicator_AllReduce_Args) {
+    let op =
+        CollectiveReductionOp::from_raw(args.reduction_op).unwrap_or(CollectiveReductionOp::Sum);
+    // SAFETY: `send_buffer` and `recv_buffer` are null or valid `PJRT_Buffer*`.
+    args.event =
+        unsafe { execute_collective_buffers(args.send_buffer, args.recv_buffer, Some(op)) };
+}
+
+/// Strongly-typed handler for [`PJRT_Communicator_ReduceScatter`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Communicator_AllReduce_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Communicator_AllReduce_Args`].
+unsafe fn handle_communicator_reduce_scatter(args: &mut PJRT_Communicator_AllReduce_Args) {
     let op =
         CollectiveReductionOp::from_raw(args.reduction_op).unwrap_or(CollectiveReductionOp::Sum);
     // SAFETY: `send_buffer` and `recv_buffer` are null or valid `PJRT_Buffer*`.
@@ -271,7 +288,7 @@ pub unsafe extern "C" fn PJRT_Communicator_ReduceScatter(
     unsafe {
         dispatch_typed_extension_args::<PJRT_Communicator_AllReduce_Args>(
             raw_args,
-            handle_communicator_all_reduce,
+            handle_communicator_reduce_scatter,
         )
     }
 }
@@ -312,7 +329,7 @@ pub unsafe extern "C" fn PJRT_Communicator_AllGather(
     }
 }
 
-/// Strongly-typed handler for [`PJRT_Communicator_CollectivePermute`] and [`PJRT_Communicator_AllToAll`].
+/// Strongly-typed handler for [`PJRT_Communicator_CollectivePermute`].
 ///
 /// # Arguments
 ///
@@ -324,6 +341,20 @@ pub unsafe extern "C" fn PJRT_Communicator_AllGather(
 unsafe fn handle_communicator_collective_permute(
     args: &mut PJRT_Communicator_CollectivePermute_Args,
 ) {
+    // SAFETY: `send_buffer` and `recv_buffer` are null or valid `PJRT_Buffer*`.
+    args.event = unsafe { execute_collective_buffers(args.send_buffer, args.recv_buffer, None) };
+}
+
+/// Strongly-typed handler for [`PJRT_Communicator_AllToAll`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Communicator_CollectivePermute_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Communicator_CollectivePermute_Args`].
+unsafe fn handle_communicator_all_to_all(args: &mut PJRT_Communicator_CollectivePermute_Args) {
     // SAFETY: `send_buffer` and `recv_buffer` are null or valid `PJRT_Buffer*`.
     args.event = unsafe { execute_collective_buffers(args.send_buffer, args.recv_buffer, None) };
 }
@@ -367,7 +398,7 @@ pub unsafe extern "C" fn PJRT_Communicator_AllToAll(
     unsafe {
         dispatch_typed_extension_args::<PJRT_Communicator_CollectivePermute_Args>(
             raw_args,
-            handle_communicator_collective_permute,
+            handle_communicator_all_to_all,
         )
     }
 }
@@ -417,7 +448,8 @@ pub unsafe extern "C" fn PJRT_Communicator_ToString(
     }
 }
 
-/// Strongly-typed handler for [`PJRT_CrossHostTransfers_Args`] entrypoints.
+/// Strongly-typed handler for [`PJRT_CrossHostTransfers_Args`] entrypoints, copying device memory
+/// across `buffers` and `remote_device` handles or storing/retrieving payloads in `cross_host_mailboxes`.
 ///
 /// # Arguments
 ///
@@ -429,6 +461,9 @@ pub unsafe extern "C" fn PJRT_Communicator_ToString(
 unsafe fn handle_cross_host_transfer(args: &mut PJRT_CrossHostTransfers_Args) {
     let mut st = extension_state().lock();
     st.cross_host_transfers = st.cross_host_transfers.saturating_add(1);
+    st.cross_host_mailboxes
+        .insert(args.remote_device, args.buffers.to_le_bytes().to_vec());
+    drop(st);
     let ev = Box::into_raw(Box::new(crate::pjrt_types::PJRT_Event {
         inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
     }));

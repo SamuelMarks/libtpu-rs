@@ -3189,6 +3189,41 @@ typedef struct PJRT_TpuTopology_ComputeSubsliceForDevices_Args {
 } PJRT_TpuTopology_ComputeSubsliceForDevices_Args;
 
 /**
+ * @brief Argument structure for `PJRT_TpuTopology_ProcessCoordFromId` and
+ * `PJRT_TpuTopology_ChipIdFromCoord` (`48` bytes).
+ */
+typedef struct PJRT_TpuTopology_MappingQuery_Args {
+  /** @brief Size of this struct (`48`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Topology description handle. */
+  const void *topology;
+  /** @brief Input process ID or `const int32_t[3]` coordinate pointer. */
+  size_t param0;
+  /** @brief Output primary coordinate pointer or chip ID. */
+  size_t out_first;
+  /** @brief Output secondary coordinate count or index. */
+  size_t out_second;
+} PJRT_TpuTopology_MappingQuery_Args;
+
+/**
+ * @brief Queries 3D process coordinates `(x, y, z)` for a process ID
+ * (`PJRT_TpuTopology_ProcessCoordFromId`).
+ * @param raw_args Pointer to `PJRT_TpuTopology_MappingQuery_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_TpuTopology_ProcessCoordFromId(void *raw_args);
+
+/**
+ * @brief Queries the global chip ID for 3D chip coordinates `(x, y, z)`
+ * (`PJRT_TpuTopology_ChipIdFromCoord`).
+ * @param raw_args Pointer to `PJRT_TpuTopology_MappingQuery_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_TpuTopology_ChipIdFromCoord(void *raw_args);
+
+/**
  * @brief Computes subslice origin coordinates for a subset of TPU devices
  * (`PJRT_TpuTopology_ComputeSubsliceForDevices`).
  * @param raw_args Pointer to `PJRT_TpuTopology_ComputeSubsliceForDevices_Args`.
@@ -3334,6 +3369,68 @@ PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString(void *raw_args);
  * @return `nullptr` on success or `PJRT_Error*` on failure.
  */
 PJRT_Error *PJRT_ExecutableMetadata_Destroy(void *raw_args);
+
+/**
+ * @brief Argument structure for `PJRT_ExecutableMetadata_Get` and
+ * `PJRT_AbiVersion_*` 32-byte queries (`32` bytes).
+ */
+typedef struct PJRT_Metadata_Get_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input handle (`PJRT_Executable*` or `PJRT_Client*`). */
+  const void *handle;
+  /** @brief Output metadata or ABI version handle word. */
+  size_t metadata_out;
+} PJRT_Metadata_Get_Args;
+
+/**
+ * @brief Queries `PJRT_ExecutableMetadata` for an executable
+ * (`PJRT_ExecutableMetadata_Get`).
+ * @param raw_args Pointer to `PJRT_Metadata_Get_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_ExecutableMetadata_Get(void *raw_args);
+
+/**
+ * @brief Allocates pinned host memory via `PJRT_HostMemoryAllocator_Extension`
+ * (`PJRT_HostMemoryAllocator_Allocate`).
+ * @param raw_args Pointer to `PJRT_HostMemoryAllocator_Allocate_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_HostMemoryAllocator_Allocate(void *raw_args);
+
+/**
+ * @brief Deleter callback for host memory buffers allocated via
+ * `PJRT_HostMemoryAllocator_Allocate` (`pjrt_host_memory_deleter`).
+ * @param holder Opaque holder pointer returned in `deleter_arg`.
+ */
+void pjrt_host_memory_deleter(void *holder);
+
+/**
+ * @brief Serializes runtime ABI version to protobuf
+ * (`PJRT_AbiVersion_RuntimeToProto`).
+ * @param raw_args Pointer to `PJRT_TpuExecutable_ProtoQuery_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_AbiVersion_RuntimeToProto(void *raw_args);
+
+/**
+ * @brief Serializes executable ABI version to protobuf
+ * (`PJRT_AbiVersion_ExecutableToProto`).
+ * @param raw_args Pointer to `PJRT_TpuExecutable_ProtoQuery_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_AbiVersion_ExecutableToProto(void *raw_args);
+
+/**
+ * @brief Queries platform ID from runtime ABI version
+ * (`PJRT_AbiVersion_RuntimePlatformId`).
+ * @param raw_args Pointer to `PJRT_Metadata_Get_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_AbiVersion_RuntimePlatformId(void *raw_args);
 
 /**
  * @brief Queries parameter `OpSharding` protos for an executable
@@ -3490,10 +3587,10 @@ struct XLA_FFI_Api;
 
 /**
  * @brief OpenXLA Typed FFI call frame passed to `XLA_FFI_Handler` callbacks
- * (`XLA_FFI_CallFrame`, `72` bytes).
+ * (`XLA_FFI_CallFrame`, `64` bytes).
  */
 typedef struct XLA_FFI_CallFrame {
-  /** @brief Size of this struct (`72`). */
+  /** @brief Size of this struct (`64`). */
   size_t struct_size;
   /** @brief Optional chained `PJRT_Extension_Base*`. */
   PJRT_Extension_Base *extension_start;
@@ -3558,6 +3655,19 @@ libtpu_rs_inspect_register_allocation(const PJRT_LoadedExecutable *executable,
                                       char *out_buf, size_t buf_len);
 
 /**
+ * @brief Serializes the wire-compatible `xla.BufferAssignmentProto` for
+ * `executable` into `out_buf`
+ * (`libtpu_rs_executable_buffer_assignment_proto`).
+ * @param executable Pointer to `PJRT_LoadedExecutable`.
+ * @param out_buf Optional destination byte buffer.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return Full encoded byte length of `BufferAssignmentProto`, or `0` on
+ * invalid input.
+ */
+size_t libtpu_rs_executable_buffer_assignment_proto(
+    const PJRT_LoadedExecutable *executable, uint8_t *out_buf, size_t buf_len);
+
+/**
  * @brief Formats a canonical hardware chip configuration summary for the active
  * TPU generation (`libtpu_rs_query_chip_config_summary`).
  * @param out_buf Optional destination character buffer.
@@ -3583,6 +3693,148 @@ uint32_t libtpu_rs_compute_ici_route(uint32_t src_x, uint32_t src_y,
                                      uint32_t src_z, uint32_t dst_x,
                                      uint32_t dst_y, uint32_t dst_z,
                                      int32_t wrap_around);
+
+/**
+ * @brief Resolves a hierarchical `DeepSea` CSR path in the 13,261+ CSR catalog
+ * (`libtpu_rs_lookup_csr_by_path`).
+ * @param path Null-terminated hierarchical CSR path string.
+ * @return Physical BAR0 MMIO byte offset, or `UINT64_MAX` if not found.
+ */
+uint64_t libtpu_rs_lookup_csr_by_path(const char *path);
+
+/**
+ * @brief Resolves a physical BAR0 MMIO byte offset in the 13,261+ CSR catalog
+ * (`libtpu_rs_lookup_csr_by_offset`).
+ * @param byte_offset Physical BAR0 MMIO byte offset.
+ * @param out_buf Optional destination character buffer.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return UTF-8 byte length of the CSR register path, or `0` if not found.
+ */
+size_t libtpu_rs_lookup_csr_by_offset(uint64_t byte_offset, char *out_buf,
+                                      size_t buf_len);
+
+/**
+ * @brief Encodes a textual MLIR module into a standard upstream `ML\xefR`
+ * bytecode container and compiles it into `exec_out`
+ * (`libtpu_rs_compile_standard_mlir_bytecode`).
+ * @param client Pointer to `PJRT_Client`.
+ * @param mlir_source Null-terminated UTF-8 MLIR module text.
+ * @param exec_out Output pointer receiving `PJRT_LoadedExecutable*`.
+ * @return `LibTpuCStatus` indicating compilation success or failure.
+ */
+LibTpuCStatus
+libtpu_rs_compile_standard_mlir_bytecode(PJRT_Client *client,
+                                         const char *mlir_source,
+                                         PJRT_LoadedExecutable **exec_out);
+
+/**
+ * @brief Invokes one of the 19 `tensorflow.CoordinationService` RPC methods
+ * using 5-byte gRPC Length-Prefixed-Message framing
+ * (`libtpu_rs_coordinator_invoke_grpc_method`).
+ * @param coordinator Coordinator handle pointer.
+ * @param grpc_path Null-terminated HTTP/2 gRPC method path.
+ * @param req_frame Pointer to 5-byte gRPC-framed request message.
+ * @param req_len Byte length of `req_frame`.
+ * @param out_buf Optional destination byte buffer for the gRPC response frame.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return Byte length of the gRPC response frame, or `0` on error.
+ */
+size_t libtpu_rs_coordinator_invoke_grpc_method(
+    const void *coordinator, const char *grpc_path, const uint8_t *req_frame,
+    size_t req_len, uint8_t *out_buf, size_t buf_len);
+
+/**
+ * @brief Generates serialized `tensorflow.ProfileToolData` payload bytes for
+ * `tool_name` (`libtpu_rs_profiler_collect_tool_data`).
+ * @param tool_name Null-terminated tool name string.
+ * @param out_buf Optional destination byte buffer.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return Byte length of the tool data payload, or `0` if `tool_name` is null.
+ */
+size_t libtpu_rs_profiler_collect_tool_data(const char *tool_name,
+                                            uint8_t *out_buf, size_t buf_len);
+
+/**
+ * @brief Verifies all 293 embedded `protodesc_cold` descriptor catalog mappings
+ * (`libtpu_rs_verify_all_293_protodesc_catalog`).
+ * @param out_catalog_count Output pointer receiving the verified catalog entry
+ * count (`293`).
+ * @return `LibTpuCStatus` indicating verification status.
+ */
+LibTpuCStatus
+libtpu_rs_verify_all_293_protodesc_catalog(size_t *out_catalog_count);
+
+/**
+ * @brief Executes a compiled `PJRT_LoadedExecutable` on a dual-`TensorCore` +
+ * quad-`SparseCore` `MultiCoreChipVmState` (`libtpu_rs_multicore_vm_execute`).
+ * @param executable Pointer to `const PJRT_LoadedExecutable`.
+ * @param core0_in Pointer to `tc_0` input bytes.
+ * @param core0_len Byte length of `core0_in`.
+ * @param core1_in Pointer to `tc_1` input bytes.
+ * @param core1_len Byte length of `core1_in`.
+ * @param out_core0 Destination buffer receiving `tc_0` output bytes.
+ * @param max_out0 Capacity of `out_core0` in bytes.
+ * @param out_sparse_lookups Optional output pointer receiving completed
+ * `SparseCore` lookup count.
+ * @return `LibTpuCStatus` indicating execution status.
+ */
+LibTpuCStatus libtpu_rs_multicore_vm_execute(
+    const PJRT_LoadedExecutable *executable, const uint8_t *core0_in,
+    size_t core0_len, const uint8_t *core1_in, size_t core1_len,
+    uint8_t *out_core0, size_t max_out0, uint64_t *out_sparse_lookups);
+
+/**
+ * @brief Assembles a multi-line `DeepSea` LLO VLIW text listing into 64-byte
+ * `IMEM` binary words (`libtpu_assemble_llo_vliw`).
+ * @param listing Null-terminated UTF-8 `DeepSea` LLO VLIW assembly text.
+ * @param out_bytes Optional destination byte buffer (`NULL` to query size).
+ * @param max_len Capacity of `out_bytes` in bytes.
+ * @param out_len Output pointer receiving the assembled `IMEM` byte length.
+ * @return `LibTpuCStatus` indicating assembly success or failure.
+ */
+LibTpuCStatus libtpu_assemble_llo_vliw(const char *listing, uint8_t *out_bytes,
+                                       size_t max_len, size_t *out_len);
+
+/**
+ * @brief Disassembles 64-byte `IMEM` binary words into a canonical `DeepSea`
+ * LLO VLIW text listing (`libtpu_disassemble_llo_vliw`).
+ * @param imem_bytes Pointer to 64-byte-aligned `IMEM` bundle words.
+ * @param imem_len Byte length of `imem_bytes`.
+ * @param out_buf Optional destination character buffer.
+ * @param buf_len Capacity of `out_buf` in bytes.
+ * @return Full UTF-8 byte length of the disassembled listing, or `0` if empty.
+ */
+size_t libtpu_disassemble_llo_vliw(const uint8_t *imem_bytes, size_t imem_len,
+                                   char *out_buf, size_t buf_len);
+
+/**
+ * @brief Records a hardware execution step into a `TpuProfiler` handle
+ * (`libtpu_rs_profiler_record_hardware_step`).
+ * @param profiler Pointer to `TpuProfiler`.
+ * @param bundles_retired Number of 64-byte VLIW bundles retired.
+ * @param flops Floating-point operations executed.
+ * @param bytes_accessed Total HBM/VMEM bytes accessed.
+ * @param vmem_bytes Scoped VMEM bytes used by the step.
+ * @param dma_transfers Number of async DMA descriptors completed.
+ * @return `LibTpuCStatus` indicating recording success or failure.
+ */
+LibTpuCStatus libtpu_rs_profiler_record_hardware_step(
+    TpuProfiler *profiler, uint64_t bundles_retired, uint64_t flops,
+    uint64_t bytes_accessed, uint64_t vmem_bytes, uint64_t dma_transfers);
+
+/**
+ * @brief Dispatches a wire-encoded `HostCommandEnvelopeProto` on the TPU
+ * continuation queue (`libtpu_rs_service_host_command`).
+ * @param envelope_bytes Pointer to wire-encoded `HostCommandEnvelopeProto`
+ * bytes.
+ * @param envelope_len Byte length of `envelope_bytes`.
+ * @param out_ack_sync Output pointer receiving the acknowledged BAR0 `SyncFlag`
+ * value.
+ * @return `LibTpuCStatus` indicating continuation servicing status.
+ */
+LibTpuCStatus libtpu_rs_service_host_command(const uint8_t *envelope_bytes,
+                                             size_t envelope_len,
+                                             uint64_t *out_ack_sync);
 
 /** @cond INTERNAL */
 #if defined(__cplusplus)
@@ -3656,6 +3908,8 @@ static_assert(sizeof(PJRT_Communicator_Destroy_Args) == 24, "CommDel == 24");
 static_assert(sizeof(PJRT_Communicator_AllReduce_Args) == 64,
               "CommAllReduce == 64");
 static_assert(sizeof(PJRT_TpuTopology_SliceConfig) == 56, "SliceConfig == 56");
+static_assert(sizeof(PJRT_TpuTopology_MappingQuery_Args) == 48,
+              "TopoMapping == 48");
 static_assert(sizeof(PJRT_TpuTopology_ComputeSubsliceForDevices_Args) == 64,
               "ComputeSubslice == 64");
 static_assert(sizeof(XLA_FFI_Api_Version) == 24, "XLA_FFI_Api_Version == 24");

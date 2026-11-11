@@ -85,6 +85,10 @@ class DataType(enum.IntEnum):
         """Returns the canonical NumPy `__array_interface__` `typestr` for this `DataType`."""
         ...
 
+    def dlpack_type_code(self) -> int:
+        """Returns the DLPack `DLDataTypeCode` integer for this `DataType`."""
+        ...
+
 def get_library_path() -> str:
     """Returns the filesystem path to the compiled `libtpu` shared library."""
     ...
@@ -247,6 +251,10 @@ class TpuExecutable:
 
     def inspect_register_allocation(self) -> str:
         """Returns the physical register allocation and `VMEM` spill summary for this executable."""
+        ...
+
+    def buffer_assignment_proto(self) -> bytes:
+        """Returns the wire-encoded `xla.BufferAssignmentProto` for this executable."""
         ...
 
     def close(self) -> None:
@@ -706,5 +714,70 @@ def compute_ici_route(
         dst_y: Destination Y chip coordinate.
         dst_z: Destination Z chip coordinate.
         wrap_around: Whether twisted-torus wrap-around links are enabled.
+    """
+    ...
+
+def register_custom_call_target(target_name: str, handler_addr: int) -> None:
+    """Registers a custom `XLA_FFI_Handler` C function address under `target_name`.
+
+    Args:
+        target_name: Custom call target name (`stablehlo.custom_call @target_name`).
+        handler_addr: Non-zero function pointer address of an `XLA_FFI_Handler`.
+    """
+    ...
+
+def lookup_csr_by_path(path: str) -> int | None:
+    """Resolves a hierarchical `DeepSea` CSR path in the 13,261+ CSR catalog.
+
+    Args:
+        path: Hierarchical CSR register path (e.g., `"pxc_tc_0_tcs_core_state.PC"`).
+    """
+    ...
+
+def lookup_csr_by_offset(byte_offset: int) -> str | None:
+    """Resolves a physical BAR0 MMIO byte offset in the 13,261+ CSR catalog.
+
+    Args:
+        byte_offset: Physical BAR0 MMIO byte offset.
+    """
+    ...
+
+def collect_profiler_tool_data(tool_name: str = "trace_viewer.json") -> bytes:
+    """Collects serialized `tensorflow.ProfileToolData` bytes for `tool_name`.
+
+    Args:
+        tool_name: Tool artifact name (`"trace_viewer.json"`, `"input_pipeline.pb"`).
+    """
+    ...
+
+def verify_protodesc_293_catalog() -> int:
+    """Verifies all 293 embedded `protodesc_cold` descriptor catalog entries."""
+    ...
+
+def verify_protodesc_cold_293() -> int:
+    """Verifies all 293 embedded `protodesc_cold` descriptor catalog entries."""
+    ...
+
+def assemble_llo_vliw(listing: str) -> bytes:
+    """Assembles a multi-line `DeepSea` LLO VLIW text listing into 64-byte `IMEM` binary words.
+
+    Args:
+        listing: Multi-line `DeepSea` LLO VLIW assembly text.
+    """
+    ...
+
+def disassemble_llo_vliw(imem_bytes: bytes) -> str:
+    """Disassembles 64-byte `IMEM` binary words into a canonical `DeepSea` LLO VLIW listing.
+
+    Args:
+        imem_bytes: Raw 64-byte-aligned `IMEM` bundle words.
+    """
+    ...
+
+def service_host_command(envelope_bytes: bytes) -> int:
+    """Dispatches a wire-encoded `HostCommandEnvelopeProto` on the TPU continuation queue.
+
+    Args:
+        envelope_bytes: Wire-encoded `HostCommandEnvelopeProto` payload bytes.
     """
     ...

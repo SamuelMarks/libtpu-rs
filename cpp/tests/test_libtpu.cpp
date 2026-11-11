@@ -241,6 +241,19 @@ int main() {
   if (!read_st.is_ok() || host_out[0] != 11.0F || host_out[3] != 44.0F) {
     return 13;
   }
+  libtpu::Buffer span_buf;
+  const std::span<const int64_t> dims_span(dims, 1);
+  const std::span<const uint8_t> f0_span(
+      reinterpret_cast<const uint8_t *>(host_f0), sizeof(host_f0));
+  uint8_t span_out[sizeof(host_f0)] = {};
+  if (!client
+           .buffer_from_host(0, libtpu::DataType::F32, dims_span, f0_span,
+                             &span_buf)
+           .is_ok() ||
+      !span_buf.to_host(std::span<uint8_t>(span_out, sizeof(span_out)))
+           .is_ok()) {
+    return 130;
+  }
 
   // 6. Verify Profiler and Topology RAII wrappers
   static_assert(sizeof(PJRT_Api) == 1144, "PJRT_Api must be 1144 bytes");
@@ -442,7 +455,12 @@ int main() {
       !coll_comm.collective_permute(b0, &b1, 4).is_ok() ||
       coll_comm.to_string().empty() || !api_view.default_layout_allocated() ||
       api_view.create_raw_buffer_device_ptr(b0) == 0 ||
-      api_view.cross_host_send(9) == 0 || part_cfg.empty() ||
+      api_view.cross_host_send(9) == 0 ||
+      api_view.runtime_abi_version_proto_size() == 0 ||
+      api_view.executable_abi_version_proto_size() == 0 ||
+      api_view.abi_platform_id() == 0 ||
+      !api_view.executable_metadata_allocated() ||
+      !api_view.allocate_host_memory(256) || part_cfg.empty() ||
       emb_written != 4 || emb_read_cnt != 4 || emb_read[0] != 1.5F ||
       emb_engine.build_load_optimizer_hlo() == 0) {
     return 29;
@@ -501,8 +519,12 @@ int main() {
       exec_insp.generated_code_size_bytes() <= 0 ||
       exec_insp.set_and_query_compilation_env(1) == 0 ||
       shard_insp.parameter_sharding_count() == 0 ||
-      shard_insp.output_sharding_count() == 0 || tile_proto_schema.empty() ||
-      !bad_proto_schema.empty()) {
+      shard_insp.output_sharding_count() == 0 ||
+      !shard_insp.parameter_sharding_bytes(99).empty() ||
+      !shard_insp.output_sharding_bytes(99).empty() ||
+      shard_insp.parameter_sharding_bytes(0).size() > 64 ||
+      shard_insp.output_sharding_bytes(0).size() > 64 ||
+      tile_proto_schema.empty() || !bad_proto_schema.empty()) {
     return 31;
   }
 
@@ -529,19 +551,90 @@ int main() {
   const std::string reg_summary = libtpu::inspect_register_allocation(exec);
   const std::string bad_reg_summary =
       libtpu::inspect_register_allocation(null_exec);
-  const libtpu::Status ffi_ok =
-      libtpu::register_ffi_handler("cpp_ffi_custom_op", &test_ffi_handler);
+  const std::string ba_bytes = libtpu::executable_buffer_assignment_proto(exec);
+  const std::string bad_ba_bytes =
+      libtpu::executable_buffer_assignment_proto(null_exec);
+  const libtpu::Status ffi_ok = libtpu::FfiRegistry::register_handler(
+      "cpp_ffi_custom_op", &test_ffi_handler);
   const libtpu::Status ffi_bad =
-      libtpu::register_ffi_handler(nullptr, &test_ffi_handler);
+      libtpu::FfiRegistry::register_handler(nullptr, &test_ffi_handler);
   const std::string chip_cfg_summary = libtpu::query_chip_config_summary();
   const uint32_t wrap_hops = libtpu::compute_ici_route(0, 0, 0, 3, 0, 0, true);
   const uint32_t mesh_hops = libtpu::compute_ici_route(0, 0, 0, 3, 0, 0, false);
+  int32_t p_coords[3] = {-1, -1, -1};
+  int32_t sub_orig[3] = {-1, -1, -1};
+  const int32_t sub_devs[2] = {0, 1};
   if (llo_text.empty() || !bad_llo.empty() || cd_json.empty() ||
       !bad_cd_json.empty() || ss_json.empty() || !bad_ss_json.empty() ||
       cm_json.empty() || !bad_cm_json.empty() || reg_summary.empty() ||
-      !bad_reg_summary.empty() || !ffi_ok.is_ok() || ffi_bad.is_ok() ||
-      chip_cfg_summary.empty() || wrap_hops != 1 || mesh_hops != 3) {
+      !bad_reg_summary.empty() || ba_bytes.empty() || !bad_ba_bytes.empty() ||
+      exec_insp.buffer_assignment_size(exec) == 0 ||
+      exec_insp.buffer_assignment_size(null_exec) != 0 || !ffi_ok.is_ok() ||
+      ffi_bad.is_ok() || chip_cfg_summary.empty() || wrap_hops != 1 ||
+      mesh_hops != 3 || !topo.process_coord_from_id(0, p_coords).is_ok() ||
+      p_coords[0] != 0 || topo.chip_id_from_coord(1, 1, 0) == 0 ||
+      !topo.compute_subslice_for_devices(sub_devs, 2, sub_orig).is_ok() ||
+      sub_orig[0] != 0) {
     return 33;
+  }
+
+  const std::string grpc_empty_req("\0\0\0\0\0", 5);
+  const std::string grpc_resp = coord.invoke_grpc_method(
+      "/tensorflow.CoordinationService/RegisterTask", grpc_empty_req);
+  const std::string grpc_bad =
+      coord.invoke_grpc_method("UnknownMethod", grpc_empty_req);
+  const uint64_t csr_off =
+      libtpu::lookup_csr_by_path("tc_0.tcs_core_state.RUN_STATUS");
+  const uint64_t bad_csr_off = libtpu::lookup_csr_by_path("nonexistent.csr");
+  const std::string csr_name = libtpu::lookup_csr_by_offset(csr_off);
+  const std::string bad_csr_name = libtpu::lookup_csr_by_offset(0xDEADFFFFULL);
+  libtpu::LoadedExecutable std_bc_exec;
+  const libtpu::Status std_bc_st =
+      libtpu::compile_standard_mlir_bytecode(client, mlir_code, &std_bc_exec);
+  const std::string prof_td =
+      libtpu::collect_profiler_tool_data("trace_viewer.json");
+  const std::string bad_prof_td = libtpu::collect_profiler_tool_data(nullptr);
+  if (grpc_resp.empty() || !grpc_bad.empty() || csr_off == UINT64_MAX ||
+      bad_csr_off != UINT64_MAX || csr_name.empty() || !bad_csr_name.empty() ||
+      !std_bc_st.is_ok() || std_bc_exec.raw() == nullptr || prof_td.empty() ||
+      !bad_prof_td.empty()) {
+    return 34;
+  }
+
+  const size_t catalog_293_cnt = libtpu::verify_protodesc_293_catalog();
+  const float mc_in0[4] = {1.0F, 2.0F, 3.0F, 4.0F};
+  const float mc_in1[4] = {5.0F, 6.0F, 7.0F, 8.0F};
+  uint8_t mc_out0[16] = {0};
+  uint64_t sc_lookups = 0;
+  const libtpu::Status mc_ok = libtpu::execute_multicore_vm(
+      exec, reinterpret_cast<const uint8_t *>(mc_in0), sizeof(mc_in0),
+      reinterpret_cast<const uint8_t *>(mc_in1), sizeof(mc_in1), mc_out0,
+      sizeof(mc_out0), &sc_lookups);
+  const libtpu::Status mc_bad = libtpu::execute_multicore_vm(
+      null_exec, nullptr, 0, nullptr, 0, nullptr, 0, nullptr);
+  const std::string asm_imem = libtpu::assemble_llo_vliw(llo_text.c_str());
+  const std::string bad_asm_imem = libtpu::assemble_llo_vliw("invalid_llo");
+  const std::string dis_llo = libtpu::disassemble_llo_vliw(
+      reinterpret_cast<const uint8_t *>(asm_imem.data()), asm_imem.size());
+  const std::string bad_dis_llo = libtpu::disassemble_llo_vliw(nullptr, 0);
+  uint64_t ack_sync_val = 0;
+  const uint8_t host_cmd_pb[4] = {0x08, 0x01, 0x10, 0x05};
+  const libtpu::Status hc_ok = libtpu::service_host_command(
+      host_cmd_pb, sizeof(host_cmd_pb), &ack_sync_val);
+  const libtpu::Status hc_bad =
+      libtpu::service_host_command(nullptr, 0, nullptr);
+  if (catalog_293_cnt != 293 || !mc_ok.is_ok() || mc_bad.is_ok() ||
+      asm_imem.empty() || !bad_asm_imem.empty() || dis_llo.empty() ||
+      !bad_dis_llo.empty() || !hc_ok.is_ok() || ack_sync_val != 7 ||
+      hc_bad.is_ok()) {
+    return 35;
+  }
+
+  const std::string llo_sched_sum = libtpu::query_llo_schedule_summary(exec);
+  const std::string bad_llo_sched_sum =
+      libtpu::query_llo_schedule_summary(null_exec);
+  if (llo_sched_sum.empty() || !bad_llo_sched_sum.empty()) {
+    return 36;
   }
 
   return 0;

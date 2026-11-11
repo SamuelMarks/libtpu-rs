@@ -89,6 +89,7 @@ impl CompiledProgram {
     /// assigning physical `HBM` (`color = 0`) and `VMEM` (`color = 1`) allocations for all entry parameters,
     /// intermediate instruction bundles, and live-out results.
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn build_buffer_assignment_proto(&self) -> crate::proto::BufferAssignmentProto {
         let mut allocations = Vec::new();
         let mut next_idx: i64 = 0;
@@ -111,11 +112,33 @@ impl CompiledProgram {
                     buffer_allocation_index: next_idx,
                     element_type: shape.element_type.as_raw(),
                 }],
+                assigned_logical_buffers: vec![crate::proto::BufferAllocationAssignedProto {
+                    logical_buffer_id: next_idx,
+                    offset: 0,
+                    size,
+                }],
             });
             next_idx += 1;
         }
 
+        let liveness = self.compute_liveness_intervals();
         let vmem_size = self.memory_stats.temp_size_in_bytes.max(256);
+        let mut vmem_slices = vec![crate::proto::BufferAllocationSliceProto {
+            offset: 0,
+            size: vmem_size,
+            buffer_allocation_index: next_idx,
+            element_type: ElementType::F32.as_raw(),
+        }];
+        for iv in &liveness {
+            let slice_sz = i64::try_from(iv.size_bytes.max(256)).unwrap_or(256);
+            let slice_off = i64::try_from(iv.assigned_vmem_offset).unwrap_or(0);
+            vmem_slices.push(crate::proto::BufferAllocationSliceProto {
+                offset: slice_off,
+                size: slice_sz,
+                buffer_allocation_index: next_idx,
+                element_type: ElementType::F32.as_raw(),
+            });
+        }
         allocations.push(crate::proto::BufferAllocationProto {
             index: next_idx,
             size: vmem_size,
@@ -126,14 +149,35 @@ impl CompiledProgram {
             is_constant: false,
             maybe_live_out: false,
             color: 1,
-            assigned: vec![crate::proto::BufferAllocationSliceProto {
-                offset: 0,
-                size: vmem_size,
-                buffer_allocation_index: next_idx,
-                element_type: ElementType::F32.as_raw(),
-            }],
+            assigned: vmem_slices,
+            assigned_logical_buffers: Vec::new(),
         });
         next_idx += 1;
+
+        for bundle in &self.instruction_bundles {
+            if !bundle.attrs.constant_bytes.is_empty() {
+                let c_size = i64::try_from(bundle.attrs.constant_bytes.len().max(16)).unwrap_or(16);
+                allocations.push(crate::proto::BufferAllocationProto {
+                    index: next_idx,
+                    size: c_size,
+                    is_thread_local: false,
+                    is_tuple: false,
+                    is_entry_computation_parameter: false,
+                    parameter_number: 0,
+                    is_constant: true,
+                    maybe_live_out: false,
+                    color: 0,
+                    assigned: vec![crate::proto::BufferAllocationSliceProto {
+                        offset: 0,
+                        size: c_size,
+                        buffer_allocation_index: next_idx,
+                        element_type: ElementType::F32.as_raw(),
+                    }],
+                    assigned_logical_buffers: Vec::new(),
+                });
+                next_idx += 1;
+            }
+        }
 
         for out_shape in &self.output_shapes {
             let size = i64::try_from(out_shape.unpadded_byte_size().0.max(256)).unwrap_or(256);
@@ -153,12 +197,19 @@ impl CompiledProgram {
                     buffer_allocation_index: next_idx,
                     element_type: out_shape.element_type.as_raw(),
                 }],
+                assigned_logical_buffers: vec![crate::proto::BufferAllocationAssignedProto {
+                    logical_buffer_id: next_idx,
+                    offset: 0,
+                    size,
+                }],
             });
             next_idx += 1;
         }
 
         crate::proto::BufferAssignmentProto {
+            logical_buffers: Vec::new(),
             buffer_allocations: allocations,
+            heap_simulator_traces: Vec::new(),
         }
     }
 
@@ -186,6 +237,7 @@ impl CompiledProgram {
                     memory_space: 0,
                     element_size_in_bits: i64::try_from(s.element_type.bit_size()).unwrap_or(0),
                     dynamic_shape_metadata_prefix_bytes: 0,
+                    ..LayoutProto::default()
                 }),
                 is_dynamic_dimension: s.dynamic_dims.clone(),
             })
@@ -340,6 +392,16 @@ impl CompiledProgram {
                 size_bytes: imem_bytes,
             }],
             fingerprint: sha256_fingerprint_u64(self.fingerprint.as_bytes()),
+            smem_size_bytes: 1_048_576,
+            vmem_size_bytes: 16_777_216,
+            cmem_size_bytes: 0,
+            imem_size_bytes: i64::try_from(imem_bytes).unwrap_or(0),
+            stack_frame_size_bytes: 4096,
+            sync_flag_count: 512,
+            xla_compiler_version: String::from("libtpu-rs-0.0.52"),
+            llo_schedule_fingerprint: sha256_fingerprint_u64(self.name.as_bytes()),
+            predication_mode: 0,
+            bundle_compression_kind: 0,
             compilation_id: 1,
             scs_start_bundle: i64::from(has_sparse_core),
             tile_start_bundle: 0,
@@ -401,6 +463,41 @@ impl CompiledProgram {
             applied += 1;
         }
         applied
+    }
+
+    /// Encodes this [`CompiledProgram`] into a generation-specific VLIW bitstream
+    /// (`32B` for `V2`/`V3`, `40B` for `V4`/`V4Lite`, `52B` for `V5e`/`V5p`, `64B` for `V6e`/`V7x`),
+    /// applies all [`IsaProgramProto::relocations`] for `param_addrs` and `output_addrs` to the
+    /// bundle scalar immediate bitfields, and recomputes each bundle's CRC-8 parity digest so
+    /// [`super::vliw::TensorCoreVliwBundle::decode_generation_bitstream`] succeeds on the relocated bitstream.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target [`crate::types::TpuGeneration`].
+    /// * `param_addrs` - Live input buffer [`DeviceAddress`] handles.
+    /// * `output_addrs` - Live output buffer [`DeviceAddress`] handles.
+    #[must_use]
+    pub fn relocate_generation_bitstream(
+        &self,
+        generation: crate::types::TpuGeneration,
+        param_addrs: &[DeviceAddress],
+        output_addrs: &[DeviceAddress],
+    ) -> Vec<u8> {
+        let mut arch_imem = self.encode_architectural_imem();
+        let isa_proto = self.build_isa_program_proto();
+        let _ = Self::apply_isa_relocations(
+            &mut arch_imem,
+            &isa_proto.relocations,
+            param_addrs,
+            output_addrs,
+        );
+        let width = super::vliw::TensorCoreVliwBundle::generation_bundle_byte_width(generation);
+        let mut out = Vec::with_capacity(self.instruction_bundles.len() * width);
+        for chunk in arch_imem.chunks_exact(64) {
+            let bundle: super::vliw::TensorCoreVliwBundle = bytemuck::pod_read_unaligned(chunk);
+            out.extend_from_slice(&bundle.encode_generation_bitstream(generation));
+        }
+        out
     }
 
     /// Converts this [`CompiledProgram`] into a validated [`IsaProgramProto`].
@@ -468,6 +565,7 @@ impl CompiledProgram {
                 options: None,
             }),
             oom_during_compilation: false,
+            relocations: Vec::new(),
         }
     }
 
@@ -609,10 +707,23 @@ impl CompiledProgram {
             hbm_scratchpad_bytes: self.memory_stats.generated_code_size_in_bytes,
             core_program: Some(core_prog.clone()),
             sparse_core_program: Some(core_prog),
+            host_command_table: Vec::new(),
+            program_relocations: Vec::new(),
+            xdb_compiler_metadata: Some(self.build_compiler_metadata_proto()),
+        };
+        let hlo_mod = self.hlo_module_proto.clone();
+        let hlo_with_cfg = crate::proto::HloModuleProtoWithConfig {
+            hlo_module: Some(hlo_mod),
+            config: Some(crate::proto::HloModuleConfigProto {
+                replica_count: i64::try_from(self.num_replicas).unwrap_or(1),
+                num_partitions: i64::try_from(self.num_partitions).unwrap_or(1),
+                use_spmd_partitioning: self.num_partitions > 1,
+                ..crate::proto::HloModuleConfigProto::default()
+            }),
         };
         TpuExecutableProto {
             ds_executable: Some(ds_exec),
-            hlo_module_with_config: None,
+            hlo_module_with_config: Some(hlo_with_cfg),
             compile_options: CompileOptionsProto::decode(&self.compile_options_bytes).ok(),
             target_arguments: Some(target_args),
             legacy_executable: Some(self.to_executable_proto()),
@@ -699,6 +810,17 @@ impl CompiledProgram {
                 is_scatter_write: b.opcode == TpuOpCode::Scatter,
             })
             .collect();
+        let tec_bundles = u32::try_from(self.instruction_bundles.len().max(1)).unwrap_or(1);
+        let scs_stream = vec![
+            0x53,
+            0x43,
+            0x53,
+            u8::try_from(sc_version).unwrap_or(1),
+            u8::try_from(tec_bundles & 0xFF).unwrap_or(1),
+            u8::try_from((tec_bundles >> 8) & 0xFF).unwrap_or(0),
+            0x01,
+            0x00,
+        ];
         let sc_imem = self.encode_architectural_imem();
         crate::proto::BarnaCoreExecutableProto {
             executable_name: format!("{}_barnacore", self.name),
@@ -716,6 +838,9 @@ impl CompiledProgram {
                 spmem_scratchpad_bytes: 1024 * 16,
                 dma_descriptors,
                 optimizer_opcode: 0,
+                tec_bundle_count: tec_bundles,
+                scs_control_stream: scs_stream,
+                tile_spmem_size_bytes: 4096,
             }],
             table_hbm_total_bytes: 1024 * 64 * 4,
         }

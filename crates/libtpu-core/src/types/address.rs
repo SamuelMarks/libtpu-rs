@@ -4,6 +4,7 @@
 //! addresses, byte/granule/alignment sizes, `PCIe` Bus:Device.Function slots, and Linux VFIO/Gasket
 //! file descriptors and `ioctl` commands.
 
+use crate::error::{LibTpuError, LibTpuResult};
 use derive_more::{Add, Display, From, Into, Sub};
 
 /// On-device HBM or VMEM virtual memory address (`DeviceAddress`).
@@ -34,6 +35,32 @@ pub struct IovaAddress(pub u64);
 )]
 #[display("{_0:#x}")]
 pub struct VmemAddress(pub u32);
+
+impl VmemAddress {
+    /// Aligns `offset` upward to a 256-byte TPU VMEM granule boundary and validates that it fits within `capacity`.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - Requested VMEM byte offset.
+    /// * `capacity` - Total VMEM capacity in bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::OutOfDeviceMemory`] if the aligned offset exceeds `capacity`.
+    pub const fn new_aligned(offset: u64, capacity: u64) -> LibTpuResult<Self> {
+        let aligned = (offset.saturating_add(255)) & !255;
+        if aligned > capacity {
+            #[allow(clippy::cast_possible_truncation)]
+            return Err(LibTpuError::OutOfDeviceMemory {
+                requested: aligned as usize,
+                available: capacity as usize,
+                memory_kind: "vmem",
+            });
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(Self(aligned as u32))
+    }
+}
 
 /// On-chip Scalar Memory (SMEM) byte offset (`SmemAddress`).
 #[repr(transparent)]
@@ -104,6 +131,31 @@ pub type ImemBundlePc = BundlePc;
 )]
 #[display("{_0:#x}")]
 pub struct VmemByteOffset(pub u64);
+
+impl VmemByteOffset {
+    /// Aligns `offset` upward to a 256-byte TPU VMEM granule boundary and validates that it fits within `capacity`.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - Requested VMEM byte offset.
+    /// * `capacity` - Total VMEM capacity in bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::OutOfDeviceMemory`] if the aligned offset exceeds `capacity`.
+    pub const fn new_aligned(offset: u64, capacity: u64) -> LibTpuResult<Self> {
+        let aligned = (offset.saturating_add(255)) & !255;
+        if aligned > capacity {
+            #[allow(clippy::cast_possible_truncation)]
+            return Err(LibTpuError::OutOfDeviceMemory {
+                requested: aligned as usize,
+                available: capacity as usize,
+                memory_kind: "vmem",
+            });
+        }
+        Ok(Self(aligned))
+    }
+}
 
 /// 64-bit Scalar Memory (`SMEM`) byte offset (`SmemByteOffset`).
 #[repr(transparent)]
@@ -546,5 +598,13 @@ mod tests {
         let smask = SublaneMask::from(0xFF_u8) + SublaneMask(0) - SublaneMask(0);
         assert_eq!(u8::from(smask), 0xFF);
         assert_eq!(smask.to_string(), "0xff");
+
+        assert_eq!(VmemAddress::new_aligned(10, 1024), Ok(VmemAddress(256)));
+        assert!(VmemAddress::new_aligned(2048, 1024).is_err());
+        assert_eq!(
+            VmemByteOffset::new_aligned(300, 1024),
+            Ok(VmemByteOffset(512))
+        );
+        assert!(VmemByteOffset::new_aligned(2048, 1024).is_err());
     }
 }

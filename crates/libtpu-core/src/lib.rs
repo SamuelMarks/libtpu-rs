@@ -4,7 +4,7 @@
 //! (HAL) for both simulated and Linux VFIO/Gasket TPU devices, an HLO/`StableHLO` compiler and
 //! serializer, a complete PJRT state engine, and legacy `TfTpu` / `TpuDriver` / `LibtpuSdk` engines.
 
-#![cfg_attr(all(test, coverage_nightly), feature(coverage_attribute))]
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 pub mod compiler;
 pub mod config;

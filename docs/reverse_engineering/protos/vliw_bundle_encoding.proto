@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: asic_sw/deepsea/vliw_bundle_encoding.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package asic_sw.deepsea;
+
+message VliwBundleEncodingSpecProto {
+  string isa_family = 1;
+  uint32 bundle_byte_width = 2;
+  uint32 scalar_slots = 3;
+  uint32 vector_slots = 4;
+  uint32 matrix_slots = 5;
+  uint32 xlu_slots = 6;
+  uint32 dma_slots = 7;
+  bool supports_dual_word_imm_ext = 8;
+}

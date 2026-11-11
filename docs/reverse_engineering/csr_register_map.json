@@ -135,6 +135,106 @@
           "access": "RO"
         },
         {
+          "name": "pxc_tc_0_tc_main_status.MXU0_STATUS",
+          "offset": "0x0403b1d0",
+          "width_bits": 64,
+          "access": "RO"
+        },
+        {
+          "name": "pxc_tc_0_tc_main_status.XLU_STATUS",
+          "offset": "0x0403b1e0",
+          "width_bits": 64,
+          "access": "RO"
+        },
+        {
+          "name": "pxc_tc_1_tcs_core_state.RUN_STATUS",
+          "offset": "0x0413a018",
+          "width_bits": 64,
+          "access": "RO"
+        },
+        {
+          "name": "pxc_tc_1_tcs_core_state.PC",
+          "offset": "0x0413a058",
+          "width_bits": 64,
+          "access": "RW"
+        },
+        {
+          "name": "pxc_tc_1_tcs_core_state.PROGRAM_LOCATION",
+          "offset": "0x0413a0a0",
+          "width_bits": 64,
+          "access": "RW"
+        },
+        {
+          "name": "gasket_att.ATT_BASE",
+          "offset": "0x00020000",
+          "width_bits": 64,
+          "access": "RW"
+        },
+        {
+          "name": "gasket_att.EXTENDED_ATT_BASE",
+          "offset": "0x00030000",
+          "width_bits": 64,
+          "access": "RW"
+        },
+        {
+          "name": "global_chip_id.GLOBAL_CHIP_ID",
+          "offset": "0xa1067000",
+          "width_bits": 64,
+          "access": "RO"
+        }
+      ]
+    },
+    "V4Lite": {
+      "codename": "pufferfish_lite",
+      "chip_parts_archive": "pufferfish_chip_parts.binarypb",
+      "chip_config_archive": "pufferfish_chip_configs_default.binarypb",
+      "hardware_abi_version": 65537,
+      "completion_state_sync_flag_word_offset": 507,
+      "hbm_reserved_word_offset": 1073479680,
+      "registers": [
+        {
+          "name": "pxc_tc_0_tcs_core_state.RUN_STATUS",
+          "offset": "0x0403a018",
+          "width_bits": 64,
+          "access": "RO"
+        },
+        {
+          "name": "pxc_tc_0_tcs_core_state.PC",
+          "offset": "0x0403a058",
+          "width_bits": 64,
+          "access": "RW"
+        },
+        {
+          "name": "pxc_tc_0_tcs_core_state.PROGRAM_LOCATION",
+          "offset": "0x0403a0a0",
+          "width_bits": 64,
+          "access": "RW"
+        },
+        {
+          "name": "pxc_tc_0_tc_main_status.VWAIT_STATE",
+          "offset": "0x0403b1b8",
+          "width_bits": 64,
+          "access": "RO"
+        },
+        {
+          "name": "pxc_tc_0_tc_main_status.VWAIT_SYNC_FLAG_STATE",
+          "offset": "0x0403b1c0",
+          "width_bits": 64,
+          "access": "RO"
+        },
+        {
+          "name": "gasket_att.ATT_BASE",
+          "offset": "0x00020000",
+          "width_bits": 64,
+          "access": "RW"
+        },
+        {
+          "name": "gasket_att.EXTENDED_ATT_BASE",
+          "offset": "0x00030000",
+          "width_bits": 64,
+          "access": "RW"
+        },
+        {
           "name": "global_chip_id.GLOBAL_CHIP_ID",
           "offset": "0xa1067000",
           "width_bits": 64,

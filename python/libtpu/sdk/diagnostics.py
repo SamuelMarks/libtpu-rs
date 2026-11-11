@@ -925,8 +925,106 @@ def emit_proto_schema(full_message_name: str) -> str:
     return buf.value.decode("utf-8")
 
 
+def protodesc_cold_file_count() -> int:
+    """Queries the number of embedded `protodesc_cold` `.proto` descriptors (`293`).
+
+    Returns:
+        Verified catalog descriptor count (`293`).
+    """
+    from libtpu import verify_protodesc_293_catalog
+
+    return verify_protodesc_293_catalog()
+
+
+def invoke_coordination_grpc(
+    method_path: str,
+    payload: bytes,
+    compressed: bool = False,
+) -> bytes:
+    """Invokes a `tensorflow.CoordinationService` RPC method using 5-byte gRPC wire framing.
+
+    Args:
+        method_path: HTTP/2 gRPC method path (e.g., `"/tensorflow.CoordinationService/Barrier"`).
+        payload: Wire-encoded protobuf request message bytes.
+        compressed: Whether the 5-byte gRPC frame compressed flag is set (`1` vs `0`).
+
+    Returns:
+        5-byte gRPC-framed response message bytes.
+
+    Raises:
+        ValueError: If `method_path` is empty or the gRPC call fails.
+    """
+    import ctypes
+
+    from libtpu import _load_cdll
+
+    if not method_path:
+        raise ValueError("method_path must not be empty")
+    cdll = _load_cdll()
+    fn_create = cdll.libtpu_rs_coordinator_create
+    fn_create.argtypes = []
+    fn_create.restype = ctypes.c_void_p
+    fn_destroy = cdll.libtpu_rs_coordinator_destroy
+    fn_destroy.argtypes = [ctypes.c_void_p]
+    fn_destroy.restype = None
+    fn_invoke = cdll.libtpu_rs_coordinator_invoke_grpc_method
+    fn_invoke.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
+    fn_invoke.restype = ctypes.c_size_t
+
+    frame = bytes([1 if compressed else 0]) + len(payload).to_bytes(4, "big") + payload
+    coord = fn_create()
+    try:
+        c_path = method_path.encode("utf-8")
+        resp_len = int(fn_invoke(coord, c_path, frame, len(frame), None, 0))
+        if resp_len == 0:
+            raise ValueError(f"CoordinationService gRPC call failed for {method_path}")
+        out_buf = ctypes.create_string_buffer(resp_len)
+        fn_invoke(coord, c_path, frame, len(frame), out_buf, resp_len)
+        return out_buf.raw
+    finally:
+        fn_destroy(coord)
+
+
+def compute_torus_route_hops(
+    src_x: int,
+    src_y: int,
+    src_z: int,
+    dst_x: int,
+    dst_y: int,
+    dst_z: int,
+    wrap_around: bool = True,
+) -> int:
+    """Computes the shortest 3D Torus optical ICI hop count between two chip coordinates.
+
+    Args:
+        src_x: Source X chip coordinate.
+        src_y: Source Y chip coordinate.
+        src_z: Source Z chip coordinate.
+        dst_x: Destination X chip coordinate.
+        dst_y: Destination Y chip coordinate.
+        dst_z: Destination Z chip coordinate.
+        wrap_around: Whether twisted-torus wrap-around links are enabled.
+
+    Returns:
+        Shortest hop count along the 3D Torus mesh.
+    """
+    from libtpu import compute_ici_route
+
+    return compute_ici_route(src_x, src_y, src_z, dst_x, dst_y, dst_z, wrap_around)
+
+
 __all__: list[str] = [
+    "compute_torus_route_hops",
     "emit_proto_schema",
+    "invoke_coordination_grpc",
+    "protodesc_cold_file_count",
     "read_compiler_metadata",
     "read_core_dump",
     "read_stall_summaries",

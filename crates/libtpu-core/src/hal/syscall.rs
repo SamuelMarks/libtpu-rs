@@ -238,6 +238,37 @@ impl EmulatedKernelDriverBackend {
         EventFdHandle(efd)
     }
 
+    /// Signals a simulated Linux `eventfd` handle (`fd`) by adding `increment` to its BAR0
+    /// interrupt counter slot and returning the updated counter value.
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - Simulated [`FileDescriptor`] handle.
+    /// * `increment` - 64-bit increment value (`>= 1`).
+    #[must_use]
+    pub fn signal_eventfd(&self, fd: FileDescriptor, increment: u64) -> u64 {
+        let key = 0xE000_0000_u64.saturating_add(u64::try_from(fd.0.max(0)).unwrap_or(0));
+        let mut guard = self.bar0_registers.lock();
+        let next = guard
+            .get(&key)
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(increment.max(1));
+        guard.insert(key, next);
+        next
+    }
+
+    /// Reads the current 64-bit counter value for a simulated Linux `eventfd` handle (`fd`).
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - Simulated [`FileDescriptor`] handle.
+    #[must_use]
+    pub fn read_eventfd(&self, fd: FileDescriptor) -> u64 {
+        let key = 0xE000_0000_u64.saturating_add(u64::try_from(fd.0.max(0)).unwrap_or(0));
+        self.bar0_registers.lock().get(&key).copied().unwrap_or(0)
+    }
+
     /// Reads a 64-bit BAR0 CSR value directly from the register map.
     ///
     /// # Arguments
@@ -431,6 +462,17 @@ impl SyscallProvider for EmulatedKernelDriverBackend {
         Ok(0)
     }
 
+    fn ioctl_bytes(&self, fd: i32, request: u64, payload: &mut [u8]) -> LibTpuResult<i32> {
+        self.ioctl_device(fd, request, payload.len())?;
+        if request == super::VFIO_DEVICE_GET_REGION_INFO {
+            // Set flags = 0x7 (READ | WRITE | MMAP) at offset 4..8
+            for (dst, src) in payload.iter_mut().skip(4).take(4).zip(7_u32.to_le_bytes()) {
+                *dst = src;
+            }
+        }
+        Ok(0)
+    }
+
     fn close_device(&self, fd: i32) -> LibTpuResult<()> {
         if fd < 0 {
             return Err(LibTpuError::HardwareIoError {
@@ -589,6 +631,31 @@ impl PosixKernelDriverBackend {
         Ok(rc)
     }
 
+    /// Maps a `PCIe` BAR aperture of `size` bytes at `offset_bytes` into a [`MappedBarAperture`].
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - Open device file descriptor (or `-1` for anonymous mapping).
+    /// * `size` - Mapping byte size (must be `> 0`).
+    /// * `offset_bytes` - Page-aligned BAR region byte offset (e.g., from `VFIO_DEVICE_GET_REGION_INFO`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareIoError`] if `mmap` fails.
+    pub fn mmap_bar_aperture_at_offset(
+        &self,
+        fd: FileDescriptor,
+        size: ByteSize,
+        offset_bytes: u64,
+    ) -> LibTpuResult<MappedBarAperture> {
+        let base_vaddr = self.mmap_bar0_at_offset(fd.0, size.0, offset_bytes)?;
+        Ok(MappedBarAperture {
+            bar_index: 0,
+            base_vaddr,
+            size,
+        })
+    }
+
     /// Maps a `PCIe` BAR aperture of `size` bytes into a [`MappedBarAperture`].
     ///
     /// # Arguments
@@ -604,12 +671,7 @@ impl PosixKernelDriverBackend {
         fd: FileDescriptor,
         size: ByteSize,
     ) -> LibTpuResult<MappedBarAperture> {
-        let base_vaddr = self.mmap_bar0(fd.0, size.0)?;
-        Ok(MappedBarAperture {
-            bar_index: 0,
-            base_vaddr,
-            size,
-        })
+        self.mmap_bar_aperture_at_offset(fd, size, 0)
     }
 
     /// Unmaps a [`MappedBarAperture`] previously mapped with [`PosixKernelDriverBackend::mmap_bar_aperture`].
@@ -625,21 +687,30 @@ impl PosixKernelDriverBackend {
         self.munmap_bar0(aperture.base_vaddr, aperture.size.0)
     }
 
-    /// Maps a `PCIe` BAR0 region of `size` bytes on file descriptor `fd` (or anonymous memory when `fd == -1`).
+    /// Maps a `PCIe` BAR region of `size` bytes at `offset_bytes` on file descriptor `fd`
+    /// (or anonymous memory when `fd < 0`).
     ///
     /// # Arguments
     ///
     /// * `fd` - Open device file descriptor (or `-1` for anonymous mapping).
     /// * `size` - Mapping byte size (must be `> 0`).
+    /// * `offset_bytes` - Page-aligned BAR region byte offset.
     ///
     /// # Errors
     ///
     /// Returns [`LibTpuError::HardwareIoError`] if `mmap` returns `MAP_FAILED`.
-    pub fn mmap_bar0(&self, fd: i32, size: usize) -> LibTpuResult<usize> {
-        let flags = if fd < 0 {
-            posix_libc::MAP_PRIVATE | posix_libc::MAP_ANONYMOUS
+    pub fn mmap_bar0_at_offset(
+        &self,
+        fd: i32,
+        size: usize,
+        offset_bytes: u64,
+    ) -> LibTpuResult<usize> {
+        let (flags, mmap_off) = if fd < 0 {
+            (posix_libc::MAP_PRIVATE | posix_libc::MAP_ANONYMOUS, 0)
         } else {
-            posix_libc::MAP_SHARED
+            #[allow(clippy::cast_possible_wrap)]
+            let off = offset_bytes as libc::off_t;
+            (posix_libc::MAP_SHARED, off)
         };
         // SAFETY: `mmap` with `null_mut()` lets the kernel select a page-aligned virtual address.
         let ptr = unsafe {
@@ -649,7 +720,7 @@ impl PosixKernelDriverBackend {
                 posix_libc::PROT_READ | posix_libc::PROT_WRITE,
                 flags,
                 fd,
-                0,
+                mmap_off,
             )
         };
         if ptr as usize == usize::MAX {
@@ -661,6 +732,20 @@ impl PosixKernelDriverBackend {
             });
         }
         Ok(ptr as usize)
+    }
+
+    /// Maps a `PCIe` BAR0 region of `size` bytes on file descriptor `fd` (or anonymous memory when `fd == -1`).
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - Open device file descriptor (or `-1` for anonymous mapping).
+    /// * `size` - Mapping byte size (must be `> 0`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareIoError`] if `mmap` returns `MAP_FAILED`.
+    pub fn mmap_bar0(&self, fd: i32, size: usize) -> LibTpuResult<usize> {
+        self.mmap_bar0_at_offset(fd, size, 0)
     }
 
     /// Unmaps a `PCIe` BAR0 region previously mapped with [`PosixKernelDriverBackend::mmap_bar0`].
@@ -778,6 +863,36 @@ impl PosixKernelDriverBackend {
         Ok(())
     }
 
+    /// Reads an 8-byte little-endian interrupt counter value from `read_fd` without blocking
+    /// when `read_fd` has already been signaled.
+    ///
+    /// # Arguments
+    ///
+    /// * `read_fd` - Read end [`EventFdHandle`] of an event descriptor or `eventfd`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EventFdError`] if `libc::read` does not return 8 bytes.
+    pub fn read_eventfd(&self, read_fd: EventFdHandle) -> LibTpuResult<u64> {
+        let mut buf = [0_u8; 8];
+        // SAFETY: `buf` is a valid 8-byte mutable buffer on the stack.
+        let n = unsafe {
+            posix_libc::read(
+                read_fd.0,
+                buf.as_mut_ptr().cast::<std::ffi::c_void>(),
+                buf.len(),
+            )
+        };
+        if n != 8 {
+            return Err(LibTpuError::EventFdError {
+                operation: "read",
+                errno: 5,
+                message: format!("Short read ({n} bytes) on interrupt eventfd fd={read_fd}"),
+            });
+        }
+        Ok(u64::from_le_bytes(buf))
+    }
+
     /// Polls `read_fd` for up to `timeout_ms` milliseconds using `libc::poll` and reads the 8-byte
     /// interrupt completion counter when signaled.
     ///
@@ -808,28 +923,21 @@ impl PosixKernelDriverBackend {
                 message: format!("Interrupt eventfd poll timed out or failed on fd={read_fd}"),
             });
         }
-        let mut buf = [0_u8; 8];
-        // SAFETY: `buf` is a valid 8-byte mutable buffer on the stack.
-        let n = unsafe {
-            posix_libc::read(
-                read_fd.0,
-                buf.as_mut_ptr().cast::<std::ffi::c_void>(),
-                buf.len(),
-            )
-        };
-        if n != 8 {
-            return Err(LibTpuError::EventFdError {
-                operation: "read",
-                errno: 5,
-                message: format!("Short read ({n} bytes) on interrupt eventfd fd={read_fd}"),
-            });
-        }
-        Ok(u64::from_le_bytes(buf))
+        self.read_eventfd(read_fd)
     }
 
-    /// Allocates a single OS-backed event notification descriptor (`eventfd` / pipe read end).
+    /// Allocates a single OS-backed event notification descriptor (`SYS_eventfd2` on Linux,
+    /// or pipe read end on macOS/BSD).
     #[must_use]
     pub fn create_eventfd(&self) -> EventFdHandle {
+        #[cfg(target_os = "linux")]
+        {
+            // SAFETY: `libc::eventfd` with `EFD_NONBLOCK | EFD_CLOEXEC` creates a valid kernel eventfd.
+            let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+            if fd >= 0 {
+                return EventFdHandle(fd);
+            }
+        }
         let mut fds = [0_i32; 2];
         // SAFETY: `fds` points to a valid 2-element `c_int` array.
         let _ = unsafe { posix_libc::pipe(fds.as_mut_ptr()) };

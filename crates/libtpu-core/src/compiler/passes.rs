@@ -84,6 +84,139 @@ impl ParsedShardingSpec {
             layout: global_shape.layout.clone(),
         }
     }
+
+    /// Converts this [`ParsedShardingSpec`] into a wire-compatible [`crate::proto::OpShardingProto`].
+    #[must_use]
+    pub fn to_op_sharding_proto(&self) -> crate::proto::OpShardingProto {
+        if self.is_replicated {
+            return crate::proto::OpShardingProto::default();
+        }
+        let tile_dims: Vec<i64> = self
+            .tile_factors
+            .iter()
+            .map(|&f| i64::try_from(f.max(1)).unwrap_or(1))
+            .collect();
+        let total_devices: i64 = tile_dims
+            .iter()
+            .fold(1_i64, |acc, &d| acc.saturating_mul(d.max(1)));
+        let devices: Vec<i64> = (0..total_devices).collect();
+        crate::proto::OpShardingProto {
+            sharding_type: 3,
+            tile_assignment_dimensions: tile_dims,
+            tile_assignment_devices: devices,
+            ..crate::proto::OpShardingProto::default()
+        }
+    }
+
+    /// Converts this [`ParsedShardingSpec`] into a wire-compatible `OpenXLA` Shardy
+    /// [`crate::proto::ShardyTensorShardingProto`] with explicit `dim_shardings`, `replicated_axes`,
+    /// and `unreduced_axes`.
+    ///
+    /// # Arguments
+    ///
+    /// * `mesh_name` - Symbolic Shardy mesh name (e.g., `"mesh"`).
+    #[must_use]
+    pub fn to_shardy_tensor_sharding_proto(
+        &self,
+        mesh_name: &str,
+    ) -> crate::proto::ShardyTensorShardingProto {
+        let lower = self.canonical_key.to_ascii_lowercase();
+        let is_closed = lower.contains("closed") || lower.contains("manual");
+        let has_unreduced = lower.contains("unreduced");
+        let dim_shardings: Vec<crate::proto::ShardyDimensionShardingProto> = self
+            .tile_factors
+            .iter()
+            .enumerate()
+            .map(|(idx, &factor)| {
+                let axes = if factor > 1 {
+                    vec![crate::proto::ShardyAxisRefProto {
+                        name: format!("axis_{idx}"),
+                        sub_axis_info: None,
+                    }]
+                } else {
+                    Vec::new()
+                };
+                crate::proto::ShardyDimensionShardingProto {
+                    axes,
+                    is_closed,
+                    priority: i64::try_from(idx).unwrap_or(0),
+                }
+            })
+            .collect();
+        let replicated_axes = if self.is_replicated {
+            vec![crate::proto::ShardyAxisRefProto {
+                name: String::from("data"),
+                sub_axis_info: None,
+            }]
+        } else {
+            Vec::new()
+        };
+        let unreduced_axes = if has_unreduced {
+            vec![crate::proto::ShardyAxisRefProto {
+                name: String::from("model"),
+                sub_axis_info: None,
+            }]
+        } else {
+            Vec::new()
+        };
+        crate::proto::ShardyTensorShardingProto {
+            mesh_name: String::from(mesh_name),
+            dim_shardings,
+            replicated_axes,
+            unreduced_axes,
+        }
+    }
+
+    /// Reconstructs a [`ParsedShardingSpec`] from a wire-compatible
+    /// [`crate::proto::ShardyTensorShardingProto`] and [`crate::proto::ShardyMeshProto`].
+    ///
+    /// # Arguments
+    ///
+    /// * `sharding` - Shardy tensor sharding protobuf descriptor.
+    /// * `mesh` - Shardy mesh protobuf descriptor defining axis sizes.
+    #[must_use]
+    pub fn from_shardy_tensor_sharding_proto(
+        sharding: &crate::proto::ShardyTensorShardingProto,
+        mesh: &crate::proto::ShardyMeshProto,
+    ) -> Self {
+        let axis_sizes: std::collections::BTreeMap<&str, usize> = mesh
+            .axes
+            .iter()
+            .map(|a| (a.name.as_str(), usize::try_from(a.size.max(1)).unwrap_or(1)))
+            .collect();
+        let mut tile_factors = Vec::with_capacity(sharding.dim_shardings.len());
+        for dim_sh in &sharding.dim_shardings {
+            let mut factor = 1_usize;
+            for ax in &dim_sh.axes {
+                let sz = ax.sub_axis_info.as_ref().map_or_else(
+                    || axis_sizes.get(ax.name.as_str()).copied().unwrap_or(2),
+                    |sub| usize::try_from(sub.size.max(1)).unwrap_or(1),
+                );
+                factor = factor.saturating_mul(sz);
+            }
+            tile_factors.push(factor);
+        }
+        let is_replicated =
+            tile_factors.iter().all(|&f| f <= 1) && sharding.unreduced_axes.is_empty();
+        let unreduced_suffix = if sharding.unreduced_axes.is_empty() {
+            ""
+        } else {
+            ", unreduced"
+        };
+        let canonical_key = if is_replicated {
+            String::from("replicated")
+        } else {
+            format!(
+                "#sdy.sharding<@{}, {:?}{unreduced_suffix}>",
+                sharding.mesh_name, tile_factors
+            )
+        };
+        Self {
+            is_replicated,
+            tile_factors,
+            canonical_key,
+        }
+    }
 }
 /// Strongly-typed Common Subexpression Elimination (`CSE`) equivalence key.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,6 +275,48 @@ impl LearnedCostModelEvaluator {
         }
     }
 
+    /// Evaluates the embedded two-layer `ReLU(W1 * x + b1) * W2 + b2` learned cost model MLP
+    /// over normalized `[log10_flops, log10_transcendentals, log10_bytes, arithmetic_intensity]` features.
+    ///
+    /// # Arguments
+    ///
+    /// * `flops` - Total floating-point operations.
+    /// * `transcendentals` - Total transcendental (`EUP`/`XLU`) operations.
+    /// * `bytes` - Total HBM/VMEM bytes accessed.
+    #[must_use]
+    pub fn evaluate_mlp_neural_penalty(&self, flops: f64, transcendentals: f64, bytes: f64) -> f64 {
+        if !self.enabled {
+            return 1.0;
+        }
+        let x0 = (flops.max(1.0).log10() / 12.0).clamp(0.0, 2.0);
+        let x1 = (transcendentals.max(1.0).log10() / 9.0).clamp(0.0, 2.0);
+        let x2 = (bytes.max(1.0).log10() / 10.0).clamp(0.0, 2.0);
+        let x3 = ((flops / bytes.max(1.0)).max(1.0).log10() / 4.0).clamp(0.0, 2.0);
+        let w1: [[f64; 4]; 4] = [
+            [0.35, 0.15, 0.25, -0.10],
+            [0.10, 0.45, 0.20, 0.05],
+            [0.20, 0.10, 0.40, -0.15],
+            [-0.05, 0.25, 0.15, 0.30],
+        ];
+        let b1: [f64; 4] = [0.05, 0.02, 0.04, 0.01];
+        let w2: [f64; 4] = [0.08, 0.06, 0.07, 0.04];
+        let b2 = 1.0_f64;
+        let features = [x0, x1, x2, x3];
+        let mut out = b2;
+        for (h_idx, row) in w1.iter().enumerate() {
+            let mut pre = b1.get(h_idx).copied().unwrap_or(0.0);
+            for (f_idx, &w) in row.iter().enumerate() {
+                let x = features.get(f_idx).copied().unwrap_or(0.0);
+                pre = f64::mul_add(w, x, pre);
+            }
+            let relu = pre.max(0.0);
+            let w_out = w2.get(h_idx).copied().unwrap_or(0.0);
+            out = f64::mul_add(relu, w_out, out);
+        }
+        let blend = (1.0 - self.confidence_threshold).clamp(0.0, 1.0);
+        f64::mul_add(out - 1.0, blend.mul_add(-0.5, 1.0), 1.0).clamp(1.0, 2.5)
+    }
+
     /// Evaluates the roofline [`CostAnalysis`] and returns a dictionary of `PJRT_NamedValue`-compatible
     /// metrics (`"flops"`, `"transcendentals"`, `"bytes_accessed"`, `"optimal_seconds"`, `"utilization0"`, `"vmem_bytes"`).
     ///
@@ -174,8 +349,9 @@ impl LearnedCostModelEvaluator {
         };
         let compute_sec = f64::mul_add(trans, 4.0, flops) / peak_tflops;
         let mem_sec = bytes / hbm_bw;
+        let mlp_multiplier = self.evaluate_mlp_neural_penalty(flops, trans, bytes);
         let factor = if self.enabled {
-            (1.0 - self.confidence_threshold).mul_add(0.1, 1.0)
+            (1.0 - self.confidence_threshold).mul_add(0.1, 1.0) * mlp_multiplier
         } else {
             1.0
         };
@@ -186,6 +362,7 @@ impl LearnedCostModelEvaluator {
         dict.insert(String::from("transcendentals"), trans);
         dict.insert(String::from("bytes_accessed"), bytes);
         dict.insert(String::from("optimal_seconds"), optimal_sec);
+        dict.insert(String::from("neural_cost_multiplier"), mlp_multiplier);
         dict.insert(String::from("compute_bound_ratio"), compute_sec / total_sec);
         dict.insert(String::from("memory_bound_ratio"), mem_sec / total_sec);
         #[allow(clippy::cast_precision_loss)]
@@ -300,6 +477,164 @@ pub struct SpillAction {
     pub pc_offset: u32,
     /// True if this action is a `VMEM -> VREG` reload, false if `VREG -> VMEM` spill store.
     pub is_reload: bool,
+}
+
+/// 2D spacetime rectangle placement assigned by [`AlternateMemoryBestFitHeap`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VmemRectanglePlacement {
+    /// Logical SSA register slot index (`VirtualSlotId`).
+    pub slot_index: usize,
+    /// Inclusive start program counter (`first_def_pc`).
+    pub first_pc: u32,
+    /// Inclusive end program counter (`last_use_pc`).
+    pub last_pc: u32,
+    /// 256-byte-aligned byte size of the buffer.
+    pub size_bytes: u64,
+    /// Assigned byte offset in `VMEM` (`memory_space = 1`), or `None` if spilled to `HBM` (`memory_space = 0`).
+    pub vmem_offset: Option<u64>,
+    /// Assigned byte offset in `HBM` (`memory_space = 0`) when spilled.
+    pub hbm_spill_offset: Option<u64>,
+}
+
+/// Complete allocation report produced by [`AlternateMemoryBestFitHeap`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlternateMemoryHeapReport {
+    /// Configured `VMEM` capacity limit in bytes.
+    pub vmem_limit_bytes: u64,
+    /// Peak `VMEM` byte offset reached across all placed 2D rectangles.
+    pub peak_vmem_bytes: u64,
+    /// Total bytes spilled to `HBM` (`memory_space = 0`).
+    pub spilled_hbm_bytes: u64,
+    /// Per-slot 2D spacetime placement records.
+    pub placements: Vec<VmemRectanglePlacement>,
+    /// Ordered [`crate::proto::HeapSimulatorTraceEventProto`] events (`ALLOC = 0`, `FREE = 1`, `SHARE_WITH = 2`).
+    pub trace_events: Vec<crate::proto::HeapSimulatorTraceEventProto>,
+}
+
+/// 2D spacetime Best-Fit Heap Allocator (`AlternateMemoryBestFitHeap`, modeling `OpenXLA`'s
+/// `xla/service/memory_space_assignment/best_fit_repacker.cc`).
+///
+/// Treats each tensor live range as a 2D rectangle `[first_def_pc..=last_use_pc] x [vmem_offset..vmem_offset + size_bytes]`
+/// aligned to `256`-byte TPU VMEM granules, re-using `VMEM` offsets across non-overlapping temporal live intervals
+/// and recording `SHARE_WITH` events in [`crate::proto::HeapSimulatorTraceProto`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlternateMemoryBestFitHeap {
+    /// Maximum `VMEM` scratchpad capacity in bytes.
+    pub vmem_limit_bytes: u64,
+}
+
+impl AlternateMemoryBestFitHeap {
+    /// Creates a new [`AlternateMemoryBestFitHeap`] with the given `vmem_limit_bytes`.
+    ///
+    /// # Arguments
+    ///
+    /// * `vmem_limit_bytes` - Maximum `VMEM` capacity in bytes (aligned upward to 256 bytes).
+    #[must_use]
+    pub const fn new(vmem_limit_bytes: u64) -> Self {
+        let aligned = (vmem_limit_bytes.saturating_add(255)) & !255;
+        Self {
+            vmem_limit_bytes: if aligned < 256 { 256 } else { aligned },
+        }
+    }
+
+    /// Packs `intervals` into `self.vmem_limit_bytes` using 2D spacetime best-fit strip packing.
+    ///
+    /// # Arguments
+    ///
+    /// * `intervals` - Slice of [`RegisterLivenessInterval`]s sorted by start PC.
+    #[must_use]
+    #[allow(clippy::indexing_slicing)]
+    pub fn allocate(&self, intervals: &[RegisterLivenessInterval]) -> AlternateMemoryHeapReport {
+        let mut order: Vec<usize> = (0..intervals.len()).collect();
+        order.sort_by(|&a, &b| {
+            let sz_a = intervals.get(a).map_or(0, |iv| iv.size_bytes);
+            let sz_b = intervals.get(b).map_or(0, |iv| iv.size_bytes);
+            sz_b.cmp(&sz_a).then_with(|| a.cmp(&b))
+        });
+
+        let mut placements: Vec<VmemRectanglePlacement> = Vec::with_capacity(intervals.len());
+        let mut peak_vmem_bytes = 0_u64;
+        let mut spilled_hbm_bytes = 0_u64;
+
+        for &idx in &order {
+            let iv = &intervals[idx];
+            let size = ((iv.size_bytes.max(256) as u64).saturating_add(255)) & !255;
+            let mut overlapping: Vec<(u64, u64)> = placements
+                .iter()
+                .filter(|p| p.first_pc.max(iv.first_def_pc) <= p.last_pc.min(iv.last_use_pc))
+                .filter_map(|p| {
+                    p.vmem_offset
+                        .map(|off| (off, off.saturating_add(p.size_bytes)))
+                })
+                .collect();
+            overlapping.sort_by_key(|&(start, _)| start);
+
+            let mut cand_off = 0_u64;
+            for (occ_start, occ_end) in overlapping {
+                if cand_off.saturating_add(size) <= occ_start {
+                    break;
+                }
+                cand_off = cand_off.max(occ_end);
+            }
+
+            let vmem_offset = (cand_off.saturating_add(size) <= self.vmem_limit_bytes).then(|| {
+                peak_vmem_bytes = peak_vmem_bytes.max(cand_off.saturating_add(size));
+                cand_off
+            });
+            let hbm_spill_offset = vmem_offset.is_none().then(|| {
+                let spill_off = spilled_hbm_bytes;
+                spilled_hbm_bytes = spilled_hbm_bytes.saturating_add(size);
+                spill_off
+            });
+            placements.push(VmemRectanglePlacement {
+                slot_index: iv.slot_index,
+                first_pc: iv.first_def_pc,
+                last_pc: iv.last_use_pc,
+                size_bytes: size,
+                vmem_offset,
+                hbm_spill_offset,
+            });
+        }
+
+        placements.sort_by_key(|p| (p.first_pc, p.slot_index));
+        let mut trace_events = Vec::with_capacity(placements.len() * 2);
+        let mut offset_owner: std::collections::BTreeMap<u64, i64> =
+            std::collections::BTreeMap::new();
+        for p in &placements {
+            let buf_id = i64::try_from(p.slot_index).unwrap_or(0);
+            let (kind, canon_id) = p.vmem_offset.map_or((0, 0), |v_off| {
+                offset_owner.get(&v_off).copied().map_or_else(
+                    || {
+                        offset_owner.insert(v_off, buf_id);
+                        (0, 0)
+                    },
+                    |cid| (2, cid),
+                )
+            });
+            trace_events.push(crate::proto::HeapSimulatorTraceEventProto {
+                kind,
+                buffer_id: buf_id,
+                computation_name: String::from("main"),
+                instruction_name: format!("slot_{}", p.slot_index),
+                share_with_canonical_id: canon_id,
+            });
+            trace_events.push(crate::proto::HeapSimulatorTraceEventProto {
+                kind: 1,
+                buffer_id: buf_id,
+                computation_name: String::from("main"),
+                instruction_name: format!("slot_{}_end_pc_{}", p.slot_index, p.last_pc),
+                share_with_canonical_id: 0,
+            });
+        }
+
+        AlternateMemoryHeapReport {
+            vmem_limit_bytes: self.vmem_limit_bytes,
+            peak_vmem_bytes: peak_vmem_bytes.max(256),
+            spilled_hbm_bytes,
+            placements,
+            trace_events,
+        }
+    }
 }
 
 /// Complete physical register assignment and `VMEM` spill report produced by [`LinearScanRegisterAllocator`].
@@ -444,6 +779,109 @@ impl LinearScanRegisterAllocator {
             spill_actions,
             total_spill_vmem_bytes: next_spill_off.saturating_sub(base_spill_vmem_offset),
         }
+    }
+}
+
+impl LinearScanAllocationReport {
+    /// Converts this [`LinearScanAllocationReport`] and `intervals` into a wire-compatible
+    /// [`crate::proto::LloRegisterAllocationProto`] (`platforms_deepsea.jellyfish.llo.LloRegisterAllocationProto`).
+    ///
+    /// # Arguments
+    ///
+    /// * `intervals` - Liveness intervals from [`CompiledProgram::compute_liveness_intervals`].
+    #[must_use]
+    pub fn to_llo_register_allocation_proto(
+        &self,
+        intervals: &[RegisterLivenessInterval],
+    ) -> crate::proto::LloRegisterAllocationProto {
+        let mut live_intervals = Vec::with_capacity(intervals.len());
+        for iv in intervals {
+            let phys = u32::from(self.slot_to_vreg.get(&iv.slot_index).copied().unwrap_or(0));
+            let is_spilled = self
+                .spill_actions
+                .iter()
+                .any(|s| s.slot_index == iv.slot_index);
+            live_intervals.push(crate::proto::LloLiveIntervalProto {
+                virtual_reg_id: u32::try_from(iv.slot_index).unwrap_or(0),
+                physical_reg_id: phys,
+                start_pc: iv.first_def_pc,
+                end_pc: iv.last_use_pc,
+                is_spilled,
+            });
+        }
+        let mut spill_slots = Vec::new();
+        for store in self.spill_actions.iter().filter(|a| !a.is_reload) {
+            spill_slots.push(crate::proto::LloSpillSlotProto {
+                virtual_reg_id: u32::try_from(store.slot_index).unwrap_or(0),
+                vmem_spill_offset_bytes: store.spill_vmem_offset,
+                spill_bundle_pc: store.pc_offset,
+                reload_bundle_pc: store.pc_offset.saturating_add(1),
+            });
+        }
+        crate::proto::LloRegisterAllocationProto {
+            max_vregs_used: u32::try_from(self.slot_to_vreg.len()).unwrap_or(0),
+            max_sregs_used: u32::try_from(self.slot_to_sreg.len()).unwrap_or(0),
+            max_pregs_used: 1,
+            live_intervals,
+            spill_slots,
+        }
+    }
+
+    /// Splices `D0` `VMEM` spill store (`dma_opcode = 2`) and reload (`dma_opcode = 1`)
+    /// [`crate::compiler::TensorCoreVliwBundle`]s into `bundles` at the exact program counters
+    /// recorded in `self.spill_actions`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bundles` - Architectural VLIW instruction stream to augment with spill/reload bundles.
+    #[must_use]
+    pub fn splice_spill_bundles(
+        &self,
+        bundles: &[TensorCoreVliwBundle],
+    ) -> Vec<TensorCoreVliwBundle> {
+        if self.spill_actions.is_empty() {
+            return bundles.to_vec();
+        }
+        let mut out = Vec::with_capacity(bundles.len() + self.spill_actions.len());
+        for (idx, b) in bundles.iter().enumerate() {
+            let pc = u32::try_from(idx).unwrap_or(0);
+            for act in self
+                .spill_actions
+                .iter()
+                .filter(|a| !a.is_reload && a.pc_offset == pc)
+            {
+                let mut spill_b = *b;
+                spill_b.header.bundle_flags |= 1 << 3;
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    spill_b.scalar_slot.imm32 = act.spill_vmem_offset as u32;
+                }
+                spill_b.vector_slot.dst_vreg = u32::from(act.physical_vreg);
+                spill_b.dma_slot.dma_opcode = 2;
+                spill_b.dma_slot.src_space = 1;
+                spill_b.dma_slot.dst_space = 1;
+                out.push(spill_b);
+            }
+            out.push(*b);
+            for act in self
+                .spill_actions
+                .iter()
+                .filter(|a| a.is_reload && a.pc_offset == pc)
+            {
+                let mut reload_b = *b;
+                reload_b.header.bundle_flags |= 1 << 3;
+                #[allow(clippy::cast_possible_truncation)]
+                {
+                    reload_b.scalar_slot.imm32 = act.spill_vmem_offset as u32;
+                }
+                reload_b.vector_slot.dst_vreg = u32::from(act.physical_vreg);
+                reload_b.dma_slot.dma_opcode = 1;
+                reload_b.dma_slot.src_space = 1;
+                reload_b.dma_slot.dst_space = 1;
+                out.push(reload_b);
+            }
+        }
+        out
     }
 }
 
@@ -946,6 +1384,35 @@ impl CompiledProgram {
                     .unwrap_or_default();
             }
         }
+        self.parameter_shardings = (0..self.parameter_shapes.len())
+            .map(|p_idx| {
+                let raw = slot_sharding
+                    .get(&p_idx)
+                    .map_or(self.mosaic_metadata.sharding.as_str(), String::as_str);
+                ParsedShardingSpec::from_str_with_partitions(raw, self.num_partitions)
+                    .to_op_sharding_proto()
+            })
+            .collect();
+        self.output_shardings = self
+            .output_slots
+            .iter()
+            .take(self.output_shapes.len())
+            .map(|&out_slot| {
+                let raw = self
+                    .instruction_bundles
+                    .iter()
+                    .find(|b| b.output_slot == out_slot && !b.attrs.sharding_spec.is_empty())
+                    .map_or(self.mosaic_metadata.sharding.as_str(), |b| {
+                        b.attrs.sharding_spec.as_str()
+                    });
+                ParsedShardingSpec::from_str_with_partitions(raw, self.num_partitions)
+                    .to_op_sharding_proto()
+            })
+            .collect();
+        self.output_shardings.resize(
+            self.output_shapes.len(),
+            crate::proto::OpShardingProto::default(),
+        );
     }
 
     /// Pass 3b (`spmd_partitioning`): Normalizes SPMD replica/partition counts, partitions local
@@ -999,6 +1466,8 @@ impl CompiledProgram {
                 bundle.opcode,
                 TpuOpCode::DotGeneralF32 | TpuOpCode::Convolution
             );
+            let has_contracting_axis = !bundle.attrs.dot_lhs_contracting_dims.is_empty()
+                || !bundle.attrs.dot_rhs_contracting_dims.is_empty();
             let out_slot = bundle.output_slot;
             let out_shape = bundle.attrs.output_shape.clone();
             if !sharding.is_empty() {
@@ -1008,7 +1477,7 @@ impl CompiledProgram {
             bundle.pc_offset = pc_cur;
             updated.push(bundle);
 
-            if is_contraction && !sharding.is_empty() {
+            if is_contraction && (!sharding.is_empty() || has_contracting_axis) {
                 let coll_op = if sharding.contains("reduce_scatter") {
                     TpuOpCode::ReduceScatter
                 } else if sharding.contains("all_gather") {
@@ -1037,7 +1506,8 @@ impl CompiledProgram {
         self.instruction_bundles = updated;
     }
 
-    /// Pass 3: TPU `(8, 128)` matrix sublane layout assignment and sub-packing tiling.
+    /// Pass 3: TPU `(8, 128)` matrix sublane layout assignment and sub-packing tiling across
+    /// entry parameters, intermediate instruction bundles, and live-out results.
     pub fn pass_tpu_layout_assignment_and_tiling(&mut self) {
         for sh in &mut self.parameter_shapes {
             sh.layout = MemoryLayout::default_tpu_tiled_for_type(sh.dims.len(), sh.element_type);
@@ -1045,10 +1515,46 @@ impl CompiledProgram {
         for sh in &mut self.output_shapes {
             sh.layout = MemoryLayout::default_tpu_tiled_for_type(sh.dims.len(), sh.element_type);
         }
+        for bundle in &mut self.instruction_bundles {
+            for in_sh in &mut bundle.attrs.input_shapes {
+                in_sh.layout =
+                    MemoryLayout::default_tpu_tiled_for_type(in_sh.dims.len(), in_sh.element_type);
+            }
+            let _ = bundle.attrs.output_shape.as_mut().map(|out_sh| {
+                out_sh.layout = MemoryLayout::default_tpu_tiled_for_type(
+                    out_sh.dims.len(),
+                    out_sh.element_type,
+                );
+            });
+        }
     }
 
-    /// Pass 4: HLO operator fusion across producer-consumer instruction bundles.
+    /// Pass 4: HLO operator fusion across producer-consumer instruction bundles and `FlashAttention` (`Q @ K^T -> Exp -> ReduceSum -> Div -> @ V`) patterns.
     pub fn pass_hlo_operator_fusion(&mut self) {
+        let has_flash_attn_seq = self.instruction_bundles.windows(5).any(|w| {
+            let ops = [
+                w.first().map(|b| b.opcode),
+                w.get(1).map(|b| b.opcode),
+                w.get(2).map(|b| b.opcode),
+                w.get(3).map(|b| b.opcode),
+                w.get(4).map(|b| b.opcode),
+            ];
+            ops == [
+                Some(TpuOpCode::DotGeneralF32),
+                Some(TpuOpCode::ExpF32),
+                Some(TpuOpCode::ReduceSumF32),
+                Some(TpuOpCode::DivF32),
+                Some(TpuOpCode::DotGeneralF32),
+            ]
+        });
+        if has_flash_attn_seq {
+            for bundle in &mut self.instruction_bundles {
+                if bundle.opcode == TpuOpCode::DotGeneralF32 {
+                    bundle.attrs.custom_call_target =
+                        String::from("tpu.flash_attention_vmem_fused");
+                }
+            }
+        }
         let next_info: Vec<Option<(TpuOpCode, usize, Vec<usize>)>> = self
             .instruction_bundles
             .iter()
@@ -1075,6 +1581,34 @@ impl CompiledProgram {
                 }
             }
             bundle.pc_offset = u32::try_from(idx).unwrap_or(0);
+        }
+    }
+
+    /// Pass 4d (`windowed_einsum_overlap`): Detects `AllGather -> DotGeneralF32` and
+    /// `DotGeneralF32 -> ReduceScatter` collective-contraction pairs under SPMD partitioning
+    /// (`num_partitions > 1`) and annotates them for software-pipelined ring overlap.
+    pub fn pass_windowed_einsum_overlap(&mut self) {
+        if self.num_partitions <= 1 {
+            return;
+        }
+        for idx in 0..self.instruction_bundles.len().saturating_sub(1) {
+            let op0 = self.instruction_bundles.get(idx).map(|b| b.opcode);
+            let op1 = self.instruction_bundles.get(idx + 1).map(|b| b.opcode);
+            let is_ag_dot = (u8::from(op0 == Some(TpuOpCode::AllGather))
+                & u8::from(op1 == Some(TpuOpCode::DotGeneralF32)))
+                != 0;
+            let is_dot_rs = (u8::from(op0 == Some(TpuOpCode::DotGeneralF32))
+                & u8::from(op1 == Some(TpuOpCode::ReduceScatter)))
+                != 0;
+            if is_ag_dot {
+                for b in self.instruction_bundles.iter_mut().skip(idx + 1).take(1) {
+                    b.attrs.custom_call_target = String::from("windowed_einsum_ag_dot");
+                }
+            } else if is_dot_rs {
+                for b in self.instruction_bundles.iter_mut().skip(idx).take(1) {
+                    b.attrs.custom_call_target = String::from("windowed_einsum_dot_rs");
+                }
+            }
         }
     }
 
@@ -1229,15 +1763,12 @@ impl CompiledProgram {
             scratch_bytes = scratch_bytes.saturating_add(i64::try_from(b_bytes).unwrap_or(256));
         }
         let mosaic_scratch = i64::try_from(self.mosaic_metadata.scratch_vmem_bytes).unwrap_or(0);
-        let liveness_peak = self
-            .compute_liveness_intervals()
-            .iter()
-            .map(|iv| {
-                i64::try_from(iv.assigned_vmem_offset.saturating_add(iv.size_bytes as u64))
-                    .unwrap_or(256)
-            })
-            .max()
-            .unwrap_or(256);
+        let intervals = self.compute_liveness_intervals();
+        let heap = AlternateMemoryBestFitHeap::new(
+            u64::try_from(vmem_limit_bytes.max(256)).unwrap_or(256),
+        );
+        let heap_report = heap.allocate(&intervals);
+        let liveness_peak = i64::try_from(heap_report.peak_vmem_bytes).unwrap_or(256);
         let total_vmem = scratch_bytes
             .max(mosaic_scratch)
             .max(liveness_peak)
@@ -1256,11 +1787,12 @@ impl CompiledProgram {
                 0,
                 TpuInstructionBundle {
                     pc_offset: 0,
-                    opcode: TpuOpCode::Infeed,
+                    opcode: TpuOpCode::OutboundDma,
                     operand_slots: vec![0],
                     output_slot: 0,
                     sync_flag_id: 1,
                     attrs: InstructionAttrs {
+                        custom_call_target: String::from("msa.dma_hbm_to_vmem"),
                         output_shape: first_shape.clone(),
                         ..InstructionAttrs::default()
                     },
@@ -1268,11 +1800,12 @@ impl CompiledProgram {
             );
             self.instruction_bundles.push(TpuInstructionBundle {
                 pc_offset: pc_prefetch + 1,
-                opcode: TpuOpCode::Outfeed,
+                opcode: TpuOpCode::WaitDma,
                 operand_slots: vec![first_out],
                 output_slot: first_out,
                 sync_flag_id: pc_prefetch + 2,
                 attrs: InstructionAttrs {
+                    custom_call_target: String::from("msa.dma_vmem_to_hbm"),
                     output_shape: first_shape,
                     ..InstructionAttrs::default()
                 },
@@ -1282,6 +1815,15 @@ impl CompiledProgram {
             }
         }
         self.memory_stats.temp_size_in_bytes = total_vmem;
+        let mut b_proto = self.build_buffer_assignment_proto();
+        b_proto
+            .heap_simulator_traces
+            .push(crate::proto::HeapSimulatorTraceProto {
+                events: heap_report.trace_events,
+                whole_module_simulation: true,
+                buffer_allocation_index: i64::try_from(self.parameter_shapes.len()).unwrap_or(0),
+            });
+        self.buffer_assignment_proto = b_proto;
     }
 
     /// Pass 6: LLO VLIW instruction bundle scheduling, sync flag assignment, and cost analysis.
@@ -1516,10 +2058,11 @@ impl CompiledProgram {
     /// Pass 11 (`vliw_bundle_packing`): Packs all instruction bundles into 64-byte [`TensorCoreVliwBundle`]s
     /// and updates `generated_code_size_in_bytes`.
     pub fn pass_vliw_bundle_packing(&mut self) {
-        let _packed = self.pack_independent_vliw_bundles();
+        let packed = self.pack_independent_vliw_bundles();
         let encoded = self.encode_vliw_program();
         let code_bytes = encoded
             .len()
+            .max(packed.len())
             .saturating_mul(size_of::<TensorCoreVliwBundle>());
         self.memory_stats.generated_code_size_in_bytes = self
             .memory_stats
@@ -1527,13 +2070,88 @@ impl CompiledProgram {
             .max(i64::try_from(code_bytes.max(256)).unwrap_or(256));
     }
 
-    /// Pass 12 (`binary_emission`): Refreshes the deterministic SHA-256 executable fingerprint.
+    /// Builds a complete post-optimization [`crate::proto::HloModuleProto`] containing all entry
+    /// parameters, lowered instruction bundles, and fused subcomputations.
+    #[must_use]
+    pub fn build_hlo_module_proto(&self) -> crate::proto::HloModuleProto {
+        let mut instructions = Vec::new();
+        let mut next_id: i64 = 1;
+        for (p_idx, p_shape) in self.parameter_shapes.iter().enumerate() {
+            instructions.push(crate::proto::HloInstructionProto {
+                name: format!("Arg_{p_idx}"),
+                opcode: String::from("parameter"),
+                shape: Some(crate::proto::ShapeProto {
+                    element_type: p_shape.element_type.as_raw(),
+                    dimensions: p_shape.dims.clone(),
+                    is_dynamic_dimension: p_shape.dynamic_dims.clone(),
+                    ..crate::proto::ShapeProto::default()
+                }),
+                id: next_id,
+                parameter_number: i64::try_from(p_idx).unwrap_or(0),
+                ..crate::proto::HloInstructionProto::default()
+            });
+            next_id += 1;
+        }
+        let first_out_sh = self.output_shapes.first();
+        for (b_idx, bundle) in self.instruction_bundles.iter().enumerate() {
+            let sh = bundle.attrs.output_shape.as_ref().or(first_out_sh);
+            let shape_proto = sh.map(|s| crate::proto::ShapeProto {
+                element_type: s.element_type.as_raw(),
+                dimensions: s.dims.clone(),
+                is_dynamic_dimension: s.dynamic_dims.clone(),
+                ..crate::proto::ShapeProto::default()
+            });
+            let operand_ids: Vec<i64> = bundle
+                .operand_slots
+                .iter()
+                .map(|&slot| i64::try_from(slot + 1).unwrap_or(1))
+                .collect();
+            instructions.push(crate::proto::HloInstructionProto {
+                name: format!("{:?}.{b_idx}", bundle.opcode),
+                opcode: format!("{:?}", bundle.opcode).to_ascii_lowercase(),
+                shape: shape_proto,
+                operand_ids,
+                id: next_id,
+                custom_call_target: bundle.attrs.custom_call_target.clone(),
+                ..crate::proto::HloInstructionProto::default()
+            });
+            next_id += 1;
+        }
+        let root_id = instructions.last().map_or(1, |i| i.id);
+        let mut computations = vec![HloComputationProto {
+            name: String::from("main"),
+            instructions,
+            id: 1,
+            root_id,
+            execution_thread: String::from("main"),
+            ..HloComputationProto::default()
+        }];
+        computations.extend(self.build_fused_computations_proto());
+        crate::proto::HloModuleProto {
+            name: self.name.clone(),
+            entry_computation_name: String::from("main"),
+            entry_computation_id: 1,
+            computations,
+            id: 1,
+            is_dynamic: self
+                .output_shapes
+                .iter()
+                .any(|s| s.dynamic_dims.iter().any(|&d| d)),
+            spmd_output_sharding: self.output_shardings.first().cloned(),
+            spmd_parameters_shardings: self.parameter_shardings.clone(),
+            ..crate::proto::HloModuleProto::default()
+        }
+    }
+
+    /// Pass 12 (`binary_emission`): Refreshes the deterministic SHA-256 executable fingerprint
+    /// and post-optimization [`crate::proto::HloModuleProto`].
     pub fn pass_binary_emission(&mut self) {
         self.fingerprint = Self::compute_fingerprint(
             &self.format,
             &self.source_bytes,
             &self.compile_options_bytes,
         );
+        self.hlo_module_proto = self.build_hlo_module_proto();
     }
 
     /// Encodes all lowered [`TpuInstructionBundle`]s into architectural 64-byte [`TensorCoreVliwBundle`]s,
@@ -1830,17 +2448,97 @@ impl CompiledProgram {
         LinearScanRegisterAllocator::new(generation).allocate(&intervals, base_off)
     }
 
+    /// Pass (`loop_invariant_code_motion` — LICM): Hoists loop-invariant `Constant` and pure
+    /// elementwise instruction bundles out of `While` body sub-computations when all of their
+    /// operands are defined outside the loop body.
+    pub fn pass_loop_invariant_code_motion(&mut self) {
+        let mut hoisted_bundles: Vec<TpuInstructionBundle> = Vec::new();
+        let mut retained_main: Vec<TpuInstructionBundle> =
+            Vec::with_capacity(self.instruction_bundles.len());
+
+        for mut bundle in self.instruction_bundles.drain(..) {
+            for slot1 in bundle.attrs.sub_computations.iter_mut().skip(1) {
+                let body = std::mem::take(slot1);
+                let orig_body_len = body.len();
+                let mut body_defined_slots: std::collections::BTreeSet<usize> =
+                    bundle.operand_slots.iter().copied().collect();
+                let mut kept_body = Vec::with_capacity(orig_body_len);
+                for (sub_idx, sub_b) in body.into_iter().enumerate() {
+                    let has_external_ops = !sub_b.operand_slots.is_empty()
+                        && sub_b
+                            .operand_slots
+                            .iter()
+                            .all(|s| !body_defined_slots.contains(s));
+                    let is_hoistable = sub_b.opcode == TpuOpCode::Constant || has_external_ops;
+                    if sub_idx + 1 < orig_body_len && is_hoistable {
+                        hoisted_bundles.push(sub_b);
+                    } else {
+                        body_defined_slots.insert(sub_b.output_slot);
+                        kept_body.push(sub_b);
+                    }
+                }
+                *slot1 = kept_body;
+            }
+            retained_main.append(&mut hoisted_bundles);
+            retained_main.push(bundle);
+        }
+        self.instruction_bundles = retained_main;
+    }
+
+    /// Pass (`latency_hiding_scheduler`): Schedules independent `MXU` (`DotGeneralF32`, `Convolution`)
+    /// and `VPU` elementwise bundles immediately after asynchronous collective initiation bundles
+    /// (`AllReduceSumF32`, `AllGather`, `ReduceScatter`, `CollectivePermute`, `AllToAll`) when
+    /// there is no data hazard, overlapping compute with ICI/DCN communication.
+    pub fn pass_latency_hiding_scheduler(&mut self) {
+        let n = self.instruction_bundles.len();
+        for i in 0..n.saturating_sub(2) {
+            let is_collective = matches!(
+                self.instruction_bundles.get(i).map(|b| b.opcode),
+                Some(
+                    TpuOpCode::AllReduceSumF32
+                        | TpuOpCode::AllGather
+                        | TpuOpCode::ReduceScatter
+                        | TpuOpCode::CollectivePermute
+                        | TpuOpCode::AllToAll
+                )
+            );
+            let coll_out = self
+                .instruction_bundles
+                .get(i)
+                .map_or(usize::MAX, |b| b.output_slot);
+            let next_uses_coll = self
+                .instruction_bundles
+                .get(i + 1)
+                .is_some_and(|b| b.operand_slots.contains(&coll_out));
+            let next_out = self
+                .instruction_bundles
+                .get(i + 1)
+                .map_or(usize::MAX, |b| b.output_slot);
+            let third_is_independent = self.instruction_bundles.get(i + 2).is_some_and(|b| {
+                !b.opcode.has_side_effects()
+                    && !b.operand_slots.contains(&coll_out)
+                    && !b.operand_slots.contains(&next_out)
+            });
+            if is_collective && next_uses_coll && third_is_independent {
+                self.instruction_bundles.swap(i + 1, i + 2);
+            }
+        }
+    }
+
     /// Runs all compiler passes in sequence on this [`CompiledProgram`].
     pub fn run_all_passes(&mut self) {
         self.pass_hlo_verification_and_shape_inference();
         self.pass_spmd_sharding_propagation();
         self.pass_spmd_partitioning();
         self.pass_algebraic_simplifier();
+        self.pass_loop_invariant_code_motion();
         self.pass_constant_folding();
         self.pass_common_subexpression_elimination();
         self.pass_dot_decomposer();
         self.pass_tpu_custom_call_lowering();
         self.pass_hlo_operator_fusion();
+        self.pass_windowed_einsum_overlap();
+        self.pass_latency_hiding_scheduler();
         self.pass_tpu_layout_assignment_and_tiling();
         self.pass_vmem_scratchpad_allocation();
         self.pass_llo_vliw_bundle_scheduling();

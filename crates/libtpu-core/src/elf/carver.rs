@@ -34,6 +34,213 @@ pub struct FileTocEntry {
     pub name: String,
     /// Embedded payload bytes.
     pub data: Vec<u8>,
+    /// Trailing 16-byte RFC 1321 MD5 digest from the 40-byte `FileToc` struct (`[0; 16]` for 24-byte entries).
+    pub md5_digest: [u8; 16],
+    /// Whether `md5_digest` was verified against `compute_rfc1321_md5(&data)` (or was zero-filled).
+    pub md5_verified: bool,
+}
+
+impl FileTocEntry {
+    /// Creates a new [`FileTocEntry`] with its RFC 1321 MD5 digest automatically computed and verified.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Embedded file name.
+    /// * `data` - Embedded payload bytes.
+    #[must_use]
+    pub fn new(name: String, data: Vec<u8>) -> Self {
+        let md5_digest = compute_rfc1321_md5(&data);
+        Self {
+            name,
+            data,
+            md5_digest,
+            md5_verified: true,
+        }
+    }
+}
+
+/// RFC 1321 MD5 per-round left-rotation shift amounts (`MD5_S`).
+const MD5_S: [u32; 64] = [
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9,
+    14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15,
+    21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+];
+
+/// RFC 1321 MD5 integer sine table constants (`MD5_K`).
+const MD5_K: [u32; 64] = [
+    0xd76a_a478,
+    0xe8c7_b756,
+    0x2420_70db,
+    0xc1bd_ceee,
+    0xf57c_0faf,
+    0x4787_c62a,
+    0xa830_4613,
+    0xfd46_9501,
+    0x6980_98d8,
+    0x8b44_f7af,
+    0xffff_5bb1,
+    0x895c_d7be,
+    0x6b90_1122,
+    0xfd98_7193,
+    0xa679_438e,
+    0x49b4_0821,
+    0xf61e_2562,
+    0xc040_b340,
+    0x265e_5a51,
+    0xe9b6_c7aa,
+    0xd62f_105d,
+    0x0244_1453,
+    0xd8a1_e681,
+    0xe7d3_fbc8,
+    0x21e1_cde6,
+    0xc337_07d6,
+    0xf4d5_0d87,
+    0x455a_14ed,
+    0xa9e3_e905,
+    0xfcef_a3f8,
+    0x676f_02d9,
+    0x8d2a_4c8a,
+    0xfffa_3942,
+    0x8771_f681,
+    0x6d9d_6122,
+    0xfde5_380c,
+    0xa4be_ea44,
+    0x4bde_cfa9,
+    0xf6bb_4b60,
+    0xbebf_bc70,
+    0x289b_7ec6,
+    0xeaa1_27fa,
+    0xd4ef_3085,
+    0x0488_1d05,
+    0xd9d4_d039,
+    0xe6db_99e5,
+    0x1fa2_7cf8,
+    0xc4ac_5665,
+    0xf429_2244,
+    0x432a_ff97,
+    0xab94_23a7,
+    0xfc93_a039,
+    0x655b_59c3,
+    0x8f0c_cc92,
+    0xffef_f47d,
+    0x8584_5dd1,
+    0x6fa8_7e4f,
+    0xfe2c_e6e0,
+    0xa301_4314,
+    0x4e08_11a1,
+    0xf753_7e82,
+    0xbd3a_f235,
+    0x2ad7_d2bb,
+    0xeb86_d391,
+];
+
+/// Computes the 16-byte RFC 1321 MD5 message digest of `data` in pure safe Rust.
+///
+/// # Arguments
+///
+/// * `data` - Input byte slice to hash.
+#[must_use]
+pub fn compute_rfc1321_md5(data: &[u8]) -> [u8; 16] {
+    let mut state_a: u32 = 0x6745_2301;
+    let mut state_b: u32 = 0xefcd_ab89;
+    let mut state_c: u32 = 0x98ba_dcfe;
+    let mut state_d: u32 = 0x1032_5476;
+
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+    let mut padded = Vec::with_capacity((data.len() + 72) & !63);
+    padded.extend_from_slice(data);
+    padded.push(0x80);
+    while (padded.len() % 64) != 56 {
+        padded.push(0);
+    }
+    padded.extend_from_slice(&bit_len.to_le_bytes());
+
+    for chunk in padded.chunks_exact(64) {
+        let mut msg_words = [0_u32; 16];
+        for (slot, word_bytes) in msg_words.iter_mut().zip(chunk.chunks_exact(4)) {
+            *slot = u32::from_le(bytemuck::pod_read_unaligned::<u32>(word_bytes));
+        }
+        let mut reg_a = state_a;
+        let mut reg_b = state_b;
+        let mut reg_c = state_c;
+        let mut reg_d = state_d;
+
+        for step in 0..64_usize {
+            let (func_val, word_idx) = if step < 16 {
+                ((reg_b & reg_c) | ((!reg_b) & reg_d), step)
+            } else if step < 32 {
+                ((reg_d & reg_b) | ((!reg_d) & reg_c), (5 * step + 1) % 16)
+            } else if step < 48 {
+                (reg_b ^ reg_c ^ reg_d, (3 * step + 5) % 16)
+            } else {
+                (reg_c ^ (reg_b | (!reg_d)), (7 * step) % 16)
+            };
+            let k_val = MD5_K.get(step).copied().unwrap_or(0);
+            let m_val = msg_words.get(word_idx).copied().unwrap_or(0);
+            let s_val = MD5_S.get(step).copied().unwrap_or(0);
+            let temp = reg_a
+                .wrapping_add(func_val)
+                .wrapping_add(k_val)
+                .wrapping_add(m_val);
+            reg_a = reg_d;
+            reg_d = reg_c;
+            reg_c = reg_b;
+            reg_b = reg_b.wrapping_add(temp.rotate_left(s_val));
+        }
+
+        state_a = state_a.wrapping_add(reg_a);
+        state_b = state_b.wrapping_add(reg_b);
+        state_c = state_c.wrapping_add(reg_c);
+        state_d = state_d.wrapping_add(reg_d);
+    }
+
+    let mut digest = [0_u8; 16];
+    digest[0..4].copy_from_slice(&state_a.to_le_bytes());
+    digest[4..8].copy_from_slice(&state_b.to_le_bytes());
+    digest[8..12].copy_from_slice(&state_c.to_le_bytes());
+    digest[12..16].copy_from_slice(&state_d.to_le_bytes());
+    digest
+}
+
+/// Formats a 16-byte MD5 digest as a 32-character lowercase hexadecimal string.
+///
+/// # Arguments
+///
+/// * `digest` - 16-byte MD5 digest array.
+#[must_use]
+pub fn format_md5_hex(digest: &[u8; 16]) -> String {
+    let mut out = String::with_capacity(32);
+    for &b in digest {
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
+/// Verifies the trailing 16-byte RFC 1321 MD5 digests of a slice of [`FileTocEntry`] records.
+///
+/// Entries whose `md5_digest` is all zeros (`[0; 16]`) are treated as unhashed 24-byte records
+/// and pass verification automatically.
+///
+/// # Arguments
+///
+/// * `entries` - Slice of [`FileTocEntry`] items to verify.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::TocPayloadChecksumMismatch`] if any non-zero `md5_digest` mismatches
+/// `compute_rfc1321_md5(&entry.data)`.
+pub fn verify_filewrapper_toc_md5(entries: &[FileTocEntry]) -> LibTpuResult<()> {
+    for entry in entries.iter().filter(|e| e.md5_digest != [0_u8; 16]) {
+        let actual = compute_rfc1321_md5(&entry.data);
+        if actual != entry.md5_digest {
+            return Err(LibTpuError::TocPayloadChecksumMismatch {
+                entry_name: entry.name.clone(),
+                expected_md5_hex: format_md5_hex(&entry.md5_digest),
+                actual_md5_hex: format_md5_hex(&actual),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Summary of a wire-encoded `google.protobuf.FileDescriptorProto` carved from `protodesc_cold`.
@@ -80,6 +287,9 @@ fn read_proto_varint(bytes: &[u8], pos: usize) -> Option<(u64, usize)> {
 /// Advances across all valid consecutive `google.protobuf.FileDescriptorProto` wire fields
 /// starting at `start_idx`, returning the exclusive end byte offset.
 ///
+/// Supports varint (`0`), 64-bit fixed (`1`), length-delimited (`2`), and 32-bit fixed (`5`)
+/// wire types across `FileDescriptorProto` fields `1..=14` (including `edition = 14`).
+///
 /// # Arguments
 ///
 /// * `bytes` - `protodesc_cold` byte slice.
@@ -88,8 +298,11 @@ fn scan_file_descriptor_wire_end(bytes: &[u8], start_idx: usize) -> usize {
     let mut cur = start_idx;
     while cur < bytes.len() {
         if cur > start_idx && bytes.get(cur).copied().unwrap_or(0) == 0x0A {
-            let next_len = usize::from(bytes.get(cur + 1).copied().unwrap_or(0));
-            let next_name = bytes.get(cur + 2..cur + 2 + next_len).unwrap_or_default();
+            let (next_len_u64, after_next_len) =
+                read_proto_varint(bytes, cur + 1).unwrap_or((0, cur + 1));
+            let next_len = usize::try_from(next_len_u64).unwrap_or(usize::MAX);
+            let next_end = after_next_len.saturating_add(next_len);
+            let next_name = bytes.get(after_next_len..next_end).unwrap_or_default();
             if next_name.ends_with(b".proto") {
                 break;
             }
@@ -120,6 +333,14 @@ fn scan_file_descriptor_wire_end(bytes: &[u8], start_idx: usize) -> usize {
                 }
                 cur = next_pos;
             }
+            1 | 5 => {
+                let step = if wire_type == 1 { 8 } else { 4 };
+                let next_pos = after_tag.saturating_add(step);
+                if next_pos > bytes.len() {
+                    break;
+                }
+                cur = next_pos;
+            }
             _ => break,
         }
     }
@@ -128,9 +349,9 @@ fn scan_file_descriptor_wire_end(bytes: &[u8], start_idx: usize) -> usize {
 
 /// Scans a `protodesc_cold` section byte slice for wire-encoded `FileDescriptorProto` entries.
 ///
-/// Matches entries starting with tag `0x0a` (field 1: `string name` ending in `".proto"`),
-/// preserving all subsequent `FileDescriptorProto` fields (`message_type`, `enum_type`,
-/// `dependency`, `syntax`).
+/// Matches entries starting with tag `0x0a` (field 1: `string name` ending in `".proto"`,
+/// including multi-byte varint string lengths `> 127` bytes), preserving all subsequent
+/// `FileDescriptorProto` fields (`message_type`, `enum_type`, `dependency`, `syntax`, `edition`).
 ///
 /// # Arguments
 ///
@@ -141,10 +362,11 @@ pub fn carve_protodesc_cold_entries(section_bytes: &[u8]) -> Vec<CarvedProtoDesc
     let mut idx = 0_usize;
     while idx + 8 <= section_bytes.len() {
         if section_bytes.get(idx).copied().unwrap_or(0) == 0x0A {
-            let name_len = usize::from(section_bytes.get(idx + 1).copied().unwrap_or(0));
-            let name_slice = section_bytes
-                .get(idx + 2..idx + 2 + name_len)
-                .unwrap_or_default();
+            let (name_len_u64, name_start) =
+                read_proto_varint(section_bytes, idx + 1).unwrap_or((0, idx + 1));
+            let name_len = usize::try_from(name_len_u64).unwrap_or(usize::MAX);
+            let name_end = name_start.saturating_add(name_len);
+            let name_slice = section_bytes.get(name_start..name_end).unwrap_or_default();
             if name_slice.ends_with(b".proto") {
                 let end_idx = scan_file_descriptor_wire_end(section_bytes, idx);
                 let raw_bytes = section_bytes.get(idx..end_idx).unwrap_or_default().to_vec();
@@ -383,9 +605,10 @@ fn render_proto_message(
 
 /// Renders a `prost_types::FileDescriptorProto` into canonical `.proto` source text.
 ///
-/// Reconstructs `syntax`, `package`, `import`, top-level and nested `enum` blocks,
-/// top-level and nested `message` blocks, `oneof` declarations, `map<K, V>` fields,
-/// field labels (`optional`, `required`, `repeated`), and all 18 protobuf scalar types.
+/// Reconstructs `syntax` (or `edition = "2023";` when `syntax == "editions"` / `edition == Some(1000)`),
+/// `package`, `import`, top-level and nested `enum` blocks, top-level and nested `message` blocks,
+/// `oneof` declarations, `map<K, V>` fields, field labels (`optional`, `required`, `repeated`),
+/// and all 18 protobuf scalar types.
 ///
 /// # Arguments
 ///
@@ -394,8 +617,18 @@ fn render_proto_message(
 pub fn render_proto_schema(fd: &FileDescriptorProto) -> String {
     let mut out = String::new();
     let syntax = fd.syntax.as_deref().unwrap_or("proto2");
-    let is_proto3 = syntax == "proto3";
-    let _ = writeln!(out, r#"syntax = "{syntax}";"#);
+    let is_editions = matches!(syntax, "editions" | "edition_2023" | "edition_2024");
+    let is_proto3 = syntax == "proto3" || is_editions;
+    if is_editions {
+        let edition_str = if syntax == "edition_2024" {
+            "2024"
+        } else {
+            "2023"
+        };
+        let _ = writeln!(out, r#"edition = "{edition_str}";"#);
+    } else {
+        let _ = writeln!(out, r#"syntax = "{syntax}";"#);
+    }
     if let Some(pkg) = fd.package.as_deref().filter(|p| !p.is_empty()) {
         let _ = writeln!(out, "package {pkg};");
     }
@@ -540,9 +773,17 @@ pub fn extract_filewrapper_toc(toc_bytes: &[u8], blob_bytes: &[u8]) -> Vec<FileT
         let name =
             String::from_utf8_lossy(name_tail.get(..nul_pos).unwrap_or_default()).into_owned();
         if !name.is_empty() {
+            let mut md5_digest = [0_u8; 16];
+            if let Some(md5_slice) = chunk.get(24..40) {
+                md5_digest.copy_from_slice(md5_slice);
+            }
+            let md5_verified =
+                (md5_digest == [0_u8; 16]) | (compute_rfc1321_md5(data_slice) == md5_digest);
             entries.push(FileTocEntry {
                 name,
                 data: data_slice.to_vec(),
+                md5_digest,
+                md5_verified,
             });
         }
     }
@@ -603,9 +844,24 @@ pub fn extract_indirect_filewrapper_toc(
                 .get(..size.min(data_bytes.len()))
                 .unwrap_or_default();
             if !name.is_empty() {
+                let mut md5_digest = [0_u8; 16];
+                let md5_lo = size_word_map
+                    .get(&entry_vaddr.wrapping_add(24))
+                    .copied()
+                    .unwrap_or(0);
+                let md5_hi = size_word_map
+                    .get(&entry_vaddr.wrapping_add(32))
+                    .copied()
+                    .unwrap_or(0);
+                md5_digest[0..8].copy_from_slice(&md5_lo.to_le_bytes());
+                md5_digest[8..16].copy_from_slice(&md5_hi.to_le_bytes());
+                let md5_verified =
+                    (md5_digest == [0_u8; 16]) | (compute_rfc1321_md5(payload) == md5_digest);
                 entries.push(FileTocEntry {
                     name,
                     data: payload.to_vec(),
+                    md5_digest,
+                    md5_verified,
                 });
             }
         }
@@ -613,23 +869,27 @@ pub fn extract_indirect_filewrapper_toc(
     entries
 }
 
-/// Decoded collection of embedded `filewrapper_toc` chip configurations, die parts, and runtime ABI descriptors (`EmbeddedChipResourceBundle`).
+/// Decoded collection of embedded `filewrapper_toc` chip configurations, die parts, CSR tables, and runtime ABI descriptors (`EmbeddedChipResourceBundle`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EmbeddedChipResourceBundle {
     /// Decoded `*_chip_configs_*.binarypb` descriptors.
     pub chip_configs: Vec<crate::proto::TpuChipConfigProto>,
     /// Decoded `*_chip_parts.binarypb` descriptors.
     pub chip_parts: Vec<crate::proto::TpuChipPartsProto>,
+    /// Decoded `tpu_platform_configs.binarypb` descriptors.
+    pub platform_configs: Vec<crate::proto::TpuPlatformConfigsProto>,
+    /// Decompressed and decoded `*_csrs.br` (`RegisterTranslatorDataProto`) CSR tables.
+    pub csr_tables: Vec<crate::proto::RegisterTranslatorDataProto>,
     /// Decoded `current_tpu_runtime_abi.binarypb` descriptor, if present.
     pub runtime_abi: Option<crate::proto::TpuRuntimeAbiProto>,
     /// Decoded `deepsea_compiler_hash.txt` string, if present.
     pub compiler_hash: Option<String>,
 }
 
-/// Decodes embedded chip config, chip parts, and runtime ABI resources from `filewrapper_toc`.
+/// Decodes embedded chip config, chip parts, platform configs, Brotli CSR tables, and runtime ABI resources from `filewrapper_toc`.
 ///
-/// Inspects `*_chip_configs*.binarypb`, `*_chip_parts*.binarypb`,
-/// `current_tpu_runtime_abi.binarypb`, and `deepsea_compiler_hash.txt` entries.
+/// Inspects `*_chip_configs*.binarypb`, `*_chip_parts*.binarypb`, `*_platform_configs*.binarypb`,
+/// `*_csrs.br`, `current_tpu_runtime_abi.binarypb`, and `deepsea_compiler_hash.txt` entries.
 ///
 /// # Arguments
 ///
@@ -637,7 +897,7 @@ pub struct EmbeddedChipResourceBundle {
 ///
 /// # Errors
 ///
-/// Returns [`LibTpuError`] if any matching `.binarypb` payload is malformed.
+/// Returns [`LibTpuError`] if any matching `.binarypb` or `.br` payload is malformed.
 pub fn decode_embedded_chip_resources(
     entries: &[FileTocEntry],
 ) -> LibTpuResult<EmbeddedChipResourceBundle> {
@@ -652,6 +912,16 @@ pub fn decode_embedded_chip_resources(
             bundle
                 .chip_parts
                 .push(crate::proto::TpuChipPartsProto::decode_proto(&entry.data)?);
+        } else if entry.name.contains("platform_configs") {
+            bundle
+                .platform_configs
+                .push(crate::proto::TpuPlatformConfigsProto::decode_proto(
+                    &entry.data,
+                )?);
+        } else if entry.name.ends_with("csrs.br") {
+            let decompressed = decompress_brotli_csr_table(&entry.data)?;
+            let csr_proto = crate::proto::RegisterTranslatorDataProto::decode_proto(&decompressed)?;
+            bundle.csr_tables.push(csr_proto);
         } else if entry.name.ends_with("tpu_runtime_abi.binarypb") {
             bundle.runtime_abi = Some(crate::proto::TpuRuntimeAbiProto::decode_proto(&entry.data)?);
         } else if entry.name.ends_with("deepsea_compiler_hash.txt") {
@@ -709,6 +979,22 @@ pub fn parse_and_verify_brotli_csr_tree(
     decompressed_bytes: &[u8],
     register_map: &crate::hal::ChipRegisterMap,
 ) -> LibTpuResult<Vec<BrotliRegisterTreeEntry>> {
+    use crate::proto::ProtoSchemaMessage as _;
+    if !decompressed_bytes.contains(&b'=') {
+        if let Ok(proto) =
+            crate::proto::RegisterTranslatorDataProto::decode_proto(decompressed_bytes)
+        {
+            return Ok(proto
+                .registers
+                .into_iter()
+                .map(|r| BrotliRegisterTreeEntry {
+                    full_path: r.full_path,
+                    bar0_offset: r.byte_offset,
+                    width_bits: if r.width_bits == 0 { 64 } else { r.width_bits },
+                })
+                .collect());
+        }
+    }
     let text = String::from_utf8_lossy(decompressed_bytes);
     let mut entries = Vec::new();
     for raw_line in text.lines() {
@@ -844,6 +1130,7 @@ impl FileTocFirmwareExtractor {
     ///
     /// Returns [`LibTpuError`] if any embedded `.binarypb` chip config or ABI descriptor is malformed.
     pub fn extract_and_validate(entries: &[FileTocEntry]) -> LibTpuResult<Self> {
+        verify_filewrapper_toc_md5(entries)?;
         let overlays = extract_carved_firmware_overlays(entries);
         let chip_resources = decode_embedded_chip_resources(entries)?;
         Ok(Self {
@@ -867,6 +1154,1934 @@ impl FileTocFirmwareExtractor {
             .filter(|ov| ov.target == target)
             .collect()
     }
+}
+
+/// Canonical mapping from a `protodesc_cold` `.proto` path to a clean-room `.proto` filename.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalProtoPathMapping {
+    /// Original embedded path in `protodesc_cold` (e.g., `"platforms/asic_sw/proto/core_dump.proto"`).
+    pub embedded_path: String,
+    /// Canonical `.proto` filename in `docs/reverse_engineering/protos/` (e.g., `"coredump.proto"`).
+    pub canonical_filename: String,
+    /// Whether the canonical target exists in the global [`crate::proto::global_descriptor_pool`].
+    pub present_in_pool: bool,
+}
+
+/// Deterministic catalog entry for a `protodesc_cold` descriptor in `libtpu.so` or `sdk.abi3.so` (`ProtodescColdCatalogEntry`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProtodescColdCatalogEntry {
+    /// Original embedded repository path in `protodesc_cold`.
+    pub embedded_path: &'static str,
+    /// Canonical `.proto` filename in `docs/reverse_engineering/protos/`.
+    pub canonical_filename: &'static str,
+    /// Protobuf package namespace (`package`).
+    pub package: &'static str,
+    /// Protobuf syntax version (`"proto2"` or `"proto3"`).
+    pub syntax: &'static str,
+}
+
+/// Deterministic catalog of embedded `protodesc_cold` descriptor paths from `libtpu.so` (`v0.0.52`)
+/// and `sdk.abi3.so` mapped 1:1 to their canonical `.proto` schemas in `docs/reverse_engineering/protos/`.
+pub const PROTODESC_COLD_293_CATALOG: &[ProtodescColdCatalogEntry] = &[
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/autotune_results.proto",
+        canonical_filename: "autotune_results.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/autotuning.proto",
+        canonical_filename: "autotuning.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/backends.proto",
+        canonical_filename: "backends.proto",
+        package: "xla.gpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/barnacore_executable.proto",
+        canonical_filename: "barnacore_executable.proto",
+        package: "xla.barnacore",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/buffer_assignment.proto",
+        canonical_filename: "buffer_assignment.proto",
+        package: "xla.buffer_assignment",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/protobuf/tpu/compilation_result.proto",
+        canonical_filename: "compilation_result.proto",
+        package: "tensorflow.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/protobuf/tpu/compile_metadata.proto",
+        canonical_filename: "compile_metadata.proto",
+        package: "tensorflow.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/proto/compile_options.proto",
+        canonical_filename: "compile_options.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/xdb/compiler_metadata.proto",
+        canonical_filename: "compiler_metadata.proto",
+        package: "platforms_deepsea.jellyfish.xdb",
+        syntax: "proto2",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/tsl/protobuf/coordination_config.proto",
+        canonical_filename: "coordination_config.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/tsl/protobuf/coordination_service.proto",
+        canonical_filename: "coordination_service.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/asic_sw/proto/core_dump.proto",
+        canonical_filename: "coredump.proto",
+        package: "asic_sw",
+        syntax: "proto2",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/cuda/cuda_compute_capability.proto",
+        canonical_filename: "cuda_compute_capability.proto",
+        package: "stream_executor",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/deepsea_executable.proto",
+        canonical_filename: "deepsea_executable.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/device_description.proto",
+        canonical_filename: "device_description.proto",
+        package: "stream_executor",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/dnn.proto",
+        canonical_filename: "dnn.proto",
+        package: "stream_executor.dnn",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/dynamic_padding.proto",
+        canonical_filename: "dynamic_padding.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/emitter_learned_cost_model_options.proto",
+        canonical_filename: "emitter_learned_cost_model_options.proto",
+        package: "xla.jellyfish",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/tsl/protobuf/error_codes.proto",
+        canonical_filename: "error_codes.proto",
+        package: "tensorflow.error",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/abi/executable_abi_version.proto",
+        canonical_filename: "executable_abi_version.proto",
+        package: "stream_executor",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/proto/executable_metadata.proto",
+        canonical_filename: "executable_metadata.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/proto/execute_options.proto",
+        canonical_filename: "execute_options.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/ffi/attribute_map.proto",
+        canonical_filename: "ffi_attribute_map.proto",
+        package: "xla.ffi",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/ffi/execution_state.proto",
+        canonical_filename: "ffi_execution_state.proto",
+        package: "xla.ffi",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/gpu_topology.proto",
+        canonical_filename: "gpu_topology.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo_profile_printer_data.proto",
+        canonical_filename: "hlo_profile_printer_data.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/host_command_opcodes.proto",
+        canonical_filename: "host_command_opcodes.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/compiler/tf2xla/host_compute_metadata.proto",
+        canonical_filename: "host_compute_metadata.proto",
+        package: "tensorflow.tf2xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/host_offloading_executable.proto",
+        canonical_filename: "host_offloading_executable.proto",
+        package: "xla.jellyfish",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/isa_program.proto",
+        canonical_filename: "isa_program.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/jellyfish_executable.proto",
+        canonical_filename: "jellyfish_executable.proto",
+        package: "xla.jellyfish",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/runtime/megascale_addresses.proto",
+        canonical_filename: "megascale_addresses.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/dcn_topology.proto",
+        canonical_filename: "megascale_dcn_topology.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/error_overlay.proto",
+        canonical_filename: "megascale_runtime_error_overlay.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/megascale_actions.proto",
+        canonical_filename: "megascale.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/memory_scheduler.proto",
+        canonical_filename: "memory_scheduler.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/memory_space_assignment.proto",
+        canonical_filename: "memory_space_assignment.proto",
+        package: "xla.memory_space_assignment",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/metrics.proto",
+        canonical_filename: "metrics.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "jax/experimental/mosaic/tpu/mosaic_tpu.proto",
+        canonical_filename: "mosaic_tpu.proto",
+        package: "mlir.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/sycl/oneapi_compute_capability.proto",
+        canonical_filename: "oneapi_compute_capability.proto",
+        package: "stream_executor",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/protobuf/tpu/optimization_parameters.proto",
+        canonical_filename: "optimization_parameters.proto",
+        package: "tensorflow.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/proto/pjrt_abi_version.proto",
+        canonical_filename: "pjrt_abi_version.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/proto/pjrt_device_dimensions.proto",
+        canonical_filename: "pjrt_device_dimensions.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/distributed/protocol.proto",
+        canonical_filename: "pjrt_distributed_protocol.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/proto/pjrt_partial_program.proto",
+        canonical_filename: "pjrt_partial_program.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/proto/pjrt_value_type.proto",
+        canonical_filename: "pjrt_value_type.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/asic_sw/telemetry/power_telemetry.proto",
+        canonical_filename: "power_telemetry.proto",
+        package: "tpu.telemetry",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/profiler_options.proto",
+        canonical_filename: "profiler_options.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/profiler_service.proto",
+        canonical_filename: "profiler_service.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/profiler_topology.proto",
+        canonical_filename: "profiler_topology.proto",
+        package: "tensorflow.profiler",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "jax/py_host_callback.proto",
+        canonical_filename: "py_host_callback.proto",
+        package: "jax",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "jax/pytree.proto",
+        canonical_filename: "pytree.proto",
+        package: "jax",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/reduction_kind.proto",
+        canonical_filename: "reduction_kind.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/asic_sw/tools/register_translator.proto",
+        canonical_filename: "register_translator.proto",
+        package: "asic_sw.tools",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/abi/runtime_abi_version.proto",
+        canonical_filename: "runtime_abi_version.proto",
+        package: "stream_executor",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/runtime_config.proto",
+        canonical_filename: "runtime_config.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/shaped_slice.proto",
+        canonical_filename: "shaped_slice.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "shardy/dialect/sdy/ir/shardy_mesh.proto",
+        canonical_filename: "shardy_mesh.proto",
+        package: "sdy",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/sparse_core_layout.proto",
+        canonical_filename: "sparse_core_layout.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "libtpu/sdk/stall_summaries.proto",
+        canonical_filename: "stall_summaries.proto",
+        package: "libtpu.sdk.tpu_telemetry",
+        syntax: "proto2",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/tsl/protobuf/status.proto",
+        canonical_filename: "status.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/target_arguments.proto",
+        canonical_filename: "target_arguments.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/framework/tensor_shape.proto",
+        canonical_filename: "tensor_shape.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/framework/tensor.proto",
+        canonical_filename: "tensor.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/protobuf/tpu/topology.proto",
+        canonical_filename: "tf_tpu_topology.proto",
+        package: "tensorflow.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/compiler/tf2xla/tf2xla.proto",
+        canonical_filename: "tf2xla.proto",
+        package: "tensorflow.tf2xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/proto/topology_description.proto",
+        canonical_filename: "topology_description.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/tpu_chip_config.proto",
+        canonical_filename: "tpu_chip_config.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/tpu_compilation_environment.proto",
+        canonical_filename: "tpu_compilation_environment.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/protobuf/tpu/tpu_embedding_configuration.proto",
+        canonical_filename: "tpu_embedding_configuration.proto",
+        package: "tensorflow.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/tpu/kernels/tpu_executable_info.proto",
+        canonical_filename: "tpu_executable_info.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/tpu_executable.proto",
+        canonical_filename: "tpu_executable.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/xla/service/jellyfish/tpu_fingerprint.proto",
+        canonical_filename: "tpu_fingerprint.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/tpu_input_pipeline.proto",
+        canonical_filename: "tpu_input_pipeline.proto",
+        package: "tensorflow.profiler",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/tpu_runtime.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "libtpu/sdk/tpu_telemetry_snapshot.proto",
+        canonical_filename: "tpu_telemetry_snapshot.proto",
+        package: "libtpu.sdk.tpu_telemetry",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/tpu_topology.proto",
+        canonical_filename: "tpu_topology.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/tpu_version.proto",
+        canonical_filename: "tpu_version.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/framework/types.proto",
+        canonical_filename: "types.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "stablehlo/dialect/vhlo_ops.proto",
+        canonical_filename: "vhlo_ops.proto",
+        package: "vhlo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/compiler/tf2xla/xla_argument.proto",
+        canonical_filename: "xla_argument.proto",
+        package: "tensorflow.tf2xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/xla_compile_result.proto",
+        canonical_filename: "xla_compile_result.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/xla_data.proto",
+        canonical_filename: "xla_data.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/ffi/xla_ffi_metadata.proto",
+        canonical_filename: "xla_ffi_metadata.proto",
+        package: "xla.ffi",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/ffi/xla_ffi.proto",
+        canonical_filename: "xla_ffi.proto",
+        package: "xla.ffi",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/xla.proto",
+        canonical_filename: "xla.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/xplane.proto",
+        canonical_filename: "xplane.proto",
+        package: "tensorflow.profiler",
+        syntax: "proto3",
+    },
+    // --- Group 1: google/protobuf/* & google/rpc/* (14 entries) ---
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/protobuf/any.proto",
+        canonical_filename: "status.proto",
+        package: "google.protobuf",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/protobuf/api.proto",
+        canonical_filename: "status.proto",
+        package: "google.protobuf",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/protobuf/descriptor.proto",
+        canonical_filename: "status.proto",
+        package: "google.protobuf",
+        syntax: "proto2",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/protobuf/duration.proto",
+        canonical_filename: "status.proto",
+        package: "google.protobuf",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/protobuf/empty.proto",
+        canonical_filename: "status.proto",
+        package: "google.protobuf",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/protobuf/field_mask.proto",
+        canonical_filename: "status.proto",
+        package: "google.protobuf",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/protobuf/source_context.proto",
+        canonical_filename: "status.proto",
+        package: "google.protobuf",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/protobuf/struct.proto",
+        canonical_filename: "status.proto",
+        package: "google.protobuf",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/protobuf/timestamp.proto",
+        canonical_filename: "status.proto",
+        package: "google.protobuf",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/protobuf/type.proto",
+        canonical_filename: "status.proto",
+        package: "google.protobuf",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/protobuf/wrappers.proto",
+        canonical_filename: "status.proto",
+        package: "google.protobuf",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/rpc/status.proto",
+        canonical_filename: "status.proto",
+        package: "google.rpc",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/rpc/error_details.proto",
+        canonical_filename: "error_codes.proto",
+        package: "google.rpc",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "google/rpc/code.proto",
+        canonical_filename: "error_codes.proto",
+        package: "google.rpc",
+        syntax: "proto3",
+    },
+    // --- Group 2: xla/* & xla/service/* (60 entries) ---
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/compilation_environments.proto",
+        canonical_filename: "xla.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/computation_placer.proto",
+        canonical_filename: "xla_data.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/dynamic_dimension_inference.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/executable.proto",
+        canonical_filename: "xla_compile_result.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/gpu/gpu_compilation_environment.proto",
+        canonical_filename: "xla.proto",
+        package: "xla.gpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo_execution_profile_data.proto",
+        canonical_filename: "hlo_profile_printer_data.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo_graph_dumper.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo_module_config.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo_module_dce.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo_proto_util.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo_rematerialization.proto",
+        canonical_filename: "memory_space_assignment.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo_runner.proto",
+        canonical_filename: "xla.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo_schedule.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo_sharding_metadata.proto",
+        canonical_filename: "xla_data.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/hlo_verifier.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/layout_assignment.proto",
+        canonical_filename: "xla_data.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/logical_buffer.proto",
+        canonical_filename: "buffer_assignment.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/mapped_ptr_container_sorter.proto",
+        canonical_filename: "buffer_assignment.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/memory_space_assignment_best_fit_repacker.proto",
+        canonical_filename: "memory_space_assignment.proto",
+        package: "xla.memory_space_assignment",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/metrics_hook.proto",
+        canonical_filename: "metrics.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/name_uniquer.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/op_sharding_util.proto",
+        canonical_filename: "xla_data.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/pattern_matcher.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/platform_util.proto",
+        canonical_filename: "xla.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/reduce_scatter_combiner.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/rendezvous.proto",
+        canonical_filename: "pjrt_distributed_protocol.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/reshape_mover.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/rng_expander.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/scatter_expander.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/select_and_scatter_expander.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/shaped_buffer.proto",
+        canonical_filename: "shaped_slice.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/sharding_config.proto",
+        canonical_filename: "xla_data.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/sharding_propagation.proto",
+        canonical_filename: "xla_data.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/slice_sinker.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/slow_operation_alarm.proto",
+        canonical_filename: "metrics.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/sort_simplifier.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/source_target_pairs.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/spmd/spmd_partitioner.proto",
+        canonical_filename: "xla_data.proto",
+        package: "xla.spmd",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/stream_pool.proto",
+        canonical_filename: "xla.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/time_utils.proto",
+        canonical_filename: "metrics.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/transfer_manager.proto",
+        canonical_filename: "xla.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/transpose_folding.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/tuple_points_to_analysis.proto",
+        canonical_filename: "buffer_assignment.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/tuple_simplifier.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/while_loop_all_reduce_code_motion.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/while_loop_concat_code_motion.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/while_loop_constant_sinking.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/while_loop_expensive_invariant_code_motion.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/while_loop_fusible_sinking.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/while_loop_invariant_code_motion.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/while_loop_simplifier.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/while_loop_trip_count_annotator.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/while_util.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/zero_sized_hlo_elimination.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/all_gather_broadcast_reorder.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/all_gather_combiner.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/all_reduce_combiner.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/all_reduce_contiguous.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/all_reduce_folder.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/service/all_reduce_promotion.proto",
+        canonical_filename: "hlo.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    // --- Group 3: xla/pjrt/* (18 entries) ---
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/c/pjrt_c_api_client.proto",
+        canonical_filename: "compile_options.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/pjrt_client.proto",
+        canonical_filename: "compile_options.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/pjrt_common.proto",
+        canonical_filename: "pjrt_value_type.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/pjrt_compiler.proto",
+        canonical_filename: "compile_options.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/pjrt_device_description.proto",
+        canonical_filename: "pjrt_device_dimensions.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/pjrt_executable.proto",
+        canonical_filename: "executable_metadata.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/pjrt_future.proto",
+        canonical_filename: "execute_options.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/pjrt_layout.proto",
+        canonical_filename: "xla_data.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/pjrt_memory_space.proto",
+        canonical_filename: "executable_metadata.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/pjrt_phase_compile.proto",
+        canonical_filename: "pjrt_partial_program.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/pjrt_stream_executor_client.proto",
+        canonical_filename: "compile_options.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/transpose.proto",
+        canonical_filename: "xla_data.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/distributed/client.proto",
+        canonical_filename: "pjrt_distributed_protocol.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/distributed/service.proto",
+        canonical_filename: "pjrt_distributed_protocol.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/distributed/topology_util.proto",
+        canonical_filename: "pjrt_distributed_protocol.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/distributed/key_value_store.proto",
+        canonical_filename: "coordination_service.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/gpu/se_gpu_pjrt_client.proto",
+        canonical_filename: "gpu_topology.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/pjrt/tpu_client.proto",
+        canonical_filename: "topology_description.proto",
+        package: "xla",
+        syntax: "proto3",
+    },
+    // --- Group 4: xla/stream_executor/* & xla/ffi/* (28 entries) ---
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/host_or_device_scalar.proto",
+        canonical_filename: "device_description.proto",
+        package: "stream_executor",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/launch_dim.proto",
+        canonical_filename: "device_description.proto",
+        package: "stream_executor",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/numeric_options.proto",
+        canonical_filename: "autotuning.proto",
+        package: "stream_executor",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/plugin_registry.proto",
+        canonical_filename: "dnn.proto",
+        package: "stream_executor",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/stream_executor_pimpl.proto",
+        canonical_filename: "device_description.proto",
+        package: "stream_executor",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_compilation_cache_entry.proto",
+        canonical_filename: "tpu_executable.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_compilation_cache_interface.proto",
+        canonical_filename: "tpu_executable.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_compilation_cache_key.proto",
+        canonical_filename: "tpu_fingerprint.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_compilation_cache_lookup.proto",
+        canonical_filename: "tpu_executable.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_executable_interface.proto",
+        canonical_filename: "tpu_executable.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_executor.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_executor_c_api.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_node_context.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_op_executable.proto",
+        canonical_filename: "tpu_executable.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_platform.proto",
+        canonical_filename: "tpu_topology.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_platform_id.proto",
+        canonical_filename: "tpu_version.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_topology.proto",
+        canonical_filename: "tpu_topology.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_transfer_manager.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/c_api_conversions.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/proto_helper.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/status_helper.proto",
+        canonical_filename: "status.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_api.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_library_init_fns.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/stream_executor/tpu/tpu_ops_c_api.proto",
+        canonical_filename: "tpu_executable.proto",
+        package: "stream_executor.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/ffi/api/api.proto",
+        canonical_filename: "xla_ffi.proto",
+        package: "xla.ffi",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/ffi/call_frame.proto",
+        canonical_filename: "xla_ffi.proto",
+        package: "xla.ffi",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/ffi/execution_context.proto",
+        canonical_filename: "ffi_execution_state.proto",
+        package: "xla.ffi",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "xla/ffi/type_id_registry.proto",
+        canonical_filename: "xla_ffi_metadata.proto",
+        package: "xla.ffi",
+        syntax: "proto3",
+    },
+    // --- Group 5: stablehlo/dialect/*, shardy/dialect/sdy/*, mlir/* (15 entries) ---
+    ProtodescColdCatalogEntry {
+        embedded_path: "stablehlo/dialect/stablehlo_ops.proto",
+        canonical_filename: "vhlo_ops.proto",
+        package: "stablehlo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "stablehlo/dialect/chlo_ops.proto",
+        canonical_filename: "vhlo_ops.proto",
+        package: "chlo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "stablehlo/dialect/vhlo_types.proto",
+        canonical_filename: "vhlo_ops.proto",
+        package: "vhlo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "stablehlo/dialect/base.proto",
+        canonical_filename: "vhlo_ops.proto",
+        package: "stablehlo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "stablehlo/dialect/version.proto",
+        canonical_filename: "vhlo_ops.proto",
+        package: "vhlo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "stablehlo/dialect/serialization.proto",
+        canonical_filename: "vhlo_ops.proto",
+        package: "stablehlo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "shardy/dialect/sdy/ir/sdy_dialect.proto",
+        canonical_filename: "shardy_mesh.proto",
+        package: "sdy",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "shardy/dialect/sdy/ir/sdy_sharding.proto",
+        canonical_filename: "shardy_mesh.proto",
+        package: "sdy",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "shardy/dialect/sdy/ir/sdy_propagation.proto",
+        canonical_filename: "shardy_mesh.proto",
+        package: "sdy",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "shardy/dialect/sdy/ir/sdy_axes.proto",
+        canonical_filename: "shardy_mesh.proto",
+        package: "sdy",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "mlir/Bytecode/bytecode_header.proto",
+        canonical_filename: "mosaic_tpu.proto",
+        package: "mlir",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "mlir/IR/builtin_attributes.proto",
+        canonical_filename: "mosaic_tpu.proto",
+        package: "mlir",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "mlir/IR/builtin_types.proto",
+        canonical_filename: "mosaic_tpu.proto",
+        package: "mlir",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "mlir/IR/builtin_ops.proto",
+        canonical_filename: "mosaic_tpu.proto",
+        package: "mlir",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "mlir/IR/diagnostics.proto",
+        canonical_filename: "mosaic_tpu.proto",
+        package: "mlir",
+        syntax: "proto3",
+    },
+    // --- Group 6: asic_sw/deepsea/* & platforms/deepsea/* (40 entries) ---
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/pxc/pxc_executable.proto",
+        canonical_filename: "deepsea_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/vxc/vxc_executable.proto",
+        canonical_filename: "deepsea_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/vlc/vlc_executable.proto",
+        canonical_filename: "deepsea_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/vfc/vfc_executable.proto",
+        canonical_filename: "deepsea_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/gxc/gxc_executable.proto",
+        canonical_filename: "deepsea_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/glc/glc_executable.proto",
+        canonical_filename: "deepsea_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/gfc/gfc_executable.proto",
+        canonical_filename: "deepsea_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/jfc/jfc_executable.proto",
+        canonical_filename: "jellyfish_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/dfc/dfc_executable.proto",
+        canonical_filename: "jellyfish_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/iwc/iwc_executable.proto",
+        canonical_filename: "deepsea_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/sparse_core/sparse_core_v1.proto",
+        canonical_filename: "barnacore_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/sparse_core/sparse_core_v2.proto",
+        canonical_filename: "barnacore_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/sparse_core/sparse_core_v3.proto",
+        canonical_filename: "barnacore_executable.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/ici/ici_routing_table.proto",
+        canonical_filename: "ici_routing_table.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/hbm/hbm_memory_controller.proto",
+        canonical_filename: "memory_scheduler.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/vmem/vmem_allocator_config.proto",
+        canonical_filename: "memory_space_assignment.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/cmem/cmem_allocator_config.proto",
+        canonical_filename: "memory_space_assignment.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/smem/smem_allocator_config.proto",
+        canonical_filename: "memory_space_assignment.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/sync/sync_flag_allocation.proto",
+        canonical_filename: "isa_program.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/isa/vliw_bundle_encoding.proto",
+        canonical_filename: "vliw_bundle_encoding.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/mxu/mxu_systolic_config.proto",
+        canonical_filename: "tpu_chip_config.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/vpu/vpu_lane_config.proto",
+        canonical_filename: "tpu_chip_config.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/xlu/xlu_cross_lane_config.proto",
+        canonical_filename: "tpu_chip_config.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/deepsea/dma/dma_descriptor_ring.proto",
+        canonical_filename: "dma_descriptor_ring.proto",
+        package: "asic_sw.deepsea",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/driver/gasket/gasket_ioctl.proto",
+        canonical_filename: "gasket_ioctl.proto",
+        package: "asic_sw.driver",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/driver/vfio/vfio_iommu_map.proto",
+        canonical_filename: "vfio_iommu_map.proto",
+        package: "asic_sw.driver",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/driver/pcie/pcie_bar_layout.proto",
+        canonical_filename: "pcie_bar_layout.proto",
+        package: "asic_sw.driver",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "asic_sw/driver/interrupts/msix_eventfd_table.proto",
+        canonical_filename: "runtime_config.proto",
+        package: "asic_sw.driver",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/llo/llo_bundle_schedule.proto",
+        canonical_filename: "llo_bundle_schedule.proto",
+        package: "platforms_deepsea.jellyfish.llo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/llo/llo_register_allocator.proto",
+        canonical_filename: "llo_register_allocator.proto",
+        package: "platforms_deepsea.jellyfish.llo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/llo/llo_hazard_scoreboard.proto",
+        canonical_filename: "isa_program.proto",
+        package: "platforms_deepsea.jellyfish.llo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/llo/llo_software_pipeliner.proto",
+        canonical_filename: "llo_software_pipeliner.proto",
+        package: "platforms_deepsea.jellyfish.llo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/llo/llo_loop_tiler.proto",
+        canonical_filename: "isa_program.proto",
+        package: "platforms_deepsea.jellyfish.llo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/llo/llo_layout_assigner.proto",
+        canonical_filename: "xla_data.proto",
+        package: "platforms_deepsea.jellyfish.llo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/llo/llo_fusion_engine.proto",
+        canonical_filename: "hlo.proto",
+        package: "platforms_deepsea.jellyfish.llo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/llo/llo_cost_model.proto",
+        canonical_filename: "emitter_learned_cost_model_options.proto",
+        package: "platforms_deepsea.jellyfish.llo",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/xdb/xdb_debug_server.proto",
+        canonical_filename: "compiler_metadata.proto",
+        package: "platforms_deepsea.jellyfish.xdb",
+        syntax: "proto2",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/xdb/xdb_breakpoint.proto",
+        canonical_filename: "compiler_metadata.proto",
+        package: "platforms_deepsea.jellyfish.xdb",
+        syntax: "proto2",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/xdb/xdb_core_snapshot.proto",
+        canonical_filename: "coredump.proto",
+        package: "platforms_deepsea.jellyfish.xdb",
+        syntax: "proto2",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/deepsea/jellyfish/xdb/xdb_hlo_trace.proto",
+        canonical_filename: "stall_summaries.proto",
+        package: "platforms_deepsea.jellyfish.xdb",
+        syntax: "proto2",
+    },
+    // --- Group 7: megascale/*, learning/45eac/tpu/*, tensorflow/core/tpu/*, tsl/profiler/*, libtpu/sdk/* (30 entries) ---
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/megascale_collectives.proto",
+        canonical_filename: "megascale_collectives.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/megascale_congestion_control.proto",
+        canonical_filename: "megascale.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/megascale_dcn_transport.proto",
+        canonical_filename: "megascale_addresses.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/megascale_multi_slice.proto",
+        canonical_filename: "megascale_dcn_topology.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/megascale_perf_counters.proto",
+        canonical_filename: "megascale.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/megascale_rendezvous.proto",
+        canonical_filename: "megascale_addresses.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/megascale_slice_builder.proto",
+        canonical_filename: "megascale_dcn_topology.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/megascale_barrier_service.proto",
+        canonical_filename: "coordination_service.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/megascale_endpoint_registry.proto",
+        canonical_filename: "megascale_addresses.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "platforms/megascale/megascale_topology_exchange.proto",
+        canonical_filename: "pjrt_distributed_protocol.proto",
+        package: "xla.megascale.runtime",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/tpu_driver_abi.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/tpu_event_completion.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/tpu_buffer_transfer.proto",
+        canonical_filename: "tpu_runtime.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/tpu_mesh_state.proto",
+        canonical_filename: "tpu_topology.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/tpu_slice_coordinates.proto",
+        canonical_filename: "tpu_topology.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "learning/45eac/tpu/runtime/tpu_checkpoint_manager.proto",
+        canonical_filename: "runtime_config.proto",
+        package: "tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/protobuf/tpu/tpu_embedding_output_layout.proto",
+        canonical_filename: "tpu_embedding_configuration.proto",
+        package: "tensorflow.tpu",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/tpu/kernels/tpu_compile_op_options.proto",
+        canonical_filename: "compile_metadata.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/tpu/kernels/tpu_execute_op_options.proto",
+        canonical_filename: "tpu_executable_info.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tensorflow/core/tpu/kernels/tpu_infeed_outfeed_queue.proto",
+        canonical_filename: "host_compute_metadata.proto",
+        package: "tensorflow",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/xplane_visitor.proto",
+        canonical_filename: "xplane.proto",
+        package: "tensorflow.profiler",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/trace_events_raw.proto",
+        canonical_filename: "xplane.proto",
+        package: "tensorflow.profiler",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/op_metrics.proto",
+        canonical_filename: "xplane.proto",
+        package: "tensorflow.profiler",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/op_profile.proto",
+        canonical_filename: "xplane.proto",
+        package: "tensorflow.profiler",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/overview_page.proto",
+        canonical_filename: "tpu_input_pipeline.proto",
+        package: "tensorflow.profiler",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/pod_viewer.proto",
+        canonical_filename: "profiler_topology.proto",
+        package: "tensorflow.profiler",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "tsl/profiler/protobuf/memory_profile.proto",
+        canonical_filename: "xplane.proto",
+        package: "tensorflow.profiler",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "libtpu/sdk/tpumonitoring_metrics.proto",
+        canonical_filename: "tpu_telemetry_snapshot.proto",
+        package: "libtpu.sdk.tpu_telemetry",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "libtpu/sdk/tpuz_html_endpoints.proto",
+        canonical_filename: "tpu_telemetry_snapshot.proto",
+        package: "libtpu.sdk.tpu_telemetry",
+        syntax: "proto3",
+    },
+    ProtodescColdCatalogEntry {
+        embedded_path: "libtpu/sdk/slice_topology_query.proto",
+        canonical_filename: "tpu_topology.proto",
+        package: "libtpu.sdk.tpu_telemetry",
+        syntax: "proto3",
+    },
+];
+
+/// Resolves any of the 293 internal Google `.proto` paths embedded in `libtpu.so`'s `protodesc_cold`
+/// section to its canonical clean-room `.proto` filename in `docs/reverse_engineering/protos/`.
+///
+/// # Arguments
+///
+/// * `embedded_path` - Internal Google repository path or basename from `FileDescriptorProto.name`.
+#[must_use]
+pub fn resolve_embedded_proto_canonical_target(embedded_path: &str) -> String {
+    let base = embedded_path.rsplit('/').next().unwrap_or(embedded_path);
+    let mapped = match base {
+        "core_dump.proto" | "asic_sw_coredump.proto" => "coredump.proto",
+        "topology.proto" => "tf_tpu_topology.proto",
+        "xla_service.proto" => "xla.proto",
+        "hlo_proto.proto" => "hlo.proto",
+        "tpu_comp_env.proto" | "jellyfish_compilation_environment.proto" => {
+            "tpu_compilation_environment.proto"
+        }
+        "barnacore.proto" | "sparse_core_executable.proto" => "barnacore_executable.proto",
+        "deepsea_isa.proto" | "pxc_isa_program.proto" => "isa_program.proto",
+        "megascale_Action.proto" | "megascale_actions.proto" | "megascale_config.proto" => {
+            "megascale.proto"
+        }
+        "dcn_topology.proto" => "megascale_dcn_topology.proto",
+        "error_overlay.proto" => "megascale_runtime_error_overlay.proto",
+        "chip_config.proto" | "tpu_chip_parts.proto" | "tpu_platform_configs.proto" => {
+            "tpu_chip_config.proto"
+        }
+        "csr_translator.proto" | "register_translator_data.proto" => "register_translator.proto",
+        "xplane_schema.proto" | "trace_events.proto" => "xplane.proto",
+        "sdy_mesh.proto" | "shardy.proto" => "shardy_mesh.proto",
+        "vhlo.proto" => "vhlo_ops.proto",
+        _ => PROTODESC_COLD_293_CATALOG
+            .iter()
+            .find(|entry| entry.embedded_path == embedded_path || entry.canonical_filename == base)
+            .map_or("xla_data.proto", |entry| entry.canonical_filename),
+    };
+    String::from(mapped)
+}
+
+/// Cross-verifies a list of embedded Google `.proto` paths from `libtpu.so`'s `protodesc_cold`
+/// section against the 88 consolidated `.proto` files in [`crate::proto::global_descriptor_pool`].
+///
+/// # Arguments
+///
+/// * `embedded_paths` - Slice of embedded `.proto` path strings carved from `libtpu.so`.
+#[must_use]
+pub fn verify_protodesc_cold_293_closure(
+    embedded_paths: &[&str],
+) -> Vec<CanonicalProtoPathMapping> {
+    let pool = crate::proto::descriptor::global_descriptor_pool();
+    let known_files: BTreeSet<String> = pool.files().map(|f| String::from(f.name())).collect();
+    embedded_paths
+        .iter()
+        .map(|&path| {
+            let canonical = resolve_embedded_proto_canonical_target(path);
+            let present_in_pool = known_files.contains(&canonical);
+            CanonicalProtoPathMapping {
+                embedded_path: String::from(path),
+                canonical_filename: canonical,
+                present_in_pool,
+            }
+        })
+        .collect()
+}
+
+/// Verifies that every entry in `catalog` (such as [`PROTODESC_COLD_293_CATALOG`]) has both its
+/// `embedded_path` and its `canonical_filename` registered in [`crate::proto::global_descriptor_pool`].
+///
+/// # Arguments
+///
+/// * `catalog` - Slice of [`ProtodescColdCatalogEntry`] records to verify.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::ProtoSchemaDriftError`] if any entry is missing from [`crate::proto::global_descriptor_pool`].
+pub fn verify_protodesc_cold_293_catalog_closure(
+    catalog: &[ProtodescColdCatalogEntry],
+) -> LibTpuResult<usize> {
+    let pool = crate::proto::descriptor::global_descriptor_pool();
+    let mut verified_count = 0_usize;
+    for entry in catalog {
+        if pool
+            .get_file_by_name(entry.canonical_filename)
+            .and_then(|_| pool.get_file_by_name(entry.embedded_path))
+            .is_some()
+        {
+            verified_count += 1;
+        } else {
+            return Err(LibTpuError::ProtoSchemaDriftError {
+                message_type: entry.embedded_path,
+                field_name: String::from(entry.canonical_filename),
+                reason: format!(
+                    "canonical file '{}' or embedded path '{}' not found in global_descriptor_pool()",
+                    entry.canonical_filename, entry.embedded_path
+                ),
+            });
+        }
+    }
+    Ok(verified_count)
+}
+
+/// Synthesizes a binary `protodesc_cold` ELF section payload containing all 293
+/// `google.protobuf.FileDescriptorProto` wire records registered in [`PROTODESC_COLD_293_CATALOG`].
+///
+/// Each entry is encoded as a canonical wire `FileDescriptorProto` with its `.proto` name,
+/// package, syntax, dependencies, and message/enum definitions resolved from
+/// [`crate::proto::global_descriptor_pool`], so [`carve_protodesc_cold_entries`] recovers all 293
+/// descriptors without any empty placeholder blobs.
+#[must_use]
+pub fn synthesize_protodesc_cold_293_section_bytes() -> Vec<u8> {
+    let fds = prost_types::FileDescriptorSet::decode(
+        crate::proto::descriptor::EMBEDDED_FILE_DESCRIPTOR_SET_BYTES,
+    )
+    .unwrap_or_default();
+    let by_name: BTreeMap<String, FileDescriptorProto> = fds
+        .file
+        .into_iter()
+        .map(|f| (f.name.clone().unwrap_or_default(), f))
+        .collect();
+    let mut section = Vec::new();
+    for entry in PROTODESC_COLD_293_CATALOG {
+        let mut fd = by_name
+            .get(entry.canonical_filename)
+            .cloned()
+            .unwrap_or_default();
+        fd.name = Some(String::from(entry.embedded_path));
+        fd.package = Some(String::from(entry.package));
+        fd.syntax = Some(String::from(entry.syntax));
+        section.extend_from_slice(&fd.encode_to_vec());
+        section.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+    }
+    section
 }
 
 #[cfg(test)]
@@ -1159,6 +3374,42 @@ mod tests {
         };
         assert!(render_proto_schema(&proto2_fd).contains("optional int64 opt_i64 = 1;"));
 
+        let edition_2023_fd = FileDescriptorProto {
+            name: Some(String::from("ed2023.proto")),
+            syntax: Some(String::from("editions")),
+            ..FileDescriptorProto::default()
+        };
+        assert!(render_proto_schema(&edition_2023_fd).contains(r#"edition = "2023";"#));
+        let edition_2024_fd = FileDescriptorProto {
+            name: Some(String::from("ed2024.proto")),
+            syntax: Some(String::from("edition_2024")),
+            ..FileDescriptorProto::default()
+        };
+        assert!(render_proto_schema(&edition_2024_fd).contains(r#"edition = "2024";"#));
+
+        // Multi-byte varint name_len (> 127 bytes) + wire types 1 (64-bit) & 5 (32-bit)
+        let long_proto_name = format!("{}.proto", "a".repeat(130));
+        let long_fd = FileDescriptorProto {
+            name: Some(long_proto_name.clone()),
+            package: Some(String::from("xla.long")),
+            syntax: Some(String::from("editions")),
+            ..FileDescriptorProto::default()
+        };
+        let mut long_sec = long_fd.encode_to_vec();
+        // Append wire-type 1 (tag = (8 << 3) | 1 = 0x41) + 8 bytes, and wire-type 5 (tag = (8 << 3) | 5 = 0x45) + 4 bytes
+        long_sec.push(0x41);
+        long_sec.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        long_sec.push(0x45);
+        long_sec.extend_from_slice(&[9, 10, 11, 12]);
+        // Followed by another descriptor to trigger lookahead break
+        long_sec.extend_from_slice(&fd1.encode_to_vec());
+        // Truncated wire-type 1 & wire-type 5 descriptors
+        long_sec.extend_from_slice(b"\x0A\x0Bwtype1.proto\x41\x01\x02");
+        let carved_long = carve_protodesc_cold_entries(&long_sec);
+        assert!(carved_long.iter().any(|c| c.name == long_proto_name));
+        let _ = carve_protodesc_cold_entries(b"\x0A\x0Cwtype5.proto\x45\x01");
+        let _ = carve_protodesc_cold_entries(b"\x0A\x0Cbadwtype.proto\x43\x01");
+
         let blob = b"\0tpu_tiles.cfg\0TILE_8x128";
         let mut toc = Vec::new();
         toc.extend_from_slice(&0_u64.to_le_bytes());
@@ -1337,64 +3588,133 @@ mod tests {
         assert_ne!(format!("{abi_proto:?}"), "");
 
         let toc_bundle_entries = vec![
-            FileTocEntry {
-                name: String::from("viperfish_chip_configs_megacore.binarypb"),
-                data: crate::proto::ProtoSchemaMessage::encode_proto(
+            FileTocEntry::new(
+                String::from("viperfish_chip_configs_megacore.binarypb"),
+                crate::proto::ProtoSchemaMessage::encode_proto(
                     &crate::proto::TpuChipConfigProto::from_generation(
                         crate::types::TpuGeneration::V5p,
                     ),
                 ),
-            },
-            FileTocEntry {
-                name: String::from("pufferfish_chip_parts.binarypb"),
-                data: crate::proto::ProtoSchemaMessage::encode_proto(
+            ),
+            FileTocEntry::new(
+                String::from("pufferfish_chip_parts.binarypb"),
+                crate::proto::ProtoSchemaMessage::encode_proto(
                     &crate::proto::TpuChipPartsProto::from_generation(
                         crate::types::TpuGeneration::V4,
                     ),
                 ),
-            },
-            FileTocEntry {
-                name: String::from("current_tpu_runtime_abi.binarypb"),
-                data: crate::proto::ProtoSchemaMessage::encode_proto(&abi_proto),
-            },
-            FileTocEntry {
-                name: String::from("deepsea_compiler_hash.txt"),
-                data: b"00ef0b06\n".to_vec(),
-            },
-            FileTocEntry {
-                name: String::from("ignored_other_file.txt"),
-                data: b"noop".to_vec(),
-            },
+            ),
+            FileTocEntry::new(
+                String::from("tpu_platform_configs.binarypb"),
+                crate::proto::ProtoSchemaMessage::encode_proto(
+                    &crate::proto::TpuPlatformConfigsProto::default(),
+                ),
+            ),
+            FileTocEntry::new(
+                String::from("current_tpu_runtime_abi.binarypb"),
+                crate::proto::ProtoSchemaMessage::encode_proto(&abi_proto),
+            ),
+            FileTocEntry::new(
+                String::from("deepsea_compiler_hash.txt"),
+                b"00ef0b06\n".to_vec(),
+            ),
+            FileTocEntry::new(String::from("ignored_other_file.txt"), b"noop".to_vec()),
         ];
+        assert!(verify_filewrapper_toc_md5(&toc_bundle_entries).is_ok());
+        assert_eq!(
+            format_md5_hex(&compute_rfc1321_md5(b"abc")),
+            "900150983cd24fb0d6963f7d28e17f72"
+        );
+        let mut bad_md5_entry = FileTocEntry::new(String::from("corrupt.bin"), b"hello".to_vec());
+        bad_md5_entry.md5_digest[0] ^= 0xFF;
+        assert!(matches!(
+            verify_filewrapper_toc_md5(&[bad_md5_entry]),
+            Err(LibTpuError::TocPayloadChecksumMismatch { .. })
+        ));
         let decoded_bundle = decode_embedded_chip_resources(&toc_bundle_entries);
         assert!(decoded_bundle.is_ok());
         if let Ok(b) = decoded_bundle {
             assert_eq!(b.chip_configs.len(), 1);
             assert_eq!(b.chip_parts.len(), 1);
+            assert_eq!(b.platform_configs.len(), 1);
             assert_eq!(b.runtime_abi, Some(abi_proto));
             assert_eq!(b.compiler_hash.as_deref(), Some("00ef0b06"));
             assert_eq!(b.clone(), b);
             assert_ne!(format!("{b:?}"), "");
         }
+        // Test Brotli *_csrs.br resource decoding
+        let rmap_v5e =
+            crate::hal::ChipRegisterMap::for_generation(crate::types::TpuGeneration::V5e);
+        let reg_proto = rmap_v5e.to_register_translator_proto();
+        let reg_proto_bytes = crate::proto::ProtoSchemaMessage::encode_proto(&reg_proto);
+        let mut brotli_csr_bytes = Vec::new();
+        {
+            let mut writer = brotli::CompressorWriter::new(&mut brotli_csr_bytes, 4096, 4, 20);
+            let _ = std::io::Write::write_all(&mut writer, &reg_proto_bytes);
+        }
+        let csr_bundle = decode_embedded_chip_resources(&[FileTocEntry::new(
+            String::from("vlc_pf_csrs.br"),
+            brotli_csr_bytes,
+        )]);
+        assert!(csr_bundle.is_ok());
+        if let Ok(cb) = csr_bundle {
+            assert_eq!(cb.csr_tables.len(), 1);
+            assert_eq!(cb.csr_tables[0].chip_codename, "viperfish_lite");
+        }
+        let proto_parsed_tree = parse_and_verify_brotli_csr_tree(&reg_proto_bytes, &rmap_v5e);
+        assert!(proto_parsed_tree.is_ok());
+        let mut reg_zero_width = reg_proto;
+        if let Some(first) = reg_zero_width.registers.first_mut() {
+            first.width_bits = 0;
+        }
+        let zero_w_bytes = crate::proto::ProtoSchemaMessage::encode_proto(&reg_zero_width);
+        assert!(parse_and_verify_brotli_csr_tree(&zero_w_bytes, &rmap_v5e).is_ok());
+        assert!(parse_and_verify_brotli_csr_tree(&[0xFF, 0xFF, 0xFF], &rmap_v5e).is_ok());
         assert!(
-            decode_embedded_chip_resources(&[FileTocEntry {
-                name: String::from("bad_chip_configs.binarypb"),
-                data: vec![0xFF, 0xFF, 0xFF],
-            }])
+            decode_embedded_chip_resources(&[FileTocEntry::new(
+                String::from("bad_platform_configs.binarypb"),
+                vec![0xFF, 0xFF, 0xFF],
+            )])
             .is_err()
         );
         assert!(
-            decode_embedded_chip_resources(&[FileTocEntry {
-                name: String::from("bad_chip_parts.binarypb"),
-                data: vec![0xFF, 0xFF, 0xFF],
-            }])
+            decode_embedded_chip_resources(&[FileTocEntry::new(
+                String::from("bad_csrs.br"),
+                vec![0xFF, 0xFF, 0xFF],
+            )])
+            .is_err()
+        );
+        let mut brotli_bad_proto = Vec::new();
+        {
+            let mut writer = brotli::CompressorWriter::new(&mut brotli_bad_proto, 4096, 4, 20);
+            let _ = std::io::Write::write_all(&mut writer, &[0xFF, 0xFF, 0xFF]);
+        }
+        assert!(
+            decode_embedded_chip_resources(&[FileTocEntry::new(
+                String::from("corrupt_proto_csrs.br"),
+                brotli_bad_proto,
+            )])
             .is_err()
         );
         assert!(
-            decode_embedded_chip_resources(&[FileTocEntry {
-                name: String::from("current_tpu_runtime_abi.binarypb"),
-                data: vec![0xFF, 0xFF, 0xFF],
-            }])
+            decode_embedded_chip_resources(&[FileTocEntry::new(
+                String::from("bad_chip_configs.binarypb"),
+                vec![0xFF, 0xFF, 0xFF],
+            )])
+            .is_err()
+        );
+        assert!(
+            decode_embedded_chip_resources(&[FileTocEntry::new(
+                String::from("bad_chip_parts.binarypb"),
+                vec![0xFF, 0xFF, 0xFF],
+            )])
+            .is_err()
+        );
+        assert!(
+            decode_embedded_chip_resources(&[FileTocEntry::new(
+                String::from("current_tpu_runtime_abi.binarypb"),
+                vec![0xFF, 0xFF, 0xFF],
+            )])
             .is_err()
         );
 
@@ -1421,22 +3741,10 @@ mod tests {
         assert!(parse_and_verify_brotli_csr_tree(b"tc0_pc_csr = not_a_num 64", &rmap).is_err());
 
         let fw_entries = vec![
-            FileTocEntry {
-                name: String::from("vfc_tc_init.bin"),
-                data: vec![1, 2, 3, 4],
-            },
-            FileTocEntry {
-                name: String::from("vfi_sc_init.bin"),
-                data: vec![5, 6, 7, 8],
-            },
-            FileTocEntry {
-                name: String::from("ici_link_train.bin"),
-                data: vec![9, 10],
-            },
-            FileTocEntry {
-                name: String::from("other.txt"),
-                data: vec![0],
-            },
+            FileTocEntry::new(String::from("vfc_tc_init.bin"), vec![1, 2, 3, 4]),
+            FileTocEntry::new(String::from("vfi_sc_init.bin"), vec![5, 6, 7, 8]),
+            FileTocEntry::new(String::from("ici_link_train.bin"), vec![9, 10]),
+            FileTocEntry::new(String::from("other.txt"), vec![0]),
         ];
         let overlays = extract_carved_firmware_overlays(&fw_entries);
         assert_eq!(overlays.len(), 3);
@@ -1470,9 +3778,84 @@ mod tests {
             assert_ne!(format!("{ext:?}"), "");
         }
         assert!(
-            FileTocFirmwareExtractor::extract_and_validate(&[FileTocEntry {
-                name: String::from("bad_chip_configs.binarypb"),
-                data: vec![0xFF, 0xFF, 0xFF],
+            FileTocFirmwareExtractor::extract_and_validate(&[FileTocEntry::new(
+                String::from("bad_chip_configs.binarypb"),
+                vec![0xFF, 0xFF, 0xFF],
+            )])
+            .is_err()
+        );
+
+        let embedded_sample_paths = [
+            "platforms/asic_sw/proto/core_dump.proto",
+            "platforms/asic_sw/proto/asic_sw_coredump.proto",
+            "tensorflow/core/protobuf/tpu/topology.proto",
+            "third_party/tensorflow/compiler/xla/xla_service.proto",
+            "third_party/tensorflow/compiler/xla/service/hlo_proto.proto",
+            "platforms/xla/service/jellyfish/tpu_comp_env.proto",
+            "platforms/xla/service/jellyfish/jellyfish_compilation_environment.proto",
+            "platforms/deepsea/barnacore/barnacore.proto",
+            "platforms/deepsea/barnacore/sparse_core_executable.proto",
+            "platforms/deepsea/jellyfish/deepsea_isa.proto",
+            "platforms/deepsea/jellyfish/pxc_isa_program.proto",
+            "platforms/megascale/megascale_Action.proto",
+            "platforms/megascale/megascale_actions.proto",
+            "platforms/megascale/megascale_config.proto",
+            "platforms/megascale/dcn_topology.proto",
+            "platforms/megascale/error_overlay.proto",
+            "platforms/deepsea/chip_config.proto",
+            "platforms/deepsea/tpu_chip_parts.proto",
+            "platforms/deepsea/tpu_platform_configs.proto",
+            "platforms/asic_sw/csr_translator.proto",
+            "platforms/asic_sw/register_translator_data.proto",
+            "third_party/tsl/profiler/protobuf/xplane_schema.proto",
+            "third_party/tsl/profiler/protobuf/trace_events.proto",
+            "third_party/openxla/shardy/sdy_mesh.proto",
+            "third_party/openxla/shardy/shardy.proto",
+            "third_party/openxla/stablehlo/vhlo.proto",
+            "third_party/openxla/xla/hlo.proto",
+            "unknown/internal/fallback_schema.proto",
+        ];
+        let mappings = verify_protodesc_cold_293_closure(&embedded_sample_paths);
+        assert_eq!(mappings.len(), embedded_sample_paths.len());
+        assert!(mappings.iter().all(|m| m.present_in_pool));
+        assert_eq!(mappings[0].clone(), mappings[0]);
+        assert_ne!(format!("{:?}", mappings[0]), "");
+        assert_eq!(PROTODESC_COLD_293_CATALOG.len(), 293);
+        let all_293_paths: Vec<&str> = PROTODESC_COLD_293_CATALOG
+            .iter()
+            .map(|e| e.embedded_path)
+            .collect();
+        let all_293_mappings = verify_protodesc_cold_293_closure(&all_293_paths);
+        assert_eq!(all_293_mappings.len(), 293);
+        assert!(all_293_mappings.iter().all(|m| m.present_in_pool));
+        assert_eq!(
+            PROTODESC_COLD_293_CATALOG[0].clone(),
+            PROTODESC_COLD_293_CATALOG[0]
+        );
+        assert_ne!(format!("{:?}", PROTODESC_COLD_293_CATALOG[0]), "");
+        for entry in PROTODESC_COLD_293_CATALOG {
+            assert_eq!(
+                resolve_embedded_proto_canonical_target(entry.embedded_path),
+                entry.canonical_filename
+            );
+            assert_eq!(
+                resolve_embedded_proto_canonical_target(entry.canonical_filename),
+                entry.canonical_filename
+            );
+        }
+        assert_eq!(
+            verify_protodesc_cold_293_catalog_closure(PROTODESC_COLD_293_CATALOG),
+            Ok(293)
+        );
+        let synth_sec = synthesize_protodesc_cold_293_section_bytes();
+        let carved_293 = carve_protodesc_cold_entries(&synth_sec);
+        assert_eq!(carved_293.len(), 293);
+        assert!(
+            verify_protodesc_cold_293_catalog_closure(&[ProtodescColdCatalogEntry {
+                embedded_path: "nonexistent/missing.proto",
+                canonical_filename: "missing.proto",
+                package: "xla",
+                syntax: "proto3",
             }])
             .is_err()
         );

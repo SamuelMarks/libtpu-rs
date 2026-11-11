@@ -43,13 +43,14 @@ pub use self::hardware::{
 };
 pub use self::ids::{
     AbiVersionNumber, BarrierId, BlockId, BufferId, CallbackId, ChannelId, ChipId, CommunicatorId,
-    CompilerId, ContextId, ContinuationId, CoreId, CoreIndex, DeviceId, EventId, ExecutableId,
-    GlobalChipId, GmrAccumId, GmrIndex, HostId, IncarnationId, LaunchId, LocalHardwareId,
-    LogicalSlotId, MatmulAccIndex, MemorySpaceId, OrdinalSeed, OverlayId, PartitionId,
-    PhysicalPregId, PhysicalSregId, PhysicalVregId, PregId, PregIndex, ProcessIndex, RegionId,
-    ReplicaId, RequestId, RunId, SemaphoreId, SflagId, SliceId, SparseCoreId, SregId, SregIndex,
-    SsaValueId, StreamId, SyncFlagId, SyncFlagIndex, SyncFlagValue, TraceMeContextId,
-    TransferManagerId, TransformId, VmaskBits, VmaskIndex, VmregIndex, VregId, VregIndex, WindowId,
+    CompilerId, ContextId, ContinuationId, CoreId, CoreIndex, DeviceId, DmaRingIndex, EventId,
+    ExecutableId, GlobalChipId, GmrAccumId, GmrIndex, HostId, ImemOffset, IncarnationId, LaunchId,
+    LocalHardwareId, LogicalSlotId, MatmulAccIndex, MemorySpaceId, OrdinalSeed, OverlayId,
+    PartitionId, PhysicalMregId, PhysicalPregId, PhysicalSregId, PhysicalVregId, PregId, PregIndex,
+    ProcessIndex, RegionId, ReplicaId, RequestId, RunId, SemaphoreId, SflagId, SliceId,
+    SparseCoreId, SregId, SregIndex, SsaValueId, StreamId, SyncFlagId, SyncFlagIndex,
+    SyncFlagValue, TraceMeContextId, TransferManagerId, TransformId, VirtualRegId, VirtualSlotId,
+    VmaskBits, VmaskIndex, VmregIndex, VregId, VregIndex, WindowId,
 };
 pub use self::shape::{
     Allocated, DimVec, DynamicDimVec, MemoryLayout, Shape, TensorShape, TypedDeviceBuffer,

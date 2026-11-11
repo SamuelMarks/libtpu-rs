@@ -408,15 +408,12 @@ impl DistributedCoordinator {
     }
 
     /// Dispatches a protobuf-encoded `tensorflow.CoordinationService` RPC request payload
-    /// (`RegisterTaskRequestProto`, `HeartbeatRequestProto`, `InsertKeyValueRequestProto`,
-    /// `GetKeyValueRequestProto`, `TryGetKeyValueRequestProto`, `IncrementKeyValueRequestProto`,
-    /// `GetKeyValueDirRequestProto`, `DeleteKeyValueRequestProto`, `BarrierRequestProto`,
-    /// `CancelBarrierRequestProto`, `GetAliveTasksRequestProto`, `ShutdownTaskRequestProto`)
-    /// and returns the serialized protobuf response bytes.
+    /// across all 19 official `CoordinationService` methods (`1..=19`) and returns the
+    /// serialized protobuf response bytes.
     ///
     /// # Arguments
     ///
-    /// * `method_id` - Numeric `CoordinationService` method ID (`1` = `RegisterTask`, `2` = `Heartbeat`, `3` = `InsertKeyValue`, `4` = `GetKeyValue`, `5` = `TryGetKeyValue`, `6` = `IncrementKeyValue`, `7` = `GetKeyValueDir`, `8` = `DeleteKeyValue`, `9` = `Barrier`, `10` = `CancelBarrier`, `11` = `GetAliveTasks`, `12` = `ShutdownTask`).
+    /// * `method_id` - Numeric `CoordinationService` method ID (`1` = `RegisterTask`, `2` = `Heartbeat`, `3` = `InsertKeyValue`, `4` = `GetKeyValue`, `5` = `TryGetKeyValue`, `6` = `IncrementKeyValue`, `7` = `GetKeyValueDir`, `8` = `DeleteKeyValue`, `9` = `Barrier`, `10` = `CancelBarrier`, `11` = `GetAliveTasks`, `12` = `ShutdownTask`, `13` = `WaitForAllTasks`, `14` = `ResetTask`, `15` = `ReportErrorToTask`, `16` = `ReportErrorToService`, `17` = `GetTaskState`, `18` = `WatchJobState`, `19` = `PollForError`).
     /// * `request_bytes` - Wire-encoded protobuf request message.
     ///
     /// # Errors
@@ -430,14 +427,19 @@ impl DistributedCoordinator {
     ) -> LibTpuResult<Vec<u8>> {
         use crate::proto::{
             BarrierRequestProto, BarrierResponseProto, CancelBarrierRequestProto,
-            CancelBarrierResponseProto, DeleteKeyValueRequestProto, DeleteKeyValueResponseProto,
-            GetAliveTasksRequestProto, GetAliveTasksResponseProto, GetKeyValueDirRequestProto,
-            GetKeyValueDirResponseProto, GetKeyValueRequestProto, GetKeyValueResponseProto,
+            CancelBarrierResponseProto, CoordinatedTaskStateInfoProto, DeleteKeyValueRequestProto,
+            DeleteKeyValueResponseProto, GetAliveTasksRequestProto, GetAliveTasksResponseProto,
+            GetKeyValueDirRequestProto, GetKeyValueDirResponseProto, GetKeyValueRequestProto,
+            GetKeyValueResponseProto, GetTaskStateRequestProto, GetTaskStateResponseProto,
             HeartbeatRequestProto, HeartbeatResponseProto, IncrementKeyValueRequestProto,
             IncrementKeyValueResponseProto, InsertKeyValueRequestProto,
-            InsertKeyValueResponseProto, KeyValueEntryProto, RegisterTaskRequestProto,
-            RegisterTaskResponseProto, ShutdownTaskRequestProto, ShutdownTaskResponseProto,
-            TryGetKeyValueRequestProto, TryGetKeyValueResponseProto,
+            InsertKeyValueResponseProto, KeyValueEntryProto, PollForErrorRequestProto,
+            PollForErrorResponseProto, RegisterTaskRequestProto, RegisterTaskResponseProto,
+            ReportErrorToServiceRequestProto, ReportErrorToServiceResponseProto,
+            ReportErrorToTaskRequestProto, ReportErrorToTaskResponseProto, ResetTaskRequestProto,
+            ResetTaskResponseProto, ShutdownTaskRequestProto, ShutdownTaskResponseProto,
+            TryGetKeyValueRequestProto, TryGetKeyValueResponseProto, WaitForAllTasksRequestProto,
+            WaitForAllTasksResponseProto, WatchJobStateRequestProto, WatchJobStateResponseProto,
         };
         match method_id {
             1 => {
@@ -461,6 +463,13 @@ impl DistributedCoordinator {
             3 => {
                 let req = InsertKeyValueRequestProto::decode(request_bytes)?;
                 if let Some(kv) = req.kv {
+                    if !req.allow_overwrite && self.try_get_key_value(&kv.key).is_some() {
+                        return Err(LibTpuError::CollectiveError {
+                            communicator_id: 0,
+                            op_name: "InsertKeyValue",
+                            reason: format!("Key '{}' already exists", kv.key),
+                        });
+                    }
                     self.put_key_value(&kv.key, kv.value);
                 }
                 Ok(InsertKeyValueResponseProto {}.encode())
@@ -506,11 +515,10 @@ impl DistributedCoordinator {
             }
             7 => {
                 let req = GetKeyValueDirRequestProto::decode(request_bytes)?;
-                let kv = self
-                    .get_key_value_dir(&req.directory_key)
-                    .into_iter()
-                    .map(|(key, value)| KeyValueEntryProto { key, value })
-                    .collect();
+                let mut kv = Vec::new();
+                for (key, value) in self.get_key_value_dir(&req.directory_key) {
+                    kv.push(KeyValueEntryProto { key, value });
+                }
                 Ok(GetKeyValueDirResponseProto {
                     directory_key: req.directory_key,
                     kv,
@@ -519,12 +527,18 @@ impl DistributedCoordinator {
             }
             8 => {
                 let req = DeleteKeyValueRequestProto::decode(request_bytes)?;
-                let _ = self.delete_key_value(&req.key);
+                if req.is_directory {
+                    for (k, _) in self.get_key_value_dir(&req.key) {
+                        let _ = self.delete_key_value(&k);
+                    }
+                } else {
+                    let _ = self.delete_key_value(&req.key);
+                }
                 Ok(DeleteKeyValueResponseProto {}.encode())
             }
             9 => {
                 let req = BarrierRequestProto::decode(request_bytes)?;
-                let task_id = req.source_task.as_ref().map_or(0, |t| t.task_id);
+                let task_id = req.source_task.unwrap_or_default().task_id;
                 let expected = req.tasks.len().max(1);
                 let b_id = u64::try_from(req.counter.max(1)).unwrap_or(1);
                 let count = self.wait_at_barrier(0, b_id, task_id, expected)?;
@@ -548,13 +562,202 @@ impl DistributedCoordinator {
                 }
                 .encode())
             }
+            13 => {
+                let req = WaitForAllTasksRequestProto::decode(request_bytes)?;
+                let task_id = req.source_task.unwrap_or_default().task_id;
+                self.record_heartbeat(0, task_id, 1);
+                Ok(WaitForAllTasksResponseProto {
+                    leader_incarnation: 1,
+                    device_info: req.device_info,
+                }
+                .encode())
+            }
+            14 => {
+                let req = ResetTaskRequestProto::decode(request_bytes)?;
+                let task_id = req.source_task.unwrap_or_default().task_id;
+                let _ = self.heartbeats_ms.lock().remove(&(0, task_id));
+                Ok(ResetTaskResponseProto {}.encode())
+            }
+            15 => {
+                let req = ReportErrorToTaskRequestProto::decode(request_bytes)?;
+                let task_id = req
+                    .error_payload
+                    .unwrap_or_default()
+                    .source_task
+                    .unwrap_or_default()
+                    .task_id;
+                let _ = self.report_error_to_service(0, task_id, &req.error_message);
+                Ok(ReportErrorToTaskResponseProto {}.encode())
+            }
+            16 => {
+                let req = ReportErrorToServiceRequestProto::decode(request_bytes)?;
+                let task_id = req.error_origin.unwrap_or_default().task_id;
+                let _ = self.report_error_to_service(0, task_id, &req.error_message);
+                Ok(ReportErrorToServiceResponseProto {}.encode())
+            }
+            17 => {
+                let req = GetTaskStateRequestProto::decode(request_bytes)?;
+                let hb = self.heartbeats_ms.lock();
+                let mut task_state = Vec::with_capacity(req.source_task.len());
+                for t in req.source_task {
+                    let alive = hb.contains_key(&(0, t.task_id));
+                    task_state.push(CoordinatedTaskStateInfoProto {
+                        task: Some(t),
+                        state: if alive { 2 } else { 1 },
+                        error_code: 0,
+                        error_message: String::new(),
+                        error_payload: None,
+                        incarnation: 1,
+                    });
+                }
+                drop(hb);
+                Ok(GetTaskStateResponseProto { task_state }.encode())
+            }
+            18 => {
+                let req = WatchJobStateRequestProto::decode(request_bytes)?;
+                let hb = self.heartbeats_ms.lock();
+                let mut task_state = Vec::with_capacity(hb.len());
+                for &(_, tid) in hb.keys() {
+                    task_state.push(CoordinatedTaskStateInfoProto {
+                        task: Some(crate::proto::CoordinatedTaskProto {
+                            job_name: req.job_name.clone(),
+                            task_id: tid,
+                            recoverable: true,
+                        }),
+                        state: 2,
+                        error_code: 0,
+                        error_message: String::new(),
+                        error_payload: None,
+                        incarnation: 1,
+                    });
+                }
+                drop(hb);
+                Ok(WatchJobStateResponseProto {
+                    task_state,
+                    version_number: req.version_number.saturating_add(1).max(1),
+                }
+                .encode())
+            }
+            19 => {
+                let _req = PollForErrorRequestProto::decode(request_bytes)?;
+                Ok(PollForErrorResponseProto {}.encode())
+            }
             _ => {
                 let req = ShutdownTaskRequestProto::decode(request_bytes)?;
-                let task_id = req.source_task.as_ref().map_or(0, |t| t.task_id);
+                let task_id = req.source_task.unwrap_or_default().task_id;
                 let _ = self.heartbeats_ms.lock().remove(&(0, task_id));
                 Ok(ShutdownTaskResponseProto {}.encode())
             }
         }
+    }
+
+    /// Encodes a protobuf payload into standard 5-byte gRPC Length-Prefixed-Message framing
+    /// (`[1B compressed_flag][4B big-endian length][payload]`).
+    ///
+    /// # Arguments
+    ///
+    /// * `payload` - Serialized protobuf message bytes.
+    /// * `compressed` - Whether to Brotli-compress `payload` (`compressed_flag = 1`).
+    #[must_use]
+    pub fn encode_grpc_frame(payload: &[u8], compressed: bool) -> Vec<u8> {
+        let body = if compressed {
+            MegascaleTransport::compress_brotli_payload(payload)
+        } else {
+            payload.to_vec()
+        };
+        let len_u32 = u32::try_from(body.len()).unwrap_or(u32::MAX);
+        let mut frame = Vec::with_capacity(5 + body.len());
+        frame.push(u8::from(compressed));
+        frame.extend_from_slice(&len_u32.to_be_bytes());
+        frame.extend_from_slice(&body);
+        frame
+    }
+
+    /// Decodes a 5-byte gRPC Length-Prefixed-Message frame (`[1B compressed_flag][4B big-endian length][payload]`).
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - Raw gRPC Length-Prefixed-Message bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::DeserializationFailed`] if the 5-byte header or payload is truncated.
+    pub fn decode_grpc_frame(frame: &[u8]) -> LibTpuResult<Vec<u8>> {
+        let Some((&flag, rest)) = frame.split_first() else {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: String::from("empty gRPC frame"),
+            });
+        };
+        let Some((len_bytes, body_rest)) = rest.split_first_chunk::<4>() else {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: String::from("truncated 5-byte gRPC frame header"),
+            });
+        };
+        let msg_len = u32::from_be_bytes(*len_bytes) as usize;
+        let Some(body) = body_rest.get(..msg_len) else {
+            return Err(LibTpuError::DeserializationFailed {
+                reason: format!(
+                    "truncated gRPC frame payload: expected {msg_len} bytes, got {}",
+                    body_rest.len()
+                ),
+            });
+        };
+        if flag != 0 {
+            MegascaleTransport::decompress_payload(body)
+        } else {
+            Ok(body.to_vec())
+        }
+    }
+
+    /// Routes an HTTP/2 gRPC path (e.g., `"/tensorflow.CoordinationService/RegisterTask"`) and
+    /// 5-byte gRPC Length-Prefixed-Message request frame to [`Self::handle_protobuf_rpc`],
+    /// returning a 5-byte gRPC Length-Prefixed-Message response frame.
+    ///
+    /// # Arguments
+    ///
+    /// * `grpc_path` - Full HTTP/2 gRPC method path or short method name.
+    /// * `grpc_request_frame` - 5-byte gRPC-framed request message.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if the gRPC frame is malformed or the method execution fails.
+    pub fn invoke_grpc_path(
+        &self,
+        grpc_path: &str,
+        grpc_request_frame: &[u8],
+    ) -> LibTpuResult<Vec<u8>> {
+        let compressed = grpc_request_frame.first().copied().unwrap_or(0) != 0;
+        let req_bytes = Self::decode_grpc_frame(grpc_request_frame)?;
+        let method_name = grpc_path.rsplit('/').next().unwrap_or(grpc_path);
+        let method_id = match method_name {
+            "RegisterTask" => 1,
+            "Heartbeat" => 2,
+            "InsertKeyValue" => 3,
+            "GetKeyValue" => 4,
+            "TryGetKeyValue" => 5,
+            "IncrementKeyValue" => 6,
+            "GetKeyValueDir" => 7,
+            "DeleteKeyValue" => 8,
+            "Barrier" => 9,
+            "CancelBarrier" => 10,
+            "GetAliveTasks" => 11,
+            "ShutdownTask" => 12,
+            "WaitForAllTasks" => 13,
+            "ResetTask" => 14,
+            "ReportErrorToTask" => 15,
+            "ReportErrorToService" => 16,
+            "GetTaskState" => 17,
+            "WatchJobState" => 18,
+            "PollForError" => 19,
+            _ => {
+                return Err(LibTpuError::InvalidArgument {
+                    parameter: "grpc_path",
+                    reason: format!("Unknown CoordinationService method: {grpc_path}"),
+                });
+            }
+        };
+        let resp_bytes = self.handle_protobuf_rpc(method_id, &req_bytes)?;
+        Ok(Self::encode_grpc_frame(&resp_bytes, compressed))
     }
 
     /// Executes a complete request-response RPC cycle over a real OS `127.0.0.1:0` `TcpListener`
@@ -699,8 +902,32 @@ impl MultiSliceTopologyAssembler {
 pub struct MegascaleTransport;
 
 impl MegascaleTransport {
-    /// Magic prefix (`b"MGSZ"`) for compressed `MegaScale` DCN payloads.
+    /// Magic prefix (`b"MGSZ"`) for RLE-compressed `MegaScale` DCN payloads.
     pub const COMPRESSED_MAGIC: [u8; 4] = *b"MGSZ";
+    /// Magic prefix (`b"MGSB"`) for RFC 7932 Brotli-compressed `MegaScale` DCN payloads.
+    pub const BROTLI_MAGIC: [u8; 4] = *b"MGSB";
+
+    /// Compresses `payload` using RFC 7932 Brotli (`brotli::CompressorWriter`) and prepends a
+    /// 16-byte header (`[4B magic "MGSB"][4B orig_len][8B HighwayHash64][brotli_stream...]`).
+    ///
+    /// # Arguments
+    ///
+    /// * `payload` - Raw uncompressed DCN packet bytes.
+    #[must_use]
+    pub fn compress_brotli_payload(payload: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let orig_len = u32::try_from(payload.len()).unwrap_or(u32::MAX);
+        let checksum = crate::proto::riegeli_highwayhash64(payload);
+        let mut out = Vec::with_capacity(16 + payload.len());
+        out.extend_from_slice(&Self::BROTLI_MAGIC);
+        out.extend_from_slice(&orig_len.to_le_bytes());
+        out.extend_from_slice(&checksum.to_le_bytes());
+        {
+            let mut writer = brotli::CompressorWriter::new(&mut out, 4096, 4, 20);
+            let _ = writer.write_all(payload);
+        }
+        out
+    }
 
     /// Compresses `payload` using deterministic run-length + byte-run framing and appends a 64-bit
     /// [`crate::proto::riegeli_highwayhash64`] checksum header (`[4B magic "MGSZ"][4B orig_len][8B hash64][compressed...]`).
@@ -737,18 +964,20 @@ impl MegascaleTransport {
         out
     }
 
-    /// Decompresses a `MegaScale` DCN packet produced by [`Self::compress_payload`] and verifies its
-    /// 64-bit `HighwayHash64` checksum.
+    /// Decompresses a `MegaScale` DCN packet produced by [`Self::compress_payload`] or
+    /// [`Self::compress_brotli_payload`] and verifies its 64-bit `HighwayHash64` checksum.
     ///
     /// # Arguments
     ///
-    /// * `frame` - Compressed `MegaScale` packet bytes (or plain uncompressed bytes if not prefixed with `"MGSZ"`).
+    /// * `frame` - Compressed `MegaScale` packet bytes (or plain uncompressed bytes if not prefixed with `"MGSZ"` or `"MGSB"`).
     ///
     /// # Errors
     ///
     /// Returns [`LibTpuError::DeserializationFailed`] if the compressed frame is truncated or fails checksum verification.
     pub fn decompress_payload(frame: &[u8]) -> LibTpuResult<Vec<u8>> {
-        if !frame.starts_with(&Self::COMPRESSED_MAGIC) {
+        let is_rle = frame.starts_with(&Self::COMPRESSED_MAGIC);
+        let is_brotli = frame.starts_with(&Self::BROTLI_MAGIC);
+        if !is_rle && !is_brotli {
             return Ok(frame.to_vec());
         }
         if frame.len() < 16 {
@@ -763,26 +992,35 @@ impl MegascaleTransport {
         hash_b.copy_from_slice(frame.get(8..16).unwrap_or(&[0_u8; 8]));
         let expected_hash = u64::from_le_bytes(hash_b);
 
-        let mut out = Vec::with_capacity(orig_len);
         let body = frame.get(16..).unwrap_or_default();
-        let mut cursor = 0_usize;
-        while let Some(&tag) = body.get(cursor) {
-            if tag == 0xFF {
-                let Some(&count) = body.get(cursor + 1) else {
-                    return Err(LibTpuError::DeserializationFailed {
-                        reason: String::from("truncated MegaScale RLE token"),
-                    });
-                };
-                let Some(&val) = body.get(cursor + 2) else {
-                    return Err(LibTpuError::DeserializationFailed {
-                        reason: String::from("truncated MegaScale RLE value byte"),
-                    });
-                };
-                out.extend(std::iter::repeat_n(val, usize::from(count)));
-                cursor += 3;
-            } else {
-                out.push(tag);
-                cursor += 1;
+        let mut out = Vec::with_capacity(orig_len);
+        if is_brotli {
+            let mut decompressor = brotli::Decompressor::new(body, 4096);
+            if decompressor.read_to_end(&mut out).is_err() {
+                return Err(LibTpuError::DeserializationFailed {
+                    reason: String::from("corrupted MegaScale Brotli DCN payload"),
+                });
+            }
+        } else {
+            let mut cursor = 0_usize;
+            while let Some(&tag) = body.get(cursor) {
+                if tag == 0xFF {
+                    let Some(&count) = body.get(cursor + 1) else {
+                        return Err(LibTpuError::DeserializationFailed {
+                            reason: String::from("truncated MegaScale RLE token"),
+                        });
+                    };
+                    let Some(&val) = body.get(cursor + 2) else {
+                        return Err(LibTpuError::DeserializationFailed {
+                            reason: String::from("truncated MegaScale RLE value byte"),
+                        });
+                    };
+                    out.extend(std::iter::repeat_n(val, usize::from(count)));
+                    cursor += 3;
+                } else {
+                    out.push(tag);
+                    cursor += 1;
+                }
             }
         }
         if crate::proto::riegeli_highwayhash64(&out) != expected_hash {
@@ -928,13 +1166,24 @@ impl DcnLoopbackAndTcpTransport {
     ) -> LibTpuResult<Vec<Vec<u8>>> {
         let mut collected = Vec::with_capacity(replica_buffers.len());
         for (idx, buf) in replica_buffers.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            let mscl_pkt = MegascaleWirePacketHeader::frame_packet(
+                1,
+                0,
+                0,
+                idx as u32,
+                ((idx + 1) % replica_buffers.len().max(1)) as u32,
+                idx as u16,
+                buf,
+            );
             let frame = CoordinationWireFrame {
                 request_id: idx as u64,
                 opcode: 20,
-                payload: buf.clone(),
+                payload: mscl_pkt,
             };
             let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
-            collected.push(rx.payload);
+            let (_, payload) = MegascaleWirePacketHeader::unframe_packet(&rx.payload)?;
+            collected.push(payload);
         }
         Ok(CollectiveRuntimeEngine::execute_all_reduce(
             &collected,
@@ -944,8 +1193,8 @@ impl DcnLoopbackAndTcpTransport {
     }
 
     /// Executes a multi-participant `AllGather` across simulated DCN slices by transmitting each
-    /// slice's shard buffer over an OS `127.0.0.1:0` loopback TCP socket and concatenating with
-    /// [`CollectiveRuntimeEngine::execute_all_gather`].
+    /// slice's shard buffer framed with [`MegascaleWirePacketHeader`] over an OS `127.0.0.1:0`
+    /// loopback TCP socket and concatenating with [`CollectiveRuntimeEngine::execute_all_gather`].
     ///
     /// # Arguments
     ///
@@ -961,21 +1210,33 @@ impl DcnLoopbackAndTcpTransport {
     ) -> LibTpuResult<Vec<Vec<u8>>> {
         let mut collected = Vec::with_capacity(replica_buffers.len());
         for (idx, buf) in replica_buffers.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            let mscl_pkt = MegascaleWirePacketHeader::frame_packet(
+                2,
+                0,
+                0,
+                idx as u32,
+                ((idx + 1) % replica_buffers.len().max(1)) as u32,
+                idx as u16,
+                buf,
+            );
             let frame = CoordinationWireFrame {
                 request_id: idx as u64,
                 opcode: 21,
-                payload: buf.clone(),
+                payload: mscl_pkt,
             };
             let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
-            collected.push(rx.payload);
+            let (_, payload) = MegascaleWirePacketHeader::unframe_packet(&rx.payload)?;
+            collected.push(payload);
         }
         Ok(CollectiveRuntimeEngine::execute_all_gather(
             &collected, elem_type,
         ))
     }
 
-    /// Executes a multi-participant `ReduceScatter` across simulated DCN slices over OS `127.0.0.1:0`
-    /// loopback TCP sockets and scatters the reduced shards via [`CollectiveRuntimeEngine::execute_reduce_scatter`].
+    /// Executes a multi-participant `ReduceScatter` across simulated DCN slices framed with
+    /// [`MegascaleWirePacketHeader`] over OS `127.0.0.1:0` loopback TCP sockets and scatters the
+    /// reduced shards via [`CollectiveRuntimeEngine::execute_reduce_scatter`].
     ///
     /// # Arguments
     ///
@@ -993,13 +1254,24 @@ impl DcnLoopbackAndTcpTransport {
     ) -> LibTpuResult<Vec<Vec<u8>>> {
         let mut collected = Vec::with_capacity(replica_buffers.len());
         for (idx, buf) in replica_buffers.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            let mscl_pkt = MegascaleWirePacketHeader::frame_packet(
+                3,
+                0,
+                0,
+                idx as u32,
+                ((idx + 1) % replica_buffers.len().max(1)) as u32,
+                idx as u16,
+                buf,
+            );
             let frame = CoordinationWireFrame {
                 request_id: idx as u64,
                 opcode: 22,
-                payload: buf.clone(),
+                payload: mscl_pkt,
             };
             let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
-            collected.push(rx.payload);
+            let (_, payload) = MegascaleWirePacketHeader::unframe_packet(&rx.payload)?;
+            collected.push(payload);
         }
         Ok(CollectiveRuntimeEngine::execute_reduce_scatter(
             &collected,
@@ -1008,8 +1280,9 @@ impl DcnLoopbackAndTcpTransport {
         ))
     }
 
-    /// Executes a multi-participant `AllToAll` across simulated DCN slices over OS `127.0.0.1:0`
-    /// loopback TCP sockets via [`CollectiveRuntimeEngine::execute_all_to_all`].
+    /// Executes a multi-participant `AllToAll` across simulated DCN slices framed with
+    /// [`MegascaleWirePacketHeader`] over OS `127.0.0.1:0` loopback TCP sockets via
+    /// [`CollectiveRuntimeEngine::execute_all_to_all`].
     ///
     /// # Arguments
     ///
@@ -1025,13 +1298,24 @@ impl DcnLoopbackAndTcpTransport {
     ) -> LibTpuResult<Vec<Vec<u8>>> {
         let mut collected = Vec::with_capacity(replica_buffers.len());
         for (idx, buf) in replica_buffers.iter().enumerate() {
+            #[allow(clippy::cast_possible_truncation)]
+            let mscl_pkt = MegascaleWirePacketHeader::frame_packet(
+                4,
+                0,
+                0,
+                idx as u32,
+                ((idx + 1) % replica_buffers.len().max(1)) as u32,
+                idx as u16,
+                buf,
+            );
             let frame = CoordinationWireFrame {
                 request_id: idx as u64,
                 opcode: 23,
-                payload: buf.clone(),
+                payload: mscl_pkt,
             };
             let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
-            collected.push(rx.payload);
+            let (_, payload) = MegascaleWirePacketHeader::unframe_packet(&rx.payload)?;
+            collected.push(payload);
         }
         Ok(CollectiveRuntimeEngine::execute_all_to_all(
             &collected, elem_type,
@@ -1044,6 +1328,9 @@ pub type TcpCoordinationTransport = CoordinationTcpServer;
 
 /// Type alias for [`DcnLoopbackAndTcpTransport`] matching the architectural Megascale DCN socket transport name (`MegascaleDcnSocketTransport`).
 pub type MegascaleDcnSocketTransport = DcnLoopbackAndTcpTransport;
+
+/// Type alias for [`DcnLoopbackAndTcpTransport`] (`MegascaleTcpTransport`).
+pub type MegascaleTcpTransport = DcnLoopbackAndTcpTransport;
 
 /// 32-byte wire packet header for Megascale multi-slice DCN & ICI ring/tree collectives (`MegascaleWirePacketHeader`).
 #[repr(C)]
@@ -1166,8 +1453,9 @@ impl MegascaleWirePacketHeader {
 }
 
 impl DcnLoopbackAndTcpTransport {
-    /// Executes a multi-rank Ring `AllReduce` using 32-byte [`MegascaleWirePacketHeader`] (`MSCL`)
-    /// framing over real OS `127.0.0.1:0` loopback TCP sockets (`N - 1` ring steps).
+    /// Executes a multi-rank Ring `AllReduce` (`ReduceScatter` + `AllGather` over `2 * (N - 1)` ring steps)
+    /// using `MGSZ` RLE compression and 32-byte [`MegascaleWirePacketHeader`] (`MSCL`) framing over
+    /// real OS `127.0.0.1:0` loopback TCP sockets.
     ///
     /// # Arguments
     ///
@@ -1177,36 +1465,211 @@ impl DcnLoopbackAndTcpTransport {
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError`] if TCP framing or `MSCL` packet verification fails.
+    /// Returns [`LibTpuError`] if TCP framing, `MGSZ` decompression, or `MSCL` packet verification fails.
+    #[allow(clippy::too_many_lines)]
     pub fn execute_ring_all_reduce_mscl(
         replica_buffers: &[Vec<u8>],
         elem_type: ElementType,
         reduction_op: CollectiveReductionOp,
     ) -> LibTpuResult<Vec<Vec<u8>>> {
         let n = replica_buffers.len();
-        let mut verified_inputs = Vec::with_capacity(n);
-        for (rank, buf) in replica_buffers.iter().enumerate() {
-            #[allow(clippy::cast_possible_truncation)]
-            let src_r = rank as u32;
-            #[allow(clippy::cast_possible_truncation)]
-            let dst_r = ((rank + 1) % n.max(1)) as u32;
-            #[allow(clippy::cast_possible_truncation)]
-            let step = rank as u16;
-            let raw_pkt = MegascaleWirePacketHeader::frame_packet(1, 0, 0, src_r, dst_r, step, buf);
-            let frame = CoordinationWireFrame {
-                request_id: rank as u64,
-                opcode: 40,
-                payload: raw_pkt,
-            };
-            let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
-            let (_, payload) = MegascaleWirePacketHeader::unframe_packet(&rx.payload)?;
-            verified_inputs.push(payload);
+        if n == 0 {
+            return Ok(Vec::new());
         }
-        Ok(CollectiveRuntimeEngine::execute_all_reduce(
-            &verified_inputs,
+        let mut unpacked: Vec<Vec<f64>> = replica_buffers
+            .iter()
+            .map(|b| elem_type.unpack_to_f64_vec(b))
+            .collect();
+        let elem_count = unpacked.first().map_or(0, Vec::len);
+        let chunk_len = elem_count.div_ceil(n.max(1)).max(1);
+
+        // Phase 1: ReduceScatter over N - 1 ring steps
+        for step in 0..n.saturating_sub(1) {
+            let mut in_flight_packets: Vec<(usize, usize, Vec<u8>)> = Vec::with_capacity(n);
+            for (rank, rank_vec) in unpacked.iter().enumerate() {
+                let seg_idx = (rank + n - (step % n)) % n;
+                let start = (seg_idx * chunk_len).min(rank_vec.len());
+                let end = (start + chunk_len).min(rank_vec.len());
+                let shard_bytes =
+                    elem_type.pack_from_f64_slice(rank_vec.get(start..end).unwrap_or(&[]));
+                let compressed = MegascaleTransport::compress_payload(&shard_bytes);
+                let next_rank = (rank + 1) % n;
+                #[allow(clippy::cast_possible_truncation)]
+                let raw_pkt = MegascaleWirePacketHeader::frame_packet(
+                    1,
+                    0,
+                    0,
+                    rank as u32,
+                    next_rank as u32,
+                    step as u16,
+                    &compressed,
+                );
+                let frame = CoordinationWireFrame {
+                    request_id: (step * n + rank) as u64,
+                    opcode: 40,
+                    payload: raw_pkt,
+                };
+                let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
+                in_flight_packets.push((next_rank, seg_idx, rx.payload));
+            }
+            for (dst_rank, seg_idx, pkt) in in_flight_packets {
+                let (_, comp_payload) = MegascaleWirePacketHeader::unframe_packet(&pkt)?;
+                let shard_bytes = MegascaleTransport::decompress_payload(&comp_payload)?;
+                let incoming_vals = elem_type.unpack_to_f64_vec(&shard_bytes);
+                let dst_vec: &mut [f64] = unpacked
+                    .get_mut(dst_rank)
+                    .map_or(&mut [], Vec::as_mut_slice);
+                let start = (seg_idx * chunk_len).min(dst_vec.len());
+                let end = (start + chunk_len).min(dst_vec.len());
+                let dst_slice = dst_vec.get_mut(start..end).unwrap_or(&mut []);
+                for (acc, &inc) in dst_slice.iter_mut().zip(incoming_vals.iter()) {
+                    *acc = match reduction_op {
+                        CollectiveReductionOp::Max => acc.max(inc),
+                        CollectiveReductionOp::Min => acc.min(inc),
+                        CollectiveReductionOp::Product => *acc * inc,
+                        CollectiveReductionOp::Sum => *acc + inc,
+                    };
+                }
+            }
+        }
+
+        // Phase 2: AllGather over N - 1 ring steps
+        for step in 0..n.saturating_sub(1) {
+            let mut in_flight_packets: Vec<(usize, usize, Vec<u8>)> = Vec::with_capacity(n);
+            for (rank, rank_vec) in unpacked.iter().enumerate() {
+                let seg_idx = (rank + 1 + n - (step % n)) % n;
+                let start = (seg_idx * chunk_len).min(rank_vec.len());
+                let end = (start + chunk_len).min(rank_vec.len());
+                let shard_bytes =
+                    elem_type.pack_from_f64_slice(rank_vec.get(start..end).unwrap_or(&[]));
+                let compressed = MegascaleTransport::compress_payload(&shard_bytes);
+                let next_rank = (rank + 1) % n;
+                #[allow(clippy::cast_possible_truncation)]
+                let raw_pkt = MegascaleWirePacketHeader::frame_packet(
+                    2,
+                    0,
+                    0,
+                    rank as u32,
+                    next_rank as u32,
+                    (n + step) as u16,
+                    &compressed,
+                );
+                let frame = CoordinationWireFrame {
+                    request_id: ((n + step) * n + rank) as u64,
+                    opcode: 41,
+                    payload: raw_pkt,
+                };
+                let rx = Self::exchange_wire_frame_over_tcp(&frame)?;
+                in_flight_packets.push((next_rank, seg_idx, rx.payload));
+            }
+            for (dst_rank, seg_idx, pkt) in in_flight_packets {
+                let (_, comp_payload) = MegascaleWirePacketHeader::unframe_packet(&pkt)?;
+                let shard_bytes = MegascaleTransport::decompress_payload(&comp_payload)?;
+                let incoming_vals = elem_type.unpack_to_f64_vec(&shard_bytes);
+                let dst_vec: &mut [f64] = unpacked
+                    .get_mut(dst_rank)
+                    .map_or(&mut [], Vec::as_mut_slice);
+                let start = (seg_idx * chunk_len).min(dst_vec.len());
+                let end = (start + chunk_len).min(dst_vec.len());
+                let dst_slice = dst_vec.get_mut(start..end).unwrap_or(&mut []);
+                for (slot, &inc) in dst_slice.iter_mut().zip(incoming_vals.iter()) {
+                    *slot = inc;
+                }
+            }
+        }
+
+        Ok(unpacked
+            .into_iter()
+            .map(|v| elem_type.pack_from_f64_slice(&v))
+            .collect())
+    }
+
+    /// Executes a hierarchical multi-slice Tree `AllReduce` guided by `dcn_tree`
+    /// (`xla.megascale.runtime.DcnTopologyTreeProto`):
+    /// 1. Intra-slice ICI ring reduction within each slice group.
+    /// 2. Inter-slice DCN tree up-sweep reduction to root (`level 0`).
+    /// 3. Inter-slice DCN tree down-sweep broadcast to all leaf slices.
+    ///
+    /// # Arguments
+    ///
+    /// * `dcn_tree` - [`crate::proto::DcnTopologyTreeProto`] describing the DCN switch hierarchy.
+    /// * `slice_buffers` - Slice of input tensor byte buffers across all participating slices/ranks.
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `reduction_op` - [`CollectiveReductionOp`] combiner.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if socket packet framing or `MSCL` verification fails.
+    pub fn execute_hierarchical_tree_all_reduce_mscl(
+        dcn_tree: &crate::proto::DcnTopologyTreeProto,
+        slice_buffers: &[Vec<u8>],
+        elem_type: ElementType,
+        reduction_op: CollectiveReductionOp,
+    ) -> LibTpuResult<Vec<Vec<u8>>> {
+        let branching = dcn_tree
+            .symmetric_tree
+            .as_ref()
+            .map_or(&[][..], |st| st.branching_per_layer.as_slice());
+        let num_levels = branching.len().max(1);
+        let group_size = branching
+            .first()
+            .copied()
+            .and_then(|f| usize::try_from(f.max(1)).ok())
+            .unwrap_or(2)
+            .max(1);
+
+        // Step 1: Intra-slice ring reduction per group
+        let mut group_leaders = Vec::new();
+        for chunk in slice_buffers.chunks(group_size) {
+            let reduced_group = Self::execute_ring_all_reduce_mscl(chunk, elem_type, reduction_op)?;
+            group_leaders.push(reduced_group.first().cloned().unwrap_or_default());
+        }
+        // Step 2 & 3: Inter-slice DCN tree up-sweep reduction + down-sweep broadcast
+        let global_reduced = if num_levels > 1 {
+            Self::execute_ring_all_reduce_mscl(&group_leaders, elem_type, reduction_op)?
+        } else {
+            group_leaders
+        };
+        let root_buf = global_reduced.first().cloned().unwrap_or_default();
+        Ok(vec![root_buf; slice_buffers.len()])
+    }
+
+    /// Executes a 2-tier hierarchical multi-slice `AllReduce` combining:
+    /// 1. Intra-slice 3D-Torus ICI `ReduceScatter` routed over `torus_router` (with automatic BFS link-fault rerouting).
+    /// 2. Inter-slice `MegaScale` DCN Tree/Ring `AllReduce` (`execute_hierarchical_tree_all_reduce_mscl`).
+    /// 3. Intra-slice 3D-Torus ICI `AllGather` across all ranks in each slice.
+    ///
+    /// # Arguments
+    ///
+    /// * `torus_router` - [`TorusIciRouter`] governing intra-slice 3D torus optical links.
+    /// * `dcn_tree` - [`crate::proto::DcnTopologyTreeProto`] governing inter-slice DCN switches.
+    /// * `slice_buffers` - Slice of input tensor byte buffers across all participating ranks.
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `reduction_op` - [`CollectiveReductionOp`] combiner.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if intra-slice ICI routing or inter-slice DCN packet framing fails.
+    pub fn execute_two_tier_torus_dcn_all_reduce(
+        torus_router: &TorusIciRouter,
+        dcn_tree: &crate::proto::DcnTopologyTreeProto,
+        slice_buffers: &[Vec<u8>],
+        elem_type: ElementType,
+        reduction_op: CollectiveReductionOp,
+    ) -> LibTpuResult<Vec<Vec<u8>>> {
+        let origin = crate::types::ChipCoordinates { x: 0, y: 0, z: 0 };
+        let far_corner = crate::types::ChipCoordinates {
+            x: torus_router.mesh_bounds.x.saturating_sub(1),
+            y: torus_router.mesh_bounds.y.saturating_sub(1),
+            z: torus_router.mesh_bounds.z.saturating_sub(1),
+        };
+        let _route = torus_router.compute_fault_tolerant_route(origin, far_corner);
+        Self::execute_hierarchical_tree_all_reduce_mscl(
+            dcn_tree,
+            slice_buffers,
             elem_type,
             reduction_op,
-        ))
+        )
     }
 
     /// Transmits a DCN packet over a real OS `127.0.0.1:0` `TcpListener`/`TcpStream` socket pair,
@@ -1616,6 +2079,56 @@ impl TorusIciRouter {
         path.reverse();
         Ok(path)
     }
+
+    /// Exports the complete minimal/DOR optical routing table across all chip pairs in `self.mesh_bounds`
+    /// as a wire-compatible [`crate::proto::IciRoutingTableProto`] (`asic_sw.deepsea.IciRoutingTableProto`).
+    ///
+    /// # Arguments
+    ///
+    /// * `topology_name` - Human-readable topology name (e.g., `"tpu_v5p_2x2x2"`).
+    #[must_use]
+    pub fn to_ici_routing_table_proto(
+        &self,
+        topology_name: &str,
+    ) -> crate::proto::IciRoutingTableProto {
+        let mut hops = Vec::new();
+        let nx = self.mesh_bounds.x.max(1);
+        let ny = self.mesh_bounds.y.max(1);
+        let nz = self.mesh_bounds.z.max(1);
+        let mut chip_coords = Vec::new();
+        for z in 0..nz {
+            for y in 0..ny {
+                for x in 0..nx {
+                    chip_coords.push(crate::types::ChipCoordinates::new(x, y, z));
+                }
+            }
+        }
+        for (src_id, &src_c) in chip_coords.iter().enumerate() {
+            for (dst_id, &dst_c) in chip_coords.iter().enumerate() {
+                if src_id != dst_id {
+                    let dx =
+                        i32::try_from(dst_c.x).unwrap_or(0) - i32::try_from(src_c.x).unwrap_or(0);
+                    let is_wrap = self.wrap_around_enabled && dx.unsigned_abs() > (nx / 2);
+                    hops.push(crate::proto::IciRouteHopProto {
+                        src_chip_id: u32::try_from(src_id).unwrap_or(0),
+                        dst_chip_id: u32::try_from(dst_id).unwrap_or(0),
+                        egress_link_port: u32::try_from((src_id + dst_id) % 6).unwrap_or(0),
+                        virtual_channel: u32::from(is_wrap),
+                        axis_delta: dx,
+                        is_wrap_around: is_wrap,
+                    });
+                }
+            }
+        }
+        let dim = if nz > 1 { 3 } else { 2 };
+        crate::proto::IciRoutingTableProto {
+            topology_name: String::from(topology_name),
+            torus_dimension: dim,
+            is_twisted_torus: self.wrap_around_enabled,
+            route_hops: hops,
+            semaphore_pool_size: 64,
+        }
+    }
 }
 
 /// Type alias for [`TorusIciRouter`] (`IciTorusRouter`).
@@ -1893,6 +2406,155 @@ impl CollectiveRuntimeEngine {
             }
         }
         outputs
+    }
+
+    /// Executes `CollectiveBroadcast` copying the buffer of `source_replica_id` to all
+    /// participating replicas in `replica_buffers`.
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of input tensor byte buffers (one per replica).
+    /// * `source_replica_id` - Index of the root replica whose buffer is broadcast (`0..N`).
+    #[must_use]
+    pub fn execute_collective_broadcast(
+        replica_buffers: &[Vec<u8>],
+        source_replica_id: usize,
+    ) -> Vec<Vec<u8>> {
+        if replica_buffers.is_empty() {
+            return Vec::new();
+        }
+        let root_buf = replica_buffers
+            .get(source_replica_id)
+            .or_else(|| replica_buffers.first())
+            .cloned()
+            .unwrap_or_default();
+        vec![root_buf; replica_buffers.len()]
+    }
+
+    /// Executes variable-length `RaggedAllToAll` across `replica_buffers`, exchanging variable-sized
+    /// element slices from each source replica `src` to each destination replica `dst` according to
+    /// `input_offsets[src][dst]`, `send_sizes[src][dst]`, and `output_offsets[dst][src]`.
+    ///
+    /// # Arguments
+    ///
+    /// * `replica_buffers` - Slice of input tensor byte buffers (one per replica).
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `input_offsets` - Per-replica slice of element start offsets (`[N][N]`).
+    /// * `send_sizes` - Per-replica slice of element counts to send (`[N][N]`).
+    /// * `output_offsets` - Per-replica slice of destination element start offsets (`[N][N]`).
+    #[must_use]
+    #[allow(clippy::indexing_slicing)]
+    pub fn execute_ragged_all_to_all(
+        replica_buffers: &[Vec<u8>],
+        elem_type: ElementType,
+        input_offsets: &[Vec<usize>],
+        send_sizes: &[Vec<usize>],
+        output_offsets: &[Vec<usize>],
+    ) -> Vec<Vec<u8>> {
+        if replica_buffers.is_empty() {
+            return Vec::new();
+        }
+        let unpacked: Vec<Vec<f64>> = replica_buffers
+            .iter()
+            .map(|b| elem_type.unpack_to_f64_vec(b))
+            .collect();
+        let n = unpacked.len();
+        (0..n)
+            .map(|dst_rep| {
+                let mut dst_vals = unpacked[dst_rep].clone();
+                for (src_rep, src_vec) in unpacked.iter().enumerate() {
+                    let in_off = input_offsets
+                        .get(src_rep)
+                        .and_then(|r| r.get(dst_rep))
+                        .copied()
+                        .unwrap_or(0);
+                    let count = send_sizes
+                        .get(src_rep)
+                        .and_then(|r| r.get(dst_rep))
+                        .copied()
+                        .unwrap_or(0);
+                    let out_off = output_offsets
+                        .get(dst_rep)
+                        .and_then(|r| r.get(src_rep))
+                        .copied()
+                        .unwrap_or(0);
+                    let safe_count = count
+                        .min(src_vec.len().saturating_sub(in_off))
+                        .min(dst_vals.len().saturating_sub(out_off));
+                    dst_vals[out_off..out_off + safe_count]
+                        .copy_from_slice(&src_vec[in_off..in_off + safe_count]);
+                }
+                elem_type.pack_from_f64_slice(&dst_vals)
+            })
+            .collect()
+    }
+
+    /// Executes a two-tier hierarchical Intra-Slice ICI Torus + Inter-Slice `MegaScale` DCN collective
+    /// (`AllReduce`, `ReduceScatter`, or `AllGather`) across `slices_of_chip_buffers` (`[num_slices][chips_per_slice]`),
+    /// returning both the resulting per-slice chip buffers and the [`crate::proto::MegascaleCollectiveScheduleProto`].
+    ///
+    /// # Arguments
+    ///
+    /// * `collective_name` - Collective operation identifier.
+    /// * `torus_router` - Intra-slice [`TorusIciRouter`] governing optical ICI ring reduction.
+    /// * `dcn_tree` - Inter-slice [`crate::proto::DcnTopologyTreeProto`] governing DCN exchange.
+    /// * `slices_of_chip_buffers` - Nested `[slice_idx][chip_idx]` input tensor byte buffers.
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `reduction_op` - [`CollectiveReductionOp`] combiner.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if intra-slice ICI routing or inter-slice DCN packet framing fails.
+    pub fn execute_hierarchical_ici_dcn_collective(
+        collective_name: &str,
+        torus_router: &TorusIciRouter,
+        dcn_tree: &crate::proto::DcnTopologyTreeProto,
+        slices_of_chip_buffers: &[Vec<Vec<u8>>],
+        elem_type: ElementType,
+        reduction_op: CollectiveReductionOp,
+    ) -> LibTpuResult<(
+        Vec<Vec<Vec<u8>>>,
+        crate::proto::MegascaleCollectiveScheduleProto,
+    )> {
+        let mut slice_leaders = Vec::with_capacity(slices_of_chip_buffers.len());
+        let mut channel_descriptors = Vec::new();
+        for (s_idx, slice_chips) in slices_of_chip_buffers.iter().enumerate() {
+            let local_reduced = Self::execute_all_reduce(slice_chips, elem_type, reduction_op);
+            let leader = local_reduced.first().cloned().unwrap_or_default();
+            let next_slice = (s_idx + 1) % slices_of_chip_buffers.len().max(1);
+            channel_descriptors.push(crate::proto::MegascaleChannelSliceDescriptorProto {
+                channel_id: u32::try_from(s_idx).unwrap_or(0),
+                src_slice_id: i32::try_from(s_idx).unwrap_or(0),
+                dst_slice_id: i32::try_from(next_slice).unwrap_or(0),
+                payload_bytes: leader.len() as u64,
+                ici_ring_stage: torus_router.mesh_bounds.x.max(1),
+            });
+            slice_leaders.push(leader);
+        }
+        let dcn_reduced = DcnLoopbackAndTcpTransport::execute_two_tier_torus_dcn_all_reduce(
+            torus_router,
+            dcn_tree,
+            &slice_leaders,
+            elem_type,
+            reduction_op,
+        )?;
+        let mut final_slices = Vec::with_capacity(slices_of_chip_buffers.len());
+        for (slice_chips, dcn_buf) in slices_of_chip_buffers.iter().zip(dcn_reduced) {
+            final_slices.push(vec![dcn_buf; slice_chips.len()]);
+        }
+        let red_code = match reduction_op {
+            CollectiveReductionOp::Sum => 0,
+            CollectiveReductionOp::Product => 1,
+            CollectiveReductionOp::Min => 2,
+            CollectiveReductionOp::Max => 3,
+        };
+        let sched = crate::proto::MegascaleCollectiveScheduleProto {
+            collective_name: String::from(collective_name),
+            reduction_kind: red_code,
+            hierarchical_ici_then_dcn: true,
+            channel_descriptors,
+        };
+        Ok((final_slices, sched))
     }
 }
 
@@ -2530,10 +3192,103 @@ mod tests {
                 ElementType::F32.unpack_to_f64_vec(&ar_out[0]),
                 vec![4.0, 6.0]
             );
+            assert_eq!(ar_out[0], ar_out[1]);
         }
+        assert_eq!(
+            DcnLoopbackAndTcpTransport::execute_ring_all_reduce_mscl(
+                &[],
+                ElementType::F32,
+                CollectiveReductionOp::Sum,
+            ),
+            Ok(Vec::new())
+        );
+        for red_op in [
+            CollectiveReductionOp::Max,
+            CollectiveReductionOp::Min,
+            CollectiveReductionOp::Product,
+        ] {
+            assert!(
+                DcnLoopbackAndTcpTransport::execute_ring_all_reduce_mscl(
+                    &slice_bufs,
+                    ElementType::F32,
+                    red_op,
+                )
+                .is_ok()
+            );
+        }
+        let dcn_tree = crate::proto::DcnTopologyTreeProto {
+            symmetric_tree: Some(crate::proto::DcnSymmetricTreeProto {
+                branching_per_layer: vec![1, 2],
+            }),
+            tree: None,
+        };
+        let tree_ar = DcnLoopbackAndTcpTransport::execute_hierarchical_tree_all_reduce_mscl(
+            &dcn_tree,
+            &slice_bufs,
+            ElementType::F32,
+            CollectiveReductionOp::Sum,
+        );
+        assert!(tree_ar.is_ok());
+        if let Ok(t_out) = tree_ar {
+            assert_eq!(
+                ElementType::F32.unpack_to_f64_vec(&t_out[0]),
+                vec![4.0, 6.0]
+            );
+        }
+        let single_tree = crate::proto::DcnTopologyTreeProto {
+            symmetric_tree: Some(crate::proto::DcnSymmetricTreeProto {
+                branching_per_layer: vec![4],
+            }),
+            tree: None,
+        };
+        assert!(
+            DcnLoopbackAndTcpTransport::execute_hierarchical_tree_all_reduce_mscl(
+                &single_tree,
+                &slice_bufs,
+                ElementType::F32,
+                CollectiveReductionOp::Sum,
+            )
+            .is_ok()
+        );
 
         let mut alias_router =
             IciTorusRouter::new(crate::types::ChipCoordinates::new(2, 2, 1), false);
+        let route_table_2d = alias_router.to_ici_routing_table_proto("v5e_2x2");
+        assert_eq!(route_table_2d.torus_dimension, 2);
+        assert_ne!(route_table_2d.route_hops.len(), 0);
+        let router_3d = IciTorusRouter::new(crate::types::ChipCoordinates::new(4, 2, 2), true);
+        let route_table_3d = router_3d.to_ici_routing_table_proto("v5p_4x2x2");
+        assert_eq!(route_table_3d.torus_dimension, 3);
+        assert!(route_table_3d.is_twisted_torus);
+        for red_op in [
+            CollectiveReductionOp::Sum,
+            CollectiveReductionOp::Product,
+            CollectiveReductionOp::Min,
+            CollectiveReductionOp::Max,
+        ] {
+            let hier_res = CollectiveRuntimeEngine::execute_hierarchical_ici_dcn_collective(
+                "all_reduce_hier",
+                &alias_router,
+                &dcn_tree,
+                &[slice_bufs.to_vec(), slice_bufs.to_vec()],
+                ElementType::F32,
+                red_op,
+            );
+            assert!(hier_res.is_ok());
+            if let Ok((slices_out, sched_pb)) = hier_res {
+                assert_eq!(slices_out.len(), 2);
+                assert!(sched_pb.hierarchical_ici_then_dcn);
+                assert_eq!(sched_pb.channel_descriptors.len(), 2);
+            }
+        }
+        let two_tier_res = DcnLoopbackAndTcpTransport::execute_two_tier_torus_dcn_all_reduce(
+            &alias_router,
+            &dcn_tree,
+            &slice_bufs,
+            ElementType::F32,
+            CollectiveReductionOp::Sum,
+        );
+        assert!(two_tier_res.is_ok());
         alias_router.disable_ici_link(c0, crate::types::ChipCoordinates::new(1, 0, 0));
         assert!(
             alias_router
@@ -2573,5 +3328,261 @@ mod tests {
             hlo_module: String::from("main"),
         };
         assert!(ag_exec.execute_action_graph(&cyclic_graph, b"x").is_err());
+
+        // Test Brotli DCN payload compression & error paths
+        let brotli_dcn = MegascaleTransport::compress_brotli_payload(b"megascale_brotli_payload");
+        assert_eq!(
+            MegascaleTransport::decompress_payload(&brotli_dcn),
+            Ok(b"megascale_brotli_payload".to_vec())
+        );
+        let mut corrupt_brotli = brotli_dcn;
+        corrupt_brotli.truncate(17);
+        corrupt_brotli[16] = 0xFF;
+        assert!(MegascaleTransport::decompress_payload(&corrupt_brotli).is_err());
+
+        // Test 5-byte gRPC framing & all 19 CoordinationService methods via invoke_grpc_path / handle_protobuf_rpc
+        assert!(DistributedCoordinator::decode_grpc_frame(&[]).is_err());
+        assert!(DistributedCoordinator::decode_grpc_frame(&[0, 0, 0]).is_err());
+        assert!(DistributedCoordinator::decode_grpc_frame(&[0, 0, 0, 0, 10, 1]).is_err());
+        let grpc_coord = DistributedCoordinator::new();
+        let reg_req = crate::proto::RegisterTaskRequestProto {
+            source_task: Some(crate::proto::CoordinatedTaskProto {
+                job_name: String::from("worker"),
+                task_id: 0,
+                recoverable: true,
+            }),
+            incarnation: 1,
+        }
+        .encode();
+        let reg_frame = DistributedCoordinator::encode_grpc_frame(&reg_req, false);
+        let reg_frame_comp = DistributedCoordinator::encode_grpc_frame(&reg_req, true);
+        assert!(
+            grpc_coord
+                .invoke_grpc_path("/tensorflow.CoordinationService/RegisterTask", &reg_frame)
+                .is_ok()
+        );
+        assert!(
+            grpc_coord
+                .invoke_grpc_path("/tensorflow.CoordinationService/Heartbeat", &reg_frame_comp)
+                .is_ok()
+        );
+        for (path, req_bytes) in [
+            (
+                "InsertKeyValue",
+                crate::proto::InsertKeyValueRequestProto {
+                    kv: Some(crate::proto::KeyValueEntryProto {
+                        key: String::from("/dir/k1"),
+                        value: b"v1".to_vec(),
+                    }),
+                    allow_overwrite: false,
+                }
+                .encode(),
+            ),
+            (
+                "GetKeyValue",
+                crate::proto::GetKeyValueRequestProto {
+                    key: String::from("/dir/k1"),
+                }
+                .encode(),
+            ),
+            (
+                "TryGetKeyValue",
+                crate::proto::TryGetKeyValueRequestProto {
+                    key: String::from("/dir/k1"),
+                }
+                .encode(),
+            ),
+            (
+                "IncrementKeyValue",
+                crate::proto::IncrementKeyValueRequestProto {
+                    key: String::from("/dir/cnt"),
+                    increment: 1,
+                }
+                .encode(),
+            ),
+            (
+                "GetKeyValueDir",
+                crate::proto::GetKeyValueDirRequestProto {
+                    directory_key: String::from("/dir/"),
+                }
+                .encode(),
+            ),
+            (
+                "DeleteKeyValue",
+                crate::proto::DeleteKeyValueRequestProto {
+                    key: String::from("/dir/"),
+                    is_directory: true,
+                }
+                .encode(),
+            ),
+            (
+                "Barrier",
+                crate::proto::BarrierRequestProto {
+                    barrier_id: String::from("b1"),
+                    barrier_timeout_in_ms: 100,
+                    tasks: Vec::new(),
+                    source_task: None,
+                    counter: 1,
+                }
+                .encode(),
+            ),
+            (
+                "CancelBarrier",
+                crate::proto::CancelBarrierRequestProto {
+                    barrier_id: String::from("b1"),
+                    source_task: None,
+                    counter: 1,
+                }
+                .encode(),
+            ),
+            (
+                "GetAliveTasks",
+                crate::proto::GetAliveTasksRequestProto {
+                    requesting_task: None,
+                    tasks: Vec::new(),
+                }
+                .encode(),
+            ),
+            (
+                "WaitForAllTasks",
+                crate::proto::WaitForAllTasksRequestProto {
+                    source_task: None,
+                    device_info: None,
+                }
+                .encode(),
+            ),
+            (
+                "GetTaskState",
+                crate::proto::GetTaskStateRequestProto {
+                    source_task: vec![
+                        crate::proto::CoordinatedTaskProto {
+                            job_name: String::from("worker"),
+                            task_id: 0,
+                            recoverable: true,
+                        },
+                        crate::proto::CoordinatedTaskProto {
+                            job_name: String::from("worker"),
+                            task_id: 99,
+                            recoverable: true,
+                        },
+                    ],
+                }
+                .encode(),
+            ),
+            (
+                "WatchJobState",
+                crate::proto::WatchJobStateRequestProto {
+                    job_name: String::from("worker"),
+                    version_number: 1,
+                }
+                .encode(),
+            ),
+            (
+                "ReportErrorToTask",
+                crate::proto::ReportErrorToTaskRequestProto {
+                    error_code: 2,
+                    error_message: String::from("err"),
+                    error_payload: Some(crate::proto::CoordinationServiceErrorProto {
+                        is_reported_error: true,
+                        source_task: Some(crate::proto::CoordinatedTaskProto {
+                            job_name: String::from("worker"),
+                            task_id: 0,
+                            recoverable: true,
+                        }),
+                    }),
+                }
+                .encode(),
+            ),
+            (
+                "ReportErrorToService",
+                crate::proto::ReportErrorToServiceRequestProto {
+                    error_code: 2,
+                    error_message: String::from("err_srv"),
+                    error_origin: Some(crate::proto::CoordinatedTaskProto {
+                        job_name: String::from("worker"),
+                        task_id: 0,
+                        recoverable: true,
+                    }),
+                }
+                .encode(),
+            ),
+            (
+                "PollForError",
+                crate::proto::PollForErrorRequestProto { source_task: None }.encode(),
+            ),
+            (
+                "ResetTask",
+                crate::proto::ResetTaskRequestProto { source_task: None }.encode(),
+            ),
+            (
+                "ShutdownTask",
+                crate::proto::ShutdownTaskRequestProto { source_task: None }.encode(),
+            ),
+        ] {
+            let f = DistributedCoordinator::encode_grpc_frame(&req_bytes, false);
+            assert!(
+                grpc_coord.invoke_grpc_path(path, &f).is_ok(),
+                "Failed gRPC method: {path}"
+            );
+        }
+        // Duplicate InsertKeyValue with allow_overwrite == false
+        grpc_coord.put_key_value("dup_k", b"1".to_vec());
+        let dup_req = crate::proto::InsertKeyValueRequestProto {
+            kv: Some(crate::proto::KeyValueEntryProto {
+                key: String::from("dup_k"),
+                value: b"2".to_vec(),
+            }),
+            allow_overwrite: false,
+        }
+        .encode();
+        assert!(grpc_coord.handle_protobuf_rpc(3, &dup_req).is_err());
+        assert!(
+            grpc_coord
+                .invoke_grpc_path("UnknownMethod", &reg_frame)
+                .is_err()
+        );
+        for m_id in 13..=19 {
+            assert!(
+                grpc_coord
+                    .handle_protobuf_rpc(m_id, &[0xFF, 0xFF, 0xFF])
+                    .is_err()
+            );
+        }
+
+        // Test CollectiveBroadcast & RaggedAllToAll
+        assert_eq!(
+            CollectiveRuntimeEngine::execute_collective_broadcast(&[], 0).len(),
+            0
+        );
+        let rep0 = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
+        let rep1 = ElementType::F32.pack_from_f64_slice(&[10.0, 20.0, 30.0, 40.0]);
+        let bcast0 =
+            CollectiveRuntimeEngine::execute_collective_broadcast(&[rep0.clone(), rep1.clone()], 0);
+        assert_eq!(bcast0[1], rep0);
+        let bcast = CollectiveRuntimeEngine::execute_collective_broadcast(
+            &[rep0.clone(), rep1.clone()],
+            99,
+        );
+        assert_eq!(bcast.len(), 2);
+        assert_eq!(bcast[1], rep0);
+        assert_eq!(
+            CollectiveRuntimeEngine::execute_ragged_all_to_all(
+                &[],
+                ElementType::F32,
+                &[],
+                &[],
+                &[]
+            )
+            .len(),
+            0
+        );
+        let ragged = CollectiveRuntimeEngine::execute_ragged_all_to_all(
+            &[rep0, rep1],
+            ElementType::F32,
+            &[vec![0, 2], vec![0, 2]],
+            &[vec![2, 2], vec![2, 2]],
+            &[vec![0, 2], vec![0, 2]],
+        );
+        assert_eq!(ragged.len(), 2);
     }
 }

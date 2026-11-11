@@ -3,7 +3,7 @@
   "section_vaddr": "0x14ba4740",
   "section_size_bytes": 2970280,
   "topologically_closed": true,
-  "proto_files_count": 84,
+  "proto_files_count": 293,
   "descriptors": [
     {
       "name": "autotune_results.proto",
@@ -566,6 +566,30 @@
     {
       "name": "tpu_chip_config.proto",
       "package": "tpu",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "vhlo_ops.proto",
+      "package": "vhlo",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "shardy_mesh.proto",
+      "package": "sdy",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "tpu_telemetry_snapshot.proto",
+      "package": "libtpu.sdk.tpu_telemetry",
+      "syntax": "proto3",
+      "imports": []
+    },
+    {
+      "name": "xla_ffi_metadata.proto",
+      "package": "xla.ffi",
       "syntax": "proto3",
       "imports": []
     }

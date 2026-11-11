@@ -215,6 +215,36 @@ pub struct IsaProgramProto {
     /// Deterministic 64-bit program fingerprint (field `5`).
     #[prost(uint64, tag = "5")]
     pub fingerprint: u64,
+    /// Scalar Memory (`SMEM`) footprint in bytes (field `6`).
+    #[prost(int64, tag = "6")]
+    pub smem_size_bytes: i64,
+    /// Vector Memory (`VMEM`) footprint in bytes (field `7`).
+    #[prost(int64, tag = "7")]
+    pub vmem_size_bytes: i64,
+    /// Chip Memory (`CMEM`) footprint in bytes (field `8`).
+    #[prost(int64, tag = "8")]
+    pub cmem_size_bytes: i64,
+    /// Instruction Memory (`IMEM`) footprint in bytes (field `9`).
+    #[prost(int64, tag = "9")]
+    pub imem_size_bytes: i64,
+    /// Scalar stack frame size in bytes (field `10`).
+    #[prost(int64, tag = "10")]
+    pub stack_frame_size_bytes: i64,
+    /// Allocated hardware `SyncFlag` counter count (field `11`).
+    #[prost(int32, tag = "11")]
+    pub sync_flag_count: i32,
+    /// Producing XLA/LLO compiler version string (field `12`).
+    #[prost(string, tag = "12")]
+    pub xla_compiler_version: String,
+    /// Deterministic 64-bit LLO modulo-schedule fingerprint (field `13`).
+    #[prost(uint64, tag = "13")]
+    pub llo_schedule_fingerprint: u64,
+    /// VLIW predication mode (`0` = full, `1` = scalar-only, `2` = unpredicated, field `14`).
+    #[prost(int32, tag = "14")]
+    pub predication_mode: i32,
+    /// Bundle compression mode (`0` = uncompressed, `1` = NOP-elided, `2` = Brotli, field `15`).
+    #[prost(int32, tag = "15")]
+    pub bundle_compression_kind: i32,
     /// Unique compilation ID (field `20`).
     #[prost(uint64, tag = "20")]
     pub compilation_id: u64,
@@ -490,6 +520,9 @@ pub struct TpuCoreProgramProto {
     /// Whether compilation ran out of VMEM/HBM (field `14`).
     #[prost(bool, tag = "14")]
     pub oom_during_compilation: bool,
+    /// Symbol relocations applied to this core program (field `15`).
+    #[prost(message, repeated, tag = "15")]
+    pub relocations: Vec<ProgramRelocationProto>,
 }
 
 impl_proto_schema_message!(TpuCoreProgramProto, "xla.TpuCoreProgramProto");
@@ -536,6 +569,15 @@ pub struct DeepseaExecutableProto {
     /// Authentic `tpu.TpuCoreProgramProto` for `SparseCore` (field `13`).
     #[prost(message, optional, tag = "13")]
     pub sparse_core_program: Option<TpuCoreProgramProto>,
+    /// Host command dispatch table embedded in this executable (field `14`).
+    #[prost(message, repeated, tag = "14")]
+    pub host_command_table: Vec<HostCommandEnvelopeProto>,
+    /// ISA program relocations across all cores (field `15`).
+    #[prost(message, repeated, tag = "15")]
+    pub program_relocations: Vec<ProgramRelocationProto>,
+    /// Embedded XDB debug symbol and HLO-to-LLO PC mapping metadata (field `16`).
+    #[prost(message, optional, tag = "16")]
+    pub xdb_compiler_metadata: Option<crate::proto::tpu::CompilerMetadataProto>,
 }
 
 impl_proto_schema_message!(DeepseaExecutableProto, "xla.DeepseaExecutableProto");
@@ -1069,6 +1111,15 @@ pub struct SparseCoreProgramProto {
     /// Optimizer algorithm opcode (`0 = Adagrad`, `1 = Adam`, `2 = Ftrl`, `3 = Sgd`, `4 = Lion`, field `5`).
     #[prost(int32, tag = "5")]
     pub optimizer_opcode: i32,
+    /// Number of Tile Execute Control (`TEC`) VLIW bundles (field `7`).
+    #[prost(uint32, tag = "7")]
+    pub tec_bundle_count: u32,
+    /// Encoded `SparseCore` Sequencer (`SCS`) control stream bytes (field `8`).
+    #[prost(bytes = "vec", tag = "8")]
+    pub scs_control_stream: Vec<u8>,
+    /// Per-tile `Spmem` scratchpad size in bytes (field `9`).
+    #[prost(uint32, tag = "9")]
+    pub tile_spmem_size_bytes: u32,
 }
 
 impl_proto_schema_message!(
@@ -1205,3 +1256,385 @@ impl TpuChipPartsProto {
         }
     }
 }
+
+/// Wire-compatible `asic_sw.deepsea.IciRouteHopProto` (`docs/reverse_engineering/protos/ici_routing_table.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct IciRouteHopProto {
+    /// Source chip identifier (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub src_chip_id: u32,
+    /// Destination chip identifier (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub dst_chip_id: u32,
+    /// Outbound optical ICI link port index (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub egress_link_port: u32,
+    /// Virtual channel index for deadlock avoidance (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub virtual_channel: u32,
+    /// Signed hop delta along torus axis (field `5`).
+    #[prost(int32, tag = "5")]
+    pub axis_delta: i32,
+    /// Whether this hop traverses a wrap-around torus optical link (field `6`).
+    #[prost(bool, tag = "6")]
+    pub is_wrap_around: bool,
+}
+
+impl_proto_schema_message!(IciRouteHopProto, "asic_sw.deepsea.IciRouteHopProto");
+
+/// Wire-compatible `asic_sw.deepsea.IciRoutingTableProto` (`docs/reverse_engineering/protos/ici_routing_table.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct IciRoutingTableProto {
+    /// Topology configuration identifier (field `1`).
+    #[prost(string, tag = "1")]
+    pub topology_name: String,
+    /// Torus dimensionality (`2` or `3`, field `2`).
+    #[prost(uint32, tag = "2")]
+    pub torus_dimension: u32,
+    /// Whether twisted-torus wrap-around routing is enabled (field `3`).
+    #[prost(bool, tag = "3")]
+    pub is_twisted_torus: bool,
+    /// Minimal/DOR route hop entries (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub route_hops: Vec<IciRouteHopProto>,
+    /// Hardware ICI semaphore pool size per core (field `5`).
+    #[prost(uint32, tag = "5")]
+    pub semaphore_pool_size: u32,
+}
+
+impl_proto_schema_message!(IciRoutingTableProto, "asic_sw.deepsea.IciRoutingTableProto");
+
+/// Wire-compatible `asic_sw.deepsea.VliwBundleEncodingSpecProto` (`docs/reverse_engineering/protos/vliw_bundle_encoding.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct VliwBundleEncodingSpecProto {
+    /// Hardware ISA family name (`jfc`, `pfc`, `vfc`, `vfk`, field `1`).
+    #[prost(string, tag = "1")]
+    pub isa_family: String,
+    /// Encoded bundle byte width (`32`, `40`, `52`, or `64`, field `2`).
+    #[prost(uint32, tag = "2")]
+    pub bundle_byte_width: u32,
+    /// Scalar issue slot count (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub scalar_slots: u32,
+    /// Vector ALU issue slot count (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub vector_slots: u32,
+    /// Systolic MXU issue slot count (field `5`).
+    #[prost(uint32, tag = "5")]
+    pub matrix_slots: u32,
+    /// Cross-lane / EUP issue slot count (field `6`).
+    #[prost(uint32, tag = "6")]
+    pub xlu_slots: u32,
+    /// Asynchronous DMA issue slot count (field `7`).
+    #[prost(uint32, tag = "7")]
+    pub dma_slots: u32,
+    /// Whether dual-word immediate extension prefixes are supported (field `8`).
+    #[prost(bool, tag = "8")]
+    pub supports_dual_word_imm_ext: bool,
+}
+
+impl_proto_schema_message!(
+    VliwBundleEncodingSpecProto,
+    "asic_sw.deepsea.VliwBundleEncodingSpecProto"
+);
+
+/// Wire-compatible `asic_sw.deepsea.DmaDescriptorRingConfigProto` (`docs/reverse_engineering/protos/dma_descriptor_ring.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct DmaDescriptorRingConfigProto {
+    /// Hardware DMA ring identifier (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub ring_id: u32,
+    /// Number of 32-byte descriptors in the circular ring (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub ring_capacity_entries: u32,
+    /// BAR0 CSR byte offset for consumer head pointer (field `3`).
+    #[prost(uint64, tag = "3")]
+    pub head_csr_offset: u64,
+    /// BAR0 CSR byte offset for producer tail doorbell (field `4`).
+    #[prost(uint64, tag = "4")]
+    pub tail_csr_offset: u64,
+    /// Base `SyncFlag` index signaled on descriptor completion (field `5`).
+    #[prost(uint32, tag = "5")]
+    pub sync_flag_base_id: u32,
+    /// Whether multi-page IOMMU scatter-gather chaining is enabled (field `6`).
+    #[prost(bool, tag = "6")]
+    pub iommu_scatter_gather_enabled: bool,
+}
+
+impl_proto_schema_message!(
+    DmaDescriptorRingConfigProto,
+    "asic_sw.deepsea.DmaDescriptorRingConfigProto"
+);
+
+/// Wire-compatible `asic_sw.driver.GasketPageTableConfigProto` (`docs/reverse_engineering/protos/gasket_ioctl.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct GasketPageTableConfigProto {
+    /// Hardware page table index (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub page_table_index: u32,
+    /// Number of simple linear page table entries (field `2`).
+    #[prost(uint64, tag = "2")]
+    pub simple_entries: u64,
+    /// Number of extended scatter-gather page table entries (field `3`).
+    #[prost(uint64, tag = "3")]
+    pub extended_entries: u64,
+    /// Base IOVA aperture address in bytes (field `4`).
+    #[prost(uint64, tag = "4")]
+    pub dma_base_iova: u64,
+}
+
+impl_proto_schema_message!(
+    GasketPageTableConfigProto,
+    "asic_sw.driver.GasketPageTableConfigProto"
+);
+
+/// Wire-compatible `asic_sw.driver.GasketIoctlConfigProto` (`docs/reverse_engineering/protos/gasket_ioctl.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct GasketIoctlConfigProto {
+    /// Character device path (e.g. `/dev/accel0`, field `1`).
+    #[prost(string, tag = "1")]
+    pub device_node_path: String,
+    /// Linux ioctl type magic (`0xDC`, field `2`).
+    #[prost(uint32, tag = "2")]
+    pub ioctl_magic: u32,
+    /// Per-core page table configurations (field `3`).
+    #[prost(message, repeated, tag = "3")]
+    pub page_tables: Vec<GasketPageTableConfigProto>,
+    /// Number of MSI-X interrupt vectors bound to `eventfd`s (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub num_msix_interrupts: u32,
+}
+
+impl_proto_schema_message!(
+    GasketIoctlConfigProto,
+    "asic_sw.driver.GasketIoctlConfigProto"
+);
+
+/// Wire-compatible `asic_sw.driver.VfioIommuMapConfigProto` (`docs/reverse_engineering/protos/vfio_iommu_map.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct VfioIommuMapConfigProto {
+    /// VFIO group device path (e.g. `/dev/vfio/0`, field `1`).
+    #[prost(string, tag = "1")]
+    pub vfio_group_path: String,
+    /// VFIO IOMMU driver mode (`VFIO_TYPE1v2_IOMMU = 3`, field `2`).
+    #[prost(uint32, tag = "2")]
+    pub iommu_type: u32,
+    /// Base IOVA mapping address (field `3`).
+    #[prost(uint64, tag = "3")]
+    pub iova_aperture_base: u64,
+    /// Total IOVA aperture size in bytes (field `4`).
+    #[prost(uint64, tag = "4")]
+    pub iova_aperture_size: u64,
+    /// Hugepage mapping granularity (`2_097_152` for 2 MiB, field `5`).
+    #[prost(uint64, tag = "5")]
+    pub hugepage_granularity_bytes: u64,
+}
+
+impl_proto_schema_message!(
+    VfioIommuMapConfigProto,
+    "asic_sw.driver.VfioIommuMapConfigProto"
+);
+
+/// Wire-compatible `asic_sw.driver.PcieBarRegionProto` (`docs/reverse_engineering/protos/pcie_bar_layout.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct PcieBarRegionProto {
+    /// `PCIe` BAR index (`0` for CSRs, `2` for HBM aperture, field `1`).
+    #[prost(uint32, tag = "1")]
+    pub bar_index: u32,
+    /// Region file offset for `mmap` (field `2`).
+    #[prost(uint64, tag = "2")]
+    pub region_offset: u64,
+    /// BAR aperture size in bytes (field `3`).
+    #[prost(uint64, tag = "3")]
+    pub size_bytes: u64,
+    /// Whether the BAR supports prefetchable write-combining (field `4`).
+    #[prost(bool, tag = "4")]
+    pub is_prefetchable: bool,
+}
+
+impl_proto_schema_message!(PcieBarRegionProto, "asic_sw.driver.PcieBarRegionProto");
+
+/// Wire-compatible `asic_sw.driver.PcieBarLayoutProto` (`docs/reverse_engineering/protos/pcie_bar_layout.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct PcieBarLayoutProto {
+    /// `PCIe` vendor ID (`0x1AE0` Google, field `1`).
+    #[prost(uint32, tag = "1")]
+    pub vendor_id: u32,
+    /// `PCIe` device ID (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub device_id: u32,
+    /// Discovered `PCIe` BAR regions (field `3`).
+    #[prost(message, repeated, tag = "3")]
+    pub bar_regions: Vec<PcieBarRegionProto>,
+}
+
+impl_proto_schema_message!(PcieBarLayoutProto, "asic_sw.driver.PcieBarLayoutProto");
+
+/// Wire-compatible `platforms_deepsea.jellyfish.llo.LloScheduledInstructionProto` (`docs/reverse_engineering/protos/llo_bundle_schedule.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct LloScheduledInstructionProto {
+    /// VLIW bundle program counter index (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub bundle_pc: u32,
+    /// Target functional unit (`0=S0`, `1=V0`, `2=M0`, `3=X0`, `4=D0`, field `2`).
+    #[prost(uint32, tag = "2")]
+    pub functional_unit: u32,
+    /// Hardware `TpuOpCode` byte (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub opcode: u32,
+    /// Guarding predicate register `@p0..@p15` (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub predicate_reg: u32,
+    /// Post-bundle scoreboard stall cycles (field `5`).
+    #[prost(uint32, tag = "5")]
+    pub stall_cycles: u32,
+    /// Originating XLA HLO instruction name (field `6`).
+    #[prost(string, tag = "6")]
+    pub hlo_instruction_name: String,
+}
+
+impl_proto_schema_message!(
+    LloScheduledInstructionProto,
+    "platforms_deepsea.jellyfish.llo.LloScheduledInstructionProto"
+);
+
+/// Wire-compatible `platforms_deepsea.jellyfish.llo.LloBundleScheduleProto` (`docs/reverse_engineering/protos/llo_bundle_schedule.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct LloBundleScheduleProto {
+    /// Schedule identifier (field `1`).
+    #[prost(string, tag = "1")]
+    pub schedule_name: String,
+    /// Total estimated execution cycles (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub total_cycles: u32,
+    /// Modulo software pipeline initiation interval MII (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub initiation_interval_mii: u32,
+    /// Scheduled VLIW instruction slots (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub scheduled_instructions: Vec<LloScheduledInstructionProto>,
+}
+
+impl_proto_schema_message!(
+    LloBundleScheduleProto,
+    "platforms_deepsea.jellyfish.llo.LloBundleScheduleProto"
+);
+
+/// Wire-compatible `platforms_deepsea.jellyfish.llo.LloSpillSlotProto` (`docs/reverse_engineering/protos/llo_register_allocator.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct LloSpillSlotProto {
+    /// Spilled virtual register index (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub virtual_reg_id: u32,
+    /// Scratchpad VMEM spill byte offset (field `2`).
+    #[prost(uint64, tag = "2")]
+    pub vmem_spill_offset_bytes: u64,
+    /// Bundle PC where the `D0` spill store was spliced (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub spill_bundle_pc: u32,
+    /// Bundle PC where the `D0` reload load was spliced (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub reload_bundle_pc: u32,
+}
+
+impl_proto_schema_message!(
+    LloSpillSlotProto,
+    "platforms_deepsea.jellyfish.llo.LloSpillSlotProto"
+);
+
+/// Wire-compatible `platforms_deepsea.jellyfish.llo.LloLiveIntervalProto` (`docs/reverse_engineering/protos/llo_register_allocator.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct LloLiveIntervalProto {
+    /// Virtual SSA slot index (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub virtual_reg_id: u32,
+    /// Assigned physical `$v0..$v63` register index (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub physical_reg_id: u32,
+    /// First bundle PC where the value is defined (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub start_pc: u32,
+    /// Last bundle PC where the value is killed (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub end_pc: u32,
+    /// Whether this live range required VMEM spilling (field `5`).
+    #[prost(bool, tag = "5")]
+    pub is_spilled: bool,
+}
+
+impl_proto_schema_message!(
+    LloLiveIntervalProto,
+    "platforms_deepsea.jellyfish.llo.LloLiveIntervalProto"
+);
+
+/// Wire-compatible `platforms_deepsea.jellyfish.llo.LloRegisterAllocationProto` (`docs/reverse_engineering/protos/llo_register_allocator.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct LloRegisterAllocationProto {
+    /// Peak physical vector registers `$vreg` allocated (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub max_vregs_used: u32,
+    /// Peak physical scalar registers `$sreg` allocated (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub max_sregs_used: u32,
+    /// Peak physical predicate registers `$preg` allocated (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub max_pregs_used: u32,
+    /// Per-slot live interval assignments (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub live_intervals: Vec<LloLiveIntervalProto>,
+    /// Recorded VMEM spill/reload slots (field `5`).
+    #[prost(message, repeated, tag = "5")]
+    pub spill_slots: Vec<LloSpillSlotProto>,
+}
+
+impl_proto_schema_message!(
+    LloRegisterAllocationProto,
+    "platforms_deepsea.jellyfish.llo.LloRegisterAllocationProto"
+);
+
+/// Wire-compatible `platforms_deepsea.jellyfish.llo.LloModuloStageProto` (`docs/reverse_engineering/protos/llo_software_pipeliner.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct LloModuloStageProto {
+    /// Software pipeline stage index `0..K-1` (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub stage_index: u32,
+    /// Rotating stage predicate register `@p0..@p7` (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub rotating_predicate_reg: u32,
+    /// Cycle offset within the modulo kernel (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub start_cycle: u32,
+    /// Completion cycle offset within the modulo kernel (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub end_cycle: u32,
+}
+
+impl_proto_schema_message!(
+    LloModuloStageProto,
+    "platforms_deepsea.jellyfish.llo.LloModuloStageProto"
+);
+
+/// Wire-compatible `platforms_deepsea.jellyfish.llo.LloSoftwarePipelineScheduleProto` (`docs/reverse_engineering/protos/llo_software_pipeliner.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct LloSoftwarePipelineScheduleProto {
+    /// Loop computation or instruction name (field `1`).
+    #[prost(string, tag = "1")]
+    pub loop_name: String,
+    /// Resource-constrained minimum initiation interval `ResMII` (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub resource_mii: u32,
+    /// Recurrence-constrained minimum initiation interval `RecMII` (field `3`).
+    #[prost(uint32, tag = "3")]
+    pub recurrence_mii: u32,
+    /// Achieved initiation interval `II = max(ResMII, RecMII)` (field `4`).
+    #[prost(uint32, tag = "4")]
+    pub achieved_ii: u32,
+    /// Modulo pipeline stages (field `5`).
+    #[prost(message, repeated, tag = "5")]
+    pub stages: Vec<LloModuloStageProto>,
+}
+
+impl_proto_schema_message!(
+    LloSoftwarePipelineScheduleProto,
+    "platforms_deepsea.jellyfish.llo.LloSoftwarePipelineScheduleProto"
+);

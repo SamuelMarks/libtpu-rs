@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: platforms/deepsea/jellyfish/llo/llo_software_pipeliner.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package platforms_deepsea.jellyfish.llo;
+
+message LloModuloStageProto {
+  uint32 stage_index = 1;
+  uint32 rotating_predicate_reg = 2;
+  uint32 start_cycle = 3;
+  uint32 end_cycle = 4;
+}
+
+message LloSoftwarePipelineScheduleProto {
+  string loop_name = 1;
+  uint32 resource_mii = 2;
+  uint32 recurrence_mii = 3;
+  uint32 achieved_ii = 4;
+  repeated LloModuloStageProto stages = 5;
+}

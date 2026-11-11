@@ -1273,3 +1273,1035 @@ const _: () = assert!(size_of::<XLA_FFI_Api_Version>() == 24);
 const _: () = assert!(size_of::<XLA_FFI_Buffer>() == 40);
 const _: () = assert!(size_of::<XLA_FFI_CallFrame>() == 64);
 const _: () = assert!(size_of::<XLA_FFI_Api>() == 56);
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ProcessCount` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ProcessCount_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output process count.
+    pub process_count: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ChipsPerProcess` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ChipsPerProcess_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output chips per process count.
+    pub chips_per_process: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_CoreCountPerChip` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_CoreCountPerChip_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output cores per chip count.
+    pub core_count_per_chip: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ChipCount` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ChipCount_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output total chip count.
+    pub chip_count: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_CoreCount` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_CoreCount_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output total core count.
+    pub core_count: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_LogiDeviceCountPerProcess` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_LogiDeviceCountPerProcess_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output logical devices per process count.
+    pub logi_device_count_per_process: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_LogiDeviceCount` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_LogiDeviceCount_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output total logical device count.
+    pub logi_device_count: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_LogiDeviceCountPerChip` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_LogiDeviceCountPerChip_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output logical devices per chip count.
+    pub logi_device_count_per_chip: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_CoreCountPerProcess` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_CoreCountPerProcess_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output cores per process count.
+    pub core_count_per_process: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_HasLimitedIciConnectivity` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_HasLimitedIciConnectivity_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output boolean flag (`0` or `1`).
+    pub has_limited_ici: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_IsSubsliceTopology` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_IsSubsliceTopology_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output boolean flag (`0` or `1`).
+    pub is_subslice: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_IsValidSubslice` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_IsValidSubslice_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output boolean flag (`0` or `1`).
+    pub is_valid_subslice: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ProcessBounds` (`40` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ProcessBounds_Args {
+    /// Size of this struct (`40` or `48` with Z/buffer).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// X bound or pointer to `int32_t[3]` coordinate array.
+    pub out_first: usize,
+    /// Y bound or coordinate array capacity.
+    pub out_second: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ChipsPerProcessBounds` (`40` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ChipsPerProcessBounds_Args {
+    /// Size of this struct (`40` or `48` with Z/buffer).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// X bound or pointer to `int32_t[3]` coordinate array.
+    pub out_first: usize,
+    /// Y bound or coordinate array capacity.
+    pub out_second: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ChipBounds` (`40` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ChipBounds_Args {
+    /// Size of this struct (`40` or `48` with Z/buffer).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// X bound or pointer to `int32_t[3]` coordinate array.
+    pub out_first: usize,
+    /// Y bound or coordinate array capacity.
+    pub out_second: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ProcessCoordFromId` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ProcessCoordFromId_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Input process ID.
+    pub process_id: usize,
+    /// Output X coordinate or pointer to `int32_t[3]` coordinate array.
+    pub out_first: usize,
+    /// Output Y coordinate or coordinate array length.
+    pub out_second: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ChipIdFromCoord` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ChipIdFromCoord_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Input X coordinate or pointer to `const int32_t[3]` coordinates.
+    pub coord_or_ptr: usize,
+    /// Output chip ID or Y coordinate.
+    pub out_first: usize,
+    /// Output index on process or chip ID.
+    pub out_second: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Input chip coordinate or pointer.
+    pub param0: usize,
+    /// Input core index or output logical device ID.
+    pub out_first: usize,
+    /// Output logical device ID or core index.
+    pub out_second: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Input logical device ID.
+    pub device_id: usize,
+    /// Output chip ID / coordinate pointer (`int32_t[3]*`).
+    pub out_first: usize,
+    /// Output core index on chip.
+    pub out_second: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ProcIdAndIdxOnProcForChip` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ProcIdAndIdxOnProcForChip_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Input global chip ID.
+    pub chip_id: usize,
+    /// Output process ID.
+    pub out_proc_id: usize,
+    /// Output chip index on process.
+    pub out_idx_on_proc: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Input logical device ID.
+    pub device_id: usize,
+    /// Output process ID.
+    pub out_proc_id: usize,
+    /// Output device index on process.
+    pub out_idx_on_proc: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ProcessIds` (`32` bytes, or `40` bytes with out-array).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ProcessIds_Args {
+    /// Size of this struct (`32` or `40`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output process count or pointer to `int32_t*` IDs buffer.
+    pub out_value: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ChipsOnProcess` (`40` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_ChipsOnProcess_Args {
+    /// Size of this struct (`40`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Target process ID or output buffer pointer.
+    pub process_id: usize,
+    /// Output chip count on process.
+    pub num_chips: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_LogiDeviceIdsOnProcess` (`32` bytes, or `40` bytes with out-array).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_LogiDeviceIdsOnProcess_Args {
+    /// Size of this struct (`32` or `40`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output logical device count or pointer to `int32_t*` IDs buffer.
+    pub out_value: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_GetSliceConfig` (`32` bytes, or `40` bytes with `SliceConfig*`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_GetSliceConfig_Args {
+    /// Size of this struct (`32` or `40`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle or slice name pointer.
+    pub topology: *const std::ffi::c_void,
+    /// Output slice config status or `PJRT_TpuTopology_SliceConfig*` pointer.
+    pub out_value: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_GetSliceConfigs` (`32` bytes, or `40` bytes with `SliceConfig*`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_GetSliceConfigs_Args {
+    /// Size of this struct (`32` or `40`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output slice config count or `PJRT_TpuTopology_SliceConfig*` array pointer.
+    pub out_value: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_GetDefaultPlatformConfig` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_GetDefaultPlatformConfig_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output default platform generation ID.
+    pub platform_config: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_GetRoutingStrategy` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuTopology_GetRoutingStrategy_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_TopologyDescription*` handle.
+    pub topology: *const std::ffi::c_void,
+    /// Output routing strategy code (`0 = DoradoShortestPath`).
+    pub routing_strategy: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_CreateClientContext` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_CreateClientContextFromPjRtClient_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Input `PJRT_Client*` handle.
+    pub client: usize,
+    /// Output `PJRT_Megascale_ClientContext*` handle.
+    pub context_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_CreateDefaultClientContext` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_CreateDefaultClientContext_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Optional configuration flags.
+    pub flags: usize,
+    /// Output `PJRT_Megascale_ClientContext*` handle.
+    pub context_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_DeleteClientContext` (`24` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_DeleteClientContext_Args {
+    /// Size of this struct (`24`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle to delete.
+    pub context: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_InitializeClientContext` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_InitializeClientContext_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub context: usize,
+    /// Output initialization status (`1 = initialized`).
+    pub status_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_UnblockPendingWork` (`24` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_UnblockPendingWork_Args {
+    /// Size of this struct (`24`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub context: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_CreateAotConfig` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_CreateAoTMegascaleConfig_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Input topology or slice count.
+    pub topology: usize,
+    /// Output `PJRT_MultiSlice_Config*` handle.
+    pub config_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_CreateMultiSliceConfig` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_CreateMultiSliceConfig_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Input topology or slice parameters.
+    pub topology: usize,
+    /// Output `PJRT_MultiSlice_Config*` handle.
+    pub config_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_DeleteMultiSliceConfig` (`24` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_DeleteMultiSliceConfig_Args {
+    /// Size of this struct (`24`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_MultiSlice_Config*` handle to delete.
+    pub config: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_ConfigNumSlices` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_ConfigNumSlices_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_MultiSlice_Config*` handle.
+    pub config: usize,
+    /// Output slice count.
+    pub num_slices: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_ConfigNumDevicesPerSlice` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_ConfigNumDevicesPerSlice_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_MultiSlice_Config*` handle.
+    pub config: usize,
+    /// Output devices per slice count.
+    pub num_devices_per_slice: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_ConfigSliceId` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_ConfigSliceId_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_MultiSlice_Config*` handle.
+    pub config: usize,
+    /// Output local slice ID.
+    pub slice_id: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_ConfigSerializedSliceKeyValue` (`40` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_ConfigSerializedSliceKeyValue_Args {
+    /// Size of this struct (`40`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_MultiSlice_Config*` handle.
+    pub config: usize,
+    /// Output serialized key-value byte length or pointer.
+    pub serialized_kv_out: usize,
+    /// Output key-value entry count.
+    pub num_entries_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_ConfigSerialize` (`48` bytes).
+pub type PJRT_Megascale_ConfigSerialize_Args = PJRT_MultiSlice_Config_Serialize_Args;
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_DeserializeMultiSliceConfig` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_DeserializeMultiSliceConfig_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Serialized bytes pointer (`const char*`).
+    pub serialized_bytes: usize,
+    /// Output `PJRT_MultiSlice_Config*` handle.
+    pub config_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_Addresses` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_Addresses_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub context: usize,
+    /// Output endpoint address count.
+    pub num_addresses: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_Barrier` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_Barrier_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Barrier ID or context handle.
+    pub barrier_id: usize,
+    /// Output completed barrier sequence number.
+    pub completed_barriers: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_WaitForBarrier` (`24` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_WaitForBarrier_Args {
+    /// Size of this struct (`24`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Barrier handle to await.
+    pub handle: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_GetDcnTopology` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_GetDcnTopology_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub context: usize,
+    /// Output serialized `MegascaleDcnTopologyProto` byte length.
+    pub serialized_size: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_GetSliceId` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_GetSliceId_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub context: usize,
+    /// Output active slice ID.
+    pub slice_id: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_GetNumSlices` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_GetNumSlices_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub context: usize,
+    /// Output total slice count.
+    pub num_slices: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_InitializeSlice` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_InitializeSlice_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub context: usize,
+    /// Output initialization status (`1 = initialized`).
+    pub status_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_FinalizeSlice` (`24` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_FinalizeSlice_Args {
+    /// Size of this struct (`24`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub handle: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_RegisterErrorHandler` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_RegisterErrorHandler_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Optional C error callback function pointer (`void (*)(const void*, void*)` as `usize`).
+    pub callback_fn: usize,
+    /// Output registered handler count or ID.
+    pub handler_id_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_UnregisterErrorHandler` (`24` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_UnregisterErrorHandler_Args {
+    /// Size of this struct (`24`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Registered error handler handle or callback pointer.
+    pub handle: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_CollectMetrics` (`40` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_CollectMetrics_Args {
+    /// Size of this struct (`40`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub context: usize,
+    /// Output pointer to serialized `MegascaleRuntimeMetricsProto`.
+    pub serialized_metrics_ptr: usize,
+    /// Output serialized byte length.
+    pub serialized_metrics_size: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_ResetMetrics` (`24` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_ResetMetrics_Args {
+    /// Size of this struct (`24`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub handle: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_GetTransportType` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_GetTransportType_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub context: usize,
+    /// Output transport type (`0 = ICI`, `1 = DCN`, `2 = RoCEv2`).
+    pub transport_type_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_SetTransportType` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_SetTransportType_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Requested transport type.
+    pub requested_transport_type: usize,
+    /// Output active transport type.
+    pub transport_type_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_AbortCollectives` (`24` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_AbortCollectives_Args {
+    /// Size of this struct (`24`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// `PJRT_Megascale_ClientContext*` handle.
+    pub handle: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_Megascale_LogError` (`24` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_Megascale_LogError_Args {
+    /// Size of this struct (`24`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Error payload pointer or handle.
+    pub handle: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_RawBuffer_CreateRawAliasOfBuffer` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_RawBuffer_CreateViewOfDeviceBuffer_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Input `PJRT_Buffer*` handle.
+    pub buffer: *mut std::ffi::c_void,
+    /// Output `PJRT_RawBuffer*` handle.
+    pub raw_buffer_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_RawBuffer_GetHostPointer` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_RawBuffer_GetHostPointer_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Input `PJRT_Buffer*` or `PJRT_RawBuffer*` handle.
+    pub buffer: *mut std::ffi::c_void,
+    /// Output device/host address (`uintptr_t`).
+    pub host_pointer_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_RawBuffer_GetOnDeviceSizeInBytes` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Input `PJRT_Buffer*` or `PJRT_RawBuffer*` handle.
+    pub buffer: *mut std::ffi::c_void,
+    /// Output on-device size in bytes.
+    pub on_device_size_in_bytes: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_RawBuffer_GetMemorySpace` (`32` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_RawBuffer_GetMemorySpace_Args {
+    /// Size of this struct (`32`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Input `PJRT_Buffer*` or `PJRT_RawBuffer*` handle.
+    pub buffer: *mut std::ffi::c_void,
+    /// Output `PJRT_Memory*` or address handle.
+    pub memory_space_out: usize,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuExecutable_GetTargetArguments` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuExecutable_TargetArguments_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Executable handle (`PJRT_Executable*`).
+    pub executable: *const std::ffi::c_void,
+    /// Output serialized `TargetArgumentsProto` bytes pointer.
+    pub serialized_bytes: usize,
+    /// Output serialized byte length.
+    pub serialized_bytes_size: usize,
+    /// Output artifact holder handle.
+    pub holder: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuExecutable_CoreProgramAbiVersion` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuExecutable_CoreProgramAbiVersion_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Executable handle (`PJRT_Executable*`).
+    pub executable: *const std::ffi::c_void,
+    /// Output serialized `TpuRuntimeAbiProto` bytes pointer.
+    pub serialized_bytes: usize,
+    /// Output serialized byte length.
+    pub serialized_bytes_size: usize,
+    /// Output artifact holder handle.
+    pub holder: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuExecutable_GetHloModuleWithConfig` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuExecutable_HloModule_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Executable handle (`PJRT_Executable*`).
+    pub executable: *const std::ffi::c_void,
+    /// Output serialized `HloModuleProtoWithConfig` bytes pointer.
+    pub serialized_bytes: usize,
+    /// Output serialized byte length.
+    pub serialized_bytes_size: usize,
+    /// Output artifact holder handle.
+    pub holder: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuExecutable_Serialize_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Executable handle (`PJRT_Executable*`).
+    pub executable: *const std::ffi::c_void,
+    /// Output serialized bytes pointer.
+    pub serialized_bytes: usize,
+    /// Output serialized byte length.
+    pub serialized_bytes_size: usize,
+    /// Output artifact holder handle.
+    pub holder: *mut std::ffi::c_void,
+}
+
+/// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuExecutable_GetFingerprint` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_TpuExecutable_GetFingerprint_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Executable handle (`PJRT_Executable*`).
+    pub executable: *const std::ffi::c_void,
+    /// Output fingerprint UTF-8 bytes pointer.
+    pub fingerprint_bytes: usize,
+    /// Output fingerprint byte length.
+    pub fingerprint_size: usize,
+    /// Output artifact holder handle.
+    pub holder: *mut std::ffi::c_void,
+}
+
+const _: () = assert!(size_of::<PJRT_TpuTopology_ProcessCount_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ChipsPerProcess_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_CoreCountPerChip_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ChipCount_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_CoreCount_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_LogiDeviceCountPerProcess_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_LogiDeviceCount_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_LogiDeviceCountPerChip_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_CoreCountPerProcess_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_HasLimitedIciConnectivity_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_IsSubsliceTopology_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_IsValidSubslice_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ProcessBounds_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ChipsPerProcessBounds_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ChipBounds_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ProcessCoordFromId_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ChipIdFromCoord_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ProcIdAndIdxOnProcForChip_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ProcessIds_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_ChipsOnProcess_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_TpuTopology_LogiDeviceIdsOnProcess_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_GetSliceConfig_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_GetSliceConfigs_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_GetDefaultPlatformConfig_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuTopology_GetRoutingStrategy_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_CreateClientContextFromPjRtClient_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_CreateDefaultClientContext_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_DeleteClientContext_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Megascale_InitializeClientContext_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_UnblockPendingWork_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Megascale_CreateAoTMegascaleConfig_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_CreateMultiSliceConfig_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_DeleteMultiSliceConfig_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Megascale_ConfigNumSlices_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_ConfigNumDevicesPerSlice_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_ConfigSliceId_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_ConfigSerializedSliceKeyValue_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_Megascale_DeserializeMultiSliceConfig_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_Addresses_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_Barrier_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_WaitForBarrier_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Megascale_GetDcnTopology_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_GetSliceId_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_GetNumSlices_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_InitializeSlice_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_FinalizeSlice_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Megascale_RegisterErrorHandler_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_UnregisterErrorHandler_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Megascale_CollectMetrics_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_Megascale_ResetMetrics_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Megascale_GetTransportType_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_SetTransportType_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_Megascale_AbortCollectives_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_Megascale_LogError_Args>() == 24);
+const _: () = assert!(size_of::<PJRT_RawBuffer_CreateViewOfDeviceBuffer_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_RawBuffer_GetHostPointer_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_RawBuffer_GetMemorySpace_Args>() == 32);
+const _: () = assert!(size_of::<PJRT_TpuExecutable_TargetArguments_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuExecutable_CoreProgramAbiVersion_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuExecutable_HloModule_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuExecutable_Serialize_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_TpuExecutable_GetFingerprint_Args>() == 48);

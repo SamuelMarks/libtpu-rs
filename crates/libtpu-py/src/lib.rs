@@ -555,6 +555,42 @@ impl PySdkBridge {
         let _ = self.profiler.stop();
         Ok(self.profiler.collect_xspace_bytes())
     }
+
+    /// Resolves a hierarchical `DeepSea` CSR path in the 13,261+ CSR catalog for this bridge's
+    /// generation and returns its physical BAR0 MMIO byte offset (`None` if unknown).
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Hierarchical CSR register path string.
+    #[must_use]
+    pub fn lookup_csr_by_path(&self, path: &str) -> Option<u64> {
+        let map = libtpu_core::hal::ChipRegisterMap::for_generation(self.driver.config.generation);
+        map.resolve_hierarchical_csr_path(path)
+            .map(|d| d.byte_offset)
+    }
+
+    /// Resolves a physical BAR0 MMIO byte offset in the 13,261+ CSR catalog for this bridge's
+    /// generation and returns its canonical hierarchical register name (`None` if unknown).
+    ///
+    /// # Arguments
+    ///
+    /// * `byte_offset` - Physical BAR0 MMIO byte offset.
+    #[must_use]
+    pub fn lookup_csr_by_offset(&self, byte_offset: u64) -> Option<&'static str> {
+        let map = libtpu_core::hal::ChipRegisterMap::for_generation(self.driver.config.generation);
+        map.lookup_by_offset(byte_offset).map(|d| d.full_path)
+    }
+
+    /// Collects serialized `tensorflow.ProfileToolData` bytes for `tool_name`
+    /// (`"trace_viewer.json"`, `"input_pipeline.pb"`, `"memory_profile.json"`, `"xspace.pb"`).
+    ///
+    /// # Arguments
+    ///
+    /// * `tool_name` - Profiling tool artifact name.
+    #[must_use]
+    pub fn collect_profiler_tool_data(&self, tool_name: &str) -> Vec<u8> {
+        self.profiler.collect_tool_data_bytes(tool_name)
+    }
 }
 
 /// `CPython` Stable ABI (`abi3`) version constant (`1013`).
@@ -612,6 +648,141 @@ pub fn execute_multi_replica_all_reduce_f32_4(replicas: &[[f32; 4]]) -> Vec<[f32
         libtpu_core::types::CollectiveReductionOp::Sum,
     );
     reduced
+        .into_iter()
+        .map(|buf| {
+            let mut out = [0.0_f32; 4];
+            for (dst, chunk) in out.iter_mut().zip(buf.chunks_exact(4)) {
+                let mut b = [0_u8; 4];
+                b.copy_from_slice(chunk);
+                *dst = f32::from_le_bytes(b);
+            }
+            out
+        })
+        .collect()
+}
+
+/// Returns the number of verified embedded `protodesc_cold` `.proto` descriptors (`293`).
+#[must_use]
+pub const fn protodesc_293_catalog_count() -> usize {
+    libtpu_core::elf::PROTODESC_COLD_293_CATALOG.len()
+}
+
+/// Verifies that all 293 embedded `protodesc_cold` `.proto` descriptors are present in
+/// [`libtpu_core::proto::global_descriptor_pool`] and returns `293`.
+///
+/// # Errors
+///
+/// Returns [`libtpu_core::error::LibTpuError`] if any descriptor is missing.
+pub fn verify_protodesc_cold_293() -> LibTpuResult<usize> {
+    libtpu_core::elf::verify_protodesc_cold_293_catalog_closure(
+        libtpu_core::elf::PROTODESC_COLD_293_CATALOG,
+    )
+}
+
+/// Assembles a multi-line `DeepSea` LLO VLIW assembly listing into 64-byte `IMEM` binary words.
+///
+/// # Arguments
+///
+/// * `listing` - Multi-line `DeepSea` LLO VLIW assembly text.
+///
+/// # Errors
+///
+/// Returns [`libtpu_core::error::LibTpuError`] if any bundle line is malformed.
+pub fn assemble_llo_vliw(listing: &str) -> LibTpuResult<Vec<u8>> {
+    let bundles = libtpu_core::compiler::parse_llo_assembly(listing)?;
+    let mut out = Vec::with_capacity(bundles.len() * 64);
+    for b in &bundles {
+        out.extend_from_slice(&b.to_bytes());
+    }
+    Ok(out)
+}
+
+/// Dispatches a wire-encoded [`libtpu_core::proto::HostCommandEnvelopeProto`] on an emulated
+/// [`libtpu_core::hal::LinuxDeviceHal`] continuation queue.
+///
+/// # Arguments
+///
+/// * `envelope_bytes` - Wire-encoded `HostCommandEnvelopeProto` payload.
+///
+/// # Errors
+///
+/// Returns [`libtpu_core::error::LibTpuError`] if `envelope_bytes` is malformed.
+pub fn service_host_command_envelope(envelope_bytes: &[u8]) -> LibTpuResult<u64> {
+    let cfg = TpuInitConfig::default();
+    let hal = libtpu_core::hal::LinuxDeviceHal::open(
+        libtpu_core::hal::KernelDriverMode::Gasket,
+        libtpu_core::hal::EmulatedKernelDriverBackend::default(),
+        &cfg,
+    )?;
+    hal.service_continuation_queue(envelope_bytes)
+}
+
+/// Disassembles 64-byte `IMEM` binary words into a canonical `DeepSea` LLO VLIW assembly listing.
+///
+/// # Arguments
+///
+/// * `imem_bytes` - Raw 64-byte-aligned `IMEM` bundle words.
+#[must_use]
+pub fn disassemble_llo_vliw(imem_bytes: &[u8]) -> String {
+    let bundles = libtpu_core::compiler::CompiledProgram::decode_architectural_imem(imem_bytes);
+    libtpu_core::compiler::format_llo_assembly(&bundles)
+}
+
+/// Executes an in-memory multi-replica `CollectiveBroadcast` across `f32` slices from `source_replica_id`.
+///
+/// # Arguments
+///
+/// * `replicas` - Slice of 4-element `f32` arrays (one per replica).
+/// * `source_replica_id` - Index of the root replica (`0..N`).
+#[must_use]
+pub fn execute_multi_replica_collective_broadcast_f32_4(
+    replicas: &[[f32; 4]],
+    source_replica_id: usize,
+) -> Vec<[f32; 4]> {
+    let raw_bufs: Vec<Vec<u8>> = replicas
+        .iter()
+        .map(|arr| arr.iter().flat_map(|&v| v.to_le_bytes()).collect())
+        .collect();
+    let broadcasted =
+        libtpu_core::distributed::CollectiveRuntimeEngine::execute_collective_broadcast(
+            &raw_bufs,
+            source_replica_id,
+        );
+    broadcasted
+        .into_iter()
+        .map(|buf| {
+            let mut out = [0.0_f32; 4];
+            for (dst, chunk) in out.iter_mut().zip(buf.chunks_exact(4)) {
+                let mut b = [0_u8; 4];
+                b.copy_from_slice(chunk);
+                *dst = f32::from_le_bytes(b);
+            }
+            out
+        })
+        .collect()
+}
+
+/// Executes an in-memory 2-replica `RaggedAllToAll` exchanging 2-element halves between replica 0 and replica 1.
+///
+/// # Arguments
+///
+/// * `replicas` - Slice of 4-element `f32` arrays (`2` replicas).
+#[must_use]
+pub fn execute_multi_replica_ragged_all_to_all_f32_4(replicas: &[[f32; 4]]) -> Vec<[f32; 4]> {
+    let raw_bufs: Vec<Vec<u8>> = replicas
+        .iter()
+        .map(|arr| arr.iter().flat_map(|&v| v.to_le_bytes()).collect())
+        .collect();
+    let offsets = vec![vec![0, 2], vec![0, 2]];
+    let sizes = vec![vec![2, 2], vec![2, 2]];
+    let exchanged = libtpu_core::distributed::CollectiveRuntimeEngine::execute_ragged_all_to_all(
+        &raw_bufs,
+        ElementType::F32,
+        &offsets,
+        &sizes,
+        &offsets,
+    );
+    exchanged
         .into_iter()
         .map(|buf| {
             let mut out = [0.0_f32; 4];
@@ -685,6 +856,26 @@ mod tests {
     #[test]
     fn test_py_tpu_runtime() {
         assert_eq!(PyTpuRuntime::pjrt_api_version(), (0, 116));
+        assert_eq!(protodesc_293_catalog_count(), 293);
+        assert_eq!(verify_protodesc_cold_293(), Ok(293));
+        let llo_sample = "[pc=0000 gen=v5 stall=0] { S0(op=1, $s0 <- $s0, $s0, imm=0) | V0(AddF32, $v0 <- $v0, $v1, $v0) }";
+        let imem_out = assemble_llo_vliw(llo_sample);
+        assert!(imem_out.is_ok());
+        if let Ok(imem) = imem_out {
+            assert_eq!(imem.len(), 64);
+            assert!(disassemble_llo_vliw(&imem).contains("pc=0000"));
+        }
+        assert!(assemble_llo_vliw("bad_line").is_err());
+        let hc_env = libtpu_core::proto::HostCommandEnvelopeProto {
+            opcode: 1,
+            continuation_id: 10,
+            device_id: 0,
+            core_index: 0,
+            handler_id: 2,
+            payload: b"pkt".to_vec(),
+        };
+        assert_eq!(service_host_command_envelope(&hc_env.encode()), Ok(12));
+        assert!(service_host_command_envelope(&[0xFF, 0xFF, 0xFF]).is_err());
         let ar_res = execute_multi_replica_all_reduce_f32_4(&[
             [1.0, 2.0, 3.0, 4.0],
             [10.0, 20.0, 30.0, 40.0],
@@ -693,6 +884,19 @@ mod tests {
             ar_res,
             vec![[11.0, 22.0, 33.0, 44.0], [11.0, 22.0, 33.0, 44.0]]
         );
+        let bc_res = execute_multi_replica_collective_broadcast_f32_4(
+            &[[1.0, 2.0, 3.0, 4.0], [10.0, 20.0, 30.0, 40.0]],
+            1,
+        );
+        assert_eq!(
+            bc_res,
+            vec![[10.0, 20.0, 30.0, 40.0], [10.0, 20.0, 30.0, 40.0]]
+        );
+        let rag_res = execute_multi_replica_ragged_all_to_all_f32_4(&[
+            [1.0, 2.0, 3.0, 4.0],
+            [10.0, 20.0, 30.0, 40.0],
+        ]);
+        assert_eq!(rag_res.len(), 2);
         assert!(!PyTpuRuntime::sdk_api_ptr().is_null());
         assert!(!PyInit_sdk().is_null());
         assert_eq!(PyInit_libtpu_py(), PyInit_sdk());
@@ -855,6 +1059,15 @@ mod tests {
         ));
         let xspace = bridge.capture_xspace();
         assert!(xspace.is_ok());
+        let csr_off = bridge.lookup_csr_by_path("tc_0.tcs_core_state.RUN_STATUS");
+        assert!(csr_off.is_some());
+        if let Some(off) = csr_off {
+            assert!(bridge.lookup_csr_by_offset(off).is_some());
+        }
+        assert_ne!(
+            bridge.collect_profiler_tool_data("trace_viewer.json"),
+            [] as [u8; 0]
+        );
         let _ = bridge.profiler.start();
         assert!(matches!(
             bridge.capture_xspace(),

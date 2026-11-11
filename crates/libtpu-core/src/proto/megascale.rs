@@ -1141,3 +1141,50 @@ impl_proto_schema_message!(
     CancelBarrierResponseProto,
     "tensorflow.CancelBarrierResponse"
 );
+
+/// Wire-compatible `xla.megascale.runtime.MegascaleChannelSliceDescriptorProto` (`docs/reverse_engineering/protos/megascale_collectives.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct MegascaleChannelSliceDescriptorProto {
+    /// Collective channel identifier (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub channel_id: u32,
+    /// Source TPU slice index (field `2`).
+    #[prost(int32, tag = "2")]
+    pub src_slice_id: i32,
+    /// Destination TPU slice index (field `3`).
+    #[prost(int32, tag = "3")]
+    pub dst_slice_id: i32,
+    /// Payload size in bytes transferred across the DCN link (field `4`).
+    #[prost(uint64, tag = "4")]
+    pub payload_bytes: u64,
+    /// Intra-slice ICI torus ring reduction stage index (field `5`).
+    #[prost(uint32, tag = "5")]
+    pub ici_ring_stage: u32,
+}
+
+impl_proto_schema_message!(
+    MegascaleChannelSliceDescriptorProto,
+    "xla.megascale.runtime.MegascaleChannelSliceDescriptorProto"
+);
+
+/// Wire-compatible `xla.megascale.runtime.MegascaleCollectiveScheduleProto` (`docs/reverse_engineering/protos/megascale_collectives.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct MegascaleCollectiveScheduleProto {
+    /// Collective operation name (field `1`).
+    #[prost(string, tag = "1")]
+    pub collective_name: String,
+    /// Reduction kind (`0=Sum`, `1=Product`, `2=Min`, `3=Max`, field `2`).
+    #[prost(int32, tag = "2")]
+    pub reduction_kind: i32,
+    /// Whether two-tier Intra-Slice ICI Torus + Inter-Slice DCN reduction is active (field `3`).
+    #[prost(bool, tag = "3")]
+    pub hierarchical_ici_then_dcn: bool,
+    /// Per-channel slice transfer descriptors (field `4`).
+    #[prost(message, repeated, tag = "4")]
+    pub channel_descriptors: Vec<MegascaleChannelSliceDescriptorProto>,
+}
+
+impl_proto_schema_message!(
+    MegascaleCollectiveScheduleProto,
+    "xla.megascale.runtime.MegascaleCollectiveScheduleProto"
+);

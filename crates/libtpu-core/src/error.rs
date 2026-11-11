@@ -1352,6 +1352,66 @@ pub enum LibTpuError {
     /// A `serde_json` operation failed (`JsonSerializationFailed`).
     #[display("{_0}")]
     JsonSerializationFailed(#[error(not(source))] SerdeJsonErrorWrapper),
+
+    /// Embedded `filewrapper_toc` 16-byte RFC 1321 MD5 digest did not match the carved payload (`TocPayloadChecksumMismatch`).
+    #[display(
+        "FileToc payload MD5 checksum mismatch for '{entry_name}': expected {expected_md5_hex}, got {actual_md5_hex}"
+    )]
+    #[from(ignore)]
+    TocPayloadChecksumMismatch {
+        /// Embedded TOC resource name.
+        entry_name: String,
+        /// Expected 32-character hexadecimal MD5 digest from the 40-byte `FileToc` struct.
+        expected_md5_hex: String,
+        /// Computed 32-character hexadecimal MD5 digest of the carved payload.
+        actual_md5_hex: String,
+    },
+
+    /// Upstream MLIR bytecode Section 1 (`kDialect`) or Section 2 (`kAttrType`) grouping header was malformed (`InvalidMlirBytecodeGrouping`).
+    #[display(
+        "Invalid MLIR bytecode grouping in section {section_id} at offset {offset}: {reason}"
+    )]
+    #[from(ignore)]
+    InvalidMlirBytecodeGrouping {
+        /// MLIR bytecode section identifier.
+        section_id: u8,
+        /// Byte offset within the section payload.
+        offset: usize,
+        /// Static diagnostic explanation.
+        reason: &'static str,
+    },
+
+    /// 2D `AlternateMemoryBestFitHeap` spacetime VMEM allocator could not place a non-spillable buffer (`VmemHeapAllocationFailed`).
+    #[display(
+        "2D VMEM heap allocation failed for slot {slot_index} ({requested_bytes} bytes over PC [{first_pc}..={last_pc}]): {reason}"
+    )]
+    #[from(ignore)]
+    VmemHeapAllocationFailed {
+        /// Logical SSA slot index.
+        slot_index: usize,
+        /// Requested byte size aligned to 256 bytes.
+        requested_bytes: u64,
+        /// Inclusive start program counter of the live interval.
+        first_pc: usize,
+        /// Inclusive end program counter of the live interval.
+        last_pc: usize,
+        /// Static failure description.
+        reason: &'static str,
+    },
+
+    /// Hardware BAR2 DMA command descriptor ring timed out awaiting MSI-X `eventfd` completion (`HardwareRingTimeout`).
+    #[display(
+        "Hardware command ring {queue_id} timed out on device {device_id} awaiting completion_seq {completion_seq}"
+    )]
+    #[from(ignore)]
+    HardwareRingTimeout {
+        /// Logical device ID.
+        device_id: u32,
+        /// Hardware ring queue identifier.
+        queue_id: u16,
+        /// Expected completion sequence number.
+        completion_seq: u32,
+    },
 }
 
 impl From<serde_json::Error> for LibTpuError {
@@ -1484,7 +1544,9 @@ impl LibTpuError {
             | Self::InvalidReductionOp { .. }
             | Self::InvalidExecutableFormat { .. }
             | Self::JsonSerializationError { .. }
-            | Self::JsonSerializationFailed(_) => PjrtErrorCode::InvalidArgument,
+            | Self::JsonSerializationFailed(_)
+            | Self::TocPayloadChecksumMismatch { .. }
+            | Self::InvalidMlirBytecodeGrouping { .. } => PjrtErrorCode::InvalidArgument,
             Self::UnsupportedApiVersion { .. } | Self::UnimplementedOperation { .. } => {
                 PjrtErrorCode::Unimplemented
             }
@@ -1512,14 +1574,15 @@ impl LibTpuError {
             | Self::OutOfDeviceMemory { .. }
             | Self::RegisterAllocationFailed { .. }
             | Self::RegisterIndexOverflow { .. }
+            | Self::VmemHeapAllocationFailed { .. }
             | Self::DmaMappingFailed { .. } => PjrtErrorCode::ResourceExhausted,
             Self::NumericOverflow { .. }
             | Self::IntegerOverflow { .. }
             | Self::StreamOverflow { .. }
             | Self::MmioOutOfBounds { .. } => PjrtErrorCode::OutOfRange,
-            Self::MegascaleBarrierTimeout { .. } | Self::SyncFlagTimeout { .. } => {
-                PjrtErrorCode::DeadlineExceeded
-            }
+            Self::MegascaleBarrierTimeout { .. }
+            | Self::SyncFlagTimeout { .. }
+            | Self::HardwareRingTimeout { .. } => PjrtErrorCode::DeadlineExceeded,
             Self::DevicePoisoned { .. }
             | Self::HardwareFault { .. }
             | Self::ProtobufEncodeError { .. }
@@ -1603,7 +1666,9 @@ impl LibTpuError {
     #[must_use]
     pub const fn megascale_error_type(&self) -> i32 {
         match self {
-            Self::MegascaleBarrierTimeout { .. } | Self::SyncFlagTimeout { .. } => 1,
+            Self::MegascaleBarrierTimeout { .. }
+            | Self::SyncFlagTimeout { .. }
+            | Self::HardwareRingTimeout { .. } => 1,
             Self::CollectiveError { .. } | Self::DevicePoisoned { .. } => 2,
             Self::HardwareFault { .. }
             | Self::HardwareIoError { .. }
@@ -2831,6 +2896,40 @@ mod tests {
                     },
                 ),
                 PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::TocPayloadChecksumMismatch {
+                    entry_name: String::from("vfc_pf_csrs.br"),
+                    expected_md5_hex: String::from("00112233445566778899aabbccddeeff"),
+                    actual_md5_hex: String::from("ffeeddccbbaa99887766554433221100"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::InvalidMlirBytecodeGrouping {
+                    section_id: 2,
+                    offset: 12,
+                    reason: "truncated dialect group header",
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::VmemHeapAllocationFailed {
+                    slot_index: 4,
+                    requested_bytes: 67_108_864,
+                    first_pc: 0,
+                    last_pc: 10,
+                    reason: "exceeds VMEM capacity",
+                },
+                PjrtErrorCode::ResourceExhausted,
+            ),
+            (
+                LibTpuError::HardwareRingTimeout {
+                    device_id: 0,
+                    queue_id: 1,
+                    completion_seq: 42,
+                },
+                PjrtErrorCode::DeadlineExceeded,
             ),
         ];
 

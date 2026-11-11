@@ -465,8 +465,34 @@ def verify_prologue_struct_sizes_against_golden(
     return results
 
 
+def _read_proto_varint(data: bytes, pos: int) -> tuple[int, int]:
+    """Decodes a base-128 protobuf varint starting at `data[pos]`.
+
+    Args:
+        data: Input byte buffer.
+        pos: Starting byte offset.
+
+    Returns:
+        Tuple of `(decoded_value, next_offset)` (or `(0, len(data) + 1)` if truncated/malformed).
+    """
+    result = 0
+    shift = 0
+    cur = pos
+    n = len(data)
+    while shift < 64 and cur < n:
+        byte = data[cur]
+        cur += 1
+        result |= (byte & 0x7F) << shift
+        if (byte & 0x80) == 0:
+            return result, cur
+        shift += 7
+    return 0, n + 1
+
+
 def carve_protodesc_cold(section_bytes: bytes) -> list[dict[str, str]]:
     """Carves embedded `FileDescriptorProto` names and packages from a `protodesc_cold` buffer.
+
+    Supports both single-byte (`<= 127`) and multi-byte varint (`> 127`) `.proto` path lengths.
 
     Args:
         section_bytes: Raw byte slice of the `protodesc_cold` ELF section.
@@ -479,20 +505,21 @@ def carve_protodesc_cold(section_bytes: bytes) -> list[dict[str, str]]:
     n = len(section_bytes)
     while idx + 8 <= n:
         if section_bytes[idx] == 0x0A:
-            name_len = section_bytes[idx + 1]
-            if 7 <= name_len <= 120 and idx + 2 + name_len <= n:
-                raw_name = section_bytes[idx + 2 : idx + 2 + name_len]
+            name_len, name_start = _read_proto_varint(section_bytes, idx + 1)
+            name_end = name_start + name_len
+            if 7 <= name_len <= 512 and name_end <= n:
+                raw_name = section_bytes[name_start:name_end]
                 if raw_name.endswith(b".proto") and all(32 < b < 127 for b in raw_name):
                     name_str = raw_name.decode("utf-8", errors="replace")
                     pkg_str = ""
-                    end_idx = idx + 2 + name_len
+                    end_idx = name_end
                     if end_idx + 2 <= n and section_bytes[end_idx] == 0x12:
-                        pkg_len = section_bytes[end_idx + 1]
-                        if end_idx + 2 + pkg_len <= n:
-                            pkg_str = section_bytes[end_idx + 2 : end_idx + 2 + pkg_len].decode(
+                        pkg_len, pkg_start = _read_proto_varint(section_bytes, end_idx + 1)
+                        if pkg_start + pkg_len <= n:
+                            pkg_str = section_bytes[pkg_start : pkg_start + pkg_len].decode(
                                 "utf-8", errors="replace"
                             )
-                            end_idx += 2 + pkg_len
+                            end_idx = pkg_start + pkg_len
                     found.append({"name": name_str, "package": pkg_str})
                     idx = end_idx
                     continue
@@ -696,10 +723,17 @@ def validate_golden_manifests(repo_root: Path) -> list[str]:
         or len(libtpu_so.get("exported_functions", [])) != 75
     ):
         errors.append("golden_binary_manifest.json: exported_functions != 75")
+    if not libtpu_so.get("filetoc_md5_verified", True):
+        errors.append("golden_binary_manifest.json: filetoc_md5_verified is False")
 
     ext_chain = layouts.get("extensions", [])
     if len(ext_chain) != 17:
         errors.append(f"golden_struct_layouts.json: expected 17 extensions, got {len(ext_chain)}")
+    ext_funcs = layouts.get("extension_functions", [])
+    if ext_funcs and len(ext_funcs) != 138:
+        errors.append(
+            f"golden_struct_layouts.json: expected 138 extension_functions, got {len(ext_funcs)}"
+        )
 
     sdk_so = manifest.get("sdk_so", {})
     if sdk_so.get("sha256") != OFFICIAL_SDK_SO_SHA256:
@@ -752,10 +786,11 @@ def validate_golden_manifests(repo_root: Path) -> list[str]:
         csr_map = json.loads(csr_map_path.read_text(encoding="utf-8"))
         if (
             not proto_desc.get("topologically_closed")
-            or len(proto_desc.get("descriptors", [])) < 59
+            or proto_desc.get("proto_files_count") != 293
+            or len(proto_desc.get("descriptors", [])) < 84
         ):
             errors.append("golden_proto_descriptors.json: incomplete descriptor closure")
-        if not {"V2", "V3", "V4", "V5e", "V5p", "V6e", "V7x"}.issubset(
+        if not {"V2", "V3", "V4", "V4Lite", "V5e", "V5p", "V6e", "V7x"}.issubset(
             set(csr_map.get("generations", {}).keys())
         ):
             errors.append("csr_register_map.json: missing TPU generation CSR maps")
@@ -790,7 +825,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to the repository root directory",
     )
     parser.add_argument(
+        "--verify",
         "--verify-golden",
+        dest="verify_golden",
         action="store_true",
         help="Verify golden_binary_manifest.json, golden_struct_layouts.json, and carved protos",
     )

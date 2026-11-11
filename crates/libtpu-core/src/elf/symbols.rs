@@ -538,6 +538,25 @@ pub fn inspect_object_crate_sections(bytes: &[u8]) -> LibTpuResult<ObjectCrateBi
     })
 }
 
+/// Evaluates the DWARF `.eh_frame` Call Frame Information (`CFI`) state machine across all FDEs.
+///
+/// Computes exact stack-frame byte sizes and saved register sets via [`super::EhFrameCfiParser`].
+///
+/// # Arguments
+///
+/// * `eh_frame_bytes` - Raw `.eh_frame` section bytes.
+/// * `eh_frame_vaddr` - Virtual address of the `.eh_frame` section in the ELF image.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError`] if any CIE or FDE record is malformed.
+pub fn evaluate_eh_frame_cfa_state(
+    eh_frame_bytes: &[u8],
+    eh_frame_vaddr: u64,
+) -> LibTpuResult<Vec<super::DwarfCfiFunctionRecord>> {
+    super::EhFrameCfiParser::parse_eh_frame(eh_frame_bytes, eh_frame_vaddr)
+}
+
 /// Parses a DWARF `.eh_frame` section byte slice using `gimli::EhFrame` to recover all
 /// Frame Description Entry (`FDE`) function address intervals.
 ///
@@ -960,6 +979,12 @@ mod tests {
             assert_eq!(list[0].len, 32);
             assert_eq!(list[0].clone(), list[0]);
             assert_ne!(format!("{:?}", list[0]), "");
+        }
+        let cfa_records = evaluate_eh_frame_cfa_state(&eh, 0x09CE_E1B8);
+        assert!(cfa_records.is_ok());
+        if let Ok(recs) = cfa_records {
+            assert_eq!(recs.len(), 1);
+            assert_eq!(recs[0].start_vaddr, 0x0B4F_9B90);
         }
 
         assert!(parse_eh_frame_fde_ranges(&[0xFF, 0x00, 0x00, 0x00], 0x1000).is_err());

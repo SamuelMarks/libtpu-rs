@@ -30,18 +30,33 @@ pub struct LayoutProto {
     /// Memory space ID (`0` = default HBM, `1` = VMEM, `3` = pinned host, field `8`).
     #[prost(int64, tag = "8")]
     pub memory_space: i64,
+    /// Per-dimension sparse level types (`DimLevelType`, field `9`).
+    #[prost(int32, repeated, packed = "true", tag = "9")]
+    pub dim_level_types: Vec<i32>,
+    /// Physical storage shape for sparse layouts (field `10`).
+    #[prost(message, optional, boxed, tag = "10")]
+    pub physical_shape: Option<Box<ShapeProto>>,
     /// Primitive type used for sparse indices (field `11`).
     #[prost(int32, tag = "11")]
     pub index_primitive_type: i32,
     /// Primitive type used for sparse pointers (field `12`).
     #[prost(int32, tag = "12")]
     pub pointer_primitive_type: i32,
+    /// Per-dimension uniqueness flags for sparse levels (field `13`).
+    #[prost(bool, repeated, packed = "true", tag = "13")]
+    pub dim_unique: Vec<bool>,
+    /// Per-dimension ordering flags for sparse levels (field `14`).
+    #[prost(bool, repeated, packed = "true", tag = "14")]
+    pub dim_ordered: Vec<bool>,
     /// Dynamic shape metadata prefix size in bytes (field `15`).
     #[prost(int64, tag = "15")]
     pub dynamic_shape_metadata_prefix_bytes: i64,
     /// Alignment of tail padding in elements (field `16`).
     #[prost(int64, tag = "16")]
     pub tail_padding_alignment_in_elements: i64,
+    /// Split configurations for tiled dimensions (field `17`).
+    #[prost(message, repeated, tag = "17")]
+    pub split_configs: Vec<SplitConfigProto>,
 }
 
 impl_proto_schema_message!(LayoutProto, "xla.LayoutProto");
@@ -105,12 +120,27 @@ pub struct OpShardingProto {
     /// Whether the last tile dimension is replicated across devices (field `6`).
     #[prost(bool, tag = "6")]
     pub replicate_on_last_tile_dim: bool,
+    /// Source provenance metadata for sharding annotations (field `7`).
+    #[prost(message, repeated, tag = "7")]
+    pub metadata: Vec<OpMetadata>,
+    /// Subgroup sharding types along trailing tile dimensions (`OpSharding.Type`, field `8`).
+    #[prost(int32, repeated, packed = "true", tag = "8")]
+    pub last_tile_dims: Vec<i32>,
     /// Compact iota reshape dimensions (field `9`).
     #[prost(int64, repeated, packed = "true", tag = "9")]
     pub iota_reshape_dims: Vec<i64>,
     /// Compact iota transpose permutation (field `10`).
     #[prost(int32, repeated, packed = "true", tag = "10")]
     pub iota_transpose_perm: Vec<i32>,
+    /// Whether this sharding belongs to a shard group (field `11`).
+    #[prost(bool, tag = "11")]
+    pub is_shard_group: bool,
+    /// Shard group identifier (field `12`).
+    #[prost(int64, tag = "12")]
+    pub shard_group_id: i64,
+    /// Shard group relation type (`0 = AS`, `1 = LIKE`, field `13`).
+    #[prost(int32, tag = "13")]
+    pub shard_group_type: i32,
 }
 
 impl_proto_schema_message!(OpShardingProto, "xla.OpSharding");
@@ -172,12 +202,33 @@ pub struct OpMetadata {
     /// Source line number (field `4`).
     #[prost(int32, tag = "4")]
     pub source_line: i32,
+    /// Profile event category types (field `5`).
+    #[prost(int64, repeated, packed = "true", tag = "5")]
+    pub profile_type: Vec<i64>,
+    /// Size of generated machine code in bytes (field `8`).
+    #[prost(int64, tag = "8")]
+    pub size_of_generated_code_in_bytes: i64,
+    /// Size of the op's memory working set in bytes (field `9`).
+    #[prost(int64, tag = "9")]
+    pub size_of_memory_working_set_in_bytes: i64,
     /// Deduplicated HLO op name (field `12`).
     #[prost(string, tag = "12")]
     pub deduplicated_name: String,
+    /// Stack frame index into `StackFrameIndexProto` (field `15`).
+    #[prost(int32, tag = "15")]
+    pub stack_frame_id: i32,
     /// Scheduling name (field `16`).
     #[prost(string, tag = "16")]
     pub scheduling_name: String,
+    /// Ending source line number (field `17`).
+    #[prost(int32, tag = "17")]
+    pub source_end_line: i32,
+    /// Starting source column number (field `18`).
+    #[prost(int32, tag = "18")]
+    pub source_column: i32,
+    /// Ending source column number (field `19`).
+    #[prost(int32, tag = "19")]
+    pub source_end_column: i32,
 }
 
 impl_proto_schema_message!(OpMetadata, "xla.OpMetadata");
@@ -328,6 +379,30 @@ pub struct LiteralProto {
     /// `F8E4M3B11FNUZ` bytes (field `23`).
     #[prost(bytes = "vec", tag = "23")]
     pub f8e4m3b11fnuzs: Vec<u8>,
+    /// `F8E5M2FNUZ` bytes (field `24`).
+    #[prost(bytes = "vec", tag = "24")]
+    pub f8e5m2fnuzs: Vec<u8>,
+    /// `F8E4M3FNUZ` bytes (field `25`).
+    #[prost(bytes = "vec", tag = "25")]
+    pub f8e4m3fnuzs: Vec<u8>,
+    /// `F8E4M3` IEEE bytes (field `26`).
+    #[prost(bytes = "vec", tag = "26")]
+    pub f8e4m3s: Vec<u8>,
+    /// `F8E3M4` IEEE bytes (field `27`).
+    #[prost(bytes = "vec", tag = "27")]
+    pub f8e3m4s: Vec<u8>,
+    /// `F8E8M0FNU` block scaling exponent bytes (field `28`).
+    #[prost(bytes = "vec", tag = "28")]
+    pub f8e8m0fnus: Vec<u8>,
+    /// Packed `S2` 2-bit signed integers (field `29`).
+    #[prost(bytes = "vec", tag = "29")]
+    pub s2s: Vec<u8>,
+    /// Packed `U2` 2-bit unsigned integers (field `30`).
+    #[prost(bytes = "vec", tag = "30")]
+    pub u2s: Vec<u8>,
+    /// Packed `F4E2M1FN` 4-bit microscaling floats (field `31`).
+    #[prost(bytes = "vec", tag = "31")]
+    pub f4e2m1fns: Vec<u8>,
 }
 
 impl_proto_schema_message!(LiteralProto, "xla.LiteralProto");

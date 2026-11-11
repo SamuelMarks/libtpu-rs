@@ -26,7 +26,22 @@ message DebugOptions {
   string xla_dump_to = 1;
   bool xla_dump_hlo_as_text = 2;
   bool xla_dump_hlo_as_proto = 3;
+  string xla_dump_hlo_pass_re = 4;
+  string xla_dump_hlo_module_re = 5;
+  bool xla_dump_hlo_snapshots = 6;
   int32 xla_backend_optimization_level = 31;
+  repeated string xla_disable_hlo_passes = 32;
+  repeated string xla_enable_hlo_passes_only = 33;
+  bool xla_tpu_detect_nan = 64;
+  bool xla_tpu_detect_inf = 65;
+  bool xla_enable_fast_math = 66;
+  bool xla_gpu_enable_triton_gemm = 67;
+  bool xla_tpu_enable_async_collective_fusion = 68;
+  bool xla_tpu_enable_ag_backward_pipelining = 69;
+  bool xla_tpu_enable_rs_forward_pipelining = 70;
+  bool xla_tpu_overlap_compute_collective_tc = 71;
+  bool xla_tpu_use_shardy_partitioner = 72;
+  int64 xla_latency_hiding_scheduler_limit = 73;
 }
 
 message ExecutionOptions {
@@ -55,10 +70,13 @@ message HloModuleConfigProto {
   bool deduplicate_hlo = 11;
   int64 intra_op_parallelism_threads = 12;
   string device_type = 13;
+  DebugOptions debug_options = 14;
   xla.DeviceAssignmentProto static_device_assignment = 15;
   bool alias_passthrough_params = 17;
+  repeated bool allow_spmd_sharding_propagation_to_output = 23;
   int32 matrix_unit_operand_precision = 29;
   int64 device_memory_size = 32;
+  repeated bool allow_spmd_sharding_propagation_to_parameters = 33;
   bool use_shardy_partitioner = 34;
 }
 

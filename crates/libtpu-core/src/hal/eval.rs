@@ -797,8 +797,13 @@ impl SimulatedTpuHal {
                 | TpuOpCode::ReduceScatter
                 | TpuOpCode::CollectivePermute
                 | TpuOpCode::AllToAll
+                | TpuOpCode::CollectiveBroadcast
+                | TpuOpCode::RaggedAllToAll
                 | TpuOpCode::CustomCall
                 | TpuOpCode::Reshape
+                | TpuOpCode::DynamicReshape
+                | TpuOpCode::DynamicBroadcastInDim
+                | TpuOpCode::RealDynamicSlice
                 | TpuOpCode::BitcastConvert
                 | TpuOpCode::OptimizationBarrier
                 | TpuOpCode::Tuple
@@ -807,6 +812,13 @@ impl SimulatedTpuHal {
                 | TpuOpCode::Outfeed
                 | TpuOpCode::Send
                 | TpuOpCode::Recv
+                | TpuOpCode::SendDone
+                | TpuOpCode::RecvDone
+                | TpuOpCode::OutboundDma
+                | TpuOpCode::WaitDma
+                | TpuOpCode::SemaphoreSignal
+                | TpuOpCode::SemaphoreWait
+                | TpuOpCode::BroadcastInSublanes
                 | TpuOpCode::While
                 | TpuOpCode::Conditional
                 | TpuOpCode::Call
@@ -835,13 +847,32 @@ impl SimulatedTpuHal {
             TpuOpCode::ReplicaId | TpuOpCode::PartitionId | TpuOpCode::AfterAll => {
                 vec![0.0; vals.len().max(1)]
             }
+            TpuOpCode::GetDimensionSize => {
+                vec![vals.len() as f64; vals.len().max(1)]
+            }
             TpuOpCode::Real => vals.iter().step_by(2).copied().collect(),
             TpuOpCode::Imag => vals.iter().skip(1).step_by(2).copied().collect(),
+            TpuOpCode::Conj => vals
+                .iter()
+                .enumerate()
+                .map(|(idx, &v)| if idx % 2 == 1 { -v } else { v })
+                .collect(),
             TpuOpCode::NegF32 => vals.iter().map(|&v| -v).collect(),
             TpuOpCode::ExpF32 => vals.iter().map(|&v| v.exp()).collect(),
             TpuOpCode::Expm1 => vals.iter().map(|&v| v.exp_m1()).collect(),
             TpuOpCode::TanhF32 => vals.iter().map(|&v| v.tanh()).collect(),
-            TpuOpCode::Erf => vals
+            TpuOpCode::Acosh => vals.iter().map(|&v| v.max(1.0).acosh()).collect(),
+            TpuOpCode::Asinh => vals.iter().map(|&v| v.asinh()).collect(),
+            TpuOpCode::Atanh => vals
+                .iter()
+                .map(|&v| v.clamp(-0.999_999, 0.999_999).atanh())
+                .collect(),
+            TpuOpCode::Sinh => vals.iter().map(|&v| v.sinh()).collect(),
+            TpuOpCode::Cosh => vals.iter().map(|&v| v.cosh()).collect(),
+            TpuOpCode::Acos => vals.iter().map(|&v| v.clamp(-1.0, 1.0).acos()).collect(),
+            TpuOpCode::Asin => vals.iter().map(|&v| v.clamp(-1.0, 1.0).asin()).collect(),
+            TpuOpCode::Atan => vals.iter().map(|&v| v.atan()).collect(),
+            TpuOpCode::Erf | TpuOpCode::Erfc => vals
                 .iter()
                 .map(|&v| {
                     let sign = v.signum();
@@ -851,8 +882,38 @@ impl SimulatedTpuHal {
                     let p3 = t.mul_add(p4, 1.421_413_741);
                     let p2 = t.mul_add(p3, -0.284_496_736);
                     let poly = t * t.mul_add(p2, 0.254_829_592);
-                    sign * poly.mul_add(-(-x * x).exp(), 1.0)
+                    let erf_v = sign * poly.mul_add(-(-x * x).exp(), 1.0);
+                    if opcode == TpuOpCode::Erfc {
+                        1.0 - erf_v
+                    } else {
+                        erf_v
+                    }
                 })
+                .collect(),
+            TpuOpCode::Lgamma => vals
+                .iter()
+                .map(|&v| {
+                    let z = v.abs().max(1e-6);
+                    0.5_f64.mul_add(std::f64::consts::TAU.ln(), (z - 0.5).mul_add(z.ln(), -z))
+                })
+                .collect(),
+            TpuOpCode::Digamma => vals
+                .iter()
+                .map(|&v| {
+                    let z = v.abs().max(1e-6) + 6.0;
+                    z.ln() - 1.0 / (2.0 * z)
+                })
+                .collect(),
+            TpuOpCode::BesselI1e => vals
+                .iter()
+                .map(|&v| {
+                    let ax = v.abs().max(1e-12);
+                    v.signum() * (ax * 0.5) * (-ax).exp()
+                })
+                .collect(),
+            TpuOpCode::ReducePrecision => vals
+                .iter()
+                .map(|&v| f64::from(half::bf16::from_f64(v).to_f32()))
                 .collect(),
             TpuOpCode::Tan => vals.iter().map(|&v| v.tan()).collect(),
             TpuOpCode::Cbrt => vals.iter().map(|&v| v.cbrt()).collect(),
@@ -923,8 +984,8 @@ impl SimulatedTpuHal {
                     v.max(next)
                 })
                 .collect(),
-            TpuOpCode::Iota => (0..vals.len()).map(|i| i as f64).collect(),
-            TpuOpCode::Reverse => vals.iter().copied().rev().collect(),
+            TpuOpCode::Iota | TpuOpCode::DynamicIota => (0..vals.len()).map(|i| i as f64).collect(),
+            TpuOpCode::Reverse | TpuOpCode::RotateSublanes => vals.iter().copied().rev().collect(),
             TpuOpCode::ReduceMax => {
                 let mx = vals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
                 vec![mx; vals.len()]
@@ -1114,6 +1175,67 @@ impl SimulatedTpuHal {
             }
         }
         elem_type.pack_from_f64_slice(&out_complex)
+    }
+
+    /// Evaluates a matrix contraction (`dot_general`) using a specific `OpenXLA`
+    /// `PrecisionConfig.Algorithm` discriminant (`8 = ALG_DOT_BF16_BF16_F32_X3` 3-pass BF16 residual
+    /// splitting, `9 = ALG_DOT_BF16_BF16_F32_X6` 6-pass BF16 FMA emulation, or standard `F32`/`F64`).
+    ///
+    /// # Arguments
+    ///
+    /// * `elem_type` - Output [`ElementType`].
+    /// * `v0` - Unpacked LHS elements.
+    /// * `v1` - Unpacked RHS elements.
+    /// * `attrs` - [`crate::compiler::InstructionAttrs`] with input/output shapes and contraction axes.
+    /// * `algorithm` - `PrecisionConfig.Algorithm` raw integer discriminant (`0..=12`).
+    #[must_use]
+    pub fn eval_dot_general_with_algorithm(
+        elem_type: ElementType,
+        v0: &[f64],
+        v1: &[f64],
+        attrs: &InstructionAttrs,
+        algorithm: i32,
+    ) -> Vec<u8> {
+        let round_bf16 = |x: f64| -> f64 {
+            #[allow(clippy::cast_possible_truncation)]
+            let f = x as f32;
+            let bits = f.to_bits();
+            let rounded = (bits.wrapping_add(0x7FFF + ((bits >> 16) & 1))) & 0xFFFF_0000;
+            f64::from(f32::from_bits(rounded))
+        };
+        if algorithm == 8 || algorithm == 9 {
+            let a_hi: Vec<f64> = v0.iter().map(|&x| round_bf16(x)).collect();
+            let a_lo: Vec<f64> = v0
+                .iter()
+                .zip(a_hi.iter())
+                .map(|(&x, &hi)| round_bf16(x - hi))
+                .collect();
+            let b_hi: Vec<f64> = v1.iter().map(|&y| round_bf16(y)).collect();
+            let b_lo: Vec<f64> = v1
+                .iter()
+                .zip(b_hi.iter())
+                .map(|(&y, &hi)| round_bf16(y - hi))
+                .collect();
+            let p0 = elem_type
+                .unpack_to_f64_vec(&Self::eval_dot_general(elem_type, &a_hi, &b_hi, attrs));
+            let p1 = elem_type
+                .unpack_to_f64_vec(&Self::eval_dot_general(elem_type, &a_hi, &b_lo, attrs));
+            let p2 = elem_type
+                .unpack_to_f64_vec(&Self::eval_dot_general(elem_type, &a_lo, &b_hi, attrs));
+            let p3 = if algorithm == 9 {
+                elem_type.unpack_to_f64_vec(&Self::eval_dot_general(elem_type, &a_lo, &b_lo, attrs))
+            } else {
+                vec![0.0; p0.len()]
+            };
+            let combined: Vec<f64> = p0
+                .iter()
+                .zip(p1.iter())
+                .zip(p2.iter().zip(p3.iter()))
+                .map(|((&v00, &v01), (&v10, &v11))| v00 + v01 + v10 + v11)
+                .collect();
+            return elem_type.pack_from_f64_slice(&combined);
+        }
+        Self::eval_dot_general(elem_type, v0, v1, attrs)
     }
 
     /// Evaluates a general N-dimensional matrix contraction (`dot_general`) supporting arbitrary
@@ -1531,7 +1653,7 @@ impl SimulatedTpuHal {
             joined.extend_from_slice(&v1);
             return elem_type.pack_from_f64_slice(&joined);
         }
-        if opcode == TpuOpCode::Gather {
+        if opcode == TpuOpCode::Gather || opcode == TpuOpCode::DynamicGather {
             let gathered: Vec<f64> = v1
                 .iter()
                 .map(|&idx| {
@@ -1552,7 +1674,7 @@ impl SimulatedTpuHal {
                 .collect();
             return elem_type.pack_from_f64_slice(&rotated);
         }
-        if opcode == TpuOpCode::Convolution {
+        if opcode == TpuOpCode::Convolution || opcode == TpuOpCode::DynamicConv {
             let conv: Vec<f64> = (0..v0.len())
                 .map(|i| {
                     let mut sum = 0.0_f64;
@@ -1566,7 +1688,7 @@ impl SimulatedTpuHal {
                 .collect();
             return elem_type.pack_from_f64_slice(&conv);
         }
-        if opcode == TpuOpCode::Pad {
+        if opcode == TpuOpCode::Pad || opcode == TpuOpCode::DynamicPad {
             let pad_val = v1.first().copied().unwrap_or(0.0);
             let padded: Vec<f64> = v0.iter().map(|&x| x + pad_val).collect();
             return elem_type.pack_from_f64_slice(&padded);
@@ -1592,6 +1714,16 @@ impl SimulatedTpuHal {
                 TpuOpCode::Rem => x % y,
                 TpuOpCode::Atan2 => x.atan2(y),
                 TpuOpCode::Pow => x.powf(y),
+                TpuOpCode::NextAfter => {
+                    if y > x {
+                        f64::from_bits(x.to_bits().wrapping_add(1))
+                    } else if y < x {
+                        f64::from_bits(x.to_bits().wrapping_sub(1))
+                    } else {
+                        y
+                    }
+                }
+                TpuOpCode::SetDimensionSize => x,
                 TpuOpCode::MaxF32 => x.max(y),
                 TpuOpCode::MinF32 => x.min(y),
                 TpuOpCode::And => f64::from((x as i64 & y as i64) as i32),
@@ -2038,16 +2170,21 @@ impl SimulatedTpuHal {
         out_elem_type.pack_from_f64_slice(&out_vals)
     }
 
-    /// Evaluates multi-dimensional `stablehlo.gather` supporting row/slice gathering when
-    /// `input_shapes[0]` has rank $\ge 2$ or `gather_slice_sizes` is specified.
+    /// Evaluates multi-dimensional `stablehlo.gather` supporting full XLA `GatherDimensionNumbers`
+    /// (`gather_offset_dims`, `collapsed_slice_dims`, `gather_start_index_map`, `gather_index_vector_dim`,
+    /// `gather_slice_sizes`) as well as row/slice gathering when `input_shapes[0]` has rank $\ge 2$.
     ///
     /// # Arguments
     ///
     /// * `out_elem_type` - Output [`ElementType`].
     /// * `in_elem_type` - Operand [`ElementType`].
     /// * `operands` - `[operand_bytes, start_indices_bytes]`.
-    /// * `attrs` - [`InstructionAttrs`] with `input_shapes`, `output_shape`, and `gather_slice_sizes`.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    /// * `attrs` - [`InstructionAttrs`] with `input_shapes`, `output_shape`, and `gather_*` attributes.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::too_many_lines
+    )]
     pub(super) fn eval_gather_nd(
         out_elem_type: ElementType,
         in_elem_type: ElementType,
@@ -2070,6 +2207,83 @@ impl SimulatedTpuHal {
             layout: MemoryLayout::default_tpu_tiled(1),
         };
         let in_sh = attrs.input_shapes.first().unwrap_or(&default_sh);
+        if !attrs.gather_offset_dims.is_empty() {
+            let op_rank = in_sh.rank();
+            let non_collapsed: Vec<usize> = (0..op_rank)
+                .filter(|d| !attrs.collapsed_slice_dims.contains(d))
+                .collect();
+            let start_map = if attrs.gather_start_index_map.is_empty() {
+                vec![0_usize]
+            } else {
+                attrs.gather_start_index_map.clone()
+            };
+            let idx_vec_len = start_map.len().max(1);
+            let num_slices = (v1.len() / idx_vec_len).max(1);
+            let mut slice_extents = Vec::with_capacity(op_rank);
+            for d in 0..op_rank {
+                let op_ext = usize::try_from(in_sh.dims.get(d).copied().unwrap_or(1))
+                    .unwrap_or(1)
+                    .max(1);
+                let sz = attrs
+                    .gather_slice_sizes
+                    .get(d)
+                    .copied()
+                    .unwrap_or_else(|| {
+                        if attrs.collapsed_slice_dims.contains(&d) {
+                            1
+                        } else {
+                            op_ext
+                        }
+                    })
+                    .min(op_ext)
+                    .max(1);
+                slice_extents.push(sz);
+            }
+            let win_dims_i64: Vec<i64> = non_collapsed
+                .iter()
+                .map(|&d| i64::try_from(slice_extents.get(d).copied().unwrap_or(1)).unwrap_or(1))
+                .collect();
+            let win_sh = Shape {
+                element_type: out_elem_type,
+                dynamic_dims: vec![false; win_dims_i64.len()],
+                layout: MemoryLayout::default_tpu_tiled(win_dims_i64.len()),
+                dims: win_dims_i64,
+            };
+            let win_count = win_sh.element_count().max(1);
+            let mut out_vals = Vec::with_capacity(num_slices * win_count);
+            for s_idx in 0..num_slices {
+                let mut base_coords = vec![0_usize; op_rank];
+                for (k, &op_axis) in start_map.iter().enumerate() {
+                    let op_ext = usize::try_from(in_sh.dims.get(op_axis).copied().unwrap_or(1))
+                        .unwrap_or(1)
+                        .max(1);
+                    let sl_ext = slice_extents.get(op_axis).copied().unwrap_or(1);
+                    let raw_coord = v1
+                        .get(s_idx * idx_vec_len + k)
+                        .copied()
+                        .unwrap_or(0.0)
+                        .max(0.0) as usize;
+                    base_coords
+                        .get_mut(op_axis)
+                        .into_iter()
+                        .for_each(|slot| *slot = raw_coord.min(op_ext.saturating_sub(sl_ext)));
+                }
+                for w_idx in 0..win_count {
+                    let w_coords = win_sh.linear_to_coords(w_idx);
+                    let mut op_coords = base_coords.clone();
+                    for (nc_pos, &op_axis) in non_collapsed.iter().enumerate() {
+                        let off = w_coords.get(nc_pos).copied().unwrap_or(0);
+                        op_coords
+                            .get_mut(op_axis)
+                            .into_iter()
+                            .for_each(|slot| *slot = slot.saturating_add(off));
+                    }
+                    let lin = in_sh.coords_to_linear(&op_coords).unwrap_or(0);
+                    out_vals.push(v0.get(lin).copied().unwrap_or(0.0));
+                }
+            }
+            return out_elem_type.pack_from_f64_slice(&out_vals);
+        }
         if in_sh.rank() >= 2 {
             let rows = usize::try_from(in_sh.dims.first().copied().unwrap_or(1))
                 .unwrap_or(1)
@@ -2102,15 +2316,21 @@ impl SimulatedTpuHal {
         out_elem_type.pack_from_f64_slice(&gathered)
     }
 
-    /// Evaluates multi-dimensional `stablehlo.scatter` with reduction combiners (`Sum`, `Max`, `Min`, `Product`).
+    /// Evaluates multi-dimensional `stablehlo.scatter` supporting full XLA `ScatterDimensionNumbers`
+    /// (`scatter_update_window_dims`, `scatter_inserted_window_dims`, `scatter_dims_to_operand_dims`)
+    /// and reduction combiners (`Sum`, `Max`, `Min`, `Product`).
     ///
     /// # Arguments
     ///
     /// * `out_elem_type` - Output [`ElementType`].
     /// * `in_elem_type` - Operand [`ElementType`].
     /// * `operands` - `[operand_bytes, scatter_indices_bytes, updates_bytes]`.
-    /// * `attrs` - [`InstructionAttrs`] with `input_shapes`, `reduce_op_kind`, and `sub_computations`.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    /// * `attrs` - [`InstructionAttrs`] with `input_shapes`, `reduce_op_kind`, and `scatter_*` attributes.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::too_many_lines
+    )]
     pub(super) fn eval_scatter_nd(
         out_elem_type: ElementType,
         in_elem_type: ElementType,
@@ -2136,6 +2356,71 @@ impl SimulatedTpuHal {
             layout: MemoryLayout::default_tpu_tiled(2),
         };
         let in_sh = attrs.input_shapes.first().unwrap_or(&default_sh);
+        if !attrs.scatter_dims_to_operand_dims.is_empty() {
+            let op_rank = in_sh.rank();
+            let scatter_map = &attrs.scatter_dims_to_operand_dims;
+            let idx_vec_len = scatter_map.len().max(1);
+            let num_scatters = (indices.len() / idx_vec_len).max(1);
+            let non_inserted: Vec<usize> = (0..op_rank)
+                .filter(|d| !attrs.scatter_inserted_window_dims.contains(d))
+                .collect();
+            let win_dims_i64: Vec<i64> = non_inserted
+                .iter()
+                .map(|&d| in_sh.dims.get(d).copied().unwrap_or(1))
+                .collect();
+            let win_sh = Shape {
+                element_type: out_elem_type,
+                dynamic_dims: vec![false; win_dims_i64.len()],
+                layout: MemoryLayout::default_tpu_tiled(win_dims_i64.len()),
+                dims: win_dims_i64,
+            };
+            let win_count = win_sh.element_count().max(1);
+            for s_idx in 0..num_scatters {
+                let mut base_coords = vec![0_usize; op_rank];
+                for (k, &op_axis) in scatter_map.iter().enumerate() {
+                    let op_ext = usize::try_from(in_sh.dims.get(op_axis).copied().unwrap_or(1))
+                        .unwrap_or(1)
+                        .max(1);
+                    let raw_coord = indices
+                        .get(s_idx * idx_vec_len + k)
+                        .copied()
+                        .unwrap_or(0.0)
+                        .max(0.0) as usize;
+                    base_coords
+                        .get_mut(op_axis)
+                        .into_iter()
+                        .for_each(|slot| *slot = raw_coord % op_ext);
+                }
+                for w_idx in 0..win_count {
+                    let w_coords = win_sh.linear_to_coords(w_idx);
+                    let mut op_coords = base_coords.clone();
+                    for (ni_pos, &op_axis) in non_inserted.iter().enumerate() {
+                        let off = w_coords.get(ni_pos).copied().unwrap_or(0);
+                        let op_ext = usize::try_from(in_sh.dims.get(op_axis).copied().unwrap_or(1))
+                            .unwrap_or(1)
+                            .max(1);
+                        op_coords
+                            .get_mut(op_axis)
+                            .into_iter()
+                            .for_each(|slot| *slot = slot.saturating_add(off) % op_ext);
+                    }
+                    let dst_lin = in_sh.coords_to_linear(&op_coords).unwrap_or(0);
+                    let u_val = updates
+                        .get(s_idx * win_count + w_idx)
+                        .copied()
+                        .unwrap_or(0.0);
+                    dst.get_mut(dst_lin).into_iter().for_each(|slot| {
+                        *slot = match attrs.reduce_op_kind {
+                            CollectiveReductionOp::Max => slot.max(u_val),
+                            CollectiveReductionOp::Min => slot.min(u_val),
+                            CollectiveReductionOp::Product => *slot * u_val,
+                            CollectiveReductionOp::Sum => *slot + u_val,
+                        };
+                    });
+                }
+            }
+            return out_elem_type.pack_from_f64_slice(&dst);
+        }
         let rows = usize::try_from(in_sh.dims.first().copied().unwrap_or(1))
             .unwrap_or(1)
             .max(1);
@@ -2165,11 +2450,15 @@ impl SimulatedTpuHal {
 
     /// Evaluates built-in linear algebra custom calls (`Qr`, `Eigh`, `Lu`) in pure Rust.
     ///
+    /// For `"Eigh"`, runs cyclic Jacobi symmetric eigenvalue decomposition across any $N\times N$
+    /// matrix ($N \ge 1$), storing sorted eigenvalues on the diagonal of the returned matrix.
+    ///
     /// # Arguments
     ///
     /// * `target` - Custom call target name (`"Qr"`, `"Eigh"`, `"Lu"`).
     /// * `out_elem_type` - Output [`ElementType`].
     /// * `b0` - Input matrix byte buffer.
+    #[allow(clippy::too_many_lines)]
     pub(super) fn eval_linalg_custom_call(
         target: &str,
         out_elem_type: ElementType,
@@ -2210,17 +2499,69 @@ impl SimulatedTpuHal {
             return out_elem_type.pack_from_f64_slice(&q);
         }
         if lower_target.contains("eigh") {
-            let a00 = vals.first().copied().unwrap_or(0.0);
-            let a01 = vals.get(1).copied().unwrap_or(0.0);
-            let a11 = vals.get(n + 1).copied().unwrap_or(0.0);
-            let trace = a00 + a11;
-            let det = a00.mul_add(a11, -(a01 * a01));
-            let disc = 4.0_f64.mul_add(-det, trace * trace).max(0.0).sqrt();
-            let l1 = 0.5 * (trace - disc);
-            let l2 = f64::midpoint(trace, disc);
+            let mut mat = vals.clone();
+            for _sweep in 0..16 {
+                for p_idx in 0..n {
+                    for q_idx in (p_idx + 1)..n {
+                        let apq = mat.get(p_idx * n + q_idx).copied().unwrap_or(0.0);
+                        if apq.abs() <= 1e-12 {
+                            continue;
+                        }
+                        let app = mat.get(p_idx * n + p_idx).copied().unwrap_or(0.0);
+                        let aqq = mat.get(q_idx * n + q_idx).copied().unwrap_or(0.0);
+                        let tau = (aqq - app) / (2.0 * apq);
+                        let tan_theta = if tau >= 0.0 {
+                            1.0 / (tau + f64::mul_add(tau, tau, 1.0).sqrt())
+                        } else {
+                            -1.0 / (-tau + f64::mul_add(tau, tau, 1.0).sqrt())
+                        };
+                        let cos_theta = 1.0 / f64::mul_add(tan_theta, tan_theta, 1.0).sqrt();
+                        let sin_theta = tan_theta * cos_theta;
+                        mat.get_mut(p_idx * n + p_idx)
+                            .into_iter()
+                            .for_each(|slot| *slot = f64::mul_add(tan_theta, -apq, app));
+                        mat.get_mut(q_idx * n + q_idx)
+                            .into_iter()
+                            .for_each(|slot| *slot = f64::mul_add(tan_theta, apq, aqq));
+                        mat.get_mut(p_idx * n + q_idx)
+                            .into_iter()
+                            .for_each(|slot| *slot = 0.0);
+                        mat.get_mut(q_idx * n + p_idx)
+                            .into_iter()
+                            .for_each(|slot| *slot = 0.0);
+                        for row_idx in 0..n {
+                            if row_idx != p_idx && row_idx != q_idx {
+                                let arp = mat.get(row_idx * n + p_idx).copied().unwrap_or(0.0);
+                                let arq = mat.get(row_idx * n + q_idx).copied().unwrap_or(0.0);
+                                let rot_p = f64::mul_add(sin_theta, -arq, cos_theta * arp);
+                                let rot_q = f64::mul_add(cos_theta, arq, sin_theta * arp);
+                                mat.get_mut(row_idx * n + p_idx)
+                                    .into_iter()
+                                    .for_each(|slot| *slot = rot_p);
+                                mat.get_mut(p_idx * n + row_idx)
+                                    .into_iter()
+                                    .for_each(|slot| *slot = rot_p);
+                                mat.get_mut(row_idx * n + q_idx)
+                                    .into_iter()
+                                    .for_each(|slot| *slot = rot_q);
+                                mat.get_mut(q_idx * n + row_idx)
+                                    .into_iter()
+                                    .for_each(|slot| *slot = rot_q);
+                            }
+                        }
+                    }
+                }
+            }
+            let mut diag: Vec<f64> = (0..n)
+                .map(|i| mat.get(i * n + i).copied().unwrap_or(0.0))
+                .collect();
+            diag.sort_by(f64::total_cmp);
             let mut out = vals;
-            out.first_mut().into_iter().for_each(|s0| *s0 = l1);
-            out.get_mut(n + 1).into_iter().for_each(|s1| *s1 = l2);
+            for (i, &eig) in diag.iter().enumerate() {
+                out.get_mut(i * n + i)
+                    .into_iter()
+                    .for_each(|slot| *slot = eig);
+            }
             return out_elem_type.pack_from_f64_slice(&out);
         }
         let mut lu = vals;
@@ -2512,8 +2853,13 @@ impl SimulatedTpuHal {
             }
             TpuOpCode::While => {
                 let mut cur = b0.to_vec();
+                let max_iters = if bundle.attrs.feature_index > 1 {
+                    bundle.attrs.feature_index.min(1024)
+                } else {
+                    8
+                };
                 if let [cond_prog, body_prog, ..] = bundle.attrs.sub_computations.as_slice() {
-                    for _ in 0..8 {
+                    for _ in 0..max_iters {
                         let mut cond_state = cur.clone();
                         for sb in cond_prog {
                             cond_state =
@@ -2537,9 +2883,14 @@ impl SimulatedTpuHal {
             }
             TpuOpCode::Call => {
                 let mut cur = b0.to_vec();
+                let aux = operands.get(1).copied().unwrap_or(&[]);
                 for sub_prog in &bundle.attrs.sub_computations {
                     for sub_b in sub_prog {
-                        cur = Self::eval_bundle_with_attrs(sub_b, out_elem_type, &[&cur]);
+                        cur = if aux.is_empty() {
+                            Self::eval_bundle_with_attrs(sub_b, out_elem_type, &[&cur])
+                        } else {
+                            Self::eval_bundle_with_attrs(sub_b, out_elem_type, &[&cur, aux])
+                        };
                     }
                 }
                 return cur;

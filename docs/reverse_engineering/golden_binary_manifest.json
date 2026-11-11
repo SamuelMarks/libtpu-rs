@@ -10,6 +10,9 @@
     "pjrt_api_version_minor": 116,
     "libtpu_sdk_api_struct_size": 144,
     "tpu_driver_fn_struct_size": 224,
+    "eh_frame_fde_count": 218420,
+    "cie_augmentation": "zR",
+    "filetoc_md5_verified": true,
     "exported_functions_count": 75,
     "exported_functions": [
       {

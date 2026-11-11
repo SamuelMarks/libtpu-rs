@@ -7,6 +7,8 @@ syntax = "proto3";
 
 package xla;
 
+import "compiler_metadata.proto";
+import "host_command_opcodes.proto";
 import "isa_program.proto";
 import "target_arguments.proto";
 import "tpu_version.proto";
@@ -40,6 +42,7 @@ message TpuCoreProgramProto {
   bool has_concurrent_program = 10;
   tpu.TpuCoreProgramAbiProto abi = 12;
   bool oom_during_compilation = 14;
+  repeated ProgramRelocation relocations = 15;
 }
 
 message DeepseaOverlaySectionProto {
@@ -86,4 +89,7 @@ message DeepseaExecutableProto {
   int64 hbm_scratchpad_bytes = 11;
   TpuCoreProgramProto core_program = 12;
   TpuCoreProgramProto sparse_core_program = 13;
+  repeated tpu.HostCommandEnvelopeProto host_command_table = 14;
+  repeated ProgramRelocation program_relocations = 15;
+  platforms_deepsea.jellyfish.xdb.CompilerMetadata xdb_compiler_metadata = 16;
 }

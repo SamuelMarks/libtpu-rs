@@ -3,6 +3,8 @@
 //! All domain identifiers use strongly-typed `derive_more` newtypes (`Add`, `Display`, `From`,
 //! `Into`, `Sub`) to prevent accidental mixing of distinct identifier spaces.
 
+use crate::error::{LibTpuError, LibTpuResult};
+use crate::types::hardware::TpuGeneration;
 use derive_more::{Add, Display, From, Into, Sub};
 
 /// Unique identifier for a logical TPU device (`PJRT_Device_Id`).
@@ -358,6 +360,128 @@ pub type GmrIndex = MatmulAccIndex;
 /// Type alias for [`MatmulAccIndex`] representing a physical MXU accumulator register ID (`GmrAccumId`).
 pub type GmrAccumId = MatmulAccIndex;
 
+/// Type alias for [`MatmulAccIndex`] representing a physical matrix register ID (`PhysicalMregId`).
+pub type PhysicalMregId = MatmulAccIndex;
+
+impl SregIndex {
+    /// Constructs a checked [`SregIndex`] (`0..32`) for the given register index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - Requested physical scalar register index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::RegisterIndexOverflow`] if `index >= 32`.
+    pub const fn new_checked(index: usize) -> LibTpuResult<Self> {
+        if index >= 32 {
+            return Err(LibTpuError::RegisterIndexOverflow {
+                slot_index: index,
+                max_registers: 31,
+            });
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(Self(index as u8))
+    }
+}
+
+impl VregIndex {
+    /// Constructs a checked [`VregIndex`] bounded by the target [`TpuGeneration`]'s physical vector register count (`32` on `V2`..`V5e`, `64` on `V5p`/`V6e`/`V7x`).
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - Requested physical vector register index.
+    /// * `generation` - Target [`TpuGeneration`] hardware architecture.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::RegisterIndexOverflow`] if `index` exceeds the generation's `VREG` capacity.
+    pub const fn new_for_generation(index: usize, generation: TpuGeneration) -> LibTpuResult<Self> {
+        let cap: usize = match generation {
+            TpuGeneration::V2
+            | TpuGeneration::V3
+            | TpuGeneration::V4
+            | TpuGeneration::V4Lite
+            | TpuGeneration::V5e => 32,
+            TpuGeneration::V5p | TpuGeneration::V6e | TpuGeneration::V7x => 64,
+        };
+        if index >= cap {
+            return Err(LibTpuError::RegisterIndexOverflow {
+                slot_index: index,
+                max_registers: cap.saturating_sub(1),
+            });
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(Self(index as u8))
+    }
+}
+
+impl PregIndex {
+    /// Constructs a checked [`PregIndex`] (`0..16`).
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - Requested scalar predicate register index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::RegisterIndexOverflow`] if `index >= 16`.
+    pub const fn new_checked(index: usize) -> LibTpuResult<Self> {
+        if index >= 16 {
+            return Err(LibTpuError::RegisterIndexOverflow {
+                slot_index: index,
+                max_registers: 15,
+            });
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(Self(index as u8))
+    }
+}
+
+impl VmregIndex {
+    /// Constructs a checked [`VmregIndex`] (`0..8`).
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - Requested vector mask register index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::RegisterIndexOverflow`] if `index >= 8`.
+    pub const fn new_checked(index: usize) -> LibTpuResult<Self> {
+        if index >= 8 {
+            return Err(LibTpuError::RegisterIndexOverflow {
+                slot_index: index,
+                max_registers: 7,
+            });
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(Self(index as u8))
+    }
+}
+
+impl MatmulAccIndex {
+    /// Constructs a checked [`MatmulAccIndex`] (`0..4`).
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - Requested MXU accumulator register index.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::RegisterIndexOverflow`] if `index >= 4`.
+    pub const fn new_checked(index: usize) -> LibTpuResult<Self> {
+        if index >= 4 {
+            return Err(LibTpuError::RegisterIndexOverflow {
+                slot_index: index,
+                max_registers: 3,
+            });
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(Self(index as u8))
+    }
+}
+
 /// Logical SSA register slot index in `CompiledProgram` (`LogicalSlotId`).
 #[repr(transparent)]
 #[derive(
@@ -365,6 +489,28 @@ pub type GmrAccumId = MatmulAccIndex;
 )]
 #[display("slot#{_0}")]
 pub struct LogicalSlotId(pub usize);
+
+/// Type alias for [`LogicalSlotId`] representing a virtual SSA slot identifier (`VirtualSlotId`).
+pub type VirtualSlotId = LogicalSlotId;
+
+/// Type alias for [`LogicalSlotId`] representing a virtual SSA register identifier (`VirtualRegId`).
+pub type VirtualRegId = LogicalSlotId;
+
+/// Hardware BAR2 DMA command descriptor ring entry index (`DmaRingIndex`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("ring[{_0}]")]
+pub struct DmaRingIndex(pub u32);
+
+/// On-chip Instruction Memory (`IMEM`) byte offset newtype (`ImemOffset`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0:#x}")]
+pub struct ImemOffset(pub u32);
 
 /// Hardware `SyncFlag` synchronization counter register index (`SyncFlagIndex`, `0..4096`).
 pub type SyncFlagIndex = SyncFlagId;
@@ -606,7 +752,43 @@ mod tests {
         let ps: PhysicalSregId = SregIndex(2);
         let pp: PhysicalPregId = VmregIndex(1);
         let gm: GmrAccumId = MatmulAccIndex(0);
+        let pm: PhysicalMregId = MatmulAccIndex(1);
         let sf: SyncFlagIndex = SyncFlagId(7);
-        assert_eq!((pv.0, ps.0, pp.0, gm.0, sf.0), (3, 2, 1, 0, 7));
+        assert_eq!((pv.0, ps.0, pp.0, gm.0, pm.0, sf.0), (3, 2, 1, 0, 1, 7));
+
+        let vs: VirtualSlotId = LogicalSlotId(9);
+        let vr: VirtualRegId = LogicalSlotId(10);
+        assert_eq!((vs.0, vr.0), (9, 10));
+
+        let ring_idx = DmaRingIndex::from(3_u32) + DmaRingIndex(1) - DmaRingIndex(1);
+        assert_eq!(u32::from(ring_idx), 3);
+        assert_eq!(ring_idx.to_string(), "ring[3]");
+
+        let imem_off = ImemOffset::from(64_u32) + ImemOffset(64) - ImemOffset(64);
+        assert_eq!(u32::from(imem_off), 64);
+        assert_eq!(imem_off.to_string(), "0x40");
+
+        assert_eq!(SregIndex::new_checked(31), Ok(SregIndex(31)));
+        assert!(SregIndex::new_checked(32).is_err());
+
+        assert_eq!(
+            VregIndex::new_for_generation(31, TpuGeneration::V4),
+            Ok(VregIndex(31))
+        );
+        assert!(VregIndex::new_for_generation(32, TpuGeneration::V4).is_err());
+        assert_eq!(
+            VregIndex::new_for_generation(63, TpuGeneration::V6e),
+            Ok(VregIndex(63))
+        );
+        assert!(VregIndex::new_for_generation(64, TpuGeneration::V6e).is_err());
+
+        assert_eq!(PregIndex::new_checked(15), Ok(PregIndex(15)));
+        assert!(PregIndex::new_checked(16).is_err());
+
+        assert_eq!(VmregIndex::new_checked(7), Ok(VmregIndex(7)));
+        assert!(VmregIndex::new_checked(8).is_err());
+
+        assert_eq!(MatmulAccIndex::new_checked(3), Ok(MatmulAccIndex(3)));
+        assert!(MatmulAccIndex::new_checked(4).is_err());
     }
 }

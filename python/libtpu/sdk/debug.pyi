@@ -28,3 +28,23 @@ unregister_callback = unregister_debug_callback
 def trigger_fault_injection() -> None:
     """Triggers registered diagnostic debug callbacks."""
     ...
+
+def assemble_llo_vliw(listing: str) -> bytes:
+    """Assembles a multi-line `DeepSea` LLO VLIW text listing into 64-byte `IMEM` binary words.
+
+    Args:
+        listing: Multi-line `DeepSea` LLO VLIW assembly text.
+    """
+    ...
+
+def disassemble_llo_vliw(imem_bytes: bytes) -> str:
+    """Disassembles 64-byte `IMEM` binary words into a canonical `DeepSea` LLO VLIW listing.
+
+    Args:
+        imem_bytes: Raw 64-byte-aligned `IMEM` bundle words.
+    """
+    ...
+
+def verify_protodesc_cold_293() -> int:
+    """Verifies all 293 embedded `protodesc_cold` descriptor catalog entries."""
+    ...

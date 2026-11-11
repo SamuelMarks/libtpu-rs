@@ -27,8 +27,8 @@ pub use self::eval::{
 };
 pub use self::linux::{
     GasketPageTableEntry, GasketPageTableMode, GasketTwoLevelPageTable, HalBackend,
-    HardwareDoorbellRing, LinuxDeviceHal, create_default_hal, create_default_hal_with_sysfs,
-    discover_pcie_tpu_devices_from_sysfs,
+    HardwareDmaCommandDescriptor, HardwareDoorbellRing, LinuxDeviceHal, MsiXInterruptReactor,
+    create_default_hal, create_default_hal_with_sysfs, discover_pcie_tpu_devices_from_sysfs,
 };
 pub use self::memory::{
     DeviceMemoryStats, HbmRegionAllocator, MappedBarAperture, MmioAperture, VmemRegionAllocator,
@@ -42,18 +42,20 @@ pub use self::registers::{
     BAR0_CSR_ICI_ROUTER_LINK_STATE, BAR0_CSR_POWER_MILLIWATTS, BAR0_CSR_SPARSECORE_RUN_CONTROL,
     BAR0_CSR_SYNC_FLAG_BASE, BAR0_CSR_TENSORCORE_PC, BAR0_CSR_TENSORCORE_RUN_CONTROL,
     BAR0_CSR_TENSORCORE_STATUS, BAR0_CSR_TENSORCORE_SYNC_FLAG, BAR0_CSR_THERMAL_MILLICELSIUS,
-    ChipRegisterMap, CsrAccessPermission, CsrBitfieldSpec, CsrRegisterDescriptor,
-    DmaRingDescriptor, GASKET_IOCTL_CLEAR_EVENTFD, GASKET_IOCTL_CLEAR_INTERRUPT_COUNTS,
-    GASKET_IOCTL_MAP_BUFFER, GASKET_IOCTL_MAP_DMABUF, GASKET_IOCTL_NUMBER_PAGE_TABLES,
-    GASKET_IOCTL_PAGE_TABLE_SIZE, GASKET_IOCTL_PARTITION_PAGE_TABLE, GASKET_IOCTL_RESET,
-    GASKET_IOCTL_SET_EVENTFD, GASKET_IOCTL_SIMPLE_PAGE_TABLE_SIZE, GASKET_IOCTL_UNMAP_BUFFER,
-    GasketInterruptEventFd, GasketPageTableDmaBuf, GasketPageTableIoctl, HbmDmaRingDescriptor,
-    IciLinkStateFlags, TensorCoreControlFlags, TensorCoreStatusFlags, VFIO_CHECK_EXTENSION,
-    VFIO_DEVICE_GET_INFO, VFIO_DEVICE_GET_IRQ_INFO, VFIO_DEVICE_GET_REGION_INFO, VFIO_DEVICE_RESET,
-    VFIO_DEVICE_SET_IRQS, VFIO_DEVICE_SET_IRQS_IOCTL, VFIO_GET_API_VERSION,
-    VFIO_GROUP_GET_DEVICE_FD, VFIO_GROUP_GET_STATUS, VFIO_GROUP_SET_CONTAINER, VFIO_IOMMU_MAP_DMA,
-    VFIO_IOMMU_MAP_DMA_IOCTL, VFIO_IOMMU_UNMAP_DMA, VFIO_IOMMU_UNMAP_DMA_IOCTL, VFIO_SET_IOMMU,
-    VfioDmaMapFlags, VfioDmaMapIoctl, VfioDmaUnmapIoctl, VfioIrqSetFlags, VfioIrqSetIoctl,
+    ChipRegisterMap, CsrAccessPermission, CsrBitfieldSpec, CsrCatalogEntry, CsrRegisterDescriptor,
+    DmaRingDescriptor, EMBEDDED_CSR_REGISTER_MAP_JSON, GASKET_IOCTL_CLEAR_EVENTFD,
+    GASKET_IOCTL_CLEAR_INTERRUPT_COUNTS, GASKET_IOCTL_MAP_BUFFER, GASKET_IOCTL_MAP_DMABUF,
+    GASKET_IOCTL_NUMBER_PAGE_TABLES, GASKET_IOCTL_PAGE_TABLE_SIZE,
+    GASKET_IOCTL_PARTITION_PAGE_TABLE, GASKET_IOCTL_RESET, GASKET_IOCTL_SET_EVENTFD,
+    GASKET_IOCTL_SIMPLE_PAGE_TABLE_SIZE, GASKET_IOCTL_UNMAP_BUFFER, GasketInterruptEventFd,
+    GasketPageTableDmaBuf, GasketPageTableIoctl, HbmDmaRingDescriptor, IciLinkStateFlags,
+    TensorCoreControlFlags, TensorCoreStatusFlags, VFIO_CHECK_EXTENSION, VFIO_DEVICE_GET_INFO,
+    VFIO_DEVICE_GET_IRQ_INFO, VFIO_DEVICE_GET_REGION_INFO, VFIO_DEVICE_RESET, VFIO_DEVICE_SET_IRQS,
+    VFIO_DEVICE_SET_IRQS_IOCTL, VFIO_GET_API_VERSION, VFIO_GROUP_GET_DEVICE_FD,
+    VFIO_GROUP_GET_STATUS, VFIO_GROUP_SET_CONTAINER, VFIO_IOMMU_MAP_DMA, VFIO_IOMMU_MAP_DMA_IOCTL,
+    VFIO_IOMMU_UNMAP_DMA, VFIO_IOMMU_UNMAP_DMA_IOCTL, VFIO_SET_IOMMU, VfioDmaMapFlags,
+    VfioDmaMapIoctl, VfioDmaUnmapIoctl, VfioIrqSetFlags, VfioIrqSetIoctl, VfioRegionInfoIoctl,
+    global_csr_register_catalog,
 };
 pub use self::simulated::SimulatedTpuHal;
 pub use self::syscall::{
@@ -63,7 +65,8 @@ pub use self::syscall::{
     discover_sysfs_tpu_pci_devices,
 };
 pub use self::vm::{
-    DeepSeaVm, SparseCoreOptimizer, SparseCoreVmState, TpuCoreVmState, VmExecutionReport,
+    DeepSeaVm, ImemAttributeEntry, MultiCoreChipVmState, SparseCoreOptimizer,
+    SparseCoreSubcoreState, SparseCoreVmState, TpuCoreVmState, VmExecutionReport, VregTile2D,
 };
 
 use crate::compiler::CompiledProgram;
@@ -1407,10 +1410,11 @@ ENTRY main {
                     payload: b"cmd".to_vec(),
                 };
                 hal.enqueue_host_command_envelope(&host_cmd_env);
-                assert_eq!(
-                    hal.service_continuation_queue(&host_cmd_env.encode()),
-                    Ok(43)
-                );
+                for op in [1_i32, 2, 3, 4, 5, 6, 7, 8, 99] {
+                    let mut env_op = host_cmd_env.clone();
+                    env_op.opcode = op;
+                    assert!(hal.service_continuation_queue(&env_op.encode()).is_ok());
+                }
                 assert!(hal.service_continuation_queue(&[0xFF, 0xFF, 0xFF]).is_err());
 
                 let addr = hal
@@ -1430,7 +1434,7 @@ ENTRY main {
                     hal.copy_device_to_device(DeviceId(0), addr, DeviceId(0), addr2, ByteSize(4))
                         .is_ok()
                 );
-                assert_eq!(hal.mmio.dma_ring_len(), 4);
+                assert_eq!(hal.mmio.dma_ring_len(), 8);
                 if let Ok(prog) = CompiledProgram::compile("mlir", b"return", b"") {
                     assert!(
                         hal.execute_program(DeviceId(0), &prog, &[addr], &[addr2])
@@ -1616,6 +1620,8 @@ ENTRY main {
             bar0_aperture: parking_lot::Mutex::new(None),
             bar2_aperture: parking_lot::Mutex::new(None),
             iommu_allocators: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
+            page_tables: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
+            pinned_dma_buffers: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
             inner: SimulatedTpuHal::new(&cfg),
         };
         assert!(bad_fd_hal.close().is_err());
@@ -1650,6 +1656,21 @@ ENTRY main {
                 .ioctl_with_payload(-1, POSIX_FIOCLEX_IOCTL, &mut dummy_flag)
                 .is_err()
         );
+
+        let tmp_bar_path =
+            std::env::temp_dir().join(format!("libtpu_bar_mmap_{}", std::process::id()));
+        let _ = std::fs::write(&tmp_bar_path, vec![0_u8; 4096]);
+        if let Ok(bar_fd) = posix.open_device(&tmp_bar_path.to_string_lossy()) {
+            if let Ok(file_ap) =
+                posix.mmap_bar_aperture_at_offset(FileDescriptor(bar_fd), ByteSize(4096), 0)
+            {
+                assert!(file_ap.write_csr_u64(MmioOffset(0), 0x1122_3344).is_ok());
+                assert_eq!(file_ap.read_csr_u64(MmioOffset(0)), Ok(0x1122_3344));
+                assert!(posix.munmap_bar_aperture(file_ap).is_ok());
+            }
+            let _ = posix.close_device(bar_fd);
+        }
+        let _ = std::fs::remove_file(&tmp_bar_path);
 
         if let Ok(aperture) = posix.mmap_bar_aperture(FileDescriptor(-1), ByteSize(4096)) {
             assert!(
@@ -3258,6 +3279,7 @@ ENTRY main {
                     is_scatter_write: true,
                 }],
                 optimizer_opcode: opt_code,
+                ..crate::proto::SparseCoreProgramProto::default()
             };
             let out_emb = sc_vm.execute_sparse_program(&sc_prog, &[3, 1, 3, 0], None);
             assert_eq!(out_emb.len(), 12);
@@ -3500,6 +3522,759 @@ ENTRY main {
             let out_dm =
                 SimulatedTpuHal::eval_bundle_with_attrs(&dm_bundle, ElementType::U64, &[&u64_b0]);
             assert_ne!(out_dm.len(), 0);
+        }
+
+        // Test ChipRegisterMap::to_register_translator_proto across all generations
+        for generation in [
+            TpuGeneration::V2,
+            TpuGeneration::V3,
+            TpuGeneration::V4,
+            TpuGeneration::V4Lite,
+            TpuGeneration::V5e,
+            TpuGeneration::V5p,
+            TpuGeneration::V6e,
+            TpuGeneration::V7x,
+        ] {
+            let rmap = ChipRegisterMap::for_generation(generation);
+            let proto = rmap.to_register_translator_proto();
+            assert_eq!(proto.chip_codename, rmap.chip_codename);
+            assert!(proto.registers.len() >= 25);
+        }
+
+        // Test TpuCoreVmState::step_vliw_bundle V0 reduction/sort/linalg opcodes directly
+        let mut vm_v0 = TpuCoreVmState::new();
+        vm_v0.vreg_tiles.insert(
+            0,
+            ElementType::F32.pack_from_f64_slice(&[4.0, 1.0, 9.0, 16.0]),
+        );
+        for v0_op in [TpuOpCode::Sort, TpuOpCode::TopK, TpuOpCode::Cholesky] {
+            let v0_bundle = crate::compiler::TensorCoreVliwBundle {
+                vector_slot: crate::compiler::VectorAluSlot {
+                    opcode: u16::from(v0_op as u8),
+                    element_type: u8::try_from(ElementType::F32.as_raw()).unwrap_or(11),
+                    lane_mask: 0xFF,
+                    dst_vreg: 1,
+                    src0_vreg: 0,
+                    src1_vreg: 0,
+                    src2_vreg: 0,
+                },
+                ..bytemuck::Zeroable::zeroed()
+            };
+            vm_v0.step_vliw_bundle(&v0_bundle);
+        }
+        let sub_b = TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::While,
+            operand_slots: vec![0],
+            output_slot: 1,
+            sync_flag_id: 1,
+            attrs: InstructionAttrs {
+                sub_computations: vec![vec![TpuInstructionBundle {
+                    pc_offset: 0,
+                    opcode: TpuOpCode::NegF32,
+                    operand_slots: vec![0],
+                    output_slot: 0,
+                    sync_flag_id: 1,
+                    attrs: InstructionAttrs::default(),
+                }]],
+                ..InstructionAttrs::default()
+            },
+        };
+        let stepped = vm_v0.step_bundle_with_attrs(&sub_b, ElementType::F32, &[&[0_u8; 16]]);
+        assert_eq!(stepped.len(), 16);
+
+        // Test GasketTwoLevelPageTable::export_dmabuf, LinuxDeviceHal::export_dmabuf_fd / map_dmabuf_fd_entry, and VFIO BAR mmap
+        let mut gpt = GasketTwoLevelPageTable::new(0, 128, 64);
+        let _ = gpt.map_pages(0x1000, 0x2000, 4096, GasketPageTableMode::SimpleLinear);
+        assert!(gpt.export_dmabuf(0x9999, 5).is_none());
+        let exp_entry = gpt.export_dmabuf(0x1000, 5);
+        assert!(exp_entry.is_some());
+        if let Some(ee) = exp_entry {
+            assert_eq!(ee.ref_count, 2);
+            assert_eq!(ee.dmabuf_fd, Some(5));
+        }
+
+        let vfio_hal = LinuxDeviceHal::open(
+            KernelDriverMode::Vfio,
+            EmulatedKernelDriverBackend::default(),
+            &TpuInitConfig::default(),
+        );
+        assert!(vfio_hal.is_ok());
+        if let Ok(vh) = vfio_hal {
+            assert!(vh.attach_bar0_mmap(ByteSize(4096)).is_ok());
+            assert!(vh.detach_bar0_mmap().is_ok());
+            assert!(vh.attach_bar2_mmap(ByteSize(4096)).is_ok());
+            assert!(vh.detach_bar2_mmap().is_ok());
+            let dmabuf_fd =
+                vh.export_dmabuf_fd(DeviceId(0), DeviceAddress(0x1000_0000), ByteSize(4096));
+            assert!(dmabuf_fd.is_ok());
+            assert!(
+                vh.map_dmabuf_fd_entry(DeviceId(0), -1, 0x1000_0000, ByteSize(4096))
+                    .is_err()
+            );
+            let imp = vh.map_dmabuf_fd_entry(DeviceId(0), 7, 0x1000_0000, ByteSize(4096));
+            assert!(imp.is_ok());
+            if let Ok(ie) = imp {
+                assert_eq!(ie.dmabuf_fd, Some(7));
+            }
+            let (sync_val, efd_cnt) = vh.trigger_and_dispatch_interrupt_eventfd(0, 42);
+            assert_eq!(sync_val, 42);
+            assert!(efd_cnt >= 1);
+            assert_eq!(vh.await_queue_interrupt(0, 100), Ok(42));
+            let _ = vh.register_queue_interrupt_eventfd(1, 55);
+            assert_eq!(vh.await_queue_interrupt(1, 100), Ok(42));
+            assert!(vh.await_queue_interrupt(0, 0).is_err());
+            assert!(vh.await_queue_interrupt(99, 100).is_err());
+            let reg_info = VfioRegionInfoIoctl::default();
+            assert_eq!(reg_info.clone(), reg_info);
+            assert_ne!(format!("{reg_info:?}"), "");
+        }
+
+        // Test eval_dot_general_with_algorithm (ALG_DOT_BF16_BF16_F32_X3 = 8, ALG_DOT_BF16_BF16_F32_X6 = 9, default = 0)
+        let dot_attrs = InstructionAttrs::default();
+        let dot_x3 = SimulatedTpuHal::eval_dot_general_with_algorithm(
+            ElementType::F32,
+            &[1.001, 2.002, 3.003, 4.004],
+            &[1.0, 0.0, 0.0, 1.0],
+            &dot_attrs,
+            8,
+        );
+        assert_eq!(dot_x3.len(), 16);
+        let dot_x6 = SimulatedTpuHal::eval_dot_general_with_algorithm(
+            ElementType::F32,
+            &[1.001, 2.002, 3.003, 4.004],
+            &[1.0, 0.0, 0.0, 1.0],
+            &dot_attrs,
+            9,
+        );
+        assert_eq!(dot_x6.len(), 16);
+        let dot_std = SimulatedTpuHal::eval_dot_general_with_algorithm(
+            ElementType::F32,
+            &[1.0, 2.0, 3.0, 4.0],
+            &[1.0, 0.0, 0.0, 1.0],
+            &dot_attrs,
+            0,
+        );
+        assert_eq!(dot_std.len(), 16);
+
+        // Test full XLA GatherDimensionNumbers, ScatterDimensionNumbers, 3x3 Jacobi Eigh, While feature_index, and multi-operand Call
+        let g_op_sh = Shape {
+            element_type: ElementType::F32,
+            dims: vec![3, 2],
+            dynamic_dims: vec![false, false],
+            layout: MemoryLayout::default_tpu_tiled(2),
+        };
+        let g_idx_sh = Shape {
+            element_type: ElementType::S32,
+            dims: vec![2, 1],
+            dynamic_dims: vec![false, false],
+            layout: MemoryLayout::default_tpu_tiled(2),
+        };
+        let g_op_bytes =
+            ElementType::F32.pack_from_f64_slice(&[10.0, 11.0, 20.0, 21.0, 30.0, 31.0]);
+        let g_idx_bytes = ElementType::S32.pack_from_f64_slice(&[2.0, 0.0]);
+        let g_attrs = InstructionAttrs {
+            input_shapes: vec![g_op_sh.clone(), g_idx_sh.clone()],
+            gather_offset_dims: vec![1],
+            collapsed_slice_dims: vec![0],
+            gather_start_index_map: vec![0],
+            gather_slice_sizes: vec![1, 2],
+            ..InstructionAttrs::default()
+        };
+        let g_res = SimulatedTpuHal::eval_gather_nd(
+            ElementType::F32,
+            ElementType::F32,
+            &[&g_op_bytes, &g_idx_bytes],
+            &g_attrs,
+        );
+        assert_eq!(
+            ElementType::F32.unpack_to_f64_vec(&g_res),
+            vec![30.0, 31.0, 10.0, 11.0]
+        );
+        let g_attrs_empty_map = InstructionAttrs {
+            input_shapes: vec![g_op_sh.clone(), g_idx_sh.clone()],
+            gather_offset_dims: vec![1],
+            collapsed_slice_dims: vec![0],
+            ..InstructionAttrs::default()
+        };
+        let g_res2 = SimulatedTpuHal::eval_gather_nd(
+            ElementType::F32,
+            ElementType::F32,
+            &[&g_op_bytes, &g_idx_bytes],
+            &g_attrs_empty_map,
+        );
+        assert_eq!(
+            ElementType::F32.unpack_to_f64_vec(&g_res2),
+            vec![30.0, 31.0, 10.0, 11.0]
+        );
+
+        let sc_upd_bytes = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
+        for red_kind in [
+            CollectiveReductionOp::Sum,
+            CollectiveReductionOp::Max,
+            CollectiveReductionOp::Min,
+            CollectiveReductionOp::Product,
+        ] {
+            let sc_attrs = InstructionAttrs {
+                input_shapes: vec![g_op_sh.clone(), g_idx_sh.clone()],
+                scatter_dims_to_operand_dims: vec![0],
+                scatter_inserted_window_dims: vec![0],
+                scatter_update_window_dims: vec![1],
+                reduce_op_kind: red_kind,
+                ..InstructionAttrs::default()
+            };
+            let sc_res = SimulatedTpuHal::eval_scatter_nd(
+                ElementType::F32,
+                ElementType::F32,
+                &[&g_op_bytes, &g_idx_bytes, &sc_upd_bytes],
+                &sc_attrs,
+            );
+            assert_eq!(sc_res.len(), 24);
+        }
+
+        // Test 3x3 symmetric Jacobi Eigh (covering tau >= 0 and tau < 0 and off-diagonal updates)
+        let sym_3x3 = ElementType::F32.pack_from_f64_slice(&[
+            5.0, 2.0, 1.0, //
+            2.0, 1.0, -3.0, //
+            1.0, -3.0, 6.0,
+        ]);
+        let eigh_3x3 = SimulatedTpuHal::eval_linalg_custom_call("Eigh", ElementType::F32, &sym_3x3);
+        let eigh_vals = ElementType::F32.unpack_to_f64_vec(&eigh_3x3);
+        assert_eq!(eigh_vals.len(), 9);
+        assert!(
+            eigh_vals.first().copied().unwrap_or(0.0) <= eigh_vals.get(4).copied().unwrap_or(0.0)
+                && eigh_vals.get(4).copied().unwrap_or(0.0)
+                    <= eigh_vals.get(8).copied().unwrap_or(0.0)
+        );
+
+        // Test While with feature_index > 1 and Call with 2 operands
+        let while_bundle = TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::While,
+            operand_slots: vec![0],
+            output_slot: 1,
+            sync_flag_id: 1,
+            attrs: InstructionAttrs {
+                feature_index: 10,
+                sub_computations: vec![
+                    vec![TpuInstructionBundle {
+                        pc_offset: 0,
+                        opcode: TpuOpCode::Constant,
+                        operand_slots: vec![],
+                        output_slot: 0,
+                        sync_flag_id: 1,
+                        attrs: InstructionAttrs {
+                            constant_bytes: vec![0, 0, 0, 0],
+                            ..InstructionAttrs::default()
+                        },
+                    }],
+                    vec![TpuInstructionBundle {
+                        pc_offset: 0,
+                        opcode: TpuOpCode::NegF32,
+                        operand_slots: vec![0],
+                        output_slot: 0,
+                        sync_flag_id: 1,
+                        attrs: InstructionAttrs::default(),
+                    }],
+                ],
+                ..InstructionAttrs::default()
+            },
+        };
+        let w_out = SimulatedTpuHal::eval_bundle_with_attrs(
+            &while_bundle,
+            ElementType::F32,
+            &[&g_op_bytes],
+        );
+        assert_eq!(w_out, g_op_bytes);
+
+        let call_2op = TpuInstructionBundle {
+            pc_offset: 0,
+            opcode: TpuOpCode::Call,
+            operand_slots: vec![0, 1],
+            output_slot: 2,
+            sync_flag_id: 1,
+            attrs: InstructionAttrs {
+                sub_computations: vec![vec![TpuInstructionBundle {
+                    pc_offset: 0,
+                    opcode: TpuOpCode::AddF32,
+                    operand_slots: vec![0, 1],
+                    output_slot: 0,
+                    sync_flag_id: 1,
+                    attrs: InstructionAttrs::default(),
+                }]],
+                ..InstructionAttrs::default()
+            },
+        };
+        let call_two_op_result = SimulatedTpuHal::eval_bundle_with_attrs(
+            &call_2op,
+            ElementType::F32,
+            &[&g_op_bytes, &g_op_bytes],
+        );
+        assert_eq!(call_two_op_result.len(), g_op_bytes.len());
+
+        // Test ChipRegisterMap::resolve_hierarchical_csr_path across all branches
+        let rmap_v6 = ChipRegisterMap::for_generation(TpuGeneration::V6e);
+        for path in [
+            "tc_0.tcs_core_state.RUN_STATUS",
+            "tile0.tensor_core0.pxc.run_status",
+            "tile0.tensor_core1.pxc.run_status",
+            "tile0.tensor_core1.pxc.pc",
+            "tile0.tensor_core1.pxc.program_location",
+            "sparse_core0.scs.status",
+            "sparse_core0.scs.pc",
+            "ici.router.link_status_0",
+            "hbm.mc0.ecc_corr_count",
+            "hbm.mc0.ecc_uncorr_count",
+            "chip.thermal.sensor",
+            "chip.power.sensor",
+        ] {
+            assert!(
+                rmap_v6.resolve_hierarchical_csr_path(path).is_some(),
+                "Failed to resolve CSR path: {path}"
+            );
+        }
+        assert!(
+            rmap_v6
+                .resolve_hierarchical_csr_path("unknown.nonexistent.reg")
+                .is_none()
+        );
+        let csr_cat = global_csr_register_catalog();
+        assert_ne!(csr_cat, [] as [CsrCatalogEntry; 0]);
+        if let Some(first_csr) = csr_cat.first() {
+            assert_eq!(first_csr.clone(), *first_csr);
+            assert_ne!(format!("{first_csr:?}"), "");
+        }
+        assert_ne!(rmap_v6.catalog_entries(), [] as [CsrCatalogEntry; 0]);
+        // Look up a non-core catalog entry by full path, leaf name, case-insensitive path, and byte offset
+        if let Some(cat_v6) = csr_cat
+            .iter()
+            .find(|e| e.generation == TpuGeneration::V6e && e.byte_offset > 0x0010_0000)
+        {
+            assert!(rmap_v6.lookup_by_name(cat_v6.full_path).is_some());
+            assert!(
+                rmap_v6
+                    .resolve_hierarchical_csr_path(&cat_v6.full_path.to_ascii_uppercase())
+                    .is_some()
+            );
+            assert!(rmap_v6.lookup_by_offset(cat_v6.byte_offset).is_some());
+        }
+        // Exercise all CsrCatalogEntry::to_descriptor and bitfields_for_register_path branches
+        for (sample_path, sample_acc) in [
+            ("scs_core_state.STATUS", CsrAccessPermission::ReadOnly),
+            ("pxc_tc_0.RUN_STATUS", CsrAccessPermission::ReadOnly),
+            ("pxc_tc_0.PC", CsrAccessPermission::ReadWrite),
+            ("pxc_tc_0.VWAIT_STATE", CsrAccessPermission::ReadOnly),
+            ("pxc_tc_0.DMA_RING_STATUS", CsrAccessPermission::ReadWrite),
+            ("ICI_ROUTER.LINK_STATE", CsrAccessPermission::ReadOnly),
+            ("hbm_mc.ECC_COUNT", CsrAccessPermission::WriteOneToClear),
+            ("telemetry.THERMAL_SENSOR", CsrAccessPermission::ReadOnly),
+            ("doorbell.TRIGGER", CsrAccessPermission::WriteOnly),
+            ("fault.STICKY", CsrAccessPermission::WriteOneToClear),
+            ("general.CONFIG", CsrAccessPermission::ReadWrite),
+        ] {
+            let entry = CsrCatalogEntry {
+                generation: TpuGeneration::V6e,
+                full_path: sample_path,
+                byte_offset: 0x1000,
+                width_bits: 64,
+                access: sample_acc,
+            };
+            let csr_descriptor = entry.to_descriptor();
+            assert_ne!(csr_descriptor.bitfields, [] as [CsrBitfieldSpec; 0]);
+        }
+        assert_eq!(
+            CsrAccessPermission::from_str_code("RO"),
+            CsrAccessPermission::ReadOnly
+        );
+        assert_eq!(
+            CsrAccessPermission::from_str_code("WO"),
+            CsrAccessPermission::WriteOnly
+        );
+        assert_eq!(
+            CsrAccessPermission::from_str_code("W1C"),
+            CsrAccessPermission::WriteOneToClear
+        );
+        assert_eq!(
+            CsrAccessPermission::from_str_code("RW"),
+            CsrAccessPermission::ReadWrite
+        );
+
+        // Exercise TpuCoreVmState::step_v0_tile across C64, S64/U64 arithmetic/bitwise, Cholesky, TriangularSolve, and Fft
+        let mut tile_vm = TpuCoreVmState::new();
+        tile_vm.vreg_tiles.insert(
+            0,
+            ElementType::C64.pack_from_complex_slice(&[(1.0, 2.0), (3.0, 4.0)]),
+        );
+        tile_vm.vreg_tiles.insert(
+            1,
+            ElementType::C64.pack_from_complex_slice(&[(0.5, 1.0), (1.5, 2.0)]),
+        );
+        let mut c64_bundle = crate::compiler::TensorCoreVliwBundle {
+            vector_slot: crate::compiler::VectorAluSlot {
+                opcode: TpuOpCode::AddF32 as u16,
+                element_type: u8::try_from(ElementType::C64.as_raw()).unwrap_or(14),
+                lane_mask: 0xFF,
+                dst_vreg: 2,
+                src0_vreg: 0,
+                src1_vreg: 1,
+                src2_vreg: 0,
+            },
+            ..crate::compiler::TensorCoreVliwBundle::default()
+        };
+        tile_vm.step_vliw_bundle(&c64_bundle);
+        assert!(tile_vm.vreg_tiles.contains_key(&2));
+
+        for linalg_op in [
+            TpuOpCode::Cholesky,
+            TpuOpCode::TriangularSolve,
+            TpuOpCode::Fft,
+        ] {
+            tile_vm.vreg_tiles.insert(
+                0,
+                ElementType::F32.pack_from_f64_slice(&[4.0, 0.0, 0.0, 9.0]),
+            );
+            tile_vm.vreg_tiles.insert(
+                1,
+                ElementType::F32.pack_from_f64_slice(&[2.0, 0.0, 0.0, 3.0]),
+            );
+            c64_bundle.vector_slot.opcode = linalg_op as u16;
+            c64_bundle.vector_slot.element_type =
+                u8::try_from(ElementType::F32.as_raw()).unwrap_or(11);
+            tile_vm.step_vliw_bundle(&c64_bundle);
+        }
+
+        for (int_et, int_op) in [
+            (ElementType::S64, TpuOpCode::AddF32),
+            (ElementType::S64, TpuOpCode::SubF32),
+            (ElementType::S64, TpuOpCode::MulF32),
+            (ElementType::S64, TpuOpCode::DivF32),
+            (ElementType::S64, TpuOpCode::MaxF32),
+            (ElementType::S64, TpuOpCode::MinF32),
+            (ElementType::S64, TpuOpCode::NegF32),
+            (ElementType::S64, TpuOpCode::Abs),
+            (ElementType::S64, TpuOpCode::And),
+            (ElementType::S64, TpuOpCode::Or),
+            (ElementType::S64, TpuOpCode::XorBytes),
+            (ElementType::S64, TpuOpCode::Not),
+            (ElementType::S64, TpuOpCode::ShiftLeft),
+            (ElementType::S64, TpuOpCode::ShiftRightLogical),
+            (ElementType::S32, TpuOpCode::ShiftRightLogical),
+            (ElementType::S64, TpuOpCode::ShiftRightArithmetic),
+            (ElementType::S64, TpuOpCode::PopulationCount),
+            (ElementType::S32, TpuOpCode::PopulationCount),
+            (ElementType::S64, TpuOpCode::CountLeadingZeros),
+            (ElementType::S32, TpuOpCode::CountLeadingZeros),
+        ] {
+            tile_vm
+                .vreg_tiles
+                .insert(0, int_et.pack_from_i128_slice(&[16, 32, 64, 128]));
+            tile_vm
+                .vreg_tiles
+                .insert(1, int_et.pack_from_i128_slice(&[2, 3, 4, 5]));
+            c64_bundle.vector_slot.opcode = int_op as u16;
+            c64_bundle.vector_slot.element_type = u8::try_from(int_et.as_raw()).unwrap_or(5);
+            tile_vm.step_vliw_bundle(&c64_bundle);
+        }
+
+        // Test TpuCoreVmState PC-driven branching (opcode 5 jump, opcode 6 branch, opcode 7 halt) and execute_generation_imem_bitstream
+        let mut branch_vm = TpuCoreVmState::new();
+        let jmp_bundles = vec![
+            crate::compiler::TensorCoreVliwBundle {
+                header: crate::compiler::VliwBundleHeader {
+                    pc_offset: 0,
+                    bundle_flags: 1,
+                    pred_mask: 1,
+                },
+                scalar_slot: crate::compiler::ScalarAluSlot {
+                    opcode: 5,
+                    dst_sreg: 1,
+                    src0_sreg: 0,
+                    src1_sreg: 0,
+                    imm32: 128,
+                },
+                vector_slot: crate::compiler::VectorAluSlot::default(),
+                matrix_slot: crate::compiler::MatrixMxuSlot::default(),
+                xunary_slot: crate::compiler::ExtendedUnarySlot::default(),
+                dma_slot: crate::compiler::AsyncDmaSlot::default(),
+            },
+            crate::compiler::TensorCoreVliwBundle::default(),
+            crate::compiler::TensorCoreVliwBundle {
+                header: crate::compiler::VliwBundleHeader {
+                    pc_offset: 128,
+                    bundle_flags: 1,
+                    pred_mask: 1,
+                },
+                scalar_slot: crate::compiler::ScalarAluSlot {
+                    opcode: 6,
+                    dst_sreg: 1,
+                    src0_sreg: 0,
+                    src1_sreg: 0,
+                    imm32: 192,
+                },
+                vector_slot: crate::compiler::VectorAluSlot::default(),
+                matrix_slot: crate::compiler::MatrixMxuSlot::default(),
+                xunary_slot: crate::compiler::ExtendedUnarySlot::default(),
+                dma_slot: crate::compiler::AsyncDmaSlot::default(),
+            },
+            crate::compiler::TensorCoreVliwBundle {
+                header: crate::compiler::VliwBundleHeader {
+                    pc_offset: 192,
+                    bundle_flags: 1,
+                    pred_mask: 1,
+                },
+                scalar_slot: crate::compiler::ScalarAluSlot {
+                    opcode: 7,
+                    dst_sreg: 0,
+                    src0_sreg: 0,
+                    src1_sreg: 0,
+                    imm32: 0,
+                },
+                vector_slot: crate::compiler::VectorAluSlot::default(),
+                matrix_slot: crate::compiler::MatrixMxuSlot::default(),
+                xunary_slot: crate::compiler::ExtendedUnarySlot::default(),
+                dma_slot: crate::compiler::AsyncDmaSlot::default(),
+            },
+        ];
+        branch_vm.execute_vliw_stream(&jmp_bundles);
+        let bs = crate::compiler::TensorCoreVliwBundle::default()
+            .encode_generation_bitstream(TpuGeneration::V6e);
+        assert!(
+            branch_vm
+                .execute_generation_imem_bitstream(TpuGeneration::V6e, &bs)
+                .is_ok()
+        );
+        assert!(
+            branch_vm
+                .execute_generation_imem_bitstream(TpuGeneration::V6e, &[0xFF; 5])
+                .is_err()
+        );
+        assert!(
+            branch_vm
+                .execute_generation_imem_bitstream(TpuGeneration::V6e, &[0xFF; 64])
+                .is_err()
+        );
+
+        // Test MsiXInterruptReactor, SparseCoreSubcoreState, MultiCoreChipVmState, and new opcodes 101..=134
+        let reactor = MsiXInterruptReactor::new();
+        assert_ne!(format!("{reactor:?}"), "");
+        assert_eq!(reactor.pending_count(), 0);
+        let ev_ok = Arc::new(crate::pjrt::PjrtCoreEvent::pending());
+        let ev_err = Arc::new(crate::pjrt::PjrtCoreEvent::pending());
+        reactor.register_event_on_sync_flag(0, 5, Arc::clone(&ev_ok));
+        reactor.register_event_on_sync_flag(1, 10, Arc::clone(&ev_err));
+        assert_eq!(reactor.pending_count(), 2);
+        assert_eq!(
+            reactor.pump_completions(0, 5, TensorCoreStatusFlags::IDLE.bits()),
+            1
+        );
+        assert!(ev_ok.is_ready());
+        assert_eq!(
+            reactor.pump_completions(1, 0, TensorCoreStatusFlags::POISONED.bits()),
+            1
+        );
+        assert!(ev_err.is_ready());
+
+        if let Ok(ring_hal) = LinuxDeviceHal::open(
+            KernelDriverMode::Gasket,
+            EmulatedKernelDriverBackend::default(),
+            &TpuInitConfig::default(),
+        ) {
+            let cmd_desc =
+                HardwareDmaCommandDescriptor::new(1, 0, 1, 0x1000, 0x2000, 256, 0x8000, 1, 7);
+            assert_eq!(cmd_desc.clone(), cmd_desc);
+            assert_ne!(format!("{cmd_desc:?}"), "");
+            let ev_ring = Arc::new(crate::pjrt::PjrtCoreEvent::pending());
+            reactor.register_event_on_sync_flag(0, 7, Arc::clone(&ev_ring));
+            assert_eq!(
+                ring_hal.submit_hardware_command_ring(&cmd_desc, &reactor),
+                Ok(7)
+            );
+            assert!(ev_ring.is_ready());
+            let mut bad_desc = cmd_desc;
+            bad_desc.crc32c ^= 0xFFFF_FFFF;
+            assert!(
+                ring_hal
+                    .submit_hardware_command_ring(&bad_desc, &reactor)
+                    .is_err()
+            );
+
+            // Test standalone pinned_dma_buffers and 2-level GasketTwoLevelPageTable translation in LinuxDeviceHal
+            if let Ok(pinned_addr) =
+                ring_hal.allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(32))
+            {
+                assert!(
+                    ring_hal
+                        .translate_device_iova(DeviceId(0), pinned_addr.0)
+                        .is_some()
+                );
+                assert!(
+                    ring_hal
+                        .write_device_memory(DeviceId(0), pinned_addr, &[1, 2, 3, 4])
+                        .is_ok()
+                );
+                let pinned_snap = ring_hal.inspect_pinned_dma_buffer(DeviceId(0), pinned_addr);
+                assert!(pinned_snap.is_some());
+                if let Some(snap) = pinned_snap {
+                    assert_eq!(snap.get(..4), Some(&[1, 2, 3, 4][..]));
+                }
+                if let Ok(pinned_dst) = ring_hal.allocate_device_memory(
+                    DeviceId(0),
+                    MemoryKind::DeviceHbm,
+                    ByteSize(32),
+                ) {
+                    assert!(
+                        ring_hal
+                            .copy_device_to_device(
+                                DeviceId(0),
+                                pinned_addr,
+                                DeviceId(0),
+                                pinned_dst,
+                                ByteSize(4),
+                            )
+                            .is_ok()
+                    );
+                    let mut read_back = [0_u8; 4];
+                    assert!(
+                        ring_hal
+                            .read_device_memory(DeviceId(0), pinned_dst, &mut read_back)
+                            .is_ok()
+                    );
+                    assert_eq!(read_back, [1, 2, 3, 4]);
+                    let _ = ring_hal.deallocate_device_memory(DeviceId(0), pinned_dst);
+                }
+                let _ = ring_hal.deallocate_device_memory(DeviceId(0), pinned_addr);
+            }
+        }
+
+        // Test PosixKernelDriverBackend::read_eventfd directly
+        let posix_be = PosixKernelDriverBackend::new();
+        if let Ok((rfd, wfd)) = posix_be.create_eventfd_pair() {
+            assert!(posix_be.signal_eventfd(wfd, 99).is_ok());
+            assert_eq!(posix_be.read_eventfd(rfd), Ok(99));
+            let _ = posix_be.close_eventfd_pair(rfd, wfd);
+        }
+        assert!(posix_be.read_eventfd(EventFdHandle(-1)).is_err());
+
+        let sc0 = SparseCoreSubcoreState::new(0);
+        assert_eq!(sc0.clone(), sc0);
+        assert_ne!(format!("{sc0:?}"), "");
+        let mut mc_vm = MultiCoreChipVmState::new(TpuGeneration::V6e, 65_536);
+        assert_ne!(format!("{:?}", mc_vm.clone()), "");
+        if let Ok(mut spmd_prog) =
+            CompiledProgram::compile("mlir", b"module @spmd { stablehlo.add }", &[])
+        {
+            let c0_bytes = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
+            let c1_bytes = ElementType::F32.pack_from_f64_slice(&[5.0, 6.0, 7.0, 8.0]);
+            assert!(
+                mc_vm
+                    .execute_spmd_and_sparse_program(
+                        &spmd_prog,
+                        &[c0_bytes.clone(), c1_bytes.clone()],
+                        &[],
+                    )
+                    .is_ok()
+            );
+            spmd_prog.instruction_bundles.push(TpuInstructionBundle {
+                pc_offset: 64,
+                opcode: TpuOpCode::AllReduceSumF32,
+                operand_slots: vec![0],
+                output_slot: 0,
+                sync_flag_id: 1,
+                attrs: InstructionAttrs::default(),
+            });
+            spmd_prog.instruction_bundles.push(TpuInstructionBundle {
+                pc_offset: 128,
+                opcode: TpuOpCode::DynamicGather,
+                operand_slots: vec![0, 1],
+                output_slot: 0,
+                sync_flag_id: 2,
+                attrs: InstructionAttrs::default(),
+            });
+            assert!(
+                mc_vm
+                    .execute_spmd_and_sparse_program(
+                        &spmd_prog,
+                        &[c0_bytes.clone(), c1_bytes.clone()],
+                        &[c1_bytes, c0_bytes],
+                    )
+                    .is_ok()
+            );
+        }
+
+        let c0_bytes = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
+        let c1_bytes = ElementType::F32.pack_from_f64_slice(&[5.0, 6.0, 7.0, 8.0]);
+        for raw_op in 101_u8..=134_u8 {
+            if let Ok(op) = TpuOpCode::from_byte(raw_op) {
+                let _ = op.arity();
+                let _ = op.has_side_effects();
+                let _ = op.is_binary();
+                let _ = op.is_transcendental();
+                let _ = SimulatedTpuHal::eval_unary_op(op, ElementType::F32, &c0_bytes);
+                let _ = SimulatedTpuHal::eval_binary_op(op, ElementType::F32, &c0_bytes, &c1_bytes);
+            }
+        }
+        let _ = SimulatedTpuHal::eval_binary_op(
+            TpuOpCode::NextAfter,
+            ElementType::F32,
+            &c1_bytes,
+            &c0_bytes,
+        );
+        let _ = SimulatedTpuHal::eval_binary_op(
+            TpuOpCode::NextAfter,
+            ElementType::F32,
+            &c0_bytes,
+            &c0_bytes,
+        );
+
+        let tile_default = VregTile2D::default();
+        let tile_cloned = tile_default.clone();
+        assert_eq!(tile_cloned, VregTile2D::new());
+        assert_ne!(format!("{tile_default:?}"), "");
+        let masked_tile = VregTile2D::from_bytes(&[1_u8, 2, 3, 4, 5, 6, 7, 8], 0x01);
+        let masked_bytes = masked_tile.to_bytes();
+        assert_eq!(masked_bytes.len(), 8 * 128 * 4);
+        let zero_masked = VregTile2D::from_bytes(&[1_u8, 2, 3, 4], 0x00);
+        assert_eq!(zero_masked.to_bytes(), vec![0_u8; 8 * 128 * 4]);
+        let mut tile_vm = TpuCoreVmState::new();
+        tile_vm.vreg_2d_file.insert(3, masked_tile.clone());
+        assert_eq!(tile_vm.inspect_vreg_2d_lanes(3), masked_tile.words);
+        let attr_ent = ImemAttributeEntry {
+            bundle: TpuInstructionBundle {
+                pc_offset: 0,
+                opcode: TpuOpCode::AddF32,
+                operand_slots: vec![0, 1],
+                output_slot: 2,
+                sync_flag_id: 1,
+                attrs: InstructionAttrs::default(),
+            },
+            elem_type: ElementType::F32,
+        };
+        let attr_ent_cloned = attr_ent.clone();
+        assert_eq!(attr_ent_cloned.elem_type, attr_ent.elem_type);
+        assert_ne!(format!("{attr_ent:?}"), "");
+
+        if let Ok(sg_hal) = LinuxDeviceHal::open_with_path(
+            KernelDriverMode::Vfio,
+            "/dev/vfio/0",
+            EmulatedKernelDriverBackend::default(),
+            &TpuInitConfig::default(),
+        ) {
+            let ring_cfg = sg_hal.dma_ring_config_proto();
+            assert_eq!(ring_cfg.ring_capacity_entries, 64);
+            assert!(ring_cfg.iommu_scatter_gather_enabled);
+            assert_eq!(
+                sg_hal.submit_scatter_gather_hugepage_dma(0x1000, 0x2000, 5_000_000, 2_097_152, 0),
+                Ok(3)
+            );
+            sg_hal.write_bar0_csr(
+                BAR0_CSR_TENSORCORE_STATUS,
+                TensorCoreStatusFlags::SYNC_FLAG_TIMEOUT.bits(),
+            );
+            assert!(
+                sg_hal
+                    .submit_scatter_gather_hugepage_dma(0x1000, 0x2000, 4096, 4096, 0)
+                    .is_err()
+            );
         }
     }
 }

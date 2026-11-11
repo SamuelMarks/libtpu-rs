@@ -128,6 +128,263 @@ impl_proto_schema_message!(
     "xla.jellyfish.EmitterLearnedCostModelOptions"
 );
 
+/// Static descriptor specification for a single `TpuCompilationEnvironmentProto` compiler flag (`JellyfishCompilationEnvFieldSpec`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JellyfishCompilationEnvFieldSpec {
+    /// Protobuf field tag number (`1..=256`).
+    pub tag: u32,
+    /// Canonical compiler flag name without leading `--` (`"xla_tpu_*"`).
+    pub name: &'static str,
+    /// Protobuf wire type name (`"bool"`, `"int32"`, `"int64"`, `"double"`, `"string"`).
+    pub wire_type: &'static str,
+    /// Canonical default value string in `libtpu.so` (`v0.0.52`).
+    pub default_value: &'static str,
+}
+
+/// Canonical table of extracted `tpu::TpuCompilationEnvironmentProto` compiler flags (`JELLYFISH_COMPILATION_ENV_FIELD_SPECS`).
+pub static JELLYFISH_COMPILATION_ENV_FIELD_SPECS: [JellyfishCompilationEnvFieldSpec; 40] = [
+    JellyfishCompilationEnvFieldSpec {
+        tag: 1,
+        name: "xla_tpu_enable_megacore_fusion",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 2,
+        name: "xla_tpu_enable_async_collective_fusion",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 3,
+        name: "xla_tpu_scoped_vmem_limit_kib",
+        wire_type: "int64",
+        default_value: "16384",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 4,
+        name: "custom_flags",
+        wire_type: "string",
+        default_value: "",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 5,
+        name: "xla_tpu_enable_latency_hiding_scheduler",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 6,
+        name: "xla_tpu_overlap_compute_collective_tc",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 7,
+        name: "xla_tpu_use_tc_device_shape_on_sc",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 8,
+        name: "xla_tpu_enable_flash_attention",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 9,
+        name: "xla_tpu_spmd_rng_bit_generator_unsafe",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 13,
+        name: "xla_tpu_use_shardy_partitioner",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 14,
+        name: "xla_tpu_enable_sparse_core_collective_offload",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 15,
+        name: "xla_tpu_enable_async_collective_fusion_multiple_steps",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 16,
+        name: "xla_tpu_overlap_compute_collective_sc",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 17,
+        name: "xla_tpu_enable_cross_program_prefetch",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 18,
+        name: "xla_tpu_enable_rematerialization",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 19,
+        name: "xla_tpu_mosaic_enable_auto_pipeline",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 20,
+        name: "xla_tpu_nd_short_transfer_max_chunks",
+        wire_type: "int32",
+        default_value: "8",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 21,
+        name: "xla_tpu_ici_all_reduce_combine_threshold_bytes",
+        wire_type: "int64",
+        default_value: "33554432",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 22,
+        name: "xla_tpu_dcn_all_reduce_combine_threshold_bytes",
+        wire_type: "int64",
+        default_value: "67108864",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 23,
+        name: "xla_tpu_spmd_threshold_for_windowed_einsum_mib",
+        wire_type: "int64",
+        default_value: "256",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 24,
+        name: "xla_tpu_bf16_emission_mode",
+        wire_type: "string",
+        default_value: "DEFAULT",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 25,
+        name: "xla_tpu_autotune_level",
+        wire_type: "int32",
+        default_value: "2",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 26,
+        name: "xla_tpu_xplane_trace_level",
+        wire_type: "int32",
+        default_value: "1",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 27,
+        name: "xla_tpu_enable_windowed_einsum",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 28,
+        name: "xla_tpu_enable_ag_backward_pipelining",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 29,
+        name: "xla_tpu_sparse_core_max_ids_per_partition",
+        wire_type: "int32",
+        default_value: "1024",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 30,
+        name: "xla_tpu_sparse_core_max_unique_ids_per_partition",
+        wire_type: "int32",
+        default_value: "512",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 31,
+        name: "xla_tpu_enable_megascale_pjrt_collectives",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 32,
+        name: "xla_tpu_enable_ici_compression",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 33,
+        name: "xla_tpu_cmem_limit_kib",
+        wire_type: "int64",
+        default_value: "0",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 34,
+        name: "xla_tpu_enable_llo_software_pipelining",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 35,
+        name: "xla_tpu_llo_modulo_scheduler_ii_limit",
+        wire_type: "int32",
+        default_value: "16",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 36,
+        name: "xla_tpu_enable_2d_all_gather_collective_matmul",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 37,
+        name: "xla_tpu_enable_rs_forward_pipelining",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 38,
+        name: "xla_tpu_enable_dcn_zstd_compression",
+        wire_type: "bool",
+        default_value: "false",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 39,
+        name: "xla_tpu_fp8_quantization_mode",
+        wire_type: "string",
+        default_value: "E4M3FN",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 40,
+        name: "xla_tpu_int4_weight_only_quantization",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 100,
+        name: "xla_jf_auto_cross_replica_sharding",
+        wire_type: "bool",
+        default_value: "true",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 200,
+        name: "xla_tpu_megascale_hang_detection_timeout_ms",
+        wire_type: "int64",
+        default_value: "30000",
+    },
+    JellyfishCompilationEnvFieldSpec {
+        tag: 256,
+        name: "xla_tpu_runtime_abi_enforcement_strict",
+        wire_type: "bool",
+        default_value: "true",
+    },
+];
+
 /// Wire-compatible `tpu.TpuCompilationEnvironmentProto` (`tpu_compilation_environment.proto`).
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, PartialEq, Message)]
@@ -168,6 +425,78 @@ pub struct TpuCompilationEnvironmentProto {
     /// Learned cost model options for LLO emitter (field `12`).
     #[prost(message, optional, tag = "12")]
     pub learned_cost_model_options: Option<EmitterLearnedCostModelOptionsProto>,
+    /// Enable `OpenXLA` Shardy (`sdy`) SPMD partitioner (field `13`).
+    #[prost(bool, tag = "13")]
+    pub xla_tpu_use_shardy_partitioner: bool,
+    /// Offload collective operations onto `SparseCore` engines (field `14`).
+    #[prost(bool, tag = "14")]
+    pub xla_tpu_enable_sparse_core_collective_offload: bool,
+    /// Allow multi-step async collective fusion across loop iterations (field `15`).
+    #[prost(bool, tag = "15")]
+    pub xla_tpu_enable_async_collective_fusion_multiple_steps: bool,
+    /// Overlap `SparseCore` compute with collective transfers (field `16`).
+    #[prost(bool, tag = "16")]
+    pub xla_tpu_overlap_compute_collective_sc: bool,
+    /// Enable cross-program HBM -> VMEM prefetching (field `17`).
+    #[prost(bool, tag = "17")]
+    pub xla_tpu_enable_cross_program_prefetch: bool,
+    /// Enable HLO rematerialization under VMEM/HBM pressure (field `18`).
+    #[prost(bool, tag = "18")]
+    pub xla_tpu_enable_rematerialization: bool,
+    /// Enable automatic DMA/compute software pipelining in Mosaic kernels (field `19`).
+    #[prost(bool, tag = "19")]
+    pub xla_tpu_mosaic_enable_auto_pipeline: bool,
+    /// Maximum chunk count for N-D short DMA transfers (field `20`).
+    #[prost(int32, tag = "20")]
+    pub xla_tpu_nd_short_transfer_max_chunks: i32,
+    /// ICI `AllReduce` combiner threshold in bytes (field `21`).
+    #[prost(int64, tag = "21")]
+    pub xla_tpu_ici_all_reduce_combine_threshold_bytes: i64,
+    /// DCN `AllReduce` combiner threshold in bytes (field `22`).
+    #[prost(int64, tag = "22")]
+    pub xla_tpu_dcn_all_reduce_combine_threshold_bytes: i64,
+    /// Activation threshold in MiB for windowed einsum collective pipelining (field `23`).
+    #[prost(int64, tag = "23")]
+    pub xla_tpu_spmd_threshold_for_windowed_einsum_mib: i64,
+    /// BF16 systolic emission mode string (e.g., `"DEFAULT"`, `"HIGH"`, `"HIGHEST"`, field `24`).
+    #[prost(string, tag = "24")]
+    pub xla_tpu_bf16_emission_mode: String,
+    /// Compiler autotuning effort level (`0..=3`, field `25`).
+    #[prost(int32, tag = "25")]
+    pub xla_tpu_autotune_level: i32,
+    /// `XPlane` hardware profiler trace verbosity level (`0..=3`, field `26`).
+    #[prost(int32, tag = "26")]
+    pub xla_tpu_xplane_trace_level: i32,
+    /// Enable windowed einsum collective matmul pipelining (field `27`).
+    #[prost(bool, tag = "27")]
+    pub xla_tpu_enable_windowed_einsum: bool,
+    /// Enable `AllGather` backward collective pipelining (field `28`).
+    #[prost(bool, tag = "28")]
+    pub xla_tpu_enable_ag_backward_pipelining: bool,
+    /// Maximum sparse IDs per `SparseCore` partition (field `29`).
+    #[prost(int32, tag = "29")]
+    pub xla_tpu_sparse_core_max_ids_per_partition: i32,
+    /// Maximum unique sparse IDs per `SparseCore` partition (field `30`).
+    #[prost(int32, tag = "30")]
+    pub xla_tpu_sparse_core_max_unique_ids_per_partition: i32,
+    /// Enable `MegaScale` PJRT multi-slice collectives (field `31`).
+    #[prost(bool, tag = "31")]
+    pub xla_tpu_enable_megascale_pjrt_collectives: bool,
+    /// Enable optical ICI payload compression (field `32`).
+    #[prost(bool, tag = "32")]
+    pub xla_tpu_enable_ici_compression: bool,
+    /// Scoped CMEM limit in KiB (field `33`).
+    #[prost(int64, tag = "33")]
+    pub xla_tpu_cmem_limit_kib: i64,
+    /// Enable LLO modulo scheduler software pipelining (field `34`).
+    #[prost(bool, tag = "34")]
+    pub xla_tpu_enable_llo_software_pipelining: bool,
+    /// Maximum initiation interval (`II`) limit for LLO modulo scheduling (field `35`).
+    #[prost(int32, tag = "35")]
+    pub xla_tpu_llo_modulo_scheduler_ii_limit: i32,
+    /// Enable 2D `AllGather` collective matmul decomposition (field `36`).
+    #[prost(bool, tag = "36")]
+    pub xla_tpu_enable_2d_all_gather_collective_matmul: bool,
 }
 
 impl_proto_schema_message!(
@@ -176,70 +505,84 @@ impl_proto_schema_message!(
 );
 
 impl TpuCompilationEnvironmentProto {
-    /// Looks up a compiler flag field by name or numeric tag on this [`TpuCompilationEnvironmentProto`]
-    /// or in the full `xla.jellyfish.TpuCompilationEnvironmentProto` descriptor schema
-    /// and returns its string representation (matching `PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString`).
+    /// Looks up a [`JellyfishCompilationEnvFieldSpec`] by flag name or numeric field tag (`1..=256`).
     ///
     /// # Arguments
     ///
-    /// * `field_query` - Field name (e.g., `"xla_tpu_enable_megacore_fusion"` or `"--xla_tpu_scoped_vmem_limit_kib"`) or field tag (`"1"`..`"12"`).
+    /// * `query` - Flag name (with or without leading `--`) or numeric tag string.
+    #[must_use]
+    pub fn lookup_jellyfish_field_spec(
+        query: &str,
+    ) -> Option<&'static JellyfishCompilationEnvFieldSpec> {
+        let normalized = query.trim().trim_start_matches('-');
+        let tag_opt = normalized.parse::<u32>().ok();
+        JELLYFISH_COMPILATION_ENV_FIELD_SPECS
+            .iter()
+            .find(|spec| spec.name == normalized || tag_opt == Some(spec.tag))
+    }
+
+    /// Looks up a compiler flag field by name or numeric tag (`1..=26`) on this [`TpuCompilationEnvironmentProto`]
+    /// via `prost_reflect::DynamicMessage` reflection or in the `xla.jellyfish` descriptor schemas,
+    /// returning its string representation (matching `PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString`).
+    ///
+    /// # Arguments
+    ///
+    /// * `field_query` - Field name (e.g., `"xla_tpu_enable_megacore_fusion"` or `"--xla_tpu_use_shardy_partitioner"`) or field tag (`"1"`..`"256"`).
     #[must_use]
     pub fn get_field_as_string(&self, field_query: &str) -> String {
         let normalized = field_query.trim().trim_start_matches('-');
-        match normalized {
-            "1" | "xla_tpu_enable_megacore_fusion" => {
-                self.xla_tpu_enable_megacore_fusion.to_string()
-            }
-            "2" | "xla_tpu_enable_async_collective_fusion" => {
-                self.xla_tpu_enable_async_collective_fusion.to_string()
-            }
-            "3" | "xla_tpu_scoped_vmem_limit_kib" => self.xla_tpu_scoped_vmem_limit_kib.to_string(),
-            "4" | "custom_flags" => self.custom_flags.clone(),
-            "5" | "xla_tpu_enable_latency_hiding_scheduler" => {
-                self.xla_tpu_enable_latency_hiding_scheduler.to_string()
-            }
-            "6" | "xla_tpu_overlap_compute_collective_tc" => {
-                self.xla_tpu_overlap_compute_collective_tc.to_string()
-            }
-            "7" | "xla_tpu_use_tc_device_shape_on_sc" => {
-                self.xla_tpu_use_tc_device_shape_on_sc.to_string()
-            }
-            "8" | "xla_tpu_enable_flash_attention" => {
-                self.xla_tpu_enable_flash_attention.to_string()
-            }
-            "9" | "xla_tpu_spmd_rng_bit_generator_unsafe" => {
-                self.xla_tpu_spmd_rng_bit_generator_unsafe.to_string()
-            }
-            _ => {
-                if let Some(val) = self
-                    .custom_flags
-                    .split(',')
-                    .filter_map(|entry| entry.split_once('='))
-                    .find_map(|(k, v)| {
-                        (k.trim().trim_start_matches('-') == normalized)
-                            .then(|| String::from(v.trim()))
-                    })
-                {
-                    return val;
-                }
-                let pool = crate::proto::descriptor::global_descriptor_pool();
-                for msg_name in [
-                    "xla.tpu.TpuCompilationEnvironment",
-                    "tpu.TpuCompilationEnvironmentProto",
-                    "xla.jellyfish.EmitterLearnedCostModelOptions",
-                    "xla.jellyfish.MemorySpaceAssignmentOptions",
-                ] {
-                    if let Some(msg_desc) = pool.get_message_by_name(msg_name)
-                        && let Some(field_desc) = msg_desc.get_field_by_name(normalized)
-                    {
-                        let dyn_msg = prost_reflect::DynamicMessage::new(msg_desc);
-                        let default_val = dyn_msg.get_field(&field_desc);
-                        return format!("{default_val:?}");
-                    }
-                }
-                String::from("default")
+        let pool = crate::proto::descriptor::global_descriptor_pool();
+        let field_opt = pool
+            .get_message_by_name("tpu.TpuCompilationEnvironmentProto")
+            .and_then(|desc| {
+                normalized
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(|tag| desc.get_field(tag))
+                    .or_else(|| desc.get_field_by_name(normalized))
+            });
+        if let Some(field_desc) = field_opt {
+            let parent = field_desc.parent_message().clone();
+            let mut dyn_msg = prost_reflect::DynamicMessage::new(parent.clone());
+            let _ = prost_reflect::DynamicMessage::decode(parent, self.encode_to_vec().as_slice())
+                .map(|decoded| dyn_msg = decoded);
+            let val = dyn_msg.get_field(&field_desc);
+            return match val.as_ref() {
+                prost_reflect::Value::Bool(b) => b.to_string(),
+                prost_reflect::Value::I32(i) => i.to_string(),
+                prost_reflect::Value::I64(i) => i.to_string(),
+                prost_reflect::Value::String(s) => s.clone(),
+                other => format!("{other:?}"),
+            };
+        }
+        if let Some(val) = self
+            .custom_flags
+            .split(',')
+            .filter_map(|entry| entry.split_once('='))
+            .find_map(|(k, v)| {
+                (k.trim().trim_start_matches('-') == normalized).then(|| String::from(v.trim()))
+            })
+        {
+            return val;
+        }
+        if let Some(spec) = Self::lookup_jellyfish_field_spec(normalized) {
+            return String::from(spec.default_value);
+        }
+        for msg_name in [
+            "xla.tpu.TpuCompilationEnvironment",
+            "tpu.TpuCompilationEnvironmentProto",
+            "xla.jellyfish.EmitterLearnedCostModelOptions",
+            "xla.jellyfish.MemorySpaceAssignmentOptions",
+        ] {
+            if let Some(msg_desc) = pool.get_message_by_name(msg_name)
+                && let Some(field_desc) = msg_desc.get_field_by_name(normalized)
+            {
+                let default_msg = prost_reflect::DynamicMessage::new(msg_desc);
+                let default_val = default_msg.get_field(&field_desc);
+                return format!("{default_val:?}");
             }
         }
+        String::from("default")
     }
 
     /// Alias for [`Self::get_field_as_string`] that resolves any `--xla_tpu_*` or `--xla_jf_*`
@@ -264,8 +607,9 @@ impl TpuCompilationEnvironmentProto {
         self.set_field_from_str(flag_name, value_str);
     }
 
-    /// Updates a compiler flag field by name or numeric tag from a string value, or appends a `key=value`
-    /// override to `custom_flags` for extended `xla.jellyfish.TpuCompilationEnvironmentProto` flags.
+    /// Updates a compiler flag field by name or numeric tag (`1..=26`) from a string value via
+    /// `prost_reflect::DynamicMessage` reflection, or appends a `key=value` override to `custom_flags`
+    /// for unrecognized custom flags.
     ///
     /// # Arguments
     ///
@@ -275,48 +619,59 @@ impl TpuCompilationEnvironmentProto {
         let normalized = field_name.trim().trim_start_matches('-');
         let val = value_str.trim();
         let is_bool_true = matches!(val, "true" | "1" | "TRUE" | "yes");
-        match normalized {
-            "1" | "xla_tpu_enable_megacore_fusion" => {
-                self.xla_tpu_enable_megacore_fusion = is_bool_true;
-            }
-            "2" | "xla_tpu_enable_async_collective_fusion" => {
-                self.xla_tpu_enable_async_collective_fusion = is_bool_true;
-            }
-            "3" | "xla_tpu_scoped_vmem_limit_kib" => {
-                self.xla_tpu_scoped_vmem_limit_kib = val.parse::<i64>().unwrap_or(16_384);
-            }
-            "4" | "custom_flags" => {
-                self.custom_flags = String::from(val);
-            }
-            "5" | "xla_tpu_enable_latency_hiding_scheduler" => {
-                self.xla_tpu_enable_latency_hiding_scheduler = is_bool_true;
-            }
-            "6" | "xla_tpu_overlap_compute_collective_tc" => {
-                self.xla_tpu_overlap_compute_collective_tc = is_bool_true;
-            }
-            "7" | "xla_tpu_use_tc_device_shape_on_sc" => {
-                self.xla_tpu_use_tc_device_shape_on_sc = is_bool_true;
-            }
-            "8" | "xla_tpu_enable_flash_attention" => {
-                self.xla_tpu_enable_flash_attention = is_bool_true;
-            }
-            "9" | "xla_tpu_spmd_rng_bit_generator_unsafe" => {
-                self.xla_tpu_spmd_rng_bit_generator_unsafe = is_bool_true;
-            }
-            _ => {
-                if !self.custom_flags.is_empty() {
-                    self.custom_flags.push(',');
+        let pool = crate::proto::descriptor::global_descriptor_pool();
+        let field_opt = pool
+            .get_message_by_name("tpu.TpuCompilationEnvironmentProto")
+            .and_then(|desc| {
+                normalized
+                    .parse::<u32>()
+                    .ok()
+                    .and_then(|tag| desc.get_field(tag))
+                    .or_else(|| desc.get_field_by_name(normalized))
+            });
+        if let Some(field_desc) = field_opt {
+            let parent = field_desc.parent_message().clone();
+            let mut dyn_msg = prost_reflect::DynamicMessage::new(parent.clone());
+            let _ = prost_reflect::DynamicMessage::decode(parent, self.encode_to_vec().as_slice())
+                .map(|decoded| dyn_msg = decoded);
+            let updated = match field_desc.kind() {
+                prost_reflect::Kind::Bool => {
+                    dyn_msg.set_field(&field_desc, prost_reflect::Value::Bool(is_bool_true));
+                    true
                 }
-                self.custom_flags.push_str(normalized);
-                self.custom_flags.push('=');
-                self.custom_flags.push_str(val);
+                prost_reflect::Kind::Int32 => {
+                    let parsed = val.parse::<i32>().unwrap_or(0);
+                    dyn_msg.set_field(&field_desc, prost_reflect::Value::I32(parsed));
+                    true
+                }
+                prost_reflect::Kind::Int64 => {
+                    let default_i64 = if field_desc.number() == 3 { 16_384 } else { 0 };
+                    let parsed = val.parse::<i64>().unwrap_or(default_i64);
+                    dyn_msg.set_field(&field_desc, prost_reflect::Value::I64(parsed));
+                    true
+                }
+                prost_reflect::Kind::String => {
+                    dyn_msg.set_field(&field_desc, prost_reflect::Value::String(String::from(val)));
+                    true
+                }
+                _ => false,
+            };
+            if updated {
+                *self = Self::decode(dyn_msg.encode_to_vec().as_slice()).unwrap_or_default();
+                return;
             }
         }
+        if !self.custom_flags.is_empty() {
+            self.custom_flags.push(',');
+        }
+        self.custom_flags.push_str(normalized);
+        self.custom_flags.push('=');
+        self.custom_flags.push_str(val);
     }
 
     /// Parses a whitespace- or comma-delimited CLI flag string (e.g., `"--xla_tpu_enable_megacore_fusion=true --xla_tpu_scoped_vmem_limit_kib=32768"`)
     /// into a [`TpuCompilationEnvironmentProto`], resolving numeric tags or field names against
-    /// `xla.jellyfish.TpuCompilationEnvironmentProto` in [`crate::proto::descriptor::global_descriptor_pool`].
+    /// `tpu.TpuCompilationEnvironmentProto` in [`crate::proto::descriptor::global_descriptor_pool`].
     ///
     /// # Arguments
     ///
@@ -336,6 +691,30 @@ impl TpuCompilationEnvironmentProto {
             memory_space_assignment_options: None,
             memory_scheduler_options: None,
             learned_cost_model_options: None,
+            xla_tpu_use_shardy_partitioner: false,
+            xla_tpu_enable_sparse_core_collective_offload: false,
+            xla_tpu_enable_async_collective_fusion_multiple_steps: false,
+            xla_tpu_overlap_compute_collective_sc: false,
+            xla_tpu_enable_cross_program_prefetch: false,
+            xla_tpu_enable_rematerialization: false,
+            xla_tpu_mosaic_enable_auto_pipeline: false,
+            xla_tpu_nd_short_transfer_max_chunks: 8,
+            xla_tpu_ici_all_reduce_combine_threshold_bytes: 33_554_432,
+            xla_tpu_dcn_all_reduce_combine_threshold_bytes: 67_108_864,
+            xla_tpu_spmd_threshold_for_windowed_einsum_mib: 256,
+            xla_tpu_bf16_emission_mode: String::from("DEFAULT"),
+            xla_tpu_autotune_level: 2,
+            xla_tpu_xplane_trace_level: 1,
+            xla_tpu_enable_windowed_einsum: true,
+            xla_tpu_enable_ag_backward_pipelining: true,
+            xla_tpu_sparse_core_max_ids_per_partition: 1024,
+            xla_tpu_sparse_core_max_unique_ids_per_partition: 512,
+            xla_tpu_enable_megascale_pjrt_collectives: true,
+            xla_tpu_enable_ici_compression: false,
+            xla_tpu_cmem_limit_kib: 0,
+            xla_tpu_enable_llo_software_pipelining: true,
+            xla_tpu_llo_modulo_scheduler_ii_limit: 16,
+            xla_tpu_enable_2d_all_gather_collective_matmul: false,
         };
         for token in cli_flags.split(|c: char| c.is_whitespace() || c == ',') {
             let trimmed = token.trim();
@@ -2311,4 +2690,91 @@ pub struct FrequencyScalingTelemetryProto {
 impl_proto_schema_message!(
     FrequencyScalingTelemetryProto,
     "tpu.telemetry.FrequencyScalingTelemetryProto"
+);
+
+/// Wire-compatible `libtpu.sdk.tpu_telemetry.TpuzActiveHloExecutionTraceProto` (`tpu_telemetry_snapshot.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuzActiveHloExecutionTraceProto {
+    /// Global or intra-chip core ID (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub core_id: u32,
+    /// Currently executing HLO module name (field `2`).
+    #[prost(string, tag = "2")]
+    pub hlo_module_name: String,
+    /// Currently executing HLO instruction name (field `3`).
+    #[prost(string, tag = "3")]
+    pub active_hlo_op_name: String,
+    /// HLO instruction category (e.g., `"dot"`, `"all-reduce"`, field `4`).
+    #[prost(string, tag = "4")]
+    pub active_hlo_category: String,
+    /// Current hardware instruction pointer (`PC`, field `5`).
+    #[prost(uint64, tag = "5")]
+    pub program_counter: u64,
+    /// Elapsed cycles spent in the current instruction (field `6`).
+    #[prost(uint64, tag = "6")]
+    pub elapsed_cycles: u64,
+}
+
+impl_proto_schema_message!(
+    TpuzActiveHloExecutionTraceProto,
+    "libtpu.sdk.tpu_telemetry.TpuzActiveHloExecutionTraceProto"
+);
+
+/// Wire-compatible `libtpu.sdk.tpu_telemetry.TpuzLiveBufferAllocationProto` (`tpu_telemetry_snapshot.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuzLiveBufferAllocationProto {
+    /// Unique buffer allocation identifier (field `1`).
+    #[prost(uint64, tag = "1")]
+    pub buffer_id: u64,
+    /// Memory space (`0 = HBM`, `1 = VMEM`, `2 = SMEM`, `3 = CMEM`, field `2`).
+    #[prost(uint32, tag = "2")]
+    pub memory_space: u32,
+    /// Base device address in bytes (field `3`).
+    #[prost(uint64, tag = "3")]
+    pub base_address: u64,
+    /// Allocation size in bytes (field `4`).
+    #[prost(uint64, tag = "4")]
+    pub size_bytes: u64,
+    /// Formatted tensor shape and layout string (field `5`).
+    #[prost(string, tag = "5")]
+    pub shape_description: String,
+    /// Producing HLO instruction name (field `6`).
+    #[prost(string, tag = "6")]
+    pub owner_hlo_name: String,
+}
+
+impl_proto_schema_message!(
+    TpuzLiveBufferAllocationProto,
+    "libtpu.sdk.tpu_telemetry.TpuzLiveBufferAllocationProto"
+);
+
+/// Wire-compatible `libtpu.sdk.tpu_telemetry.TpuzCoreTelemetrySnapshotProto` (`tpu_telemetry_snapshot.proto`).
+#[derive(Clone, PartialEq, Eq, Message)]
+pub struct TpuzCoreTelemetrySnapshotProto {
+    /// Physical chip ordinal ID (field `1`).
+    #[prost(uint32, tag = "1")]
+    pub chip_id: u32,
+    /// Core ordinal ID (field `2`).
+    #[prost(uint32, tag = "2")]
+    pub core_id: u32,
+    /// Core type (`0 = TensorCore`, `1 = SparseCore`, field `3`).
+    #[prost(uint32, tag = "3")]
+    pub core_type: u32,
+    /// Active HLO execution trace on this core (field `4`).
+    #[prost(message, optional, tag = "4")]
+    pub active_trace: Option<TpuzActiveHloExecutionTraceProto>,
+    /// Live device buffer allocations on this core (field `5`).
+    #[prost(message, repeated, tag = "5")]
+    pub live_buffers: Vec<TpuzLiveBufferAllocationProto>,
+    /// Total VMEM bytes currently allocated on this core (field `6`).
+    #[prost(uint64, tag = "6")]
+    pub vmem_bytes_in_use: u64,
+    /// Total HBM bytes currently allocated on this core (field `7`).
+    #[prost(uint64, tag = "7")]
+    pub hbm_bytes_in_use: u64,
+}
+
+impl_proto_schema_message!(
+    TpuzCoreTelemetrySnapshotProto,
+    "libtpu.sdk.tpu_telemetry.TpuzCoreTelemetrySnapshotProto"
 );

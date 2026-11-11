@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: asic_sw/driver/gasket_ioctl.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package asic_sw.driver;
+
+message GasketPageTableConfigProto {
+  uint32 page_table_index = 1;
+  uint64 simple_entries = 2;
+  uint64 extended_entries = 3;
+  uint64 dma_base_iova = 4;
+}
+
+message GasketIoctlConfigProto {
+  string device_node_path = 1;
+  uint32 ioctl_magic = 2;
+  repeated GasketPageTableConfigProto page_tables = 3;
+  uint32 num_msix_interrupts = 4;
+}

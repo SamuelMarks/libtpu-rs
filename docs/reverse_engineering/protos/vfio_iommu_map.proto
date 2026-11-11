@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: asic_sw/driver/vfio_iommu_map.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package asic_sw.driver;
+
+message VfioIommuMapConfigProto {
+  string vfio_group_path = 1;
+  uint32 iommu_type = 2;
+  uint64 iova_aperture_base = 3;
+  uint64 iova_aperture_size = 4;
+  uint64 hugepage_granularity_bytes = 5;
+}

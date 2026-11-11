@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: platforms/deepsea/jellyfish/llo/llo_register_allocator.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package platforms_deepsea.jellyfish.llo;
+
+message LloSpillSlotProto {
+  uint32 virtual_reg_id = 1;
+  uint64 vmem_spill_offset_bytes = 2;
+  uint32 spill_bundle_pc = 3;
+  uint32 reload_bundle_pc = 4;
+}
+
+message LloLiveIntervalProto {
+  uint32 virtual_reg_id = 1;
+  uint32 physical_reg_id = 2;
+  uint32 start_pc = 3;
+  uint32 end_pc = 4;
+  bool is_spilled = 5;
+}
+
+message LloRegisterAllocationProto {
+  uint32 max_vregs_used = 1;
+  uint32 max_sregs_used = 2;
+  uint32 max_pregs_used = 3;
+  repeated LloLiveIntervalProto live_intervals = 4;
+  repeated LloSpillSlotProto spill_slots = 5;
+}

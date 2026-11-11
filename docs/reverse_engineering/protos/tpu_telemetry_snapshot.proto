@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: learning/45eac/tpu/sdk/tpuz/tpu_telemetry_snapshot.proto (embedded in libtpu/sdk.so protodesc_cold)
+
+syntax = "proto3";
+
+package libtpu.sdk.tpu_telemetry;
+
+message TpuzActiveHloExecutionTraceProto {
+  uint32 core_id = 1;
+  string hlo_module_name = 2;
+  string active_hlo_op_name = 3;
+  string active_hlo_category = 4;
+  uint64 program_counter = 5;
+  uint64 elapsed_cycles = 6;
+}
+
+message TpuzLiveBufferAllocationProto {
+  uint64 buffer_id = 1;
+  uint32 memory_space = 2;
+  uint64 base_address = 3;
+  uint64 size_bytes = 4;
+  string shape_description = 5;
+  string owner_hlo_name = 6;
+}
+
+message TpuzCoreTelemetrySnapshotProto {
+  uint32 chip_id = 1;
+  uint32 core_id = 2;
+  uint32 core_type = 3;
+  TpuzActiveHloExecutionTraceProto active_trace = 4;
+  repeated TpuzLiveBufferAllocationProto live_buffers = 5;
+  uint64 vmem_bytes_in_use = 6;
+  uint64 hbm_bytes_in_use = 7;
+}

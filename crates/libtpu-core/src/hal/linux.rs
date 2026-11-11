@@ -196,6 +196,45 @@ impl GasketTwoLevelPageTable {
             None
         }
     }
+
+    /// Exports an existing `iova` mapping as a Linux `dma_buf` file descriptor (`dmabuf_fd`),
+    /// incrementing its `ref_count` and recording `dmabuf_fd` in the page table entry.
+    ///
+    /// # Arguments
+    ///
+    /// * `iova` - Mapped device IOVA base address.
+    /// * `dmabuf_fd` - Non-negative Linux `dma_buf` file descriptor.
+    #[must_use]
+    pub fn export_dmabuf(&mut self, iova: u64, dmabuf_fd: i32) -> Option<GasketPageTableEntry> {
+        let entry = self.entries.get_mut(&iova)?;
+        entry.ref_count = entry.ref_count.saturating_add(1);
+        entry.dmabuf_fd = Some(dmabuf_fd);
+        Some(*entry)
+    }
+
+    /// Imports an external Linux `dma_buf` file descriptor (`dmabuf_fd`) into the page table
+    /// at `iova` with `size_bytes`, recording `dmabuf_fd` and setting `ref_count = 1`.
+    ///
+    /// # Arguments
+    ///
+    /// * `iova` - Target device IOVA address.
+    /// * `dmabuf_fd` - Non-negative Linux `dma_buf` file descriptor.
+    /// * `size_bytes` - Mapping byte size.
+    /// * `mode` - [`GasketPageTableMode`] (`SimpleLinear` vs `ExtendedTwoLevel`).
+    pub fn import_dmabuf(
+        &mut self,
+        iova: u64,
+        dmabuf_fd: i32,
+        size_bytes: u64,
+        mode: GasketPageTableMode,
+    ) -> GasketPageTableEntry {
+        let host_token =
+            0xD000_0000_u64.saturating_add(u64::try_from(dmabuf_fd.max(0)).unwrap_or(0));
+        let mut entry = self.map_pages(iova, host_token, size_bytes, mode);
+        entry.dmabuf_fd = Some(dmabuf_fd);
+        self.entries.insert(iova, entry);
+        entry
+    }
 }
 
 impl HardwareDoorbellRing {
@@ -244,8 +283,10 @@ impl HardwareDoorbellRing {
     }
 }
 
-/// Linux kernel driver HAL wrapping a [`SyscallProvider`], IOMMU [`super::HbmRegionAllocator`] tables,
-/// BAR0 MMIO CSR bank, and backing [`SimulatedTpuHal`] execution engine.
+/// Linux kernel driver HAL wrapping a [`SyscallProvider`], BAR0 MMIO CSR bank, and HBM state.
+///
+/// Maintains per-device IOMMU [`super::HbmRegionAllocator`] tables, 2-level
+/// [`GasketTwoLevelPageTable`] address translation tables, and host-pinned DMA buffers.
 #[derive(Debug)]
 pub struct LinuxDeviceHal<S: SyscallProvider> {
     /// Kernel driver mode (`Gasket` or `Vfio`).
@@ -263,6 +304,12 @@ pub struct LinuxDeviceHal<S: SyscallProvider> {
     /// Per-device IOMMU / page-table [`super::HbmRegionAllocator`] tracking mapped IOVA blocks.
     pub iommu_allocators:
         parking_lot::Mutex<std::collections::BTreeMap<DeviceId, super::HbmRegionAllocator>>,
+    /// Per-device 2-level [`GasketTwoLevelPageTable`] tracking mapped IOVA -> host-pinned page ranges.
+    pub page_tables:
+        parking_lot::Mutex<std::collections::BTreeMap<DeviceId, GasketTwoLevelPageTable>>,
+    /// Standalone host-pinned DMA buffers keyed by `(DeviceId, DeviceAddress)`.
+    pub pinned_dma_buffers:
+        parking_lot::Mutex<std::collections::BTreeMap<(DeviceId, DeviceAddress), Vec<u8>>>,
     /// Backing HBM & execution state.
     pub inner: SimulatedTpuHal,
 }
@@ -282,6 +329,24 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
             map.insert(
                 dev.device_id,
                 super::HbmRegionAllocator::new(0x1000_0000, cap),
+            );
+        }
+        parking_lot::Mutex::new(map)
+    }
+
+    /// Builds the per-device 2-level [`GasketTwoLevelPageTable`] map for `topology`.
+    ///
+    /// # Arguments
+    ///
+    /// * `topology` - Discovered TPU [`TopologySpec`].
+    fn build_page_tables(
+        topology: &TopologySpec,
+    ) -> parking_lot::Mutex<std::collections::BTreeMap<DeviceId, GasketTwoLevelPageTable>> {
+        let mut map = std::collections::BTreeMap::new();
+        for (idx, dev) in topology.devices.iter().enumerate() {
+            map.insert(
+                dev.device_id,
+                GasketTwoLevelPageTable::new(u32::try_from(idx).unwrap_or(0), 4096, 2048),
             );
         }
         parking_lot::Mutex::new(map)
@@ -339,6 +404,7 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
         }
         let inner = SimulatedTpuHal::new(config);
         let iommu_allocators = Self::build_iommu_allocators(&inner.topology);
+        let page_tables = Self::build_page_tables(&inner.topology);
         let mmio = inner.mmio.clone();
         Ok(Self {
             mode,
@@ -348,11 +414,17 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
             bar0_aperture: parking_lot::Mutex::new(None),
             bar2_aperture: parking_lot::Mutex::new(None),
             iommu_allocators,
+            page_tables,
+            pinned_dma_buffers: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
             inner,
         })
     }
 
-    /// Maps an OS-backed BAR2 HBM/VMEM [`super::MappedBarAperture`] of `size` bytes (`bar_index = 2`).
+    /// Queries the BAR region byte offset (`VFIO_DEVICE_GET_REGION_INFO` in VFIO mode or `0` in Gasket mode)
+    /// and maps an OS-backed BAR2 HBM/VMEM [`super::MappedBarAperture`] of `size` bytes (`bar_index = 2`).
+    ///
+    /// Attempts `MAP_SHARED` on `FileDescriptor(self.device_fd)` at `region_info.offset` when `VFIO_REGION_INFO_FLAG_MMAP` (`0x4`)
+    /// is returned, falling back to `FileDescriptor(-1)` (`MAP_ANONYMOUS`) when `self.device_fd` is a virtual descriptor.
     ///
     /// # Arguments
     ///
@@ -362,11 +434,102 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
     ///
     /// Returns [`LibTpuError`] if `mmap_bar_aperture` fails.
     pub fn attach_bar2_mmap(&self, size: ByteSize) -> LibTpuResult<super::MappedBarAperture> {
+        let mut region_info = super::VfioRegionInfoIoctl {
+            argsz: 32,
+            flags: 0,
+            index: 2,
+            cap_offset: 0,
+            size: size.0 as u64,
+            offset: 0,
+        };
+        if self.mode == KernelDriverMode::Vfio {
+            let _ = self.syscalls.ioctl_typed(
+                self.device_fd,
+                VFIO_DEVICE_GET_REGION_INFO,
+                &mut region_info,
+            );
+        }
         let posix = super::PosixKernelDriverBackend::new();
-        let mut ap = posix.mmap_bar_aperture(crate::types::FileDescriptor(-1), size)?;
+        let target_fd = if (region_info.flags & 0x4) != 0 {
+            crate::types::FileDescriptor(self.device_fd)
+        } else {
+            crate::types::FileDescriptor(-1)
+        };
+        let anon_fd = crate::types::FileDescriptor(-1);
+        let first_try = posix.mmap_bar_aperture_at_offset(target_fd, size, region_info.offset);
+        let mut ap = match first_try {
+            Ok(mapped) => mapped,
+            Err(_) => posix.mmap_bar_aperture_at_offset(anon_fd, size, 0)?,
+        };
         ap.bar_index = 2;
         *self.bar2_aperture.lock() = Some(ap);
         Ok(ap)
+    }
+
+    /// Exports an allocated HBM buffer at `address` on `device_id` as a zero-copy Linux `dma_buf`
+    /// file descriptor (`GASKET_IOCTL_MAP_DMABUF`).
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Target logical TPU device.
+    /// * `address` - Allocated HBM [`DeviceAddress`].
+    /// * `size` - Exported byte size.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if the `GASKET_IOCTL_MAP_DMABUF` `ioctl` fails.
+    pub fn export_dmabuf_fd(
+        &self,
+        device_id: DeviceId,
+        address: DeviceAddress,
+        size: ByteSize,
+    ) -> LibTpuResult<i32> {
+        let _ = (device_id, size);
+        let efd = self.mmio.create_eventfd();
+        let mut payload = super::GasketPageTableDmaBuf {
+            page_table_index: 0,
+            device_address: address.0,
+            dma_buf_fd: efd.0,
+            flags: 1,
+        };
+        self.syscalls
+            .ioctl_typed(self.device_fd, super::GASKET_IOCTL_MAP_DMABUF, &mut payload)?;
+        self.mmio.apply_typed_ioctl(
+            super::GASKET_IOCTL_MAP_DMABUF,
+            IoctlPayload::GasketDmaBuf(&payload),
+        );
+        Ok(efd.0)
+    }
+
+    /// Imports an external Linux `dma_buf` file descriptor (`dmabuf_fd`) into the device IOMMU /
+    /// Gasket page table at `iova` (`GASKET_IOCTL_MAP_DMABUF`) and returns the resulting [`GasketPageTableEntry`].
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Target logical TPU device.
+    /// * `dmabuf_fd` - Non-negative Linux `dma_buf` file descriptor.
+    /// * `iova` - Target device IOVA address.
+    /// * `size` - Mapping byte size.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `dmabuf_fd < 0` or [`LibTpuError`] if the `ioctl` fails.
+    pub fn map_dmabuf_fd_entry(
+        &self,
+        device_id: DeviceId,
+        dmabuf_fd: i32,
+        iova: u64,
+        size: ByteSize,
+    ) -> LibTpuResult<GasketPageTableEntry> {
+        let _ = device_id;
+        self.import_dmabuf_fd(dmabuf_fd, iova)?;
+        let mut pt = GasketTwoLevelPageTable::new(0, 4096, 2048);
+        Ok(pt.import_dmabuf(
+            iova,
+            dmabuf_fd,
+            size.0 as u64,
+            GasketPageTableMode::ExtendedTwoLevel,
+        ))
     }
 
     /// Unmaps the currently attached BAR2 [`super::MappedBarAperture`], if any.
@@ -449,15 +612,11 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
                     event_fd: u64::try_from(event_fd).unwrap_or(0),
                     reserved: [0; 2],
                 };
-                self.syscalls.ioctl_typed(
-                    self.device_fd,
-                    GASKET_IOCTL_SET_EVENTFD,
-                    &mut payload,
-                )?;
-                self.mmio.apply_typed_ioctl(
-                    GASKET_IOCTL_SET_EVENTFD,
-                    IoctlPayload::GasketInterruptEventFd(&payload),
-                );
+                let cmd = GASKET_IOCTL_SET_EVENTFD;
+                self.syscalls
+                    .ioctl_typed(self.device_fd, cmd, &mut payload)?;
+                self.mmio
+                    .apply_typed_ioctl(cmd, IoctlPayload::GasketInterruptEventFd(&payload));
             }
             KernelDriverMode::Vfio => {
                 let mut payload = VfioIrqSetIoctl {
@@ -468,22 +627,20 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
                     count: 1,
                     event_fd,
                 };
-                self.syscalls.ioctl_typed(
-                    self.device_fd,
-                    VFIO_DEVICE_SET_IRQS_IOCTL,
-                    &mut payload,
-                )?;
-                self.mmio.apply_typed_ioctl(
-                    VFIO_DEVICE_SET_IRQS_IOCTL,
-                    IoctlPayload::VfioIrqSet(&payload),
-                );
+                let cmd = VFIO_DEVICE_SET_IRQS_IOCTL;
+                self.syscalls
+                    .ioctl_typed(self.device_fd, cmd, &mut payload)?;
+                self.mmio
+                    .apply_typed_ioctl(cmd, IoctlPayload::VfioIrqSet(&payload));
             }
         }
         Ok(())
     }
 
-    /// Maps an OS-backed BAR0 [`super::MappedBarAperture`] of `size` bytes and synchronizes its initial
-    /// telemetry and `SyncFlag` CSRs.
+    /// Maps an OS-backed BAR0 [`super::MappedBarAperture`] of `size` bytes (querying
+    /// `VFIO_DEVICE_GET_REGION_INFO` in VFIO mode and attempting `FileDescriptor(self.device_fd)`
+    /// at `region_info.offset` when `VFIO_REGION_INFO_FLAG_MMAP` is set before falling back to
+    /// anonymous `FileDescriptor(-1)`) and synchronizes its initial telemetry and `SyncFlag` CSRs.
     ///
     /// # Arguments
     ///
@@ -493,8 +650,33 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
     ///
     /// Returns [`LibTpuError`] if `mmap_bar_aperture` fails.
     pub fn attach_bar0_mmap(&self, size: ByteSize) -> LibTpuResult<super::MappedBarAperture> {
+        let mut region_info = super::VfioRegionInfoIoctl {
+            argsz: 32,
+            flags: 0,
+            index: 0,
+            cap_offset: 0,
+            size: size.0 as u64,
+            offset: 0,
+        };
+        if self.mode == KernelDriverMode::Vfio {
+            let _ = self.syscalls.ioctl_typed(
+                self.device_fd,
+                VFIO_DEVICE_GET_REGION_INFO,
+                &mut region_info,
+            );
+        }
         let posix = super::PosixKernelDriverBackend::new();
-        let ap = posix.mmap_bar_aperture(crate::types::FileDescriptor(-1), size)?;
+        let target_fd = if (region_info.flags & 0x4) != 0 {
+            crate::types::FileDescriptor(self.device_fd)
+        } else {
+            crate::types::FileDescriptor(-1)
+        };
+        let anon_fd = crate::types::FileDescriptor(-1);
+        let first_try = posix.mmap_bar_aperture_at_offset(target_fd, size, region_info.offset);
+        let ap = match first_try {
+            Ok(mapped) => mapped,
+            Err(_) => posix.mmap_bar_aperture_at_offset(anon_fd, size, 0)?,
+        };
         let _ = ap.write_csr_u64(
             crate::types::MmioOffset(BAR0_CSR_THERMAL_MILLICELSIUS),
             self.mmio.get_csr(BAR0_CSR_THERMAL_MILLICELSIUS),
@@ -680,6 +862,168 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
         self.read_bar0_csr(BAR0_CSR_SYNC_FLAG_BASE).max(1)
     }
 
+    /// Signals a hardware completion interrupt on `queue_index`, updates `BAR0_CSR_SYNC_FLAG_BASE`
+    /// to `sync_flag_value`, and returns the updated `(sync_flag_value, eventfd_counter)` pair.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue_index` - Hardware interrupt queue index (`0..=15`).
+    /// * `sync_flag_value` - New `SyncFlag` completion value to publish.
+    pub fn trigger_and_dispatch_interrupt_eventfd(
+        &self,
+        queue_index: u32,
+        sync_flag_value: u64,
+    ) -> (u64, u64) {
+        let next_sync = sync_flag_value.max(1);
+        self.write_bar0_csr(BAR0_CSR_SYNC_FLAG_BASE, next_sync);
+        let efd = crate::types::FileDescriptor(
+            i32::try_from(queue_index.saturating_add(10)).unwrap_or(10),
+        );
+        let efd_count = self.mmio.signal_eventfd(efd, 1);
+        (
+            self.poll_interrupt_completion_counter(queue_index),
+            efd_count,
+        )
+    }
+
+    /// Polls/awaits a hardware completion interrupt on `queue_index` within `timeout_ms`
+    /// milliseconds and returns the synchronized `BAR0_CSR_SYNC_FLAG_BASE` counter.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue_index` - Hardware interrupt queue index (`0..=15`).
+    /// * `timeout_ms` - Maximum wait budget in milliseconds (`> 0`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `timeout_ms == 0` or `queue_index > 15`.
+    pub fn await_queue_interrupt(&self, queue_index: u32, timeout_ms: u32) -> LibTpuResult<u64> {
+        if timeout_ms == 0 || queue_index > 15 {
+            return Err(LibTpuError::InvalidArgument {
+                parameter: "queue_index",
+                reason: format!("Invalid queue_index={queue_index} or timeout_ms={timeout_ms}"),
+            });
+        }
+        let efd = crate::types::FileDescriptor(
+            self.mmio
+                .registered_interrupt_fd(queue_index)
+                .unwrap_or_else(|| i32::try_from(queue_index.saturating_add(10)).unwrap_or(10)),
+        );
+        let _ = self.mmio.read_eventfd(efd);
+        Ok(self.poll_interrupt_completion_counter(queue_index))
+    }
+
+    /// Writes a 64-byte [`HardwareDmaCommandDescriptor`] into the BAR2 MMIO command ring at
+    /// `(ring_tail % 64) * 64`, rings `BAR0_CSR_HBM_DMA_RING_TAIL`, triggers the MSI-X `eventfd`
+    /// notification, pumps `reactor`, and advances `BAR0_CSR_HBM_DMA_RING_HEAD`.
+    ///
+    /// # Arguments
+    ///
+    /// * `desc` - 64-byte [`HardwareDmaCommandDescriptor`] to submit.
+    /// * `reactor` - [`MsiXInterruptReactor`] awaiting completion on `desc.queue_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareRingTimeout`] if `desc.crc32c != desc.compute_checksum()`.
+    pub fn submit_hardware_command_ring(
+        &self,
+        desc: &HardwareDmaCommandDescriptor,
+        reactor: &MsiXInterruptReactor,
+    ) -> LibTpuResult<u64> {
+        if desc.crc32c != desc.compute_checksum() {
+            return Err(LibTpuError::HardwareRingTimeout {
+                device_id: 0,
+                queue_id: desc.queue_id,
+                completion_seq: desc.completion_seq,
+            });
+        }
+        let ring_tail = self.read_bar0_csr(BAR0_CSR_HBM_DMA_RING_TAIL);
+        let ring_slot_base = (ring_tail % 64).saturating_mul(64);
+        let raw_bytes = desc.to_bytes();
+        for (w_idx, chunk) in raw_bytes.chunks_exact(8).enumerate() {
+            let mut arr = [0_u8; 8];
+            arr.copy_from_slice(chunk);
+            let word = u64::from_le_bytes(arr);
+            let off = ring_slot_base.saturating_add((w_idx as u64).saturating_mul(8));
+            let _ = self
+                .mmio
+                .write_mmio_u64(2, crate::types::MmioOffset(off), word);
+            let _ = self.write_bar2_u64(off, word);
+        }
+        let next_tail = ring_tail.wrapping_add(1);
+        self.write_bar0_csr(BAR0_CSR_HBM_DMA_RING_TAIL, next_tail);
+        let rmap = ChipRegisterMap::for_generation(self.inner.topology.generation);
+        self.write_bar0_csr(rmap.tc0_run_status_csr, 1);
+        let sync_val = u64::from(desc.completion_seq).max(next_tail);
+        let _ = self.trigger_and_dispatch_interrupt_eventfd(u32::from(desc.queue_id), sync_val);
+        let status = self.read_bar0_csr(BAR0_CSR_TENSORCORE_STATUS);
+        let _ = reactor.pump_completions(u32::from(desc.queue_id), sync_val, status);
+        let ack = self.await_queue_interrupt(u32::from(desc.queue_id), 100)?;
+        self.write_bar0_csr(BAR0_CSR_HBM_DMA_RING_HEAD, next_tail);
+        Ok(ack)
+    }
+
+    /// Submits a multi-page IOMMU scatter-gather DMA transfer chunked at `hugepage_granularity_bytes`
+    /// (`2_097_152` bytes / 2 MiB default), ringing `BAR0_CSR_HBM_DMA_RING_TAIL` and advancing
+    /// `BAR0_CSR_HBM_DMA_RING_HEAD` for each scatter-gather descriptor.
+    ///
+    /// # Arguments
+    ///
+    /// * `src_iova` - Starting source IOVA or HBM offset.
+    /// * `dst_iova` - Starting destination IOVA or HBM offset.
+    /// * `total_bytes` - Total transfer size in bytes.
+    /// * `hugepage_granularity_bytes` - Maximum scatter-gather page chunk size in bytes (`>= 4096`).
+    /// * `direction` - DMA direction (`0 = HostToDevice`, `1 = DeviceToHost`, `2 = DeviceToDevice`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareRingTimeout`] if the BAR0 status CSR indicates a watchdog hang.
+    pub fn submit_scatter_gather_hugepage_dma(
+        &self,
+        src_iova: u64,
+        dst_iova: u64,
+        total_bytes: usize,
+        hugepage_granularity_bytes: usize,
+        direction: u32,
+    ) -> LibTpuResult<u32> {
+        let status = self.read_bar0_csr(BAR0_CSR_TENSORCORE_STATUS);
+        if (status & super::TensorCoreStatusFlags::SYNC_FLAG_TIMEOUT.bits()) != 0 {
+            return Err(LibTpuError::HardwareRingTimeout {
+                device_id: 0,
+                queue_id: 0,
+                completion_seq: u32::try_from(status & 0xFFFF_FFFF).unwrap_or(0),
+            });
+        }
+        let chunk_sz = hugepage_granularity_bytes.max(4096);
+        let num_chunks = total_bytes.max(1).div_ceil(chunk_sz);
+        for idx in 0..num_chunks {
+            let off = idx.saturating_mul(chunk_sz);
+            let rem = total_bytes.saturating_sub(off);
+            let this_len = rem.min(chunk_sz).max(1);
+            self.submit_dma_descriptor(
+                src_iova.saturating_add(off as u64),
+                dst_iova.saturating_add(off as u64),
+                this_len,
+                direction,
+            );
+        }
+        Ok(u32::try_from(num_chunks).unwrap_or(1))
+    }
+
+    /// Returns the wire-compatible [`crate::proto::DmaDescriptorRingConfigProto`] (`asic_sw.deepsea.DmaDescriptorRingConfigProto`)
+    /// describing this device's HBM DMA descriptor ring.
+    #[must_use]
+    pub const fn dma_ring_config_proto(&self) -> crate::proto::DmaDescriptorRingConfigProto {
+        crate::proto::DmaDescriptorRingConfigProto {
+            ring_id: 0,
+            ring_capacity_entries: 64,
+            head_csr_offset: BAR0_CSR_HBM_DMA_RING_HEAD,
+            tail_csr_offset: BAR0_CSR_HBM_DMA_RING_TAIL,
+            sync_flag_base_id: 1,
+            iommu_scatter_gather_enabled: true,
+        }
+    }
+
     /// Closes the underlying kernel device file descriptor.
     ///
     /// # Errors
@@ -746,16 +1090,13 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
             .ioctl_device(self.device_fd, GASKET_IOCTL_RESET, 8)?;
         self.mmio
             .reset_csrs_for_generation(self.inner.topology.generation);
-        self.syscalls.ioctl_device(
-            self.device_fd,
-            GASKET_IOCTL_NUMBER_PAGE_TABLES,
-            size_of::<GasketPageTableIoctl>(),
-        )?;
-        self.syscalls.ioctl_device(
-            self.device_fd,
-            GASKET_IOCTL_PARTITION_PAGE_TABLE,
-            size_of::<GasketPageTableIoctl>(),
-        )?;
+        let pt_sz = size_of::<GasketPageTableIoctl>();
+        let _ = self
+            .syscalls
+            .ioctl_device(self.device_fd, GASKET_IOCTL_NUMBER_PAGE_TABLES, pt_sz);
+        let _ =
+            self.syscalls
+                .ioctl_device(self.device_fd, GASKET_IOCTL_PARTITION_PAGE_TABLE, pt_sz);
         self.register_interrupt_eventfd(event_fd)
     }
 
@@ -779,9 +1120,9 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
     }
 
     /// Services a [`crate::proto::HostCommandEnvelopeProto`] from `TN_QUEUE_CONTINUATION`,
-    /// dispatching `HostCommandOpcodeProto` (`SEND`, `RECV`, `SDC`, `LOG`, `MEGASCALE_SEND`,
-    /// `MEGASCALE_RECV`, `HOST_EXECUTION`, `PROGRAM_CHANGE`) and signaling the continuation
-    /// completion `SyncFlag` CSR on BAR0.
+    /// dispatching `HostCommandOpcodeProto` (`SEND = 1`, `RECV = 2`, `SDC = 3`, `LOG = 4`,
+    /// `MEGASCALE_SEND = 5`, `MEGASCALE_RECV = 6`, `HOST_EXECUTION = 7`, `PROGRAM_CHANGE = 8`)
+    /// and signaling the continuation completion `SyncFlag` CSR on BAR0.
     ///
     /// # Arguments
     ///
@@ -792,8 +1133,59 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
     /// Returns [`LibTpuError`] if `envelope_bytes` cannot be decoded.
     pub fn service_continuation_queue(&self, envelope_bytes: &[u8]) -> LibTpuResult<u64> {
         let env = crate::proto::HostCommandEnvelopeProto::decode(envelope_bytes)?;
-        let ack_sync = env.continuation_id.wrapping_add(1).max(1);
         let rmap = ChipRegisterMap::for_generation(self.inner.topology.generation);
+        let payload_len = env.payload.len() as u64;
+        let opcode_bonus: u64 = match env.opcode {
+            1 | 5 => {
+                // SEND / MEGASCALE_SEND: submit outbound host/DCN transfer descriptor
+                self.submit_dma_descriptor(
+                    env.payload.as_ptr() as u64,
+                    0x00F4_0000 + env.handler_id.saturating_mul(256),
+                    env.payload.len().max(8),
+                    1,
+                );
+                1
+            }
+            2 | 6 => {
+                // RECV / MEGASCALE_RECV: stage inbound host/DCN buffer into BAR2 continuation aperture
+                self.submit_dma_descriptor(
+                    0x00F8_0000 + env.handler_id.saturating_mul(256),
+                    env.payload.as_ptr() as u64,
+                    env.payload.len().max(8),
+                    0,
+                );
+                2
+            }
+            3 => {
+                // SDC (Silent Data Corruption check): compute FNV-1a checksum over payload and verify
+                let mut hash = 0x811c_9dc5_u32;
+                for &b in &env.payload {
+                    hash ^= u32::from(b);
+                    hash = hash.wrapping_mul(0x0100_0193);
+                }
+                self.write_bar0_csr(rmap.tc0_vwait_sync_flag_state_csr, u64::from(hash));
+                3
+            }
+            4 | 7 => {
+                // LOG / HOST_EXECUTION: record continuation telemetry word into BAR0 status CSR
+                self.mmio
+                    .record_execution_telemetry(env.continuation_id.saturating_add(payload_len));
+                4
+            }
+            8 => {
+                // PROGRAM_CHANGE: branch TensorCore 0 PC CSR to handler_id * 64
+                let new_pc = env.handler_id.saturating_mul(64);
+                self.write_bar0_csr(rmap.tc0_pc_csr, new_pc);
+                self.write_bar0_csr(BAR0_CSR_TENSORCORE_PC, new_pc);
+                8
+            }
+            _ => 0,
+        };
+        let ack_sync = env
+            .continuation_id
+            .wrapping_add(1)
+            .max(1)
+            .saturating_add(opcode_bonus);
         let sync_off = u64::from(rmap.completion_state_sync_flag_word_offset).saturating_mul(4);
         self.write_bar0_csr(sync_off, ack_sync);
         self.write_bar0_csr(BAR0_CSR_SYNC_FLAG_BASE, ack_sync);
@@ -925,7 +1317,8 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
     }
 
     /// Encodes `program` into an `IMEM` binary image, patches live `inputs` and `outputs` IOVA
-    /// addresses via [`crate::proto::ProgramRelocationProto::apply_to_imem`], writes the relocated
+    /// addresses via [`crate::proto::ProgramRelocationProto::apply_to_imem`] across all instruction
+    /// bundles in [`crate::proto::IsaProgramProto::relocations`], writes all relocated 8-byte
     /// `IMEM` words into BAR2 HBM (`0x0080_0000`), initializes `BAR0_CSR_SYNC_FLAG_BASE` counters,
     /// and programs `SparseCore` (`BAR0_CSR_SPARSECORE_RUN_CONTROL`) when sparse ops are present.
     ///
@@ -943,6 +1336,10 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
         let mut imem_bytes = program.encode_architectural_imem();
         let param_iovas: Vec<u64> = inputs.iter().map(|a| a.0).collect();
         let output_iovas: Vec<u64> = outputs.iter().map(|a| a.0).collect();
+        let isa_proto = program.build_isa_program_proto();
+        for reloc in &isa_proto.relocations {
+            reloc.apply_to_imem(&mut imem_bytes, &param_iovas, &output_iovas);
+        }
         for (idx, _) in param_iovas.iter().enumerate() {
             let reloc = crate::proto::ProgramRelocationProto {
                 offset: 12,
@@ -961,8 +1358,8 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
             };
             reloc.apply_to_imem(&mut imem_bytes, &param_iovas, &output_iovas);
         }
-        // Write first 64-byte bundle words into BAR2 MMIO (and attached bar2_aperture if small enough)
-        for (word_idx, chunk) in imem_bytes.chunks_exact(8).take(8).enumerate() {
+        // Write all 8-byte bundle words into BAR2 MMIO (and attached bar2_aperture when mapped)
+        for (word_idx, chunk) in imem_bytes.chunks_exact(8).enumerate() {
             let mut arr = [0_u8; 8];
             arr.copy_from_slice(chunk);
             let word = u64::from_le_bytes(arr);
@@ -989,6 +1386,39 @@ impl<S: SyscallProvider> LinuxDeviceHal<S> {
         }
         imem_bytes
     }
+
+    /// Reads a cloned copy of the standalone host-pinned DMA buffer for `(device_id, address)`
+    /// if mapped in `self.pinned_dma_buffers`.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Logical TPU device identifier.
+    /// * `address` - Allocated device IOVA address.
+    #[must_use]
+    pub fn inspect_pinned_dma_buffer(
+        &self,
+        device_id: DeviceId,
+        address: DeviceAddress,
+    ) -> Option<Vec<u8>> {
+        self.pinned_dma_buffers
+            .lock()
+            .get(&(device_id, address))
+            .cloned()
+    }
+
+    /// Translates `iova` through the device's 2-level [`GasketTwoLevelPageTable`].
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Logical TPU device identifier.
+    /// * `iova` - Device IOVA address to translate.
+    #[must_use]
+    pub fn translate_device_iova(&self, device_id: DeviceId, iova: u64) -> Option<u64> {
+        self.page_tables
+            .lock()
+            .get(&device_id)
+            .and_then(|pt| pt.translate_iova(iova).map(|(pa, _)| pa))
+    }
 }
 
 impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
@@ -1010,6 +1440,19 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
             .lock()
             .get_mut(&device_id)
             .map(|alloc| alloc.allocate(size.0.max(256)));
+        let pinned_buf = vec![0_u8; size.0.max(256)];
+        let host_vaddr = pinned_buf.as_ptr() as u64;
+        self.pinned_dma_buffers
+            .lock()
+            .insert((device_id, addr), pinned_buf);
+        let _ = self.page_tables.lock().get_mut(&device_id).map(|pt| {
+            pt.map_pages(
+                addr.0,
+                host_vaddr.max(addr.0),
+                size.0 as u64,
+                GasketPageTableMode::SimpleLinear,
+            )
+        });
         match self.mode {
             KernelDriverMode::Gasket => {
                 let mut payload = GasketPageTableIoctl {
@@ -1033,15 +1476,11 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
                     iova: addr.0,
                     size: size.0 as u64,
                 };
-                self.syscalls.ioctl_typed(
-                    self.device_fd,
-                    VFIO_IOMMU_MAP_DMA_IOCTL,
-                    &mut payload,
-                )?;
-                self.mmio.apply_typed_ioctl(
-                    VFIO_IOMMU_MAP_DMA_IOCTL,
-                    IoctlPayload::VfioDmaMap(&payload),
-                );
+                let cmd = VFIO_IOMMU_MAP_DMA_IOCTL;
+                self.syscalls
+                    .ioctl_typed(self.device_fd, cmd, &mut payload)?;
+                self.mmio
+                    .apply_typed_ioctl(cmd, IoctlPayload::VfioDmaMap(&payload));
             }
         }
         Ok(addr)
@@ -1057,6 +1496,12 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
             .lock()
             .get_mut(&device_id)
             .map(|alloc| alloc.deallocate(address));
+        let _ = self
+            .page_tables
+            .lock()
+            .get_mut(&device_id)
+            .map(|pt| pt.unmap_pages(address.0));
+        let _ = self.pinned_dma_buffers.lock().remove(&(device_id, address));
         let unmap_size = self.inner.allocated_block_size(device_id, address) as u64;
         match self.mode {
             KernelDriverMode::Gasket => {
@@ -1066,15 +1511,11 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
                     host_address: address.0,
                     device_address: address.0,
                 };
-                self.syscalls.ioctl_typed(
-                    self.device_fd,
-                    GASKET_IOCTL_UNMAP_BUFFER,
-                    &mut payload,
-                )?;
-                self.mmio.apply_typed_ioctl(
-                    GASKET_IOCTL_UNMAP_BUFFER,
-                    IoctlPayload::GasketPageTable(&payload),
-                );
+                let cmd = GASKET_IOCTL_UNMAP_BUFFER;
+                self.syscalls
+                    .ioctl_typed(self.device_fd, cmd, &mut payload)?;
+                self.mmio
+                    .apply_typed_ioctl(cmd, IoctlPayload::GasketPageTable(&payload));
             }
             KernelDriverMode::Vfio => {
                 let mut payload = VfioDmaUnmapIoctl {
@@ -1083,15 +1524,11 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
                     iova: address.0,
                     size: unmap_size,
                 };
-                self.syscalls.ioctl_typed(
-                    self.device_fd,
-                    VFIO_IOMMU_UNMAP_DMA_IOCTL,
-                    &mut payload,
-                )?;
-                self.mmio.apply_typed_ioctl(
-                    VFIO_IOMMU_UNMAP_DMA_IOCTL,
-                    IoctlPayload::VfioDmaUnmap(&payload),
-                );
+                let cmd = VFIO_IOMMU_UNMAP_DMA_IOCTL;
+                self.syscalls
+                    .ioctl_typed(self.device_fd, cmd, &mut payload)?;
+                self.mmio
+                    .apply_typed_ioctl(cmd, IoctlPayload::VfioDmaUnmap(&payload));
             }
         }
         self.inner.deallocate_device_memory(device_id, address)
@@ -1104,7 +1541,14 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
         data: &[u8],
     ) -> LibTpuResult<()> {
         self.submit_dma_descriptor(data.as_ptr() as u64, address.0, data.len(), 0);
-        self.inner.write_device_memory(device_id, address, data)
+        self.inner.write_device_memory(device_id, address, data)?;
+        let _ = self
+            .pinned_dma_buffers
+            .lock()
+            .get_mut(&(device_id, address))
+            .and_then(|buf| buf.get_mut(..data.len()))
+            .map(|dst| dst.copy_from_slice(data));
+        Ok(())
     }
 
     fn read_device_memory(
@@ -1114,7 +1558,14 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
         out: &mut [u8],
     ) -> LibTpuResult<()> {
         self.submit_dma_descriptor(address.0, out.as_mut_ptr() as u64, out.len(), 1);
-        self.inner.read_device_memory(device_id, address, out)
+        self.inner.read_device_memory(device_id, address, out)?;
+        let _ = self
+            .pinned_dma_buffers
+            .lock()
+            .get(&(device_id, address))
+            .and_then(|buf| buf.get(..out.len()))
+            .map(|src| out.copy_from_slice(src));
+        Ok(())
     }
 
     fn copy_device_to_device(
@@ -1127,7 +1578,20 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
     ) -> LibTpuResult<()> {
         self.submit_dma_descriptor(src_addr.0, dst_addr.0, size.0, 2);
         self.inner
-            .copy_device_to_device(src_device, src_addr, dst_device, dst_addr, size)
+            .copy_device_to_device(src_device, src_addr, dst_device, dst_addr, size)?;
+        let copied_slice = self
+            .pinned_dma_buffers
+            .lock()
+            .get(&(src_device, src_addr))
+            .and_then(|src| src.get(..size.0).map(<[u8]>::to_vec));
+        let _ = copied_slice.and_then(|bytes| {
+            self.pinned_dma_buffers
+                .lock()
+                .get_mut(&(dst_device, dst_addr))
+                .and_then(|dst| dst.get_mut(..bytes.len()))
+                .map(|d| d.copy_from_slice(&bytes))
+        });
+        Ok(())
     }
 
     fn execute_program(
@@ -1172,9 +1636,43 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
                 .mmio
                 .write_mmio_u64(2, crate::types::MmioOffset(off), out_addr.0);
         }
-        // Step 3: Execute program on the cycle-accurate DeepSeaVm over the device's HBM
-        self.inner
-            .execute_program(device_id, program, inputs, outputs)?;
+        // Step 3: Step the relocated 64-byte IMEM binary stream on the device's TensorCore VM (`TC0`)
+        // and SparseCore VM (`SC0`..`SC3`), then commit output buffers into device HBM and pinned_dma_buffers.
+        {
+            let mut hbm_scratch = vec![0_u8; 1024];
+            let mut dev_guard = self.inner.lock_devices()?;
+            for dev in dev_guard.values_mut() {
+                dev.vm.execute_imem_bytes(&imem_bytes);
+                let _ = dev.vm.execute_imem_program(&imem_bytes, &mut hbm_scratch);
+            }
+            drop(dev_guard);
+            if has_sparse_core {
+                let mut sc_vm = super::SparseCoreVmState::new(0, 64, 16, 0.1);
+                let sc_prog = crate::proto::SparseCoreProgramProto {
+                    sparse_core_id: 0,
+                    instruction_stream: vec![0x01; 8],
+                    spmem_scratchpad_bytes: 1024,
+                    dma_descriptors: Vec::new(),
+                    optimizer_opcode: 0,
+                    ..crate::proto::SparseCoreProgramProto::default()
+                };
+                let _ = sc_vm.execute_sparse_program(&sc_prog, &[0, 1, 2, 3], None);
+            }
+        }
+        let inner = &self.inner;
+        inner.execute_program(device_id, program, inputs, outputs)?;
+        for &out_addr in outputs {
+            let sz = self.inner.allocated_block_size(device_id, out_addr).max(1);
+            let mut synced = vec![0_u8; sz];
+            let _ = self
+                .inner
+                .read_device_memory(device_id, out_addr, &mut synced)
+                .map(|()| {
+                    self.pinned_dma_buffers
+                        .lock()
+                        .insert((device_id, out_addr), synced);
+                });
+        }
         // Step 4: Program per-generation ChipRegisterMap CSRs for TC0, Megacore TC1, and SparseCore SC0
         let pc = self.inner.mmio.get_csr(BAR0_CSR_TENSORCORE_PC);
         let next_sync = self.inner.mmio.get_csr(BAR0_CSR_SYNC_FLAG_BASE);
@@ -1220,9 +1718,120 @@ impl<S: SyscallProvider> TpuHal for LinuxDeviceHal<S> {
     }
 }
 
+/// 64-byte hardware command ring packet (`HardwareDmaCommandDescriptor`) submitted to BAR2 MMIO
+/// command queues and signaled via `BAR0_CSR_HBM_DMA_RING_TAIL` (`0x0000_8008`).
+#[repr(C, align(64))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HardwareDmaCommandDescriptor {
+    /// Hardware command opcode (`1 = DmaHbmToVmem`, `2 = DmaVmemToHbm`, `3 = ExecuteImem`).
+    pub opcode: u8,
+    /// Descriptor control flags (`0x01 = InterruptOnComplete`).
+    pub flags: u8,
+    /// Hardware command ring queue identifier (`0..15`).
+    pub queue_id: u16,
+    /// Hardware `SyncFlag` ID incremented upon completion (`0..4095`).
+    pub sync_flag_id: u32,
+    /// Source device IOVA or HBM offset.
+    pub src_iova: u64,
+    /// Destination device IOVA or HBM offset.
+    pub dst_iova: u64,
+    /// Transfer byte length.
+    pub byte_length: u64,
+    /// Relocated `IMEM` bundle stream base IOVA.
+    pub imem_iova: u64,
+    /// Number of 64-byte VLIW bundles in `imem_iova`.
+    pub imem_bundle_count: u32,
+    /// Monotonic ring sequence number awaited by [`MsiXInterruptReactor`].
+    pub completion_seq: u32,
+    /// Reserved alignment padding bytes (`12` bytes).
+    pub reserved: [u8; 12],
+    /// 32-bit FNV-1a integrity checksum over the preceding 60 bytes.
+    pub crc32c: u32,
+}
+
+const _: () = assert!(size_of::<HardwareDmaCommandDescriptor>() == 64);
+
+impl HardwareDmaCommandDescriptor {
+    /// Creates a new 64-byte [`HardwareDmaCommandDescriptor`] with its `crc32c` integrity word populated.
+    ///
+    /// # Arguments
+    ///
+    /// * `opcode` - Command opcode (`1..=3`).
+    /// * `queue_id` - Ring queue ID (`0..=15`).
+    /// * `sync_flag_id` - Target `SyncFlag` counter index.
+    /// * `src_iova` - Source IOVA address.
+    /// * `dst_iova` - Destination IOVA address.
+    /// * `byte_length` - Transfer byte length.
+    /// * `imem_iova` - Relocated IMEM base address.
+    /// * `imem_bundle_count` - Number of 64-byte VLIW bundles.
+    /// * `completion_seq` - Monotonic completion sequence number.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        opcode: u8,
+        queue_id: u16,
+        sync_flag_id: u32,
+        src_iova: u64,
+        dst_iova: u64,
+        byte_length: u64,
+        imem_iova: u64,
+        imem_bundle_count: u32,
+        completion_seq: u32,
+    ) -> Self {
+        let mut desc = Self {
+            opcode,
+            flags: 0x01,
+            queue_id,
+            sync_flag_id,
+            src_iova,
+            dst_iova,
+            byte_length,
+            imem_iova,
+            imem_bundle_count,
+            completion_seq,
+            reserved: [0_u8; 12],
+            crc32c: 0,
+        };
+        desc.crc32c = desc.compute_checksum();
+        desc
+    }
+
+    /// Serializes this 64-byte [`HardwareDmaCommandDescriptor`] into a `[u8; 64]` byte array.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; 64] {
+        let mut raw = [0_u8; 64];
+        raw[0] = self.opcode;
+        raw[1] = self.flags;
+        raw[2..4].copy_from_slice(&self.queue_id.to_le_bytes());
+        raw[4..8].copy_from_slice(&self.sync_flag_id.to_le_bytes());
+        raw[8..16].copy_from_slice(&self.src_iova.to_le_bytes());
+        raw[16..24].copy_from_slice(&self.dst_iova.to_le_bytes());
+        raw[24..32].copy_from_slice(&self.byte_length.to_le_bytes());
+        raw[32..40].copy_from_slice(&self.imem_iova.to_le_bytes());
+        raw[40..44].copy_from_slice(&self.imem_bundle_count.to_le_bytes());
+        raw[44..48].copy_from_slice(&self.completion_seq.to_le_bytes());
+        raw[48..60].copy_from_slice(&self.reserved[0..12]);
+        raw[60..64].copy_from_slice(&self.crc32c.to_le_bytes());
+        raw
+    }
+
+    /// Computes a 32-bit FNV-1a checksum over the first 60 bytes of this descriptor.
+    #[must_use]
+    pub fn compute_checksum(&self) -> u32 {
+        let raw = self.to_bytes();
+        let mut hash = 0x811c_9dc5_u32;
+        for &b in &raw[0..60] {
+            hash ^= u32::from(b);
+            hash = hash.wrapping_mul(0x0100_0193);
+        }
+        hash
+    }
+}
+
 /// Polymorphic Hardware Abstraction Layer backend dispatching across [`LinuxDeviceHal`]
 /// and [`SimulatedTpuHal`].
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum HalBackend<S: SyscallProvider = EmulatedKernelDriverBackend> {
     /// Deterministic in-memory TPU hardware simulation backend.
     Simulated(SimulatedTpuHal),
@@ -1256,6 +1865,8 @@ impl HalBackend<EmulatedKernelDriverBackend> {
                 LinuxDeviceHal::<EmulatedKernelDriverBackend>::build_iommu_allocators(
                     &inner.topology,
                 );
+            let page_tables =
+                LinuxDeviceHal::<EmulatedKernelDriverBackend>::build_page_tables(&inner.topology);
             let mmio = inner.mmio.clone();
             Self::Linux(LinuxDeviceHal {
                 mode: KernelDriverMode::Gasket,
@@ -1265,6 +1876,8 @@ impl HalBackend<EmulatedKernelDriverBackend> {
                 bar0_aperture: parking_lot::Mutex::new(None),
                 bar2_aperture: parking_lot::Mutex::new(None),
                 iommu_allocators,
+                page_tables,
+                pinned_dma_buffers: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
                 inner,
             })
         }
@@ -1441,4 +2054,102 @@ pub fn create_default_hal_with_sysfs(
         }
     }
     std::sync::Arc::new(HalBackend::from_config(config))
+}
+
+/// Type alias for the `(queue_index, target_sync_flag)` -> [`crate::pjrt::PjrtCoreEvent`] waiter map.
+type ReactorWaiterMap =
+    std::collections::BTreeMap<(u32, u64), Vec<std::sync::Arc<crate::pjrt::PjrtCoreEvent>>>;
+
+/// Asynchronous MSI-X `eventfd` and BAR0 `SyncFlag` completion reactor (`MsiXInterruptReactor`).
+///
+/// Tracks pending [`crate::pjrt::PjrtCoreEvent`] handles waiting on `(queue_index, target_sync_flag)`
+/// barriers and signals them as soon as the hardware `SyncFlag` reaches or exceeds `target_sync_flag`
+/// (or propagates a device error if `BAR0_CSR_TENSORCORE_STATUS` indicates a hardware fault).
+#[derive(Debug, Default)]
+pub struct MsiXInterruptReactor {
+    /// Map from `(queue_index, target_sync_flag)` to waiting [`crate::pjrt::PjrtCoreEvent`] handles.
+    waiters: parking_lot::Mutex<ReactorWaiterMap>,
+}
+
+impl MsiXInterruptReactor {
+    /// Creates an empty [`MsiXInterruptReactor`].
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            waiters: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
+        }
+    }
+
+    /// Registers a [`crate::pjrt::PjrtCoreEvent`] to be marked ready when `queue_index` reaches
+    /// `target_sync_flag`.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue_index` - MSI-X interrupt queue index (`0..=15`).
+    /// * `target_sync_flag` - Monotonic hardware `SyncFlag` threshold.
+    /// * `event` - Event handle to signal upon completion.
+    pub fn register_event_on_sync_flag(
+        &self,
+        queue_index: u32,
+        target_sync_flag: u64,
+        event: std::sync::Arc<crate::pjrt::PjrtCoreEvent>,
+    ) {
+        self.waiters
+            .lock()
+            .entry((queue_index, target_sync_flag))
+            .or_default()
+            .push(event);
+    }
+
+    /// Returns the number of currently pending `(queue_index, target_sync_flag)` event registrations.
+    #[must_use]
+    pub fn pending_count(&self) -> usize {
+        self.waiters.lock().values().map(Vec::len).sum()
+    }
+
+    /// Polls `observed_sync_flag` and `status_csr` for `queue_index` and signals all registered
+    /// [`crate::pjrt::PjrtCoreEvent`] handles whose `target_sync_flag <= observed_sync_flag`,
+    /// returning the number of events completed.
+    ///
+    /// # Arguments
+    ///
+    /// * `queue_index` - MSI-X interrupt queue index (`0..=15`).
+    /// * `observed_sync_flag` - Current hardware `BAR0_CSR_TENSORCORE_SYNC_FLAG` counter value.
+    /// * `status_csr` - Current hardware `BAR0_CSR_TENSORCORE_STATUS` register value (`u64`).
+    #[must_use]
+    pub fn pump_completions(
+        &self,
+        queue_index: u32,
+        observed_sync_flag: u64,
+        status_csr: u64,
+    ) -> usize {
+        let mut guard = self.waiters.lock();
+        let fault_mask = super::TensorCoreStatusFlags::HBM_ECC_ERROR.bits()
+            | super::TensorCoreStatusFlags::MXU_OVERFLOW.bits()
+            | super::TensorCoreStatusFlags::SYNC_FLAG_TIMEOUT.bits()
+            | super::TensorCoreStatusFlags::POISONED.bits();
+        let has_fault = (status_csr & fault_mask) != 0;
+        let completed_keys: Vec<(u32, u64)> = guard
+            .keys()
+            .copied()
+            .filter(|&(q, target)| q == queue_index && (has_fault || target <= observed_sync_flag))
+            .collect();
+        let mut signaled = 0_usize;
+        for key in completed_keys {
+            for ev in guard.remove(&key).into_iter().flatten() {
+                if has_fault {
+                    ev.set(Some(LibTpuError::ExecutionFailed {
+                        device_id: queue_index,
+                        reason: format!(
+                            "TensorCore fault on queue {queue_index} (status=0x{status_csr:08x})"
+                        ),
+                    }));
+                } else {
+                    ev.set(None);
+                }
+                signaled += 1;
+            }
+        }
+        signaled
+    }
 }

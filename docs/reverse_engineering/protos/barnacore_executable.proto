@@ -25,6 +25,9 @@ message SparseCoreProgramProto {
   uint32 spmem_scratchpad_bytes = 3;
   repeated SparseCoreDmaDescriptorProto dma_descriptors = 4;
   int32 optimizer_opcode = 5;
+  uint32 tec_bundle_count = 7;
+  bytes scs_control_stream = 8;
+  uint32 tile_spmem_size_bytes = 9;
 }
 
 message BarnaCoreExecutableProto {

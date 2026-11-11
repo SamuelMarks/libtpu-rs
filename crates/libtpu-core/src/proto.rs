@@ -142,6 +142,10 @@ mod tests {
             verified_count,
             Some(ALL_REGISTERED_PROTO_MESSAGE_NAMES.len())
         );
+        assert_eq!(protodesc_cold_293_file_count(), 293);
+        assert!(lookup_protodesc_cold_file_descriptor("xla/service/hlo.proto").is_some());
+        assert!(lookup_protodesc_cold_file_descriptor("hlo.proto").is_some());
+        assert!(lookup_protodesc_cold_file_descriptor("unknown_alias_file.proto").is_some());
 
         assert!(decode_descriptor_pool(EMBEDDED_FILE_DESCRIPTOR_SET_BYTES).is_ok());
         assert!(try_global_descriptor_pool().is_ok());
@@ -252,7 +256,37 @@ mod tests {
             comp_env2.get_flag_by_name("--xla_tpu_enable_flash_attention"),
             "true"
         );
+        comp_env2.set_flag_by_name("--xla_tpu_use_shardy_partitioner", "true");
+        comp_env2.set_flag_by_name("--xla_tpu_nd_short_transfer_max_chunks", "16");
+        comp_env2.set_flag_by_name(
+            "--xla_tpu_ici_all_reduce_combine_threshold_bytes",
+            "1048576",
+        );
+        comp_env2.set_flag_by_name("--xla_tpu_bf16_emission_mode", "HIGH");
+        comp_env2.set_flag_by_name("25", "3");
+        comp_env2.set_flag_by_name("10", "ignored_submsg");
+        assert!(comp_env2.xla_tpu_use_shardy_partitioner);
+        assert_eq!(comp_env2.xla_tpu_nd_short_transfer_max_chunks, 16);
+        assert_eq!(
+            comp_env2.xla_tpu_ici_all_reduce_combine_threshold_bytes,
+            1_048_576
+        );
+        assert_eq!(comp_env2.xla_tpu_bf16_emission_mode, "HIGH");
+        assert_eq!(comp_env2.xla_tpu_autotune_level, 3);
+        assert_eq!(
+            comp_env2.get_flag_by_name("xla_tpu_use_shardy_partitioner"),
+            "true"
+        );
+        assert_eq!(comp_env2.get_flag_by_name("20"), "16");
+        assert_eq!(comp_env2.get_flag_by_name("21"), "1048576");
+        assert_eq!(comp_env2.get_flag_by_name("24"), "HIGH");
+        assert_ne!(comp_env2.get_flag_by_name("10"), "default");
         assert_ne!(comp_env2.get_flag_by_name("model_version"), "default");
+        assert_eq!(
+            verify_all_registered_proto_schemas_strict(),
+            Ok(ALL_REGISTERED_PROTO_MESSAGE_NAMES.len())
+        );
+        assert!(verify_registered_proto_schemas_closure(&[]).is_err());
     }
 
     #[test]
@@ -314,6 +348,7 @@ mod tests {
             memory_space: 1,
             element_size_in_bits: 16,
             dynamic_shape_metadata_prefix_bytes: 64,
+            ..LayoutProto::default()
         };
         let mut layout_bytes = layout.encode();
         assert_eq!(
@@ -373,6 +408,7 @@ mod tests {
             replicate_on_last_tile_dim: true,
             iota_reshape_dims: vec![4],
             iota_transpose_perm: vec![0],
+            ..OpShardingProto::default()
         };
         let mut sharding_bytes = sharding.encode();
         assert_eq!(
@@ -492,6 +528,7 @@ mod tests {
                 xla_dump_hlo_as_text: true,
                 xla_dump_hlo_as_proto: false,
                 xla_backend_optimization_level: 3,
+                ..DebugOptionsProto::default()
             }),
             num_replicas: 2,
             num_partitions: 4,
@@ -1384,6 +1421,16 @@ mod tests {
             core_programs: vec![isa_core],
             symbols: vec![isa_sym],
             fingerprint: 123_456_789,
+            smem_size_bytes: 1_048_576,
+            vmem_size_bytes: 16_777_216,
+            cmem_size_bytes: 0,
+            imem_size_bytes: 4096,
+            stack_frame_size_bytes: 4096,
+            sync_flag_count: 512,
+            xla_compiler_version: String::from("libtpu-rs-0.0.52"),
+            llo_schedule_fingerprint: 987_654_321,
+            predication_mode: 0,
+            bundle_compression_kind: 0,
             compilation_id: 1,
             scs_start_bundle: 0,
             tile_start_bundle: 0,
@@ -1528,6 +1575,7 @@ mod tests {
             has_concurrent_program: false,
             abi: Some(core_abi),
             oom_during_compilation: false,
+            relocations: Vec::new(),
         };
         assert_eq!(
             TpuCoreProgramProto::decode(&core_prog.encode()).ok(),
@@ -1549,6 +1597,7 @@ mod tests {
             hbm_scratchpad_bytes: 1_048_576,
             core_program: Some(core_prog.clone()),
             sparse_core_program: Some(core_prog),
+            ..DeepseaExecutableProto::default()
         };
         assert_eq!(
             DeepseaExecutableProto::decode(&ds_exec.encode()).ok(),
@@ -1651,6 +1700,7 @@ mod tests {
             maybe_live_out: true,
             color: 0,
             assigned: vec![buf_slice],
+            assigned_logical_buffers: Vec::new(),
         };
         assert_eq!(
             BufferAllocationProto::decode(&buf_alloc.encode()).ok(),
@@ -1659,7 +1709,9 @@ mod tests {
         assert!(buf_alloc.verify_schema_sync().is_ok());
 
         let buf_assign = BufferAssignmentProto {
+            logical_buffers: Vec::new(),
             buffer_allocations: vec![buf_alloc],
+            heap_simulator_traces: Vec::new(),
         };
         assert_eq!(
             BufferAssignmentProto::decode(&buf_assign.encode()).ok(),
@@ -1757,6 +1809,7 @@ mod tests {
             source_line: 42,
             deduplicated_name: String::from("fusion.1"),
             scheduling_name: String::from("fusion.1.sched"),
+            ..OpMetadata::default()
         };
         assert_eq!(
             OpMetadata::decode(&op_meta.encode()).ok(),
@@ -1837,6 +1890,14 @@ mod tests {
             s4s: vec![0x12],
             u4s: vec![0x34],
             f8e4m3b11fnuzs: vec![0x56],
+            f8e5m2fnuzs: vec![0x78],
+            f8e4m3fnuzs: vec![0x9A],
+            f8e4m3s: vec![0xBC],
+            f8e3m4s: vec![0xDE],
+            f8e8m0fnus: vec![0x7F],
+            s2s: vec![0x03],
+            u2s: vec![0x02],
+            f4e2m1fns: vec![0x11],
         };
         assert_eq!(
             LiteralProto::decode(&lit_proto.encode()).ok(),
@@ -2347,6 +2408,19 @@ mod tests {
         /// Generated `megascale` protobuf package.
         pub mod megascale {
             include!(concat!(env!("OUT_DIR"), "/megascale.rs"));
+        }
+        /// Generated `platforms_deepsea` protobuf package.
+        pub mod platforms_deepsea {
+            /// Generated `platforms_deepsea.jellyfish` protobuf package.
+            pub mod jellyfish {
+                /// Generated `platforms_deepsea.jellyfish.xdb` protobuf package.
+                pub mod xdb {
+                    include!(concat!(
+                        env!("OUT_DIR"),
+                        "/platforms_deepsea.jellyfish.xdb.rs"
+                    ));
+                }
+            }
         }
         /// Generated `stream_executor` protobuf package.
         pub mod stream_executor {
@@ -4863,6 +4937,103 @@ mod tests {
             .ok(),
             Some(FrequencyScalingTelemetryProto::default())
         );
+        assert!(VhloDialectVersionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(VhloDialectVersionProto::decode(&corrupt).is_err());
+        assert_eq!(
+            VhloDialectVersionProto::decode(&VhloDialectVersionProto::default().encode()).ok(),
+            Some(VhloDialectVersionProto::default())
+        );
+        assert!(StableHloPortableArtifactMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(StableHloPortableArtifactMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            StableHloPortableArtifactMetadataProto::decode(
+                &StableHloPortableArtifactMetadataProto::default().encode()
+            )
+            .ok(),
+            Some(StableHloPortableArtifactMetadataProto::default())
+        );
+        assert!(ShardyMeshAxisProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ShardyMeshAxisProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ShardyMeshAxisProto::decode(&ShardyMeshAxisProto::default().encode()).ok(),
+            Some(ShardyMeshAxisProto::default())
+        );
+        assert!(ShardySubAxisInfoProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ShardySubAxisInfoProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ShardySubAxisInfoProto::decode(&ShardySubAxisInfoProto::default().encode()).ok(),
+            Some(ShardySubAxisInfoProto::default())
+        );
+        assert!(ShardyAxisRefProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ShardyAxisRefProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ShardyAxisRefProto::decode(&ShardyAxisRefProto::default().encode()).ok(),
+            Some(ShardyAxisRefProto::default())
+        );
+        assert!(ShardyDimensionShardingProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ShardyDimensionShardingProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ShardyDimensionShardingProto::decode(&ShardyDimensionShardingProto::default().encode())
+                .ok(),
+            Some(ShardyDimensionShardingProto::default())
+        );
+        assert!(ShardyTensorShardingProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ShardyTensorShardingProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ShardyTensorShardingProto::decode(&ShardyTensorShardingProto::default().encode()).ok(),
+            Some(ShardyTensorShardingProto::default())
+        );
+        assert!(ShardyMeshProto::verify_bidirectional_equivalence().is_ok());
+        assert!(ShardyMeshProto::decode(&corrupt).is_err());
+        assert_eq!(
+            ShardyMeshProto::decode(&ShardyMeshProto::default().encode()).ok(),
+            Some(ShardyMeshProto::default())
+        );
+        assert!(XlaFfiTypeIdRegistrationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XlaFfiTypeIdRegistrationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XlaFfiTypeIdRegistrationProto::decode(
+                &XlaFfiTypeIdRegistrationProto::default().encode()
+            )
+            .ok(),
+            Some(XlaFfiTypeIdRegistrationProto::default())
+        );
+        assert!(XlaFfiExecutionContextMetadataProto::verify_bidirectional_equivalence().is_ok());
+        assert!(XlaFfiExecutionContextMetadataProto::decode(&corrupt).is_err());
+        assert_eq!(
+            XlaFfiExecutionContextMetadataProto::decode(
+                &XlaFfiExecutionContextMetadataProto::default().encode()
+            )
+            .ok(),
+            Some(XlaFfiExecutionContextMetadataProto::default())
+        );
+        assert!(TpuzActiveHloExecutionTraceProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuzActiveHloExecutionTraceProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuzActiveHloExecutionTraceProto::decode(
+                &TpuzActiveHloExecutionTraceProto::default().encode()
+            )
+            .ok(),
+            Some(TpuzActiveHloExecutionTraceProto::default())
+        );
+        assert!(TpuzLiveBufferAllocationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuzLiveBufferAllocationProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuzLiveBufferAllocationProto::decode(
+                &TpuzLiveBufferAllocationProto::default().encode()
+            )
+            .ok(),
+            Some(TpuzLiveBufferAllocationProto::default())
+        );
+        assert!(TpuzCoreTelemetrySnapshotProto::verify_bidirectional_equivalence().is_ok());
+        assert!(TpuzCoreTelemetrySnapshotProto::decode(&corrupt).is_err());
+        assert_eq!(
+            TpuzCoreTelemetrySnapshotProto::decode(
+                &TpuzCoreTelemetrySnapshotProto::default().encode()
+            )
+            .ok(),
+            Some(TpuzCoreTelemetrySnapshotProto::default())
+        );
 
         let sample_meta = CompilerMetadataProto {
             program_id: 42,
@@ -4976,6 +5147,139 @@ mod tests {
         assert!(!emitted_no_pkg.contains("package "));
         assert_eq!(no_pkg_spec.clone(), no_pkg_spec);
         assert_ne!(format!("{no_pkg_spec:?}"), "");
+
+        assert_ne!(GENERATED_PROTO_RUST_FILES, &[] as &[&str]);
+        let sample_payload = b"riegeli_compressed_test_payload_bytes_1234567890";
+        for mode in [
+            RiegeliChunkCompression::Uncompressed,
+            RiegeliChunkCompression::Brotli,
+            RiegeliChunkCompression::Zstd,
+            RiegeliChunkCompression::Metadata,
+        ] {
+            let wrapped = RiegeliRecordCodec::wrap_record_compressed(sample_payload, mode);
+            let unwrapped = RiegeliRecordCodec::unwrap_record_decompressed(&wrapped);
+            assert_eq!(unwrapped.ok(), Some((mode, sample_payload.to_vec())));
+            assert_eq!(mode.clone(), mode);
+            assert_ne!(format!("{mode:?}"), "");
+        }
+        assert_eq!(
+            RiegeliRecordCodec::unwrap_record_decompressed(sample_payload).ok(),
+            Some((
+                RiegeliChunkCompression::Uncompressed,
+                sample_payload.to_vec()
+            ))
+        );
+        let mut corrupt_brotli = RiegeliRecordCodec::wrap_record_compressed(
+            b"bad_brotli",
+            RiegeliChunkCompression::Brotli,
+        );
+        corrupt_brotli.truncate(64);
+        corrupt_brotli.extend_from_slice(&[0xFF, 0xFF, 0xFF]);
+        let h_hash = riegeli_highwayhash64(corrupt_brotli.get(..48).unwrap_or_default());
+        let p_hash = riegeli_highwayhash64(corrupt_brotli.get(64..).unwrap_or_default());
+        if let Some(h_slice) = corrupt_brotli.get_mut(48..56) {
+            h_slice.copy_from_slice(&h_hash.to_le_bytes());
+        }
+        if let Some(p_slice) = corrupt_brotli.get_mut(56..64) {
+            p_slice.copy_from_slice(&p_hash.to_le_bytes());
+        }
+        assert!(RiegeliRecordCodec::unwrap_record_decompressed(&corrupt_brotli).is_err());
+        let mut bad_hdr = RiegeliRecordCodec::wrap_record(b"x");
+        if let Some(b) = bad_hdr.get_mut(48) {
+            *b ^= 0xFF;
+        }
+        assert!(RiegeliRecordCodec::unwrap_record_decompressed(&bad_hdr).is_err());
+
+        let env_proto = TpuCompilationEnvironmentProto::from_cli_flags("");
+        assert_eq!(
+            env_proto.get_field_as_string("xla_tpu_enable_windowed_einsum"),
+            "true"
+        );
+        assert_eq!(
+            env_proto.get_field_as_string("xla_tpu_enable_llo_software_pipelining"),
+            "true"
+        );
+        assert_eq!(
+            env_proto.get_field_as_string("xla_tpu_llo_modulo_scheduler_ii_limit"),
+            "16"
+        );
+        assert_eq!(
+            env_proto.get_field_as_string("xla_tpu_enable_rs_forward_pipelining"),
+            "true"
+        );
+        assert_eq!(env_proto.get_field_as_string("256"), "true");
+        if let Some(spec) = TpuCompilationEnvironmentProto::lookup_jellyfish_field_spec("34") {
+            assert_eq!(spec.name, "xla_tpu_enable_llo_software_pipelining");
+            assert_eq!(spec.clone(), *spec);
+            assert_ne!(format!("{spec:?}"), "");
+        }
+
+        assert!(StackFrameFileLocationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(StackFrameEntryProto::verify_bidirectional_equivalence().is_ok());
+        assert!(StackFrameIndexProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LogicalBufferLocationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LogicalBufferProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HeapSimulatorTraceEventProto::verify_bidirectional_equivalence().is_ok());
+        assert!(HeapSimulatorTraceProto::verify_bidirectional_equivalence().is_ok());
+        assert!(BufferAllocationAssignedProto::verify_bidirectional_equivalence().is_ok());
+        assert!(IciRouteHopProto::verify_bidirectional_equivalence().is_ok());
+        assert!(IciRoutingTableProto::verify_bidirectional_equivalence().is_ok());
+        assert!(VliwBundleEncodingSpecProto::verify_bidirectional_equivalence().is_ok());
+        assert!(DmaDescriptorRingConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GasketPageTableConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(GasketIoctlConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(VfioIommuMapConfigProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PcieBarRegionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(PcieBarLayoutProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LloScheduledInstructionProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LloBundleScheduleProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LloSpillSlotProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LloLiveIntervalProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LloRegisterAllocationProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LloModuloStageProto::verify_bidirectional_equivalence().is_ok());
+        assert!(LloSoftwarePipelineScheduleProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MegascaleChannelSliceDescriptorProto::verify_bidirectional_equivalence().is_ok());
+        assert!(MegascaleCollectiveScheduleProto::verify_bidirectional_equivalence().is_ok());
+        for m in [
+            IciRouteHopProto::default().encode(),
+            IciRoutingTableProto::default().encode(),
+            VliwBundleEncodingSpecProto::default().encode(),
+            DmaDescriptorRingConfigProto::default().encode(),
+            GasketPageTableConfigProto::default().encode(),
+            GasketIoctlConfigProto::default().encode(),
+            VfioIommuMapConfigProto::default().encode(),
+            PcieBarRegionProto::default().encode(),
+            PcieBarLayoutProto::default().encode(),
+            LloScheduledInstructionProto::default().encode(),
+            LloBundleScheduleProto::default().encode(),
+            LloSpillSlotProto::default().encode(),
+            LloLiveIntervalProto::default().encode(),
+            LloRegisterAllocationProto::default().encode(),
+            LloModuloStageProto::default().encode(),
+            LloSoftwarePipelineScheduleProto::default().encode(),
+            MegascaleChannelSliceDescriptorProto::default().encode(),
+            MegascaleCollectiveScheduleProto::default().encode(),
+        ] {
+            assert_eq!(m.len(), 0);
+        }
+        assert!(IciRouteHopProto::decode(&[]).is_ok());
+        assert!(IciRoutingTableProto::decode(&[]).is_ok());
+        assert!(VliwBundleEncodingSpecProto::decode(&[]).is_ok());
+        assert!(DmaDescriptorRingConfigProto::decode(&[]).is_ok());
+        assert!(GasketPageTableConfigProto::decode(&[]).is_ok());
+        assert!(GasketIoctlConfigProto::decode(&[]).is_ok());
+        assert!(VfioIommuMapConfigProto::decode(&[]).is_ok());
+        assert!(PcieBarRegionProto::decode(&[]).is_ok());
+        assert!(PcieBarLayoutProto::decode(&[]).is_ok());
+        assert!(LloScheduledInstructionProto::decode(&[]).is_ok());
+        assert!(LloBundleScheduleProto::decode(&[]).is_ok());
+        assert!(LloSpillSlotProto::decode(&[]).is_ok());
+        assert!(LloLiveIntervalProto::decode(&[]).is_ok());
+        assert!(LloRegisterAllocationProto::decode(&[]).is_ok());
+        assert!(LloModuloStageProto::decode(&[]).is_ok());
+        assert!(LloSoftwarePipelineScheduleProto::decode(&[]).is_ok());
+        assert!(MegascaleChannelSliceDescriptorProto::decode(&[]).is_ok());
+        assert!(MegascaleCollectiveScheduleProto::decode(&[]).is_ok());
     }
 
     proptest! {
@@ -5004,6 +5308,7 @@ mod tests {
                     memory_space,
                     element_size_in_bits: 32,
                     dynamic_shape_metadata_prefix_bytes: 0,
+                    ..LayoutProto::default()
                 }),
                 is_dynamic_dimension: vec![false; dims.len()],
             };

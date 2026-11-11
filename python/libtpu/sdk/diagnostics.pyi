@@ -42,4 +42,44 @@ def emit_proto_schema(full_message_name: str) -> str:
     """
     ...
 
+def protodesc_cold_file_count() -> int:
+    """Queries the number of embedded `protodesc_cold` `.proto` descriptors (`293`)."""
+    ...
+
+def invoke_coordination_grpc(
+    method_path: str,
+    payload: bytes,
+    compressed: bool = False,
+) -> bytes:
+    """Invokes a `tensorflow.CoordinationService` RPC method using 5-byte gRPC wire framing.
+
+    Args:
+        method_path: HTTP/2 gRPC method path (e.g., `"/tensorflow.CoordinationService/Barrier"`).
+        payload: Wire-encoded protobuf request message bytes.
+        compressed: Whether the 5-byte gRPC frame compressed flag is set (`1` vs `0`).
+    """
+    ...
+
+def compute_torus_route_hops(
+    src_x: int,
+    src_y: int,
+    src_z: int,
+    dst_x: int,
+    dst_y: int,
+    dst_z: int,
+    wrap_around: bool = True,
+) -> int:
+    """Computes the shortest 3D Torus optical ICI hop count between two chip coordinates.
+
+    Args:
+        src_x: Source X chip coordinate.
+        src_y: Source Y chip coordinate.
+        src_z: Source Z chip coordinate.
+        dst_x: Destination X chip coordinate.
+        dst_y: Destination Y chip coordinate.
+        dst_z: Destination Z chip coordinate.
+        wrap_around: Whether twisted-torus wrap-around links are enabled.
+    """
+    ...
+
 __all__: list[str]

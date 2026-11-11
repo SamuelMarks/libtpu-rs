@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: asic_sw/deepsea/ici_routing_table.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package asic_sw.deepsea;
+
+message IciRouteHopProto {
+  uint32 src_chip_id = 1;
+  uint32 dst_chip_id = 2;
+  uint32 egress_link_port = 3;
+  uint32 virtual_channel = 4;
+  int32 axis_delta = 5;
+  bool is_wrap_around = 6;
+}
+
+message IciRoutingTableProto {
+  string topology_name = 1;
+  uint32 torus_dimension = 2;
+  bool is_twisted_torus = 3;
+  repeated IciRouteHopProto route_hops = 4;
+  uint32 semaphore_pool_size = 5;
+}

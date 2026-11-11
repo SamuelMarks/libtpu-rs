@@ -43,6 +43,13 @@ enum PrimitiveType {
   F4E2M1FN = 31;
 }
 
+enum DimLevelType {
+  DIM_DENSE = 0;
+  DIM_COMPRESSED = 1;
+  DIM_SINGLETON = 2;
+  DIM_LOOSE_COMPRESSED = 3;
+}
+
 message TileProto {
   repeated int64 dimensions = 1;
 }
@@ -57,10 +64,15 @@ message LayoutProto {
   repeated TileProto tiles = 6;
   int64 element_size_in_bits = 7;
   int64 memory_space = 8;
+  repeated DimLevelType dim_level_types = 9;
+  ShapeProto physical_shape = 10;
   PrimitiveType index_primitive_type = 11;
   PrimitiveType pointer_primitive_type = 12;
+  repeated bool dim_unique = 13;
+  repeated bool dim_ordered = 14;
   int64 dynamic_shape_metadata_prefix_bytes = 15;
   int64 tail_padding_alignment_in_elements = 16;
+  repeated SplitConfigProto split_configs = 17;
 }
 
 message ShapeProto {
@@ -77,6 +89,22 @@ message ProgramShapeProto {
   repeated string parameter_names = 3;
 }
 
+message OpMetadata {
+  string op_type = 1;
+  string op_name = 2;
+  string source_file = 3;
+  int32 source_line = 4;
+  repeated int64 profile_type = 5;
+  int64 size_of_generated_code_in_bytes = 8;
+  int64 size_of_memory_working_set_in_bytes = 9;
+  string deduplicated_name = 12;
+  int32 stack_frame_id = 15;
+  string scheduling_name = 16;
+  int32 source_end_line = 17;
+  int32 source_column = 18;
+  int32 source_end_column = 19;
+}
+
 message OpSharding {
   enum Type {
     REPLICATED = 0;
@@ -87,14 +115,23 @@ message OpSharding {
     UNKNOWN = 5;
     UNREDUCED = 6;
   }
+  enum ShardGroupType {
+    AS = 0;
+    LIKE = 1;
+  }
   int32 sharding_type = 1;
   ShapeProto tuple_shardings_shape = 2;
   repeated int64 tile_assignment_dimensions = 3;
   repeated int64 tile_assignment_devices = 4;
   repeated OpSharding tuple_shardings = 5;
   bool replicate_on_last_tile_dim = 6;
+  repeated OpMetadata metadata = 7;
+  repeated Type last_tile_dims = 8;
   repeated int64 iota_reshape_dims = 9;
   repeated int32 iota_transpose_perm = 10;
+  bool is_shard_group = 11;
+  int64 shard_group_id = 12;
+  ShardGroupType shard_group_type = 13;
 }
 
 message DeviceAssignmentProto {
@@ -104,15 +141,6 @@ message DeviceAssignmentProto {
     repeated int64 replica_device_ids = 1;
   }
   repeated ComputationDevice computation_devices = 3;
-}
-
-message OpMetadata {
-  string op_type = 1;
-  string op_name = 2;
-  string source_file = 3;
-  int32 source_line = 4;
-  string deduplicated_name = 12;
-  string scheduling_name = 16;
 }
 
 message ExecutionProfile {
@@ -167,6 +195,14 @@ message LiteralProto {
   bytes s4s = 21;
   bytes u4s = 22;
   bytes f8e4m3b11fnuzs = 23;
+  bytes f8e5m2fnuzs = 24;
+  bytes f8e4m3fnuzs = 25;
+  bytes f8e4m3s = 26;
+  bytes f8e3m4s = 27;
+  bytes f8e8m0fnus = 28;
+  bytes s2s = 29;
+  bytes u2s = 30;
+  bytes f4e2m1fns = 31;
 }
 
 message ParameterReplication {
@@ -254,6 +290,15 @@ message PrecisionConfig {
     ALG_DOT_F16_F16_F16 = 1;
     ALG_DOT_F32_F32_F32 = 2;
     ALG_DOT_BF16_BF16_F32 = 3;
+    ALG_DOT_ANY_F8_ANY_F8_F32 = 4;
+    ALG_DOT_ANY_F8_ANY_F8_F32_FAST_ACCUM = 5;
+    ALG_DOT_F16_F16_F32 = 6;
+    ALG_DOT_BF16_BF16_BF16 = 7;
+    ALG_DOT_BF16_BF16_F32_X3 = 8;
+    ALG_DOT_BF16_BF16_F32_X6 = 9;
+    ALG_DOT_TF32_TF32_F32 = 10;
+    ALG_DOT_TF32_TF32_F32_X3 = 11;
+    ALG_DOT_F64_F64_F64 = 12;
   }
   repeated Precision operand_precision = 1;
   Algorithm algorithm = 2;

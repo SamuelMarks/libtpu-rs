@@ -9,6 +9,7 @@
 #include "libtpu.h"
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <string>
 
 /**
@@ -268,6 +269,13 @@ public:
    * @return `Status` indicating success or transfer error.
    */
   [[nodiscard]] Status to_host(uint8_t *host_dst, size_t len) const noexcept;
+
+  /**
+   * @brief Copies the on-device buffer bytes into a C++20 `std::span<uint8_t>`.
+   * @param host_dst Destination mutable byte span.
+   * @return `Status` indicating success or transfer error.
+   */
+  [[nodiscard]] Status to_host(std::span<uint8_t> host_dst) const noexcept;
 
   /**
    * @brief Returns the rank (number of dimensions) of this buffer.
@@ -647,6 +655,21 @@ public:
                                         Buffer *buffer_out) noexcept;
 
   /**
+   * @brief Allocates a device `Buffer` from C++20 `std::span` dimension and
+   * host byte views.
+   * @param device_id Target logical TPU device ID.
+   * @param dtype Element data type.
+   * @param dims Span of dimension extents.
+   * @param host_data Span of source host bytes.
+   * @param buffer_out Output `Buffer` receiving the allocated tensor.
+   * @return `Status` indicating success or failure.
+   */
+  [[nodiscard]] Status buffer_from_host(uint32_t device_id, DataType dtype,
+                                        std::span<const int64_t> dims,
+                                        std::span<const uint8_t> host_data,
+                                        Buffer *buffer_out) noexcept;
+
+  /**
    * @brief Compiles and loads an HLO or `StableHLO` program.
    * @param format Null-terminated format string (`"mlir"` or `"hlo"`).
    * @param code Pointer to program source bytes.
@@ -811,6 +834,40 @@ public:
    * @return TPU generation version (`5` for `v5e`).
    */
   [[nodiscard]] int32_t version() const noexcept;
+
+  /**
+   * @brief Queries the 3D process coordinates `(x, y, z)` for `process_id` via
+   * `PJRT_TpuTopology_ProcessCoordFromId`.
+   * @param process_id Target process ID.
+   * @param coords_out Output 3-element `int32_t` array receiving `(x, y, z)`.
+   * @return `Status` indicating success or failure.
+   */
+  [[nodiscard]] Status
+  process_coord_from_id(size_t process_id,
+                        int32_t coords_out[3]) const noexcept;
+
+  /**
+   * @brief Queries the global chip ID for 3D chip coordinates `(x, y, z)` via
+   * `PJRT_TpuTopology_ChipIdFromCoord`.
+   * @param x Chip X coordinate.
+   * @param y Chip Y coordinate.
+   * @param z Chip Z coordinate.
+   * @return Global chip ID.
+   */
+  [[nodiscard]] size_t chip_id_from_coord(int32_t x, int32_t y,
+                                          int32_t z) const noexcept;
+
+  /**
+   * @brief Computes the bounding subslice origin `(x, y, z)` for `device_ids`
+   * via `PJRT_TpuTopology_ComputeSubsliceForDevices`.
+   * @param device_ids Pointer to logical device IDs array.
+   * @param num_devices Number of device IDs.
+   * @param origin_out Output 3-element `int32_t` array receiving the origin.
+   * @return `Status` indicating success or failure.
+   */
+  [[nodiscard]] Status
+  compute_subslice_for_devices(const int32_t *device_ids, size_t num_devices,
+                               int32_t origin_out[3]) const noexcept;
 
 private:
   /** @brief Non-owning pointer to global `TpuTopology`. */
@@ -983,6 +1040,43 @@ public:
    * @return Completed transfer status value (`>= 1`).
    */
   [[nodiscard]] size_t cross_host_send(size_t transfer_tag) const noexcept;
+
+  /**
+   * @brief Queries the serialized `PjRtRuntimeAbiVersionProto` byte length via
+   * `PJRT_AbiVersion_RuntimeToProto`.
+   * @return Serialized runtime ABI version byte length (`> 0`).
+   */
+  [[nodiscard]] size_t runtime_abi_version_proto_size() const noexcept;
+
+  /**
+   * @brief Queries the serialized `PjRtExecutableAbiVersionProto` byte length
+   * via `PJRT_AbiVersion_ExecutableToProto`.
+   * @return Serialized executable ABI version byte length (`> 0`).
+   */
+  [[nodiscard]] size_t executable_abi_version_proto_size() const noexcept;
+
+  /**
+   * @brief Queries the 64-bit platform ID via
+   * `PJRT_AbiVersion_RuntimePlatformId`.
+   * @return Non-zero TPU platform ID (`0x54505500`).
+   */
+  [[nodiscard]] size_t abi_platform_id() const noexcept;
+
+  /**
+   * @brief Allocates and immediately destroys a `PJRT_ExecutableMetadata`
+   * holder via `PJRT_ExecutableMetadata_Get` and
+   * `PJRT_ExecutableMetadata_Destroy`.
+   * @return `true` if a non-null metadata holder was allocated.
+   */
+  [[nodiscard]] bool executable_metadata_allocated() const noexcept;
+
+  /**
+   * @brief Allocates and immediately frees `size` bytes of pinned host memory
+   * via `PJRT_HostMemoryAllocator_Allocate`.
+   * @param size Requested byte size (`>= 1`).
+   * @return `true` if a non-null host buffer was allocated and freed.
+   */
+  [[nodiscard]] bool allocate_host_memory(size_t size) const noexcept;
 
 private:
   /** @brief Non-owning pointer to static `PJRT_Api` vtable. */
@@ -1521,6 +1615,15 @@ public:
   [[nodiscard]] size_t
   set_and_query_compilation_env(size_t field_tag) const noexcept;
 
+  /**
+   * @brief Queries the serialized `xla.BufferAssignmentProto` byte length for
+   * `loaded` via `libtpu_rs_executable_buffer_assignment_proto`.
+   * @param loaded Reference to a `LoadedExecutable`.
+   * @return Serialized `BufferAssignmentProto` size in bytes (`0` if null).
+   */
+  [[nodiscard]] size_t
+  buffer_assignment_size(const LoadedExecutable &loaded) const noexcept;
+
 private:
   /** @brief Non-owning `PJRT_Executable*` handle. */
   PJRT_Executable *executable_;
@@ -1553,6 +1656,25 @@ public:
    */
   [[nodiscard]] size_t output_sharding_count() const noexcept;
 
+  /**
+   * @brief Queries the serialized `xla.OpSharding` protobuf bytes for parameter
+   * `index` via `PJRT_Shardings_ParameterShardings`.
+   * @param index Zero-based parameter index.
+   * @return Serialized `xla.OpSharding` wire bytes (or `""` if `index` is out
+   * of range).
+   */
+  [[nodiscard]] std::string
+  parameter_sharding_bytes(size_t index) const noexcept;
+
+  /**
+   * @brief Queries the serialized `xla.OpSharding` protobuf bytes for output
+   * `index` via `PJRT_Shardings_OutputShardings`.
+   * @param index Zero-based output index.
+   * @return Serialized `xla.OpSharding` wire bytes (or `""` if `index` is out
+   * of range).
+   */
+  [[nodiscard]] std::string output_sharding_bytes(size_t index) const noexcept;
+
 private:
   /** @brief Non-owning `PJRT_Executable*` handle. */
   PJRT_Executable *executable_;
@@ -1570,8 +1692,31 @@ using MegaScaleContext = MegascaleContext;
 /** @brief Type alias for `MegascaleContext` (`MultiSliceConfig`). */
 using MultiSliceConfig = MegascaleContext;
 
+/** @brief Type alias for `MegascaleContext` (`MultiSliceCoordinator`). */
+using MultiSliceCoordinator = MegascaleContext;
+
 /** @brief Type alias for `EmbeddingEngine` (`SparseCoreEngine`). */
 using SparseCoreEngine = EmbeddingEngine;
+
+/** @brief Type alias for `Buffer` (`DlPackTensor`). */
+using DlPackTensor = Buffer;
+
+/**
+ * @brief Strongly-typed C++20 wrapper for registering OpenXLA Typed FFI v0.2
+ * `XLA_FFI_Handler` custom call targets (`FfiRegistry`).
+ */
+class FfiRegistry {
+public:
+  /**
+   * @brief Registers an OpenXLA Typed FFI v0.2 `XLA_FFI_Handler` callback under
+   * `target_name` (`libtpu::register_ffi_handler`).
+   * @param target_name Null-terminated UTF-8 custom-call target name.
+   * @param handler Function pointer matching `XLA_FFI_Handler`.
+   * @return `Status` indicating registration success or failure.
+   */
+  [[nodiscard]] static Status
+  register_handler(const char *target_name, XLA_FFI_Handler handler) noexcept;
+};
 
 /**
  * @brief Strongly-typed C++20 move-only RAII wrapper over
@@ -1635,6 +1780,18 @@ public:
    * @return Value string (or `""` if not found).
    */
   [[nodiscard]] std::string get_key_value(const char *key) const noexcept;
+
+  /**
+   * @brief Invokes one of the 19 `tensorflow.CoordinationService` RPC methods
+   * using 5-byte gRPC Length-Prefixed-Message framing via
+   * `libtpu_rs_coordinator_invoke_grpc_method`.
+   * @param grpc_path Null-terminated HTTP/2 gRPC method path.
+   * @param req_frame 5-byte gRPC-framed request message bytes.
+   * @return 5-byte gRPC-framed response message bytes (or `""` on error).
+   */
+  [[nodiscard]] std::string
+  invoke_grpc_method(const char *grpc_path,
+                     const std::string &req_frame) const noexcept;
 
 private:
   /** @brief Owned coordinator handle pointer. */
@@ -1712,6 +1869,15 @@ disassemble_executable_llo(const LoadedExecutable &executable) noexcept;
 inspect_register_allocation(const LoadedExecutable &executable) noexcept;
 
 /**
+ * @brief Serializes the wire-compatible `xla.BufferAssignmentProto` for
+ * `executable` (`libtpu_rs_executable_buffer_assignment_proto`).
+ * @param executable Reference to a `LoadedExecutable`.
+ * @return Serialized `BufferAssignmentProto` bytes (or `""` if null).
+ */
+[[nodiscard]] std::string
+executable_buffer_assignment_proto(const LoadedExecutable &executable) noexcept;
+
+/**
  * @brief Formats a canonical hardware chip configuration summary for the active
  * TPU generation (`libtpu_rs_query_chip_config_summary`).
  * @return Hardware chip configuration summary string.
@@ -1734,6 +1900,116 @@ inspect_register_allocation(const LoadedExecutable &executable) noexcept;
                                          uint32_t src_z, uint32_t dst_x,
                                          uint32_t dst_y, uint32_t dst_z,
                                          bool wrap_around = true) noexcept;
+
+/**
+ * @brief Resolves a hierarchical `DeepSea` CSR path in the 13,261+ CSR catalog
+ * (`libtpu_rs_lookup_csr_by_path`).
+ * @param path Null-terminated hierarchical CSR path string.
+ * @return Physical BAR0 MMIO byte offset, or `UINT64_MAX` if not found.
+ */
+[[nodiscard]] uint64_t lookup_csr_by_path(const char *path) noexcept;
+
+/**
+ * @brief Resolves a physical BAR0 MMIO byte offset in the 13,261+ CSR catalog
+ * (`libtpu_rs_lookup_csr_by_offset`).
+ * @param byte_offset Physical BAR0 MMIO byte offset.
+ * @return Canonical hierarchical CSR register path (or `""` if not found).
+ */
+[[nodiscard]] std::string lookup_csr_by_offset(uint64_t byte_offset) noexcept;
+
+/**
+ * @brief Encodes a textual MLIR module into a standard upstream `ML\xefR`
+ * bytecode container and compiles it into `executable_out`
+ * (`libtpu_rs_compile_standard_mlir_bytecode`).
+ * @param client Reference to an active `Client`.
+ * @param mlir_source Null-terminated UTF-8 MLIR module text.
+ * @param executable_out Output `LoadedExecutable` receiving the compiled
+ * program.
+ * @return `Status` indicating compilation success or failure.
+ */
+[[nodiscard]] Status
+compile_standard_mlir_bytecode(const Client &client, const char *mlir_source,
+                               LoadedExecutable *executable_out) noexcept;
+
+/**
+ * @brief Collects serialized `tensorflow.ProfileToolData` bytes for `tool_name`
+ * (`libtpu_rs_profiler_collect_tool_data`).
+ * @param tool_name Null-terminated tool name (e.g., `"trace_viewer.json"`,
+ * `"input_pipeline.pb"`).
+ * @return Serialized tool data payload bytes (or `""` if null).
+ */
+[[nodiscard]] std::string
+collect_profiler_tool_data(const char *tool_name) noexcept;
+
+/**
+ * @brief Verifies all 293 embedded `protodesc_cold` descriptor catalog mappings
+ * (`libtpu_rs_verify_all_293_protodesc_catalog`).
+ * @return Verified catalog entry count (`293`).
+ */
+[[nodiscard]] size_t verify_protodesc_293_catalog() noexcept;
+
+/**
+ * @brief Executes a compiled `LoadedExecutable` on a dual-`TensorCore` +
+ * quad-`SparseCore` `MultiCoreChipVmState` (`libtpu_rs_multicore_vm_execute`).
+ * @param executable Reference to a compiled `LoadedExecutable`.
+ * @param core0_in Pointer to `tc_0` input bytes.
+ * @param core0_len Byte length of `core0_in`.
+ * @param core1_in Pointer to `tc_1` input bytes.
+ * @param core1_len Byte length of `core1_in`.
+ * @param out_core0 Destination buffer receiving `tc_0` output bytes.
+ * @param max_out0 Capacity of `out_core0` in bytes.
+ * @param out_sparse_lookups Optional output pointer receiving completed
+ * `SparseCore` lookup count.
+ * @return `Status` indicating execution success or failure.
+ */
+[[nodiscard]] Status
+execute_multicore_vm(const LoadedExecutable &executable,
+                     const uint8_t *core0_in, size_t core0_len,
+                     const uint8_t *core1_in, size_t core1_len,
+                     uint8_t *out_core0, size_t max_out0,
+                     uint64_t *out_sparse_lookups = nullptr) noexcept;
+
+/**
+ * @brief Assembles a multi-line `DeepSea` LLO VLIW text listing into 64-byte
+ * `IMEM` binary words (`libtpu_assemble_llo_vliw`).
+ * @param listing Null-terminated UTF-8 `DeepSea` LLO VLIW assembly text.
+ * @return Assembled `IMEM` bytes as a `std::string` (or `""` on syntax error).
+ */
+[[nodiscard]] std::string assemble_llo_vliw(const char *listing) noexcept;
+
+/**
+ * @brief Disassembles 64-byte `IMEM` binary words into a canonical `DeepSea`
+ * LLO VLIW text listing (`libtpu_disassemble_llo_vliw`).
+ * @param imem_bytes Pointer to 64-byte-aligned `IMEM` bundle words.
+ * @param imem_len Byte length of `imem_bytes`.
+ * @return Disassembled LLO VLIW text listing (or `""` if `imem_len < 64`).
+ */
+[[nodiscard]] std::string disassemble_llo_vliw(const uint8_t *imem_bytes,
+                                               size_t imem_len) noexcept;
+
+/**
+ * @brief Dispatches a wire-encoded `HostCommandEnvelopeProto` on the TPU
+ * continuation queue (`libtpu_rs_service_host_command`).
+ * @param envelope_bytes Pointer to wire-encoded `HostCommandEnvelopeProto`
+ * bytes.
+ * @param envelope_len Byte length of `envelope_bytes`.
+ * @param out_ack_sync Output pointer receiving the acknowledged BAR0 `SyncFlag`
+ * value.
+ * @return `Status` indicating continuation servicing success or failure.
+ */
+[[nodiscard]] Status service_host_command(const uint8_t *envelope_bytes,
+                                          size_t envelope_len,
+                                          uint64_t *out_ack_sync) noexcept;
+
+/**
+ * @brief Returns a formatted summary combining the LLO VLIW bundle schedule,
+ * physical register allocation, and 3D ICI optical routing hop count for a
+ * compiled `LoadedExecutable`.
+ * @param executable Reference to a compiled `LoadedExecutable`.
+ * @return Summary string (or `""` if `executable` is null).
+ */
+[[nodiscard]] std::string
+query_llo_schedule_summary(const LoadedExecutable &executable) noexcept;
 
 /**
  * @brief Zero-exception monadic value-or-status container (`Result<T>`) for

@@ -49,8 +49,34 @@ def collect_xspace(duration_ms: int = 100) -> bytes:
         prof.close()
 
 
+def inspect_executable_buffer_assignment(executable: libtpu.TpuExecutable) -> bytes:
+    """Returns the serialized `xla.BufferAssignmentProto` for `executable`.
+
+    Args:
+        executable: Compiled `libtpu.TpuExecutable` instance.
+
+    Returns:
+        Serialized `xla.BufferAssignmentProto` bytes.
+    """
+    return executable.buffer_assignment_proto()
+
+
+def collect_profiler_tool_data(tool_name: str = "trace_viewer.json") -> bytes:
+    """Collects serialized `tensorflow.ProfileToolData` bytes for `tool_name`.
+
+    Args:
+        tool_name: Tool artifact name (`"trace_viewer.json"`, `"input_pipeline.pb"`).
+
+    Returns:
+        Serialized tool payload bytes.
+    """
+    return libtpu.collect_profiler_tool_data(tool_name)
+
+
 __all__: list[str] = [
+    "collect_profiler_tool_data",
     "collect_xspace",
     "get_core_state_summary",
+    "inspect_executable_buffer_assignment",
     "start_server",
 ]

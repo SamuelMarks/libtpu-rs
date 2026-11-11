@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: shardy/dialect/sdy/ir/attrs.td & xla/service/spmd/shardy (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package sdy;
+
+message ShardyMeshAxisProto {
+  string name = 1;
+  int64 size = 2;
+}
+
+message ShardySubAxisInfoProto {
+  int64 pre_size = 1;
+  int64 size = 2;
+}
+
+message ShardyAxisRefProto {
+  string name = 1;
+  ShardySubAxisInfoProto sub_axis_info = 2;
+}
+
+message ShardyDimensionShardingProto {
+  repeated ShardyAxisRefProto axes = 1;
+  bool is_closed = 2;
+  int64 priority = 3;
+}
+
+message ShardyTensorShardingProto {
+  string mesh_name = 1;
+  repeated ShardyDimensionShardingProto dim_shardings = 2;
+  repeated ShardyAxisRefProto replicated_axes = 3;
+  repeated ShardyAxisRefProto unreduced_axes = 4;
+}
+
+message ShardyMeshProto {
+  string name = 1;
+  repeated ShardyMeshAxisProto axes = 2;
+  repeated int64 device_ids = 3;
+}

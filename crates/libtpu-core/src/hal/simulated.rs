@@ -4,7 +4,7 @@ use super::{
     BAR0_CSR_HBM_DMA_RING_HEAD, BAR0_CSR_HBM_DMA_RING_TAIL, BAR0_CSR_SYNC_FLAG_BASE,
     BAR0_CSR_TENSORCORE_PC, BAR0_CSR_TENSORCORE_RUN_CONTROL, BAR0_CSR_TENSORCORE_STATUS,
     ChipRegisterMap, DeviceMemoryStats, DeviceSpec, EmulatedKernelDriverBackend,
-    HbmRegionAllocator, TopologySpec, TpuCoreVmState, TpuHal,
+    HbmRegionAllocator, MultiCoreChipVmState, TopologySpec, TpuCoreVmState, TpuHal,
 };
 use crate::compiler::CompiledProgram;
 use crate::config::TpuInitConfig;
@@ -40,6 +40,8 @@ pub(super) struct SimulatedDeviceState {
     pub(super) poison_reason: Option<String>,
     /// Architectural `TensorCore` VLIW execution state machine.
     pub(super) vm: TpuCoreVmState,
+    /// Multi-core chip execution state machine (`tc_0`, `tc_1`, `scs_0..scs_3`).
+    pub(super) chip_vm: MultiCoreChipVmState,
 }
 
 /// Deterministic in-memory TPU hardware simulator implementing [`TpuHal`].
@@ -128,6 +130,10 @@ impl SimulatedTpuHal {
                                                 capacity_bytes: generation.hbm_capacity_bytes().0,
                                                 poison_reason: None,
                                                 vm: TpuCoreVmState::new(),
+                                                chip_vm: MultiCoreChipVmState::new(
+                                                    generation,
+                                                    generation.hbm_capacity_bytes().0,
+                                                ),
                                             },
                                         );
                                         local_hw_id += 1;
@@ -206,7 +212,7 @@ impl SimulatedTpuHal {
         Ok(())
     }
 
-    /// Queries the page-aligned byte length of an allocated HBM region at `address` on `device_id`.
+    /// Queries the byte length of an allocated HBM region at `address` on `device_id`.
     ///
     /// # Arguments
     ///
@@ -219,9 +225,9 @@ impl SimulatedTpuHal {
             .and_then(|guard| {
                 guard
                     .get(&device_id)
-                    .and_then(|dev| dev.region_allocator.allocated_block_size(address))
+                    .and_then(|dev| dev.allocations.get(&address).map(Vec::len))
             })
-            .unwrap_or(4096)
+            .unwrap_or(256)
     }
 }
 
@@ -417,6 +423,9 @@ impl TpuHal for SimulatedTpuHal {
             input_buffers.push(buf.clone());
         }
 
+        let _ =
+            dev.chip_vm
+                .execute_spmd_and_sparse_program(program, &input_buffers, &input_buffers)?;
         let evaluated_outputs =
             dev.vm
                 .execute_compiled_program(program, input_buffers, outputs.len());

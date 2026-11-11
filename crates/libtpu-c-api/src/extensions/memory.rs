@@ -153,26 +153,74 @@ pub unsafe extern "C" fn PJRT_HostMemoryAllocator_Get(
 ///
 /// `args` must be a valid [`PJRT_Metadata_Get_Args`].
 unsafe fn handle_executable_metadata_get(args: &mut PJRT_Metadata_Get_Args) {
+    let (stats_proto, platform_meta) = if (args.handle as usize) > 0x10000 {
+        // SAFETY: `args.handle` is a valid `PJRT_Executable*`.
+        let exec = unsafe { &*args.handle.cast::<crate::pjrt_types::PJRT_Executable>() };
+        let ms = &exec.inner.program.memory_stats;
+        let ba_bytes = exec.inner.program.buffer_assignment_proto.encode();
+        let total_size = ms
+            .generated_code_size_in_bytes
+            .saturating_add(ms.argument_size_in_bytes)
+            .saturating_add(ms.output_size_in_bytes)
+            .saturating_add(ms.temp_size_in_bytes);
+        let peak_mem = ms
+            .argument_size_in_bytes
+            .saturating_add(ms.output_size_in_bytes)
+            .saturating_add(ms.temp_size_in_bytes);
+        let target_args = exec
+            .inner
+            .program
+            .to_tpu_executable_proto()
+            .target_arguments
+            .unwrap_or_default()
+            .encode();
+        (
+            libtpu_core::proto::CompiledMemoryStatsProto {
+                generated_code_size_in_bytes: ms.generated_code_size_in_bytes,
+                argument_size_in_bytes: ms.argument_size_in_bytes,
+                output_size_in_bytes: ms.output_size_in_bytes,
+                alias_size_in_bytes: ms.alias_size_in_bytes,
+                temp_size_in_bytes: ms.temp_size_in_bytes,
+                host_generated_code_size_in_bytes: 0,
+                host_argument_size_in_bytes: 0,
+                host_output_size_in_bytes: 0,
+                host_alias_size_in_bytes: 0,
+                host_temp_size_in_bytes: 0,
+                serialized_buffer_assignment: ba_bytes,
+                peak_memory_in_bytes: peak_mem,
+                total_size_in_bytes: total_size,
+                total_allocation_bytes: total_size,
+                indefinite_allocations: ms.argument_size_in_bytes,
+                peak_unpadded_heap_bytes: peak_mem,
+            },
+            target_args,
+        )
+    } else {
+        (
+            libtpu_core::proto::CompiledMemoryStatsProto {
+                generated_code_size_in_bytes: 1024,
+                argument_size_in_bytes: 256,
+                output_size_in_bytes: 256,
+                alias_size_in_bytes: 0,
+                temp_size_in_bytes: 512,
+                host_generated_code_size_in_bytes: 0,
+                host_argument_size_in_bytes: 0,
+                host_output_size_in_bytes: 0,
+                host_alias_size_in_bytes: 0,
+                host_temp_size_in_bytes: 0,
+                serialized_buffer_assignment: Vec::new(),
+                peak_memory_in_bytes: 2048,
+                total_size_in_bytes: 2048,
+                total_allocation_bytes: 2048,
+                indefinite_allocations: 0,
+                peak_unpadded_heap_bytes: 1536,
+            },
+            Vec::new(),
+        )
+    };
     let encoded = libtpu_core::proto::PjRtExecutableMetadataProto {
-        compiled_memory_stats: Some(libtpu_core::proto::CompiledMemoryStatsProto {
-            generated_code_size_in_bytes: 1024,
-            argument_size_in_bytes: 256,
-            output_size_in_bytes: 256,
-            alias_size_in_bytes: 0,
-            temp_size_in_bytes: 512,
-            host_generated_code_size_in_bytes: 0,
-            host_argument_size_in_bytes: 0,
-            host_output_size_in_bytes: 0,
-            host_alias_size_in_bytes: 0,
-            host_temp_size_in_bytes: 0,
-            serialized_buffer_assignment: Vec::new(),
-            peak_memory_in_bytes: 2048,
-            total_size_in_bytes: 2048,
-            total_allocation_bytes: 2048,
-            indefinite_allocations: 0,
-            peak_unpadded_heap_bytes: 1536,
-        }),
-        platform_specific_metadata: Vec::new(),
+        compiled_memory_stats: Some(stats_proto),
+        platform_specific_metadata: platform_meta,
     }
     .encode();
     let (_, _, holder) = box_serialized_artifact(encoded);
@@ -442,6 +490,7 @@ unsafe fn handle_layouts_serialize(args: &mut PJRT_Layouts_MemoryLayout_Serializ
         memory_space: 0,
         element_size_in_bits: 32,
         dynamic_shape_metadata_prefix_bytes: 0,
+        ..libtpu_core::proto::LayoutProto::default()
     }
     .encode();
     let (ptr, len, holder) = box_serialized_artifact(encoded);
@@ -602,7 +651,7 @@ pub unsafe extern "C" fn PJRT_Layouts_Topology_GetDefaultLayout(
 ///
 /// `args` must be a valid [`PJRT_Metadata_Get_Args`].
 unsafe fn handle_layouts_executable_layouts(args: &mut PJRT_Metadata_Get_Args) {
-    args.metadata_out = if !args.handle.is_null() {
+    args.metadata_out = if (args.handle as usize) > 0x10000 {
         // SAFETY: `args.handle` is a valid `PJRT_Executable*`.
         let exec = unsafe { &*args.handle.cast::<crate::pjrt_types::PJRT_Executable>() };
         exec.inner.program.output_shapes.len().max(1)
@@ -659,12 +708,12 @@ pub unsafe extern "C" fn PJRT_Layouts_Executable_GetParameterLayouts(
 ///
 /// # Arguments
 ///
-/// * `args` - Validated [`PJRT_RawBuffer_Query_Args`] structure.
+/// * `args` - Validated [`PJRT_RawBuffer_CreateViewOfDeviceBuffer_Args`] structure.
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
-unsafe fn handle_raw_buffer_create(args: &mut PJRT_RawBuffer_Query_Args) {
+/// `args` must be a valid [`PJRT_RawBuffer_CreateViewOfDeviceBuffer_Args`].
+unsafe fn handle_raw_buffer_create(args: &mut PJRT_RawBuffer_CreateViewOfDeviceBuffer_Args) {
     let mut st = extension_state().lock();
     st.raw_buffers = st.raw_buffers.saturating_add(1);
     let (buf_ptr, addr, byte_size, mem_ptr) = if !args.buffer.is_null() {
@@ -690,25 +739,25 @@ unsafe fn handle_raw_buffer_create(args: &mut PJRT_RawBuffer_Query_Args) {
         byte_size,
         memory_ptr: mem_ptr,
     }));
-    args.out_value = raw_handle as usize;
+    args.raw_buffer_out = raw_handle as usize;
 }
 
 /// Creates a `PJRT_RawBuffer` alias of a `PJRT_Buffer` (`PJRT_RawBuffer_CreateRawAliasOfBuffer`).
 ///
 /// # Arguments
 ///
-/// * `raw_args` - Pointer to [`PJRT_RawBuffer_Query_Args`].
+/// * `raw_args` - Pointer to [`PJRT_RawBuffer_CreateViewOfDeviceBuffer_Args`].
 ///
 /// # Safety
 ///
-/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
+/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_CreateViewOfDeviceBuffer_Args`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_RawBuffer_CreateRawAliasOfBuffer(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_RawBuffer_Query_Args>(
+        dispatch_typed_extension_args::<PJRT_RawBuffer_CreateViewOfDeviceBuffer_Args>(
             raw_args,
             handle_raw_buffer_create,
         )
@@ -758,17 +807,17 @@ pub unsafe extern "C" fn PJRT_RawBuffer_Destroy(
     }
 }
 
-/// Strongly-typed handler for [`PJRT_RawBuffer_GetHostPointer`] and [`PJRT_RawBuffer_GetMemorySpace`].
+/// Strongly-typed handler for [`PJRT_RawBuffer_GetHostPointer`].
 ///
 /// # Arguments
 ///
-/// * `args` - Validated [`PJRT_RawBuffer_Query_Args`] structure.
+/// * `args` - Validated [`PJRT_RawBuffer_GetHostPointer_Args`] structure.
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
-unsafe fn handle_raw_buffer_get_device_address(args: &mut PJRT_RawBuffer_Query_Args) {
-    args.out_value = if !args.buffer.is_null() {
+/// `args` must be a valid [`PJRT_RawBuffer_GetHostPointer_Args`].
+unsafe fn handle_raw_buffer_get_device_address(args: &mut PJRT_RawBuffer_GetHostPointer_Args) {
+    args.host_pointer_out = if !args.buffer.is_null() {
         // SAFETY: `buffer` is a valid `PJRT_Buffer*`.
         let buf = unsafe { &*args.buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
         usize::try_from(buf.inner.address.0).unwrap_or(0x1000)
@@ -781,18 +830,18 @@ unsafe fn handle_raw_buffer_get_device_address(args: &mut PJRT_RawBuffer_Query_A
 ///
 /// # Arguments
 ///
-/// * `raw_args` - Pointer to [`PJRT_RawBuffer_Query_Args`].
+/// * `raw_args` - Pointer to [`PJRT_RawBuffer_GetHostPointer_Args`].
 ///
 /// # Safety
 ///
-/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
+/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_GetHostPointer_Args`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_RawBuffer_GetHostPointer(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_RawBuffer_Query_Args>(
+        dispatch_typed_extension_args::<PJRT_RawBuffer_GetHostPointer_Args>(
             raw_args,
             handle_raw_buffer_get_device_address,
         )
@@ -803,13 +852,13 @@ pub unsafe extern "C" fn PJRT_RawBuffer_GetHostPointer(
 ///
 /// # Arguments
 ///
-/// * `args` - Validated [`PJRT_RawBuffer_Query_Args`] structure.
+/// * `args` - Validated [`PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args`] structure.
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_RawBuffer_Query_Args`].
-unsafe fn handle_raw_buffer_get_size(args: &mut PJRT_RawBuffer_Query_Args) {
-    args.out_value = if !args.buffer.is_null() {
+/// `args` must be a valid [`PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args`].
+unsafe fn handle_raw_buffer_get_size(args: &mut PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args) {
+    args.on_device_size_in_bytes = if !args.buffer.is_null() {
         // SAFETY: `buffer` is a valid `PJRT_Buffer*`.
         let buf = unsafe { &*args.buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
         buf.inner.shape.on_device_byte_size().0
@@ -822,42 +871,61 @@ unsafe fn handle_raw_buffer_get_size(args: &mut PJRT_RawBuffer_Query_Args) {
 ///
 /// # Arguments
 ///
-/// * `raw_args` - Pointer to [`PJRT_RawBuffer_Query_Args`].
+/// * `raw_args` - Pointer to [`PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args`].
 ///
 /// # Safety
 ///
-/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
+/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_RawBuffer_GetOnDeviceSizeInBytes(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_RawBuffer_Query_Args>(
+        dispatch_typed_extension_args::<PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args>(
             raw_args,
             handle_raw_buffer_get_size,
         )
     }
 }
 
+/// Strongly-typed handler for [`PJRT_RawBuffer_GetMemorySpace`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_RawBuffer_GetMemorySpace_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_RawBuffer_GetMemorySpace_Args`].
+unsafe fn handle_raw_buffer_get_memory_space(args: &mut PJRT_RawBuffer_GetMemorySpace_Args) {
+    args.memory_space_out = if !args.buffer.is_null() {
+        // SAFETY: `buffer` is a valid `PJRT_Buffer*`.
+        let buf = unsafe { &*args.buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
+        usize::try_from(buf.inner.address.0).unwrap_or(0x1000)
+    } else {
+        0x1000
+    };
+}
+
 /// Queries memory space of a `PJRT_RawBuffer` (`PJRT_RawBuffer_GetMemorySpace`).
 ///
 /// # Arguments
 ///
-/// * `raw_args` - Pointer to [`PJRT_RawBuffer_Query_Args`].
+/// * `raw_args` - Pointer to [`PJRT_RawBuffer_GetMemorySpace_Args`].
 ///
 /// # Safety
 ///
-/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_Query_Args`].
+/// `raw_args` must be null or a valid pointer to [`PJRT_RawBuffer_GetMemorySpace_Args`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_RawBuffer_GetMemorySpace(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_RawBuffer_Query_Args>(
+        dispatch_typed_extension_args::<PJRT_RawBuffer_GetMemorySpace_Args>(
             raw_args,
-            handle_raw_buffer_get_device_address,
+            handle_raw_buffer_get_memory_space,
         )
     }
 }

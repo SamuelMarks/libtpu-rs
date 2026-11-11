@@ -1179,16 +1179,23 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
         == []
     )
 
+    long_name = ("a" * 130 + ".proto").encode("utf-8")
+    # 136 in base-128 varint is [0x88, 0x01]
     proto_sec = (
         b"\x00\x0a\x02ab\x0a\x0exla_data.proto\x12\x03xla"
         b"\x0a\x09hlo.proto"
+        b"\x0a\x88\x01" + long_name + b"\x12\x08xla.long"
+        b"\x0a\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80"
         b"\x0a\x0dbad_pkg.proto\x12\xff"
+        b"\x0a\x0ebad_pkg2.proto\x12\x7f"
         b"\x0a\x08notproto\x00"
     )
     carved = re_ext.carve_protodesc_cold(proto_sec)
-    assert len(carved) == 3
+    assert len(carved) == 5
     assert carved[0] == {"name": "xla_data.proto", "package": "xla"}
     assert carved[1] == {"name": "hlo.proto", "package": ""}
+    assert carved[2] == {"name": long_name.decode("utf-8"), "package": "xla.long"}
+    assert re_ext._read_proto_varint(b"\x80", 0) == (0, 2)
 
     blob = b"\x00tpu_tiles.cfg\x00TILE_8x128"
     toc = (
@@ -1230,10 +1237,14 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     assert len(bad_errs) >= 10
 
     mismatch_manifest = {
-        "libtpu_so": {"pjrt_vtable_slots": [{"min_struct_size": 24}] * 138},
+        "libtpu_so": {
+            "pjrt_vtable_slots": [{"min_struct_size": 24}] * 138,
+            "filetoc_md5_verified": False,
+        },
     }
     mismatch_layouts = {
         "pjrt_slots": [{"min_struct_size": None}] * 138,
+        "extension_functions": [{"ext_type": 29}],
     }
     (bad_re / "golden_binary_manifest.json").write_text(
         json.dumps(mismatch_manifest), encoding="utf-8"
@@ -1247,5 +1258,6 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     (bad_re / "csr_register_map.json").write_text(json.dumps({"generations": {}}), encoding="utf-8")
     mismatch_errs = re_ext.validate_golden_manifests(tmp_path)
     assert any("min_struct_size mismatch" in e for e in mismatch_errs)
+    assert any("expected 138 extension_functions" in e for e in mismatch_errs)
     assert any("incomplete descriptor closure" in e for e in mismatch_errs)
     assert any("missing TPU generation CSR maps" in e for e in mismatch_errs)

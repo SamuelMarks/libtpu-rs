@@ -947,18 +947,55 @@ pub fn hlo_ast_to_proto(ast: &AstModule) -> HloModuleProto {
                 })
                 .collect();
 
+            let slice_dimensions: Vec<crate::proto::HloSliceDimensionsProto> = inst
+                .slice_bounds
+                .iter()
+                .map(
+                    |&(start, limit, stride)| crate::proto::HloSliceDimensionsProto {
+                        start: i64::try_from(start).unwrap_or(0),
+                        limit: i64::try_from(limit).unwrap_or(0),
+                        stride: i64::try_from(stride.max(1)).unwrap_or(1),
+                    },
+                )
+                .collect();
+
+            let control_predecessor_ids: Vec<i64> = inst
+                .control_predecessors
+                .iter()
+                .filter_map(|pred_name| name_to_id.get(pred_name).copied())
+                .collect();
+
+            let sharding = inst.sharding.as_deref().map(|sh_text| {
+                let mut op_sh =
+                    super::passes::ParsedShardingSpec::from_str_with_partitions(sh_text, 1)
+                        .to_op_sharding_proto();
+                if sh_text.contains("last_tile_dim_replicate") {
+                    op_sh.replicate_on_last_tile_dim = true;
+                }
+                op_sh
+            });
+
+            let comparison_direction = match inst.extra_attrs.get("comparison_direction") {
+                Some(MlirAttribute::String(s)) => s.clone(),
+                _ => String::new(),
+            };
+
             instructions.push(HloInstructionProto {
                 name: inst.name.clone(),
                 opcode: inst.opcode.clone(),
                 shape: Some(mlir_type_to_shape_proto(&inst.result_type)),
                 operand_ids,
+                control_predecessor_ids,
                 called_computation_ids,
                 dimensions,
                 window,
                 convolution_dimension_numbers,
+                slice_dimensions,
                 dot_dimension_numbers,
                 padding_config,
+                sharding,
                 replica_groups,
+                comparison_direction,
                 channel_id: inst.channel_id.unwrap_or(0),
                 backend_config: inst
                     .backend_config
@@ -1216,6 +1253,52 @@ pub fn hlo_proto_to_ast(proto: &HloModuleProto) -> AstModule {
             let backend_config = (!inst.backend_config.is_empty())
                 .then(|| String::from_utf8_lossy(&inst.backend_config).into_owned());
             let channel_id = (inst.channel_id > 0).then_some(inst.channel_id);
+            let slice_bounds: Vec<(usize, usize, usize)> = inst
+                .slice_dimensions
+                .iter()
+                .map(|sd| {
+                    (
+                        usize::try_from(sd.start.max(0)).unwrap_or(0),
+                        usize::try_from(sd.limit.max(0)).unwrap_or(0),
+                        usize::try_from(sd.stride.max(1)).unwrap_or(1),
+                    )
+                })
+                .collect();
+            let control_predecessors: Vec<String> = inst
+                .control_predecessor_ids
+                .iter()
+                .filter_map(|cid| id_to_name.get(cid).cloned())
+                .collect();
+            let sharding = inst.sharding.as_ref().map(|sh| {
+                if sh.tile_assignment_dimensions.is_empty() {
+                    String::from("{replicated}")
+                } else {
+                    let dims_str = sh
+                        .tile_assignment_dimensions
+                        .iter()
+                        .map(i64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let devs_str = sh
+                        .tile_assignment_devices
+                        .iter()
+                        .map(i64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let suffix = if sh.replicate_on_last_tile_dim {
+                        " last_tile_dim_replicate"
+                    } else {
+                        ""
+                    };
+                    format!("{{devices=[{dims_str}]{devs_str}{suffix}}}")
+                }
+            });
+            if !inst.comparison_direction.is_empty() {
+                extra_attrs.insert(
+                    String::from("comparison_direction"),
+                    MlirAttribute::String(inst.comparison_direction.clone()),
+                );
+            }
             instructions.push(HloInstructionAst {
                 name: inst.name.clone(),
                 is_root,
@@ -1230,15 +1313,15 @@ pub fn hlo_proto_to_ast(proto: &HloModuleProto) -> AstModule {
                 conv_dim_labels,
                 dot_dims,
                 dimensions,
-                slice_bounds: Vec::new(),
+                slice_bounds,
                 padding_config,
-                sharding: None,
+                sharding,
                 custom_call_target: (!inst.custom_call_target.is_empty())
                     .then(|| inst.custom_call_target.clone()),
                 backend_config,
                 channel_id,
                 replica_groups,
-                control_predecessors: Vec::new(),
+                control_predecessors,
                 extra_attrs,
                 span: TokenSpan::default(),
             });
@@ -1783,12 +1866,35 @@ fn build_instruction_attrs_from_ast(
         gather_index_vector_dim: attr_usize(&op.attributes, "index_vector_dim"),
         gather_slice_sizes: attr_usize_vec(&op.attributes, "slice_sizes"),
         collapsed_slice_dims: attr_usize_vec(&op.attributes, "collapsed_slice_dims"),
+        gather_offset_dims: attr_usize_vec(&op.attributes, "offset_dims"),
+        gather_start_index_map: attr_usize_vec(&op.attributes, "start_index_map"),
+        gather_operand_batching_dims: attr_usize_vec(&op.attributes, "operand_batching_dims"),
+        gather_start_indices_batching_dims: attr_usize_vec(
+            &op.attributes,
+            "start_indices_batching_dims",
+        ),
         scatter_update_window_dims: attr_usize_vec(&op.attributes, "update_window_dims"),
+        scatter_inserted_window_dims: attr_usize_vec(&op.attributes, "inserted_window_dims"),
+        scatter_dims_to_operand_dims: attr_usize_vec(
+            &op.attributes,
+            "scatter_dims_to_operand_dims",
+        ),
+        scatter_input_batching_dims: attr_usize_vec(&op.attributes, "input_batching_dims"),
+        scatter_indices_batching_dims: attr_usize_vec(
+            &op.attributes,
+            "scatter_indices_batching_dims",
+        ),
+        scatter_index_vector_dim: attr_usize(&op.attributes, "index_vector_dim"),
         custom_call_target: op
             .attributes
             .get("call_target_name")
             .and_then(MlirAttribute::as_str)
             .map_or_else(String::new, String::from),
+        sharding_spec: op
+            .attributes
+            .get("sdy.sharding")
+            .or_else(|| op.attributes.get("mhlo.sharding"))
+            .map_or_else(String::new, MlirAttribute::to_mlir_string),
         comparison_direction: match op.attributes.get("comparison_direction") {
             Some(MlirAttribute::ComparisonDirection(dir)) => String::from(dir.as_str()),
             _ => String::new(),
@@ -1856,6 +1962,45 @@ fn build_instruction_attrs_from_ast(
         attrs
             .dot_rhs_batch_dims
             .clone_from(&dot.rhs_batching_dimensions);
+    }
+    for attr_val in op.attributes.values() {
+        match attr_val {
+            MlirAttribute::GatherDimensionNumbers(gdn) => {
+                attrs.gather_offset_dims.clone_from(&gdn.offset_dims);
+                attrs
+                    .collapsed_slice_dims
+                    .clone_from(&gdn.collapsed_slice_dims);
+                attrs
+                    .gather_operand_batching_dims
+                    .clone_from(&gdn.operand_batching_dims);
+                attrs
+                    .gather_start_indices_batching_dims
+                    .clone_from(&gdn.start_indices_batching_dims);
+                attrs
+                    .gather_start_index_map
+                    .clone_from(&gdn.start_index_map);
+                attrs.gather_index_vector_dim = gdn.index_vector_dim;
+            }
+            MlirAttribute::ScatterDimensionNumbers(sdn) => {
+                attrs
+                    .scatter_update_window_dims
+                    .clone_from(&sdn.update_window_dims);
+                attrs
+                    .scatter_inserted_window_dims
+                    .clone_from(&sdn.inserted_window_dims);
+                attrs
+                    .scatter_input_batching_dims
+                    .clone_from(&sdn.input_batching_dims);
+                attrs
+                    .scatter_indices_batching_dims
+                    .clone_from(&sdn.scatter_indices_batching_dims);
+                attrs
+                    .scatter_dims_to_operand_dims
+                    .clone_from(&sdn.scatter_dims_to_operand_dims);
+                attrs.scatter_index_vector_dim = sdn.index_vector_dim;
+            }
+            _ => {}
+        }
     }
     attrs
 }
@@ -2079,6 +2224,7 @@ fn lower_hlo_computations(ast: &AstModule) -> ParsedHloModule {
                         dot_lhs_batch_dims: inst.dot_dims.lhs_batching_dimensions.clone(),
                         dot_rhs_batch_dims: inst.dot_dims.rhs_batching_dimensions.clone(),
                         custom_call_target: inst.custom_call_target.clone().unwrap_or_default(),
+                        sharding_spec: inst.sharding.clone().unwrap_or_default(),
                         reduce_op_kind,
                         sub_computations,
                         ..InstructionAttrs::default()

@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: asic_sw/deepsea/dma_descriptor_ring.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package asic_sw.deepsea;
+
+message DmaDescriptorRingConfigProto {
+  uint32 ring_id = 1;
+  uint32 ring_capacity_entries = 2;
+  uint64 head_csr_offset = 3;
+  uint64 tail_csr_offset = 4;
+  uint32 sync_flag_base_id = 5;
+  bool iommu_scatter_gather_enabled = 6;
+}

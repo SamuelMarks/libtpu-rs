@@ -178,6 +178,68 @@ class DataType(enum.IntEnum):
         """
         return _DATA_TYPE_NUMPY_TYPESTRS[int(self.value)]
 
+    def dlpack_type_code(self) -> int:
+        """Returns the DLPack `DLDataTypeCode` integer for this `DataType`.
+
+        Returns:
+            DLPack type code (`0` int, `1` uint, `2` float, `4` bfloat, `5` complex, `6` bool).
+        """
+        val = int(self.value)
+        if val == 1:
+            return 6
+        if val in (2, 3, 4, 5, 21, 24):
+            return 0
+        if val in (6, 7, 8, 9, 22, 25):
+            return 1
+        if val == 13:
+            return 4
+        if val in (14, 15):
+            return 5
+        return 2
+
+
+class _DLDevice(ctypes.Structure):
+    """DLPack v1.0 `DLDevice` C ABI structure (`8` bytes)."""
+
+    _fields_ = [
+        ("device_type", ctypes.c_int32),
+        ("device_id", ctypes.c_int32),
+    ]
+
+
+class _DLDataType(ctypes.Structure):
+    """DLPack v1.0 `DLDataType` C ABI structure (`4` bytes)."""
+
+    _fields_ = [
+        ("code", ctypes.c_uint8),
+        ("bits", ctypes.c_uint8),
+        ("lanes", ctypes.c_uint16),
+    ]
+
+
+class _DLTensor(ctypes.Structure):
+    """DLPack v1.0 `DLTensor` C ABI structure (`48` bytes)."""
+
+    _fields_ = [
+        ("data", ctypes.c_void_p),
+        ("device", _DLDevice),
+        ("ndim", ctypes.c_int32),
+        ("dtype", _DLDataType),
+        ("shape", ctypes.POINTER(ctypes.c_int64)),
+        ("strides", ctypes.POINTER(ctypes.c_int64)),
+        ("byte_offset", ctypes.c_uint64),
+    ]
+
+
+class _DLManagedTensor(ctypes.Structure):
+    """DLPack v1.0 `DLManagedTensor` C ABI structure (`64` bytes)."""
+
+    _fields_ = [
+        ("dl_tensor", _DLTensor),
+        ("manager_ctx", ctypes.c_void_p),
+        ("deleter", ctypes.c_void_p),
+    ]
+
 
 def get_library_path() -> str:
     """Resolves the filesystem path to the compiled `libtpu` shared library.
@@ -772,6 +834,13 @@ def _load_cdll() -> ctypes.CDLL:
     ]
     lib.libtpu_rs_inspect_register_allocation.restype = ctypes.c_size_t
 
+    lib.libtpu_rs_executable_buffer_assignment_proto.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
+    lib.libtpu_rs_executable_buffer_assignment_proto.restype = ctypes.c_size_t
+
     _CDLL_CACHE[lib_path] = lib
     return lib
 
@@ -958,16 +1027,39 @@ class TpuBuffer:
         return (14, 0)
 
     def __dlpack__(self, stream: int | None = None) -> object:
-        """Returns a CPython `PyCapsule` (`"dltensor"`) wrapping the device buffer pointer.
+        """Returns a CPython `PyCapsule` (`"dltensor"`) wrapping a DLPack v1.0 `DLManagedTensor`.
 
         Args:
             stream: Optional stream identifier (unused on synchronous HBM view).
 
         Returns:
-            `PyCapsule` wrapping the underlying `PJRT_Buffer*` handle.
+            `PyCapsule` wrapping a populated `_DLManagedTensor` structure.
         """
         _ = stream
-        return _create_c_api_capsule(int(self._handle.value or 0), "dltensor")
+        dims = self.shape()
+        ndim = len(dims)
+        dt = self.dtype()
+        shape_arr = (ctypes.c_int64 * max(ndim, 1))(*dims) if ndim > 0 else (ctypes.c_int64 * 1)(1)
+        strides_list: list[int] = [1] * max(ndim, 1)
+        running = 1
+        for ax in range(ndim - 1, -1, -1):
+            strides_list[ax] = running
+            running *= max(dims[ax], 1)
+        strides_arr = (ctypes.c_int64 * max(ndim, 1))(*strides_list)
+        dl_dev = _DLDevice(14, 0)
+        dl_dt = _DLDataType(dt.dlpack_type_code(), max(dt.bit_size(), 8), 1)
+        dl_tensor = _DLTensor(
+            int(self._handle.value or 0),
+            dl_dev,
+            ndim,
+            dl_dt,
+            ctypes.cast(shape_arr, ctypes.POINTER(ctypes.c_int64)),
+            ctypes.cast(strides_arr, ctypes.POINTER(ctypes.c_int64)),
+            0,
+        )
+        managed = _DLManagedTensor(dl_tensor, int(self._handle.value or 0), 0)
+        self._dlpack_keepalive: tuple[object, ...] = (shape_arr, strides_arr, managed)
+        return _create_c_api_capsule(ctypes.addressof(managed), "dltensor")
 
     def close(self) -> None:
         """Deletes and frees the underlying `PJRT_Buffer*` via `PJRT_Buffer_Destroy`."""
@@ -1250,6 +1342,17 @@ class TpuExecutable:
         buf = ctypes.create_string_buffer(sz + 1)
         self._lib.libtpu_rs_inspect_register_allocation(self._handle, buf, sz + 1)
         return buf.value.decode("utf-8")
+
+    def buffer_assignment_proto(self) -> bytes:
+        """Returns the wire-encoded `xla.BufferAssignmentProto` for this executable.
+
+        Returns:
+            Serialized `BufferAssignmentProto` byte payload.
+        """
+        sz = int(self._lib.libtpu_rs_executable_buffer_assignment_proto(self._handle, None, 0))
+        buf = ctypes.create_string_buffer(sz)
+        self._lib.libtpu_rs_executable_buffer_assignment_proto(self._handle, buf, sz)
+        return buf.raw
 
     def close(self) -> None:
         """Frees the underlying `PJRT_LoadedExecutable*` via `PJRT_LoadedExecutable_Destroy`."""
@@ -2471,6 +2574,216 @@ def compute_ici_route(
             src_x, src_y, src_z, dst_x, dst_y, dst_z, 1 if wrap_around else 0
         )
     )
+
+
+class _LibTpuCStatus(ctypes.Structure):
+    """C ABI structure matching `LibTpuCStatus` (`16` bytes)."""
+
+    _fields_ = [
+        ("code", ctypes.c_int32),
+        ("pad", ctypes.c_int32),
+        ("message", ctypes.c_void_p),
+    ]
+
+
+def register_custom_call_target(target_name: str, handler_addr: int) -> None:
+    """Registers a custom `XLA_FFI_Handler` C function address under `target_name`.
+
+    Args:
+        target_name: Custom call target name (`stablehlo.custom_call @target_name`).
+        handler_addr: Non-zero function pointer address of an `XLA_FFI_Handler`.
+
+    Raises:
+        TpuError: If `target_name` is empty or `handler_addr` is zero.
+    """
+    if not target_name or handler_addr <= 0:
+        raise TpuError(3, "target_name must be non-empty and handler_addr > 0")
+    lib = _load_cdll()
+    lib.libtpu_rs_register_ffi_handler.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+    lib.libtpu_rs_register_ffi_handler.restype = _LibTpuCStatus
+    _ = lib.libtpu_rs_register_ffi_handler(
+        target_name.encode("utf-8"), ctypes.c_void_p(handler_addr)
+    )
+
+
+def lookup_csr_by_path(path: str) -> int | None:
+    """Resolves a hierarchical `DeepSea` CSR path in the 13,261+ CSR catalog.
+
+    Args:
+        path: Hierarchical CSR register path (e.g., `"pxc_tc_0_tcs_core_state.PC"`).
+
+    Returns:
+        Physical BAR0 MMIO byte offset, or `None` if `path` is unknown.
+    """
+    lib = _load_cdll()
+    lib.libtpu_rs_lookup_csr_by_path.argtypes = [ctypes.c_char_p]
+    lib.libtpu_rs_lookup_csr_by_path.restype = ctypes.c_uint64
+    res = int(lib.libtpu_rs_lookup_csr_by_path(path.encode("utf-8")))
+    if res == 0xFFFF_FFFF_FFFF_FFFF:
+        return None
+    return res
+
+
+def lookup_csr_by_offset(byte_offset: int) -> str | None:
+    """Resolves a physical BAR0 MMIO byte offset in the 13,261+ CSR catalog.
+
+    Args:
+        byte_offset: Physical BAR0 MMIO byte offset.
+
+    Returns:
+        Canonical hierarchical CSR register path, or `None` if unknown.
+    """
+    lib = _load_cdll()
+    lib.libtpu_rs_lookup_csr_by_offset.argtypes = [
+        ctypes.c_uint64,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
+    lib.libtpu_rs_lookup_csr_by_offset.restype = ctypes.c_size_t
+    length = int(lib.libtpu_rs_lookup_csr_by_offset(byte_offset, None, 0))
+    if length == 0:
+        return None
+    buf = ctypes.create_string_buffer(length + 1)
+    lib.libtpu_rs_lookup_csr_by_offset(byte_offset, buf, length + 1)
+    return buf.value.decode("utf-8")
+
+
+def collect_profiler_tool_data(tool_name: str = "trace_viewer.json") -> bytes:
+    """Collects serialized `tensorflow.ProfileToolData` bytes for `tool_name`.
+
+    Args:
+        tool_name: Tool artifact name (`"trace_viewer.json"`, `"input_pipeline.pb"`).
+
+    Returns:
+        Serialized tool payload bytes from `libtpu_rs_profiler_collect_tool_data`.
+    """
+    lib = _load_cdll()
+    lib.libtpu_rs_profiler_collect_tool_data.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+    ]
+    lib.libtpu_rs_profiler_collect_tool_data.restype = ctypes.c_size_t
+    c_name = tool_name.encode("utf-8")
+    length = int(lib.libtpu_rs_profiler_collect_tool_data(c_name, None, 0))
+    buf = (ctypes.c_uint8 * length)()
+    lib.libtpu_rs_profiler_collect_tool_data(c_name, ctypes.addressof(buf), length)
+    return bytes(buf)
+
+
+def verify_protodesc_293_catalog() -> int:
+    """Verifies all 293 embedded `protodesc_cold` descriptor catalog entries.
+
+    Returns:
+        Number of verified embedded `.proto` descriptor catalog entries (`293`).
+    """
+    lib = _load_cdll()
+    lib.libtpu_rs_verify_all_293_protodesc_catalog.argtypes = [ctypes.POINTER(ctypes.c_size_t)]
+    lib.libtpu_rs_verify_all_293_protodesc_catalog.restype = _LibTpuCStatus
+    count = ctypes.c_size_t(0)
+    _ = lib.libtpu_rs_verify_all_293_protodesc_catalog(ctypes.byref(count))
+    return int(count.value)
+
+
+def verify_protodesc_cold_293() -> int:
+    """Alias for `verify_protodesc_293_catalog()` verifying all 293 embedded `.proto` files.
+
+    Returns:
+        Number of verified embedded `.proto` descriptor catalog entries (`293`).
+    """
+    return verify_protodesc_293_catalog()
+
+
+def assemble_llo_vliw(listing: str) -> bytes:
+    """Assembles a multi-line `DeepSea` LLO VLIW text listing into 64-byte `IMEM` binary words.
+
+    Args:
+        listing: Multi-line `DeepSea` LLO VLIW assembly text.
+
+    Returns:
+        Assembled 64-byte-aligned `IMEM` binary words.
+
+    Raises:
+        TpuError: If `listing` contains malformed LLO VLIW syntax.
+    """
+    lib = _load_cdll()
+    lib.libtpu_assemble_llo_vliw.argtypes = [
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    lib.libtpu_assemble_llo_vliw.restype = _LibTpuCStatus
+    c_listing = listing.encode("utf-8")
+    out_len = ctypes.c_size_t(0)
+    st = lib.libtpu_assemble_llo_vliw(c_listing, None, 0, ctypes.byref(out_len))
+    if int(st.code) != 0:
+        lib.libtpu_rs_status_free(st)
+        raise TpuError(int(st.code), "Failed to assemble LLO VLIW listing")
+    buf = (ctypes.c_uint8 * int(out_len.value))()
+    st2 = lib.libtpu_assemble_llo_vliw(
+        c_listing, ctypes.addressof(buf), int(out_len.value), ctypes.byref(out_len)
+    )
+    lib.libtpu_rs_status_free(st2)
+    return bytes(buf)
+
+
+def disassemble_llo_vliw(imem_bytes: bytes) -> str:
+    """Disassembles 64-byte `IMEM` binary words into a canonical `DeepSea` LLO VLIW listing.
+
+    Args:
+        imem_bytes: Raw 64-byte-aligned `IMEM` bundle words.
+
+    Returns:
+        Multi-line `DeepSea` LLO VLIW text listing (or `""` if `len(imem_bytes) < 64`).
+    """
+    lib = _load_cdll()
+    lib.libtpu_disassemble_llo_vliw.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
+    lib.libtpu_disassemble_llo_vliw.restype = ctypes.c_size_t
+    in_buf = (ctypes.c_uint8 * len(imem_bytes)).from_buffer_copy(imem_bytes)
+    length = int(
+        lib.libtpu_disassemble_llo_vliw(ctypes.addressof(in_buf), len(imem_bytes), None, 0)
+    )
+    if length == 0:
+        return ""
+    out_buf = ctypes.create_string_buffer(length + 1)
+    lib.libtpu_disassemble_llo_vliw(ctypes.addressof(in_buf), len(imem_bytes), out_buf, length + 1)
+    return out_buf.value.decode("utf-8")
+
+
+def service_host_command(envelope_bytes: bytes) -> int:
+    """Dispatches a wire-encoded `HostCommandEnvelopeProto` on the TPU continuation queue.
+
+    Args:
+        envelope_bytes: Wire-encoded `HostCommandEnvelopeProto` payload bytes.
+
+    Returns:
+        Acknowledged BAR0 `SyncFlag` integer value.
+
+    Raises:
+        TpuError: If `envelope_bytes` cannot be decoded.
+    """
+    lib = _load_cdll()
+    lib.libtpu_rs_service_host_command.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_uint64),
+    ]
+    lib.libtpu_rs_service_host_command.restype = _LibTpuCStatus
+    in_buf = (ctypes.c_uint8 * len(envelope_bytes)).from_buffer_copy(envelope_bytes)
+    out_ack = ctypes.c_uint64(0)
+    st = lib.libtpu_rs_service_host_command(
+        ctypes.addressof(in_buf), len(envelope_bytes), ctypes.byref(out_ack)
+    )
+    if int(st.code) != 0:
+        lib.libtpu_rs_status_free(st)
+        raise TpuError(int(st.code), "Failed to service HostCommandEnvelopeProto")
+    return int(out_ack.value)
 
 
 configure_library_path()

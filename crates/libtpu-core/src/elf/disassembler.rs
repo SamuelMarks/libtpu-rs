@@ -538,7 +538,57 @@ impl IsaBitfieldSpecTable {
     pub fn for_generation(generation: crate::types::TpuGeneration) -> Self {
         use crate::types::TpuGeneration;
         let (bundle_width_bits, slots) = match generation {
-            TpuGeneration::V2 | TpuGeneration::V3 | TpuGeneration::V4 | TpuGeneration::V4Lite => (
+            TpuGeneration::V2 | TpuGeneration::V3 => (
+                256,
+                vec![
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::Header,
+                        bit_offset: 0,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::S0,
+                        bit_offset: 32,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::S1,
+                        bit_offset: 64,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::V0,
+                        bit_offset: 96,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::V1,
+                        bit_offset: 128,
+                        bit_width: 32,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::M0,
+                        bit_offset: 160,
+                        bit_width: 16,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::M1,
+                        bit_offset: 176,
+                        bit_width: 8,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::X0,
+                        bit_offset: 184,
+                        bit_width: 8,
+                    },
+                    IsaBitfieldSpec {
+                        slot: IsaSlotKind::D0,
+                        bit_offset: 192,
+                        bit_width: 64,
+                    },
+                ],
+            ),
+            TpuGeneration::V4 | TpuGeneration::V4Lite => (
                 320,
                 vec![
                     IsaBitfieldSpec {
@@ -734,6 +784,30 @@ impl IsaBitfieldSpecTable {
         }
         table
     }
+
+    /// Verifies that this [`IsaBitfieldSpecTable`] is bit-locked 1:1 with the compiler's
+    /// generation-specific VLIW bundle encoders (`JfcV2V3BundleWord`, `PfcV4BundleWord`,
+    /// `VfcV5BundleWord`, `VfkV6V7BundleWord`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::BinaryFormatError`] if the slot bit widths do not sum to
+    /// `self.bundle_width_bits` or do not match the compiler's bundle word size.
+    pub fn verify_compiler_bitstream_lock(&self) -> LibTpuResult<()> {
+        let sum_bits: u16 = self.slots.iter().map(|s| s.bit_width).sum();
+        let expected_bytes =
+            crate::compiler::TensorCoreVliwBundle::generation_bundle_byte_width(self.generation);
+        let expected_bits = u16::try_from(expected_bytes * 8).unwrap_or(0);
+        if (sum_bits, self.bundle_width_bits) != (expected_bits, expected_bits) {
+            return Err(LibTpuError::BinaryFormatError {
+                reason: format!(
+                    "ISA bitfield spec mismatch for {:?}: sum_bits={sum_bits}, table_bits={}, compiler_bits={expected_bits}",
+                    self.generation, self.bundle_width_bits
+                ),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Scans an x86-64 machine code slice from `asic_sw::driver::*` using `iced_x86`
@@ -925,6 +999,23 @@ impl EhFrameCfiParser {
                     0x05 => {
                         let reg = Self::read_uleb128(instrs, &mut pc)?;
                         let _off = Self::read_uleb128(instrs, &mut pc)?;
+                        saved_regs.insert((reg & 0xFF) as u8);
+                    }
+                    0x0F => {
+                        let expr_len =
+                            usize::try_from(Self::read_uleb128(instrs, &mut pc)?).unwrap_or(0);
+                        pc = pc.saturating_add(expr_len).min(instrs.len());
+                    }
+                    0x10 => {
+                        let reg = Self::read_uleb128(instrs, &mut pc)?;
+                        let expr_len =
+                            usize::try_from(Self::read_uleb128(instrs, &mut pc)?).unwrap_or(0);
+                        pc = pc.saturating_add(expr_len).min(instrs.len());
+                        saved_regs.insert((reg & 0xFF) as u8);
+                    }
+                    0x11 => {
+                        let reg = Self::read_uleb128(instrs, &mut pc)?;
+                        let _s_off = Self::read_sleb128(instrs, &mut pc)?;
                         saved_regs.insert((reg & 0xFF) as u8);
                     }
                     _ => {}
@@ -1555,6 +1646,172 @@ pub fn verify_prologue_struct_sizes_against_golden(
     results
 }
 
+/// Verifies a slice of reconstructed [`super::ExtractedExtensionNode`] records against
+/// the 17 extension specifications in [`super::GoldenStructLayouts`].
+///
+/// # Arguments
+///
+/// * `extracted_extensions` - Slice of [`super::ExtractedExtensionNode`] nodes reconstructed from `.data.rel.ro`.
+/// * `golden_layouts` - Parsed [`super::GoldenStructLayouts`] reference.
+#[must_use]
+pub fn verify_extension_struct_layouts_against_golden(
+    extracted_extensions: &[super::ExtractedExtensionNode],
+    golden_layouts: &super::GoldenStructLayouts,
+) -> Vec<PrologueStructSizeVerification> {
+    let mut results = Vec::with_capacity(extracted_extensions.len());
+    for ext in extracted_extensions {
+        if let Some(golden_ext) = golden_layouts
+            .extensions
+            .iter()
+            .find(|g| g.ext_type == ext.ext_type)
+        {
+            let actual_size = usize::try_from(ext.struct_size).unwrap_or(0);
+            let matches_golden = (u8::from(actual_size == golden_ext.struct_size)
+                & u8::from(ext.method_vaddrs.len() == golden_ext.num_functions))
+                != 0;
+            results.push(PrologueStructSizeVerification {
+                slot_index: golden_ext.index,
+                symbol_name: golden_ext.name.clone(),
+                extracted_struct_size: Some(actual_size),
+                golden_min_struct_size: golden_ext.struct_size,
+                matches_golden,
+            });
+        }
+    }
+    results
+}
+
+/// Extracted BAR0 CSR polling loop descriptor (`DriverBarMmioPollLoop`) from `asic_sw::driver`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriverBarMmioPollLoop {
+    /// Virtual address (`RIP`) of the MMIO write or read instruction inside the polling loop.
+    pub instruction_ip: u64,
+    /// BAR0 byte offset accessed by the instruction.
+    pub mmio_offset: u64,
+    /// Optional immediate value compared or written in the polling loop.
+    pub immediate_value: Option<u64>,
+    /// Resolved symbolic CSR full path from [`crate::hal::ChipRegisterMap`] when matched.
+    pub matched_csr_path: Option<String>,
+}
+
+/// Extracts and cross-validates LLO VLIW slot shift/mask constants (`(slot_kind, bit_offset, bit_mask)`)
+/// from an x86-64 or `AArch64` instruction encoder stream for `generation`.
+///
+/// # Arguments
+///
+/// * `generation` - Target [`crate::types::TpuGeneration`].
+/// * `code` - Raw machine code bytes of the encoder routine.
+/// * `is_aarch64` - `true` for 32-bit little-endian `AArch64`, `false` for `x86-64`.
+#[must_use]
+pub fn extract_vliw_bitfield_pack_masks(
+    generation: crate::types::TpuGeneration,
+    code: &[u8],
+    is_aarch64: bool,
+) -> Vec<(IsaSlotKind, u16, u64)> {
+    let table = IsaBitfieldSpecTable::from_encoder_machine_code(generation, code, is_aarch64);
+    table
+        .slots
+        .into_iter()
+        .map(|spec| {
+            let mask = if spec.bit_width >= 64 {
+                u64::MAX
+            } else {
+                (1_u64 << spec.bit_width) - 1
+            };
+            (spec.slot, spec.bit_offset, mask)
+        })
+        .collect()
+}
+
+/// Result of cross-checking a DWARF `.eh_frame` [`DwarfCfiFunctionRecord`]'s CFA stack-frame size
+/// against `iced_x86` prologue disassembly (`push rReg` + `sub rsp, imm`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FdePrologueParityReport {
+    /// Function entrypoint virtual address (`start_vaddr`).
+    pub start_vaddr: u64,
+    /// Stack frame size in bytes computed by DWARF CFA instructions (`stack_frame_bytes`).
+    pub dwarf_cfa_bytes: u64,
+    /// Stack frame size in bytes computed from `iced_x86` prologue instructions (`8` return address + `8 * pushes` + `sub rsp, imm`).
+    pub prologue_rsp_bytes: u64,
+    /// Whether `dwarf_cfa_bytes == prologue_rsp_bytes`.
+    pub matches_prologue: bool,
+}
+
+/// Cross-checks DWARF `.eh_frame` [`DwarfCfiFunctionRecord`] stack-frame sizes against `iced_x86`
+/// prologue disassembly (`push rReg` and `sub rsp, imm`) across a slice of `(fde_record, code_bytes)` pairs.
+///
+/// # Arguments
+///
+/// * `functions` - Slice of `(&DwarfCfiFunctionRecord, &[u8])` tuples containing the FDE record and its machine code bytes.
+#[must_use]
+pub fn verify_fde_prologue_stack_frame_parity(
+    functions: &[(&DwarfCfiFunctionRecord, &[u8])],
+) -> Vec<FdePrologueParityReport> {
+    let mut reports = Vec::with_capacity(functions.len());
+    for &(fde, code) in functions {
+        let mut decoder = Decoder::with_ip(64, code, fde.start_vaddr, DecoderOptions::NONE);
+        let mut rsp_delta = 8_u64;
+        for instr in &mut decoder {
+            if instr.mnemonic() == Mnemonic::Push {
+                rsp_delta = rsp_delta.saturating_add(8);
+            } else if instr.mnemonic() == Mnemonic::Sub {
+                let sub_imm = match instr.op1_kind() {
+                    OpKind::Immediate8to64 => u64::try_from(instr.immediate8to64()).unwrap_or(0),
+                    OpKind::Immediate32 | OpKind::Immediate32to64 => {
+                        u64::try_from(instr.immediate32to64()).unwrap_or(0)
+                    }
+                    _ => 0,
+                };
+                rsp_delta = rsp_delta.saturating_add(sub_imm);
+                break;
+            }
+        }
+        reports.push(FdePrologueParityReport {
+            start_vaddr: fde.start_vaddr,
+            dwarf_cfa_bytes: fde.stack_frame_bytes,
+            prologue_rsp_bytes: rsp_delta,
+            matches_prologue: fde.stack_frame_bytes == rsp_delta,
+        });
+    }
+    reports
+}
+
+/// Scans an `x86-64` driver instruction stream for BAR0 MMIO sequences and cross-matches
+/// each offset against the architectural [`crate::hal::ChipRegisterMap`] for `generation`.
+///
+/// # Arguments
+///
+/// * `code` - Raw `x86-64` machine code bytes.
+/// * `base_ip` - Base virtual address (`RIP`) of `code`.
+/// * `generation` - Target [`crate::types::TpuGeneration`] whose BAR0 CSR table is consulted.
+#[must_use]
+pub fn extract_driver_bar_mmio_poll_loops(
+    code: &[u8],
+    base_ip: u64,
+    generation: crate::types::TpuGeneration,
+) -> Vec<DriverBarMmioPollLoop> {
+    let seqs = scan_x86_64_driver_mmio_sequences(code, base_ip);
+    let rmap = crate::hal::ChipRegisterMap::for_generation(generation);
+    let descriptors = rmap.csr_descriptors();
+    seqs.into_iter()
+        .map(|seq| {
+            let matched_csr_path = descriptors
+                .iter()
+                .find(|d| {
+                    d.byte_offset == seq.mmio_offset
+                        || (d.byte_offset & 0xFFFF) == (seq.mmio_offset & 0xFFFF)
+                })
+                .map(|d| String::from(d.full_path));
+            DriverBarMmioPollLoop {
+                instruction_ip: seq.instruction_ip,
+                mmio_offset: seq.mmio_offset,
+                immediate_value: seq.immediate_value,
+                matched_csr_path,
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 #[allow(
     clippy::indexing_slicing,
@@ -1795,6 +2052,72 @@ mod tests {
         assert_eq!(mmio_seqs[4].immediate_value, None);
         assert_eq!(mmio_seqs[0].clone(), mmio_seqs[0]);
         assert_ne!(format!("{:?}", mmio_seqs[0]), "");
+
+        let vliw_masks_v4 =
+            extract_vliw_bitfield_pack_masks(crate::types::TpuGeneration::V4, bitfield_code, false);
+        assert_eq!(vliw_masks_v4.len(), 9);
+        assert_eq!(vliw_masks_v4[0].0, IsaSlotKind::Header);
+        assert_eq!(vliw_masks_v4[0].2, u64::MAX);
+        assert_eq!(vliw_masks_v4[6].2, 0xFFFF);
+        let vliw_masks_v7x = extract_vliw_bitfield_pack_masks(
+            crate::types::TpuGeneration::V7x,
+            bitfield_code,
+            false,
+        );
+        assert!(vliw_masks_v7x.iter().any(|(_, _, mask)| *mask == u64::MAX));
+
+        let poll_code: &[u8] = &[
+            0x48, 0xC7, 0x87, 0x18, 0x20, 0x42, 0x00, 0x01, 0x00, 0x00,
+            0x00, // mov qword ptr [rdi + 0x00422018], 1 (matches RUN_STATUS)
+            0x48, 0xC7, 0x47, 0x7C, 0x00, 0x00, 0x00,
+            0x00, // mov qword ptr [rdi + 0x7C], 0 (unmatched CSR)
+        ];
+        let poll_loops =
+            extract_driver_bar_mmio_poll_loops(poll_code, 0x4000, crate::types::TpuGeneration::V2);
+        assert_eq!(poll_loops.len(), 2);
+        assert_eq!(
+            poll_loops[0].matched_csr_path.as_deref(),
+            Some("tc_0.tcs_core_state.RUN_STATUS")
+        );
+        assert!(poll_loops[1].matched_csr_path.is_none());
+        assert_eq!(poll_loops[0].clone(), poll_loops[0]);
+        assert_ne!(format!("{:?}", poll_loops[0]), "");
+
+        let fde_rec = DwarfCfiFunctionRecord {
+            start_vaddr: 0x5000,
+            end_vaddr: 0x5020,
+            byte_len: 32,
+            lsda_vaddr: None,
+            stack_frame_bytes: 32,
+            saved_registers: vec![6],
+        };
+        // push rbp (0x55 -> +8 = 16); sub rsp, 16 (0x48, 0x83, 0xEC, 0x10 -> +16 = 32); ret (0xC3)
+        let pro_32: &[u8] = &[0x55, 0x48, 0x83, 0xEC, 0x10, 0xC3];
+        // sub rsp, 0x100 (Immediate32to64: 0x48, 0x81, 0xEC, 0x00, 0x01, 0x00, 0x00)
+        let fde_rec_264 = DwarfCfiFunctionRecord {
+            start_vaddr: 0x6000,
+            end_vaddr: 0x6020,
+            byte_len: 32,
+            lsda_vaddr: None,
+            stack_frame_bytes: 264,
+            saved_registers: Vec::new(),
+        };
+        let pro_264: &[u8] = &[0x48, 0x81, 0xEC, 0x00, 0x01, 0x00, 0x00, 0xC3];
+        // sub rsp, rax (non-immediate) + ret
+        let pro_reg: &[u8] = &[0x48, 0x29, 0xC4, 0xC3];
+        // sub al, 4 (Immediate8 on AL, not RSP, and Immediate8 sub rsp via 0x80/custom)
+        let parity = verify_fde_prologue_stack_frame_parity(&[
+            (&fde_rec, pro_32),
+            (&fde_rec_264, pro_264),
+            (&fde_rec, pro_reg),
+            (&fde_rec, &[0xC3]),
+        ]);
+        assert_eq!(parity.len(), 4);
+        assert!(parity[0].matches_prologue);
+        assert!(parity[1].matches_prologue);
+        assert!(!parity[2].matches_prologue);
+        assert_eq!(parity[0].clone(), parity[0]);
+        assert_ne!(format!("{:?}", parity[0]), "");
     }
 
     #[test]
@@ -1948,6 +2271,38 @@ mod tests {
         assert!(EhFrameCfiParser::eval_cfa_instructions(&[0x0E], -8).is_err());
         assert!(EhFrameCfiParser::eval_cfa_instructions(&[0x05], -8).is_err());
         assert!(EhFrameCfiParser::eval_cfa_instructions(&[0x05, 0x03], -8).is_err());
+        assert!(
+            EhFrameCfiParser::eval_cfa_instructions(
+                &[
+                    0x0A, 0x0B, 0x0F, 0x02, 0xAA, 0xBB, 0x10, 0x03, 0x01, 0xCC, 0x11, 0x06, 0x04
+                ],
+                -8
+            )
+            .is_ok()
+        );
+        assert!(EhFrameCfiParser::eval_cfa_instructions(&[0x0F], -8).is_err());
+        assert!(EhFrameCfiParser::eval_cfa_instructions(&[0x10], -8).is_err());
+        assert!(EhFrameCfiParser::eval_cfa_instructions(&[0x10, 0x03], -8).is_err());
+        assert!(EhFrameCfiParser::eval_cfa_instructions(&[0x11], -8).is_err());
+        assert!(EhFrameCfiParser::eval_cfa_instructions(&[0x11, 0x06], -8).is_err());
+
+        for tpu_gen in [
+            crate::types::TpuGeneration::V2,
+            crate::types::TpuGeneration::V3,
+            crate::types::TpuGeneration::V4,
+            crate::types::TpuGeneration::V4Lite,
+            crate::types::TpuGeneration::V5e,
+            crate::types::TpuGeneration::V5p,
+            crate::types::TpuGeneration::V6e,
+            crate::types::TpuGeneration::V7x,
+        ] {
+            let spec_tbl = IsaBitfieldSpecTable::for_generation(tpu_gen);
+            assert!(spec_tbl.verify_compiler_bitstream_lock().is_ok());
+        }
+        let mut bad_spec_tbl =
+            IsaBitfieldSpecTable::for_generation(crate::types::TpuGeneration::V6e);
+        bad_spec_tbl.bundle_width_bits = 128;
+        assert!(bad_spec_tbl.verify_compiler_bitstream_lock().is_err());
 
         // 5. Test AArch64ForensicsAnalyzer
         let aarch64_analyzer = AArch64ForensicsAnalyzer;
@@ -2102,6 +2457,28 @@ mod tests {
             assert!(verifications[1].matches_golden);
             assert_eq!(verifications[0].clone(), verifications[0]);
             assert_ne!(format!("{:?}", verifications[0]), "");
+
+            if let Some(first_ext) = golden.extensions.first() {
+                let ext_nodes = [
+                    super::super::ExtractedExtensionNode {
+                        vaddr: 0x5000,
+                        struct_size: first_ext.struct_size as u64,
+                        ext_type: first_ext.ext_type,
+                        next_vaddr: 0,
+                        method_vaddrs: vec![0x6000; first_ext.num_functions],
+                    },
+                    super::super::ExtractedExtensionNode {
+                        vaddr: 0x5100,
+                        struct_size: 8,
+                        ext_type: 9999,
+                        next_vaddr: 0,
+                        method_vaddrs: Vec::new(),
+                    },
+                ];
+                let ext_ver = verify_extension_struct_layouts_against_golden(&ext_nodes, &golden);
+                assert_eq!(ext_ver.len(), 1);
+                assert!(ext_ver[0].matches_golden);
+            }
         }
     }
 }

@@ -210,6 +210,74 @@ pub enum TpuOpCode {
     Imag = 99,
     /// Width-preserving bitcast conversion (`stablehlo.bitcast_convert`) (`100`).
     BitcastConvert = 100,
+    /// Elementwise IEEE-754 next representable floating-point value toward target (`chlo.next_after` / `stablehlo.next_after`) (`101`).
+    NextAfter = 101,
+    /// Runtime shape-parameterized tensor broadcast (`stablehlo.dynamic_broadcast_in_dim`) (`102`).
+    DynamicBroadcastInDim = 102,
+    /// Runtime padding/dilation parameterized spatial convolution (`stablehlo.dynamic_conv`) (`103`).
+    DynamicConv = 103,
+    /// Runtime slice-size parameterized tensor gather (`stablehlo.dynamic_gather`) (`104`).
+    DynamicGather = 104,
+    /// Runtime output-shape parameterized index sequence generation (`stablehlo.dynamic_iota`) (`105`).
+    DynamicIota = 105,
+    /// Runtime edge/interior padding tensor operation (`stablehlo.dynamic_pad`) (`106`).
+    DynamicPad = 106,
+    /// Runtime output-shape parameterized tensor reshape (`stablehlo.dynamic_reshape`) (`107`).
+    DynamicReshape = 107,
+    /// Runtime start/limit/stride tensor slice extraction (`stablehlo.real_dynamic_slice`) (`108`).
+    RealDynamicSlice = 108,
+    /// Queries the runtime dynamic extent of a bounded tensor dimension (`stablehlo.get_dimension_size`) (`109`).
+    GetDimensionSize = 109,
+    /// Sets the runtime dynamic extent of a bounded tensor dimension (`stablehlo.set_dimension_size`) (`110`).
+    SetDimensionSize = 110,
+    /// Cross-replica ICI `CollectiveBroadcast` (`stablehlo.collective_broadcast`) (`111`).
+    CollectiveBroadcast = 111,
+    /// Cross-replica variable-length `RaggedAllToAll` (`stablehlo.ragged_all_to_all`) (`112`).
+    RaggedAllToAll = 112,
+    /// Asynchronous channel send completion barrier (`stablehlo.send_done`) (`113`).
+    SendDone = 113,
+    /// Asynchronous channel receive completion barrier (`stablehlo.recv_done`) (`114`).
+    RecvDone = 114,
+    /// Elementwise complex conjugate (`chlo.conj` / `stablehlo.conj`) (`115`).
+    Conj = 115,
+    /// Elementwise inverse hyperbolic cosine (`chlo.acosh` / HLO `acosh`) (`116`).
+    Acosh = 116,
+    /// Elementwise inverse hyperbolic sine (`chlo.asinh` / HLO `asinh`) (`117`).
+    Asinh = 117,
+    /// Elementwise inverse hyperbolic tangent (`chlo.atanh` / HLO `atanh`) (`118`).
+    Atanh = 118,
+    /// Elementwise hyperbolic sine (`chlo.sinh` / HLO `sinh`) (`119`).
+    Sinh = 119,
+    /// Elementwise hyperbolic cosine (`chlo.cosh` / HLO `cosh`) (`120`).
+    Cosh = 120,
+    /// Elementwise inverse cosine (`chlo.acos` / HLO `acos`) (`121`).
+    Acos = 121,
+    /// Elementwise inverse sine (`chlo.asin` / HLO `asin`) (`122`).
+    Asin = 122,
+    /// Elementwise inverse tangent (`chlo.atan` / HLO `atan`) (`123`).
+    Atan = 123,
+    /// Elementwise complementary Gauss error function (`chlo.erfc` / HLO `erfc`) (`124`).
+    Erfc = 124,
+    /// Elementwise natural logarithm of absolute Gamma function (`chlo.lgamma` / HLO `lgamma`) (`125`).
+    Lgamma = 125,
+    /// Elementwise logarithmic derivative of Gamma function (`chlo.digamma` / HLO `digamma`) (`126`).
+    Digamma = 126,
+    /// Elementwise exponentially scaled modified Bessel function of order 1 (`chlo.bessel_i1e`) (`127`).
+    BesselI1e = 127,
+    /// Mantissa/exponent precision truncation (`stablehlo.reduce_precision`) (`128`).
+    ReducePrecision = 128,
+    /// Mosaic TPU asynchronous DMA descriptor enqueue (`tpu.enqueue_dma`) (`129`).
+    OutboundDma = 129,
+    /// Mosaic TPU asynchronous DMA completion wait (`tpu.wait_dma`) (`130`).
+    WaitDma = 130,
+    /// Mosaic TPU hardware semaphore atomic signal (`tpu.semaphore_signal`) (`131`).
+    SemaphoreSignal = 131,
+    /// Mosaic TPU hardware semaphore blocking wait (`tpu.semaphore_wait`) (`132`).
+    SemaphoreWait = 132,
+    /// Mosaic TPU VPU sublane broadcast (`tpu.broadcast_in_sublanes`) (`133`).
+    BroadcastInSublanes = 133,
+    /// Mosaic TPU XLU cross-lane sublane rotation (`tpu.rotate`) (`134`).
+    RotateSublanes = 134,
 }
 
 impl TpuOpCode {
@@ -260,7 +328,12 @@ impl TpuOpCode {
             3
         } else if matches!(
             self,
-            Self::Constant | Self::Iota | Self::AfterAll | Self::ReplicaId | Self::PartitionId
+            Self::Constant
+                | Self::Iota
+                | Self::DynamicIota
+                | Self::AfterAll
+                | Self::ReplicaId
+                | Self::PartitionId
         ) {
             0
         } else if self.is_binary() {
@@ -283,10 +356,18 @@ impl TpuOpCode {
                 | Self::RngBitGenerator
                 | Self::CollectivePermute
                 | Self::AllToAll
+                | Self::CollectiveBroadcast
+                | Self::RaggedAllToAll
                 | Self::Infeed
                 | Self::Outfeed
                 | Self::Send
                 | Self::Recv
+                | Self::SendDone
+                | Self::RecvDone
+                | Self::OutboundDma
+                | Self::WaitDma
+                | Self::SemaphoreSignal
+                | Self::SemaphoreWait
                 | Self::OptimizationBarrier
         )
     }
@@ -323,6 +404,11 @@ impl TpuOpCode {
                 | Self::Pad
                 | Self::TriangularSolve
                 | Self::Complex
+                | Self::NextAfter
+                | Self::DynamicConv
+                | Self::DynamicGather
+                | Self::DynamicPad
+                | Self::SetDimensionSize
         )
     }
 
@@ -346,6 +432,18 @@ impl TpuOpCode {
                 | Self::Atan2
                 | Self::Pow
                 | Self::Erf
+                | Self::Acosh
+                | Self::Asinh
+                | Self::Atanh
+                | Self::Sinh
+                | Self::Cosh
+                | Self::Acos
+                | Self::Asin
+                | Self::Atan
+                | Self::Erfc
+                | Self::Lgamma
+                | Self::Digamma
+                | Self::BesselI1e
         )
     }
 }
@@ -415,8 +513,26 @@ pub struct InstructionAttrs {
     pub gather_slice_sizes: Vec<usize>,
     /// Operand axes collapsed after slicing in `gather` (`collapsed_slice_dims`).
     pub collapsed_slice_dims: Vec<usize>,
+    /// Output axes corresponding to non-collapsed slice dimensions in `gather` (`offset_dims`).
+    pub gather_offset_dims: Vec<usize>,
+    /// Map from index vector component to operand dimension in `gather` (`start_index_map`).
+    pub gather_start_index_map: Vec<usize>,
+    /// Operand batching dimensions in `gather` (`operand_batching_dims`).
+    pub gather_operand_batching_dims: Vec<usize>,
+    /// Start indices batching dimensions in `gather` (`start_indices_batching_dims`).
+    pub gather_start_indices_batching_dims: Vec<usize>,
     /// Update window axes in `updates` for `scatter` (`update_window_dims`).
     pub scatter_update_window_dims: Vec<usize>,
+    /// Operand axes omitted from `updates` window dimensions in `scatter` (`inserted_window_dims`).
+    pub scatter_inserted_window_dims: Vec<usize>,
+    /// Map from scatter index vector component to operand dimension in `scatter` (`scatter_dims_to_operand_dims`).
+    pub scatter_dims_to_operand_dims: Vec<usize>,
+    /// Input batching dimensions in `scatter` (`input_batching_dims`).
+    pub scatter_input_batching_dims: Vec<usize>,
+    /// Scatter indices batching dimensions in `scatter` (`scatter_indices_batching_dims`).
+    pub scatter_indices_batching_dims: Vec<usize>,
+    /// Index vector axis in `scatter_indices` for `scatter` (`index_vector_dim`).
+    pub scatter_index_vector_dim: usize,
     /// LHS base dilation factors per spatial dimension in `convolution`.
     pub lhs_dilation: Vec<usize>,
     /// RHS window dilation factors per spatial dimension in `convolution`.

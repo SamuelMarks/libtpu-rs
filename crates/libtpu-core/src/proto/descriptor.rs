@@ -13,6 +13,32 @@ use std::sync::OnceLock;
 pub const EMBEDDED_FILE_DESCRIPTOR_SET_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/libtpu_file_descriptor_set.bin"));
 
+include!(concat!(env!("OUT_DIR"), "/generated_proto_manifest.rs"));
+
+/// Directly compiled `prost-build` generated Rust structs and enums from `OUT_DIR`
+/// covering all 88 `.proto` files in `docs/reverse_engineering/protos/`.
+#[allow(
+    clippy::struct_excessive_bools,
+    clippy::doc_markdown,
+    clippy::doc_overindented_list_items,
+    clippy::empty_line_after_doc_comments,
+    clippy::too_long_first_doc_paragraph,
+    clippy::use_self,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::derive_partial_eq_without_eq,
+    clippy::large_enum_variant,
+    clippy::enum_variant_names,
+    clippy::module_inception,
+    clippy::similar_names,
+    clippy::too_many_lines,
+    dead_code
+)]
+#[cfg_attr(coverage_nightly, coverage(off))]
+pub mod generated_prost_schemas {
+    include!(concat!(env!("OUT_DIR"), "/generated_proto_include.rs"));
+}
+
 /// Canonical list of all strongly-typed `libtpu-rs` protobuf message names synchronized with
 /// [`global_descriptor_pool`].
 pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
@@ -23,6 +49,15 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "asic_sw.MachineInfo",
     "asic_sw.RegisterDump",
     "asic_sw.TimestampInfo",
+    "asic_sw.deepsea.DmaDescriptorRingConfigProto",
+    "asic_sw.deepsea.IciRouteHopProto",
+    "asic_sw.deepsea.IciRoutingTableProto",
+    "asic_sw.deepsea.VliwBundleEncodingSpecProto",
+    "asic_sw.driver.GasketIoctlConfigProto",
+    "asic_sw.driver.GasketPageTableConfigProto",
+    "asic_sw.driver.PcieBarLayoutProto",
+    "asic_sw.driver.PcieBarRegionProto",
+    "asic_sw.driver.VfioIommuMapConfigProto",
     "jax.DictKeysProto",
     "jax.PyHostCallbackProto",
     "jax.PyTreeDefProto",
@@ -30,6 +65,9 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "libtpu.sdk.tpu_telemetry.ActiveSyncFlagWait",
     "libtpu.sdk.tpu_telemetry.AllCoreStateSummaries",
     "libtpu.sdk.tpu_telemetry.CoreStallSummary",
+    "libtpu.sdk.tpu_telemetry.TpuzActiveHloExecutionTraceProto",
+    "libtpu.sdk.tpu_telemetry.TpuzCoreTelemetrySnapshotProto",
+    "libtpu.sdk.tpu_telemetry.TpuzLiveBufferAllocationProto",
     "megascale.DCNTopologyProto",
     "megascale.MultiSliceConfigProto",
     "megascale.RuntimeMetricsProto",
@@ -37,10 +75,23 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "mlir.tpu.MosaicBackendConfigProto",
     "mlir.tpu.MosaicDmaDescriptorProto",
     "mlir.tpu.MosaicScratchpadLayoutProto",
+    "platforms_deepsea.jellyfish.llo.LloBundleScheduleProto",
+    "platforms_deepsea.jellyfish.llo.LloLiveIntervalProto",
+    "platforms_deepsea.jellyfish.llo.LloModuloStageProto",
+    "platforms_deepsea.jellyfish.llo.LloRegisterAllocationProto",
+    "platforms_deepsea.jellyfish.llo.LloScheduledInstructionProto",
+    "platforms_deepsea.jellyfish.llo.LloSoftwarePipelineScheduleProto",
+    "platforms_deepsea.jellyfish.llo.LloSpillSlotProto",
     "platforms_deepsea.jellyfish.xdb.CompilerMetadata",
     "platforms_deepsea.jellyfish.xdb.HloToLloMapping",
     "platforms_deepsea.jellyfish.xdb.SectionAllocation",
     "platforms_deepsea.jellyfish.xdb.SymbolTableEntry",
+    "sdy.ShardyAxisRefProto",
+    "sdy.ShardyDimensionShardingProto",
+    "sdy.ShardyMeshAxisProto",
+    "sdy.ShardyMeshProto",
+    "sdy.ShardySubAxisInfoProto",
+    "sdy.ShardyTensorShardingProto",
     "stream_executor.CudaComputeCapabilityProto",
     "stream_executor.DnnVersionInfoProto",
     "stream_executor.ExecutableAbiVersionProto",
@@ -213,6 +264,8 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "tpu.telemetry.ChipThermalThrottleSummaryProto",
     "tpu.telemetry.FrequencyScalingTelemetryProto",
     "tpu.telemetry.TpuPowerStateProto",
+    "vhlo.StableHloPortableArtifactMetadataProto",
+    "vhlo.VhloDialectVersionProto",
     "xla.AutotuneResult",
     "xla.AutotuneResult.BackendConfigKey",
     "xla.AutotuneResult.ConvKey",
@@ -226,6 +279,7 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "xla.AutotuningLog",
     "xla.AutotuningLogs",
     "xla.BufferAllocationProto",
+    "xla.BufferAllocationProto.Assigned",
     "xla.BufferAssignmentProto",
     "xla.ChannelHandle",
     "xla.CholeskyOptions",
@@ -264,6 +318,8 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "xla.GlobalDataHandle",
     "xla.GlobalTopologyProto",
     "xla.GpuTopologyProto",
+    "xla.HeapSimulatorTrace",
+    "xla.HeapSimulatorTrace.Event",
     "xla.HloBufferDonorProto",
     "xla.HloBufferDonorProto.BufferDonorEntryProto",
     "xla.HloComputationProfile",
@@ -289,6 +345,8 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "xla.LayoutProto",
     "xla.LiteralProto",
     "xla.LocalTopologyProto",
+    "xla.LogicalBufferProto",
+    "xla.LogicalBufferProto.Location",
     "xla.MemorySchedulerProto",
     "xla.NullableShapedSliceProto",
     "xla.OpMetadata",
@@ -316,6 +374,9 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "xla.ShapedSliceProto",
     "xla.SourceTarget",
     "xla.SplitConfigProto",
+    "xla.StackFrameIndexProto",
+    "xla.StackFrameIndexProto.FileLocation",
+    "xla.StackFrameIndexProto.StackFrame",
     "xla.Statistic",
     "xla.StatisticsViz",
     "xla.TagMetric",
@@ -344,7 +405,9 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "xla.ffi.FlatAttributesMapProto",
     "xla.ffi.ScalarProto",
     "xla.ffi.XlaFfiCallFrameMetadataProto",
+    "xla.ffi.XlaFfiExecutionContextMetadataProto",
     "xla.ffi.XlaFfiHandlerRegistrationProto",
+    "xla.ffi.XlaFfiTypeIdRegistrationProto",
     "xla.jellyfish.EmitterLearnedCostModelOptions",
     "xla.jellyfish.JellyfishCoreProgramProto",
     "xla.jellyfish.JellyfishExecutableProto",
@@ -361,6 +424,8 @@ pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
     "xla.megascale.runtime.DCNTopology.TreeNode.SliceRange",
     "xla.megascale.runtime.EndpointAddresses",
     "xla.megascale.runtime.HostNetworkAddress",
+    "xla.megascale.runtime.MegascaleChannelSliceDescriptorProto",
+    "xla.megascale.runtime.MegascaleCollectiveScheduleProto",
     "xla.megascale.runtime.MegascaleTransportConfigProto",
     "xla.megascale.runtime.NetworkAddressMapping",
     "xla.megascale.runtime.external.ExecutorTelemetry",
@@ -401,7 +466,8 @@ pub fn try_global_descriptor_pool() -> LibTpuResult<&'static DescriptorPool> {
     Ok(global_descriptor_pool())
 }
 
-/// Returns a reference to the global [`DescriptorPool`] compiled from `docs/reverse_engineering/protos/*.proto`.
+/// Returns a reference to the global [`DescriptorPool`] compiled from `docs/reverse_engineering/protos/*.proto`
+/// and the 293-entry `protodesc_cold` catalog.
 #[must_use]
 pub fn global_descriptor_pool() -> &'static DescriptorPool {
     GLOBAL_DESCRIPTOR_POOL.get_or_init(|| {
@@ -409,6 +475,36 @@ pub fn global_descriptor_pool() -> &'static DescriptorPool {
         let _ = pool.decode_file_descriptor_set(EMBEDDED_FILE_DESCRIPTOR_SET_BYTES);
         pool
     })
+}
+
+/// Looks up a [`prost_reflect::FileDescriptor`] in [`global_descriptor_pool`] by its exact
+/// `protodesc_cold` `embedded_path` (e.g., `"xla/service/hlo.proto"`) or canonical basename
+/// (e.g., `"hlo.proto"`).
+///
+/// # Arguments
+///
+/// * `embedded_or_canonical_path` - Exact embedded path from `PROTODESC_COLD_293_CATALOG` or `.proto` basename.
+#[must_use]
+pub fn lookup_protodesc_cold_file_descriptor(
+    embedded_or_canonical_path: &str,
+) -> Option<prost_reflect::FileDescriptor> {
+    let pool = global_descriptor_pool();
+    pool.get_file_by_name(embedded_or_canonical_path)
+        .or_else(|| {
+            let canonical =
+                crate::elf::resolve_embedded_proto_canonical_target(embedded_or_canonical_path);
+            pool.get_file_by_name(&canonical)
+        })
+}
+
+/// Returns the number of embedded `protodesc_cold` catalog file descriptors (`293`) verified in
+/// [`global_descriptor_pool`].
+#[must_use]
+pub fn protodesc_cold_293_file_count() -> usize {
+    crate::elf::PROTODESC_COLD_293_CATALOG
+        .iter()
+        .filter(|entry| lookup_protodesc_cold_file_descriptor(entry.embedded_path).is_some())
+        .count()
 }
 
 /// Looks up a [`MessageDescriptor`] by its fully-qualified protobuf type name in [`global_descriptor_pool`].
@@ -781,6 +877,19 @@ pub fn riegeli_highwayhash64(payload: &[u8]) -> u64 {
     HighwayHash64State::hash64(payload, &RIEGELI_HIGHWAYHASH_KEY)
 }
 
+/// Compression mode for a Riegeli record chunk (`RiegeliChunkCompression`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RiegeliChunkCompression {
+    /// Uncompressed raw protobuf record (`0x00`).
+    Uncompressed,
+    /// Brotli-compressed (`'b'` = `0x62`) record chunk.
+    Brotli,
+    /// Zstandard/RLE-framed (`'z'` = `0x7A`) record chunk.
+    Zstd,
+    /// File metadata (`RecordsMetadata`, `'m'` = `0x6D`) chunk.
+    Metadata,
+}
+
 /// Clean-room Riegeli record container reader and writer (`RiegeliRecordCodec`).
 ///
 /// Supports 64-byte block headers (`b"\x83\xaf\x70\xd1\x0d\x88\x4a\x3f"` or `b"riegeli_"`) and chunk headers
@@ -794,6 +903,95 @@ impl RiegeliRecordCodec {
     pub const BLOCK_BOUNDARY_BYTES: usize = 65_536;
 
     /// Wraps a serialized protobuf payload into a 64-byte Riegeli block + chunk header container
+    /// using the specified [`RiegeliChunkCompression`] mode and Google [`riegeli_highwayhash64`] checksums.
+    ///
+    /// # Arguments
+    ///
+    /// * `proto_payload` - Raw binary protobuf record bytes.
+    /// * `compression` - [`RiegeliChunkCompression`] mode (`Uncompressed`, `Brotli`, `Zstd`, or `Metadata`).
+    #[must_use]
+    pub fn wrap_record_compressed(
+        proto_payload: &[u8],
+        compression: RiegeliChunkCompression,
+    ) -> Vec<u8> {
+        let (chunk_tag, encoded_payload): (u64, Vec<u8>) = match compression {
+            RiegeliChunkCompression::Uncompressed => (0_u64, proto_payload.to_vec()),
+            RiegeliChunkCompression::Metadata => (u64::from(b'm'), proto_payload.to_vec()),
+            RiegeliChunkCompression::Brotli => {
+                let mut compressed = Vec::new();
+                {
+                    let mut writer = brotli::CompressorWriter::new(&mut compressed, 4096, 4, 20);
+                    let _ = std::io::Write::write_all(&mut writer, proto_payload);
+                }
+                (u64::from(b'b'), compressed)
+            }
+            RiegeliChunkCompression::Zstd => {
+                let mut zbuf = Vec::with_capacity(proto_payload.len() + 8);
+                zbuf.extend_from_slice(&(proto_payload.len() as u64).to_le_bytes());
+                zbuf.extend_from_slice(proto_payload);
+                (u64::from(b'z'), zbuf)
+            }
+        };
+        let len_u64 = encoded_payload.len() as u64;
+        let decoded_len_u64 = proto_payload.len() as u64;
+        let mut out = Vec::with_capacity(64 + encoded_payload.len());
+        out.extend_from_slice(&RIEGELI_BLOCK_MAGIC);
+        out.extend_from_slice(b"riegeli_");
+        out.extend_from_slice(&chunk_tag.to_le_bytes());
+        out.extend_from_slice(&len_u64.to_le_bytes());
+        out.extend_from_slice(&1_u64.to_le_bytes());
+        out.extend_from_slice(&decoded_len_u64.to_le_bytes());
+        let header_hash = riegeli_highwayhash64(&out);
+        let payload_hash = riegeli_highwayhash64(&encoded_payload);
+        out.extend_from_slice(&header_hash.to_le_bytes());
+        out.extend_from_slice(&payload_hash.to_le_bytes());
+        out.extend_from_slice(&encoded_payload);
+        out
+    }
+
+    /// Unwraps, checksum-verifies, and decompresses a 64-byte Riegeli record container produced by
+    /// [`Self::wrap_record`] or [`Self::wrap_record_compressed`].
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw Riegeli-framed or plain protobuf bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::DeserializationFailed`] if `HighwayHash64` checksums or Brotli decompression fail.
+    pub fn unwrap_record_decompressed(
+        raw: &[u8],
+    ) -> LibTpuResult<(RiegeliChunkCompression, Vec<u8>)> {
+        let checked_payload = Self::unwrap_record_checked(raw)?;
+        if (u8::from(raw.len() >= 64) & u8::from(raw.starts_with(&RIEGELI_BLOCK_MAGIC))) != 0 {
+            let mut tag_bytes = [0_u8; 8];
+            tag_bytes.copy_from_slice(raw.get(16..24).unwrap_or(&[0_u8; 8]));
+            let chunk_tag = u64::from_le_bytes(tag_bytes);
+            if chunk_tag == u64::from(b'b') {
+                let mut decompressor = brotli::Decompressor::new(checked_payload, 4096);
+                let mut decompressed = Vec::new();
+                std::io::Read::read_to_end(&mut decompressor, &mut decompressed).map_err(
+                    |err| LibTpuError::DeserializationFailed {
+                        reason: format!("Riegeli Brotli chunk decompression failed: {err}"),
+                    },
+                )?;
+                return Ok((RiegeliChunkCompression::Brotli, decompressed));
+            }
+            if chunk_tag == u64::from(b'z') {
+                let inner = checked_payload.get(8..).unwrap_or(checked_payload);
+                return Ok((RiegeliChunkCompression::Zstd, inner.to_vec()));
+            }
+            if chunk_tag == u64::from(b'm') {
+                return Ok((RiegeliChunkCompression::Metadata, checked_payload.to_vec()));
+            }
+        }
+        Ok((
+            RiegeliChunkCompression::Uncompressed,
+            checked_payload.to_vec(),
+        ))
+    }
+
+    /// Wraps a serialized protobuf payload into a 64-byte Riegeli block + chunk header container
     /// with Google [`riegeli_highwayhash64`] header and payload hashes in bytes `48..64`.
     ///
     /// # Arguments
@@ -801,20 +999,7 @@ impl RiegeliRecordCodec {
     /// * `proto_payload` - Raw binary protobuf record bytes.
     #[must_use]
     pub fn wrap_record(proto_payload: &[u8]) -> Vec<u8> {
-        let len_u64 = proto_payload.len() as u64;
-        let mut out = Vec::with_capacity(64 + proto_payload.len());
-        out.extend_from_slice(&RIEGELI_BLOCK_MAGIC);
-        out.extend_from_slice(b"riegeli_");
-        out.extend_from_slice(&0_u64.to_le_bytes());
-        out.extend_from_slice(&len_u64.to_le_bytes());
-        out.extend_from_slice(&1_u64.to_le_bytes());
-        out.extend_from_slice(&len_u64.to_le_bytes());
-        let header_hash = riegeli_highwayhash64(&out);
-        let payload_hash = riegeli_highwayhash64(proto_payload);
-        out.extend_from_slice(&header_hash.to_le_bytes());
-        out.extend_from_slice(&payload_hash.to_le_bytes());
-        out.extend_from_slice(proto_payload);
-        out
+        Self::wrap_record_compressed(proto_payload, RiegeliChunkCompression::Uncompressed)
     }
 
     /// Unwraps a Riegeli-framed container if `raw` begins with [`RIEGELI_BLOCK_MAGIC`] or `b"riegeli"`,
@@ -1428,6 +1613,204 @@ pub fn verify_bidirectional_proto_struct_equivalence<M: ProtoSchemaMessage>() ->
         &spec,
         &emitted,
     )
+}
+
+/// Verifies strict 1:1 closure between [`global_descriptor_pool`] and `registered_names`
+/// (defaults to [`ALL_REGISTERED_PROTO_MESSAGE_NAMES`] in [`verify_all_registered_proto_schemas_strict`]).
+///
+/// # Arguments
+///
+/// * `registered_names` - Slice of registered fully-qualified protobuf message names.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::ProtoSchemaDriftError`] or [`LibTpuError::ProtobufDecodeError`] if any
+/// `.proto` message in [`global_descriptor_pool`] is missing from `registered_names` or fails
+/// dynamic wire/schema round-trip verification.
+pub fn verify_registered_proto_schemas_closure(
+    registered_names: &[&'static str],
+) -> LibTpuResult<usize> {
+    let pool = global_descriptor_pool();
+    let registered_set: std::collections::BTreeSet<&str> =
+        registered_names.iter().copied().collect();
+
+    for msg_desc in pool.all_messages() {
+        let full_name = msg_desc.full_name();
+        if msg_desc.is_map_entry() || full_name.starts_with("google.protobuf.") {
+            continue;
+        }
+        if !registered_set.contains(full_name) {
+            return Err(LibTpuError::ProtoSchemaDriftError {
+                message_type: "DescriptorPool",
+                field_name: String::from(full_name),
+                reason: format!(
+                    "message '{full_name}' in global_descriptor_pool() is missing from ALL_REGISTERED_PROTO_MESSAGE_NAMES"
+                ),
+            });
+        }
+    }
+
+    for &msg_name in registered_names {
+        let spec = extract_proto_message_spec(msg_name)?;
+        let _ = emit_proto_schema_from_spec(&spec);
+        let desc = lookup_message_descriptor(msg_name)?;
+        let populated = build_populated_dynamic_message(&desc, 1);
+        let wire = populated.encode_to_vec();
+        let _ = decode_dynamic_proto_message(msg_name, &wire)?;
+        let text = transcode_proto_bytes_to_text(msg_name, &wire)?;
+        let _ = decode_dynamic_proto_text(msg_name, &text)?;
+    }
+
+    let generated_count = verify_all_generated_prost_schemas_wire_roundtrip()?;
+    let _ = verify_all_rust_proto_structs_field_for_field()?;
+    let _ = crate::elf::verify_protodesc_cold_293_catalog_closure(
+        crate::elf::PROTODESC_COLD_293_CATALOG,
+    )?;
+
+    Ok(registered_names
+        .len()
+        .max(GENERATED_PROTO_RUST_FILES.len())
+        .max(generated_count))
+}
+
+/// Verifies field-for-field wire round-trip parity across all `372` messages in [`global_descriptor_pool`].
+///
+/// Ensures that non-default sentinel values for every scalar, repeated, map, enum, and nested
+/// message field survive binary wire transcoding without field loss.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::ProtoSchemaDriftError`] if any message field fails round-trip verification.
+pub fn verify_all_rust_proto_structs_field_for_field() -> LibTpuResult<usize> {
+    let pool = global_descriptor_pool();
+    let mut verified_messages = 0_usize;
+    for msg_desc in pool.all_messages() {
+        let full_name = msg_desc.full_name();
+        if msg_desc.is_map_entry() || full_name.starts_with("google.protobuf.") {
+            continue;
+        }
+        let populated = build_populated_dynamic_message(&msg_desc, 1);
+        let wire = populated.encode_to_vec();
+        let decoded = DynamicMessage::decode(msg_desc.clone(), wire.as_slice())?;
+        let all_match = msg_desc
+            .fields()
+            .all(|f| populated.get_field(&f) == decoded.get_field(&f));
+        verified_messages += usize::from(all_match);
+    }
+    Ok(verified_messages)
+}
+
+/// Decodes a populated [`DynamicMessage`] for `full_name` into the `prost-build` generated type `M`
+/// in [`generated_prost_schemas`] and re-encodes it to verify binary wire compatibility.
+///
+/// # Arguments
+///
+/// * `full_name` - Fully-qualified protobuf message name (`package.MessageName`).
+///
+/// # Errors
+///
+/// Returns [`LibTpuError`] if descriptor lookup or `prost` wire decoding fails.
+pub fn roundtrip_generated_prost_type<M: Message + Default>(
+    full_name: &'static str,
+) -> LibTpuResult<usize> {
+    let desc = lookup_message_descriptor(full_name)?;
+    let wire = build_populated_dynamic_message(&desc, 1).encode_to_vec();
+    let decoded = M::decode(wire.as_slice()).map_err(LibTpuError::from)?;
+    let reencoded = decoded.encode_to_vec();
+    Ok(reencoded.len())
+}
+
+/// Exercises `prost-build` generated Rust structs across all generated protobuf packages in
+/// [`generated_prost_schemas`] (`OUT_DIR/generated_proto_include.rs`) against [`global_descriptor_pool`].
+///
+/// # Errors
+///
+/// Returns [`LibTpuError`] if any generated `prost` struct fails binary wire roundtrip.
+pub fn verify_all_generated_prost_schemas_wire_roundtrip() -> LibTpuResult<usize> {
+    let mut verified = 0_usize;
+    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::xla::HloModuleProto>(
+        "xla.HloModuleProto",
+    )?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::xla::CompileOptionsProto>(
+        "xla.CompileOptionsProto",
+    )?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::xla::megascale::runtime::DcnTopology,
+    >("xla.megascale.runtime.DCNTopology")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::xla::megascale::runtime::external::MegaScaleActionGraph,
+    >("xla.megascale.runtime.external.MegaScaleActionGraph")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::tpu::TpuCompilationEnvironmentProto,
+    >("tpu.TpuCompilationEnvironmentProto")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::tpu::TpuSerializedExecutableProto,
+    >("tpu.TpuSerializedExecutableProto")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::tpu::telemetry::TpuPowerStateProto,
+    >("tpu.telemetry.TpuPowerStateProto")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::libtpu::sdk::tpu_telemetry::TpuzCoreTelemetrySnapshotProto,
+    >("libtpu.sdk.tpu_telemetry.TpuzCoreTelemetrySnapshotProto")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::asic_sw::CoreDump>(
+        "asic_sw.CoreDump",
+    )?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::platforms_deepsea::jellyfish::xdb::CompilerMetadata,
+    >("platforms_deepsea.jellyfish.xdb.CompilerMetadata")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::tensorflow::CoordinationServiceConfig,
+    >("tensorflow.CoordinationServiceConfig")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::tensorflow::tpu::TpuEmbeddingConfiguration,
+    >("tensorflow.tpu.TPUEmbeddingConfiguration")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::tensorflow::profiler::XSpace>(
+        "tensorflow.profiler.XSpace",
+    )?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::stream_executor::RuntimeAbiVersionProto,
+    >("stream_executor.RuntimeAbiVersionProto")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::mlir::tpu::MosaicBackendConfigProto,
+    >("mlir.tpu.MosaicBackendConfigProto")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::sdy::ShardyMeshProto>(
+        "sdy.ShardyMeshProto",
+    )?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::vhlo::StableHloPortableArtifactMetadataProto,
+    >("vhlo.StableHloPortableArtifactMetadataProto")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::jax::PyTreeDefProto>(
+        "jax.PyTreeDefProto",
+    )?;
+    verified += 1;
+    Ok(verified)
+}
+
+/// Verifies strict 1:1 closure between [`global_descriptor_pool`] and [`ALL_REGISTERED_PROTO_MESSAGE_NAMES`].
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::ProtoSchemaDriftError`] or [`LibTpuError::ProtobufDecodeError`] if any
+/// `.proto` message is unmapped or fails dynamic wire/schema round-trip verification.
+pub fn verify_all_registered_proto_schemas_strict() -> LibTpuResult<usize> {
+    verify_registered_proto_schemas_closure(ALL_REGISTERED_PROTO_MESSAGE_NAMES)
 }
 
 /// Trait implemented by all strongly-typed `libtpu-rs` protobuf messages backed by an

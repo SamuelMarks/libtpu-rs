@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 The OpenXLA Authors and Google LLC.
+// Source: xla/ffi/api/c_api.h & xla/ffi/type_id_registry.proto (embedded in libtpu/libtpu.so protodesc_cold)
+
+syntax = "proto3";
+
+package xla.ffi;
+
+message XlaFfiTypeIdRegistrationProto {
+  string type_name = 1;
+  int64 type_id = 2;
+  uint64 type_size_bytes = 3;
+  uint64 type_align_bytes = 4;
+}
+
+message XlaFfiExecutionContextMetadataProto {
+  int32 run_id = 1;
+  int32 device_ordinal = 2;
+  uint64 stream_handle = 3;
+  repeated XlaFfiTypeIdRegistrationProto registered_types = 4;
+}
