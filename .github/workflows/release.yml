@@ -16,6 +16,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: "2"
   RUST_BACKTRACE: 1
 
 jobs:
@@ -49,7 +50,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends clang clang-format cmake doxygen llvm
-          python -m pip install --upgrade pip ruff mypy pytest pytest-cov pyelftools
+          python -m pip install --upgrade pip ruff mypy pytest pytest-cov pyelftools numpy ml_dtypes maturin jax
+          python -m pip install --no-build-isolation --no-deps -e .
 
       - name: Run all pre-commit hooks in check mode
         env:

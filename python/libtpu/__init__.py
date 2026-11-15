@@ -397,9 +397,9 @@ class _PjrtClientCreateArgs(ctypes.Structure):
         ("kv_get_user_arg", ctypes.c_void_p),
         ("kv_put_callback", ctypes.c_void_p),
         ("kv_put_user_arg", ctypes.c_void_p),
+        ("client", ctypes.c_void_p),
         ("kv_try_get_callback", ctypes.c_void_p),
         ("kv_try_get_user_arg", ctypes.c_void_p),
-        ("client", ctypes.c_void_p),
     ]
 
 

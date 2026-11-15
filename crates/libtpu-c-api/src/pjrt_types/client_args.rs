@@ -8,6 +8,28 @@ use crate::pjrt_types::{
 };
 use std::os::raw::c_char;
 
+/// Argument structure passed to `PJRT_KeyValuePutCallback` (`64` bytes).
+#[repr(C)]
+#[derive(Debug)]
+pub struct PJRT_KeyValuePutCallback_Args {
+    /// Size of this struct (`64`).
+    pub struct_size: usize,
+    /// Extension pointer (`NULL`).
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Key UTF-8 byte pointer.
+    pub key: *const c_char,
+    /// Key byte length.
+    pub key_size: usize,
+    /// Value byte pointer.
+    pub value: *const c_char,
+    /// Value byte length.
+    pub value_size: usize,
+    /// Caller `kv_put_user_arg`.
+    pub user_arg: *mut std::ffi::c_void,
+    /// Optional callback error output (`PJRT_Error*`).
+    pub callback_error: *mut crate::pjrt_types::PJRT_Error,
+}
+
 /// Argument structure for `PJRT_Client_Create` (`88` bytes).
 #[repr(C)]
 #[derive(Debug)]
@@ -28,12 +50,12 @@ pub struct PJRT_Client_Create_Args {
     pub kv_put_callback: *const std::ffi::c_void,
     /// Optional key-value put user arg.
     pub kv_put_user_arg: *mut std::ffi::c_void,
-    /// Optional non-blocking key-value try-get callback.
-    pub kv_try_get_callback: *const std::ffi::c_void,
-    /// Optional non-blocking key-value try-get user arg.
-    pub kv_try_get_user_arg: *mut std::ffi::c_void,
-    /// Output created `PJRT_Client*`.
+    /// Output created `PJRT_Client*` (`0x40`).
     pub client: *mut PJRT_Client,
+    /// Optional non-blocking key-value try-get callback (`0x48`).
+    pub kv_try_get_callback: *const std::ffi::c_void,
+    /// Optional non-blocking key-value try-get user arg (`0x50`).
+    pub kv_try_get_user_arg: *mut std::ffi::c_void,
 }
 
 /// Argument structure for `PJRT_Client_Destroy` (`24` bytes).
@@ -527,8 +549,9 @@ const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, create_optio
 const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, num_options) == 0x18);
 const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, kv_get_callback) == 0x20);
 const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, kv_put_callback) == 0x30);
-const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, kv_try_get_callback) == 0x40);
-const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, client) == 0x50);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, client) == 0x40);
+const _: () = assert!(std::mem::offset_of!(PJRT_Client_Create_Args, kv_try_get_callback) == 0x48);
+const _: () = assert!(std::mem::size_of::<PJRT_KeyValuePutCallback_Args>() == 64);
 const _: () = assert!(std::mem::offset_of!(PJRT_Client_Compile_Args, client) == 0x10);
 const _: () = assert!(std::mem::offset_of!(PJRT_Client_Compile_Args, program) == 0x18);
 const _: () = assert!(std::mem::offset_of!(PJRT_Client_Compile_Args, compile_options) == 0x20);

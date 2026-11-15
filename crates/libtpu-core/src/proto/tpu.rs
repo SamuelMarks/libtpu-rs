@@ -270,14 +270,105 @@ pub static JELLYFISH_COMPILATION_ENV_FIELD_SPECS: [JellyfishCompilationEnvFieldS
     },
 ];
 
-impl TpuCompilationEnvironmentProto {
+/// Extension helpers on [`TpuCompilationEnvironmentProto`] for dynamic descriptor reflection and CLI flag sync.
+pub trait TpuCompilationEnvironmentProtoExt: Sized {
     /// Looks up a [`JellyfishCompilationEnvFieldSpec`] by flag name (with or without `--`) or numeric tag.
     ///
     /// # Arguments
     ///
     /// * `name_or_tag` - Flag name or numeric field tag string.
     #[must_use]
-    pub fn lookup_jellyfish_field_spec(
+    fn lookup_jellyfish_field_spec(
+        name_or_tag: &str,
+    ) -> Option<&'static JellyfishCompilationEnvFieldSpec>;
+
+    /// Returns all real field names defined on `xla.jellyfish.TpuCompilationEnvironment` in `libtpu.so`.
+    #[must_use]
+    fn list_jellyfish_schema_field_names() -> Vec<&'static str>;
+
+    /// Resolves a [`prost_reflect::MessageDescriptor`] and [`prost_reflect::DynamicMessage`]
+    /// for `full_name` using the wire encoding of `self`.
+    ///
+    /// # Arguments
+    ///
+    /// * `full_name` - Fully-qualified protobuf message name in the global descriptor pool.
+    #[must_use]
+    fn reflect_as_message_by_name(
+        &self,
+        full_name: &str,
+    ) -> Option<(
+        prost_reflect::MessageDescriptor,
+        prost_reflect::DynamicMessage,
+    )>;
+
+    /// Reads any field on `xla.jellyfish.TpuCompilationEnvironment` (by name or numeric tag) as a string,
+    /// falling back to [`Self::lookup_jellyfish_field_spec`] defaults or `"default"`.
+    ///
+    /// # Arguments
+    ///
+    /// * `field_name_or_tag` - Field name (with or without `--`) or decimal tag string.
+    #[must_use]
+    fn get_field_as_string(&self, field_name_or_tag: &str) -> String;
+
+    /// Reads `field_name_or_tag` against `schema_name` in the global descriptor pool.
+    ///
+    /// # Arguments
+    ///
+    /// * `schema_name` - Fully-qualified protobuf message name.
+    /// * `field_name_or_tag` - Field name or numeric tag string.
+    #[must_use]
+    fn get_field_as_string_in_schema(&self, schema_name: &str, field_name_or_tag: &str) -> String;
+
+    /// Sets a field on `xla.jellyfish.TpuCompilationEnvironment` (by name or numeric tag) from a
+    /// CLI string value, storing unrecognized custom key/value pairs in the sweep profile annotation.
+    ///
+    /// # Arguments
+    ///
+    /// * `field_name_or_tag` - Field name (with or without `--`) or decimal tag string.
+    /// * `raw_value` - String value to parse and assign.
+    fn set_field_from_str(&mut self, field_name_or_tag: &str, raw_value: &str);
+
+    /// Sets `field_name_or_tag` against `schema_name` in the global descriptor pool.
+    ///
+    /// # Arguments
+    ///
+    /// * `schema_name` - Fully-qualified protobuf message name.
+    /// * `field_name_or_tag` - Field name or numeric tag string.
+    /// * `raw_value` - String value to parse and assign.
+    fn set_field_from_str_in_schema(
+        &mut self,
+        schema_name: &str,
+        field_name_or_tag: &str,
+        raw_value: &str,
+    );
+
+    /// Parses a whitespace-delimited CLI flag string (`--xla_tpu_foo=bar --xla_tpu_bool`) into a
+    /// [`TpuCompilationEnvironmentProto`].
+    ///
+    /// # Arguments
+    ///
+    /// * `cli_flags` - Whitespace-separated `--key=value` or `--bool_flag` arguments.
+    #[must_use]
+    fn from_cli_flags(cli_flags: &str) -> Self;
+
+    /// Exports all explicitly set fields on this [`TpuCompilationEnvironmentProto`] into `config`.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Target [`TpuInitConfig`] to update.
+    fn apply_to_init_config(&self, config: &mut TpuInitConfig);
+
+    /// Exports set fields from `schema_name` on `self` into `config`.
+    ///
+    /// # Arguments
+    ///
+    /// * `schema_name` - Fully-qualified protobuf message name.
+    /// * `config` - Target [`TpuInitConfig`] to update.
+    fn apply_to_init_config_in_schema(&self, schema_name: &str, config: &mut TpuInitConfig);
+}
+
+impl TpuCompilationEnvironmentProtoExt for TpuCompilationEnvironmentProto {
+    fn lookup_jellyfish_field_spec(
         name_or_tag: &str,
     ) -> Option<&'static JellyfishCompilationEnvFieldSpec> {
         let key = name_or_tag.trim_start_matches('-');
@@ -295,9 +386,7 @@ impl TpuCompilationEnvironmentProto {
         )
     }
 
-    /// Returns all real field names defined on `xla.jellyfish.TpuCompilationEnvironment` in `libtpu.so`.
-    #[must_use]
-    pub fn list_jellyfish_schema_field_names() -> Vec<&'static str> {
+    fn list_jellyfish_schema_field_names() -> Vec<&'static str> {
         let pool = crate::proto::descriptor::global_descriptor_pool();
         pool.get_message_by_name(Self::PROTO_FULL_NAME)
             .into_iter()
@@ -314,14 +403,7 @@ impl TpuCompilationEnvironmentProto {
             .collect()
     }
 
-    /// Resolves a [`prost_reflect::MessageDescriptor`] and [`prost_reflect::DynamicMessage`]
-    /// for `full_name` using the wire encoding of `self`.
-    ///
-    /// # Arguments
-    ///
-    /// * `full_name` - Fully-qualified protobuf message name in the global descriptor pool.
-    #[must_use]
-    pub fn reflect_as_message_by_name(
+    fn reflect_as_message_by_name(
         &self,
         full_name: &str,
     ) -> Option<(
@@ -336,29 +418,11 @@ impl TpuCompilationEnvironmentProto {
         Some((desc, dyn_msg))
     }
 
-    /// Reads any field on `xla.jellyfish.TpuCompilationEnvironment` (by name or numeric tag) as a string,
-    /// falling back to [`Self::lookup_jellyfish_field_spec`] defaults or `"default"`.
-    ///
-    /// # Arguments
-    ///
-    /// * `field_name_or_tag` - Field name (with or without `--`) or decimal tag string.
-    #[must_use]
-    pub fn get_field_as_string(&self, field_name_or_tag: &str) -> String {
+    fn get_field_as_string(&self, field_name_or_tag: &str) -> String {
         self.get_field_as_string_in_schema(Self::PROTO_FULL_NAME, field_name_or_tag)
     }
 
-    /// Reads `field_name_or_tag` against `schema_name` in the global descriptor pool.
-    ///
-    /// # Arguments
-    ///
-    /// * `schema_name` - Fully-qualified protobuf message name.
-    /// * `field_name_or_tag` - Field name or numeric tag string.
-    #[must_use]
-    pub fn get_field_as_string_in_schema(
-        &self,
-        schema_name: &str,
-        field_name_or_tag: &str,
-    ) -> String {
+    fn get_field_as_string_in_schema(&self, schema_name: &str, field_name_or_tag: &str) -> String {
         use prost_reflect::{Kind, ReflectMessage as _, Value};
         let clean = field_name_or_tag.trim_start_matches('-');
         if let Some((desc, dyn_msg)) = self.reflect_as_message_by_name(schema_name) {
@@ -422,25 +486,11 @@ impl TpuCompilationEnvironmentProto {
         String::from("default")
     }
 
-    /// Sets a field on `xla.jellyfish.TpuCompilationEnvironment` (by name or numeric tag) from a
-    /// CLI string value, storing unrecognized custom key/value pairs in the sweep profile annotation.
-    ///
-    /// # Arguments
-    ///
-    /// * `field_name_or_tag` - Field name (with or without `--`) or decimal tag string.
-    /// * `raw_value` - String value to parse and assign.
-    pub fn set_field_from_str(&mut self, field_name_or_tag: &str, raw_value: &str) {
+    fn set_field_from_str(&mut self, field_name_or_tag: &str, raw_value: &str) {
         self.set_field_from_str_in_schema(Self::PROTO_FULL_NAME, field_name_or_tag, raw_value);
     }
 
-    /// Sets `field_name_or_tag` against `schema_name` in the global descriptor pool.
-    ///
-    /// # Arguments
-    ///
-    /// * `schema_name` - Fully-qualified protobuf message name.
-    /// * `field_name_or_tag` - Field name or numeric tag string.
-    /// * `raw_value` - String value to parse and assign.
-    pub fn set_field_from_str_in_schema(
+    fn set_field_from_str_in_schema(
         &mut self,
         schema_name: &str,
         field_name_or_tag: &str,
@@ -530,14 +580,7 @@ impl TpuCompilationEnvironmentProto {
         path.push_str(&entry);
     }
 
-    /// Parses a whitespace-delimited CLI flag string (`--xla_tpu_foo=bar --xla_tpu_bool`) into a
-    /// [`TpuCompilationEnvironmentProto`].
-    ///
-    /// # Arguments
-    ///
-    /// * `cli_flags` - Whitespace-separated `--key=value` or `--bool_flag` arguments.
-    #[must_use]
-    pub fn from_cli_flags(cli_flags: &str) -> Self {
+    fn from_cli_flags(cli_flags: &str) -> Self {
         let mut env = Self::default();
         for token in cli_flags.split_whitespace() {
             let stripped = token.trim_start_matches('-');
@@ -553,22 +596,11 @@ impl TpuCompilationEnvironmentProto {
         env
     }
 
-    /// Exports all explicitly set fields on this [`TpuCompilationEnvironmentProto`] into `config`.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Target [`TpuInitConfig`] to update.
-    pub fn apply_to_init_config(&self, config: &mut TpuInitConfig) {
+    fn apply_to_init_config(&self, config: &mut TpuInitConfig) {
         self.apply_to_init_config_in_schema(Self::PROTO_FULL_NAME, config);
     }
 
-    /// Exports set fields from `schema_name` on `self` into `config`.
-    ///
-    /// # Arguments
-    ///
-    /// * `schema_name` - Fully-qualified protobuf message name.
-    /// * `config` - Target [`TpuInitConfig`] to update.
-    pub fn apply_to_init_config_in_schema(&self, schema_name: &str, config: &mut TpuInitConfig) {
+    fn apply_to_init_config_in_schema(&self, schema_name: &str, config: &mut TpuInitConfig) {
         if let Some(vmem_kib) = self.xla_tpu_scoped_vmem_limit_kib.filter(|&v| v > 0) {
             let kib_u64 = u64::try_from(vmem_kib).unwrap_or(16384);
             config.xla_tpu_scoped_vmem_limit_kib = kib_u64;

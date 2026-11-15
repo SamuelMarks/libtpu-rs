@@ -930,6 +930,13 @@ pub unsafe extern "C" fn PJRT_AsyncTrackingEvent_Destroy(
     }
 }
 
+/// No-op C deleter for static/client-owned `PJRT_Device_GetAttributes_Args` attribute slices.
+///
+/// # Arguments
+///
+/// * `_owner` - Unused `attributes_owner` pointer (`NULL`).
+pub(crate) extern "C" fn pjrt_noop_attributes_deleter(_owner: *mut std::ffi::c_void) {}
+
 /// Populates [`crate::pjrt_types::PJRT_Device_GetAttributes_Args`].
 ///
 /// # Arguments
@@ -952,6 +959,8 @@ unsafe fn handle_device_get_attributes(
     );
     args.attributes = ptr;
     args.num_attributes = len;
+    args.reserved0 = 0;
+    args.reserved1 = pjrt_noop_attributes_deleter as *const () as usize;
     Ok(())
 }
 
@@ -1050,6 +1059,7 @@ mod tests {
             let client = create_args.client;
 
             drop(Box::from_raw(PJRT_Device_GetAttributes(ptr::null_mut())));
+            pjrt_noop_attributes_deleter(ptr::null_mut());
             if let Some(&dev0) = (*client).device_ptrs.first() {
                 assert_ne!(format!("{:?}{:?}", *dev0, *(*dev0).desc_ptr), "");
                 let desc0 = (*dev0).desc_ptr;

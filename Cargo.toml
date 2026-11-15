@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/libtpu-proto-s0",
+    "crates/libtpu-proto-s1",
+    "crates/libtpu-proto-s2",
+    "crates/libtpu-proto-s3",
+    "crates/libtpu-proto-s4",
+    "crates/libtpu-proto-s5",
     "crates/libtpu-core",
     "crates/libtpu-c-api",
     "crates/libtpu-py",
@@ -34,6 +40,12 @@ indexmap = { version = "2.14", default-features = false, features = ["std"] }
 lexopt = { version = "0.3", default-features = false }
 libc = { version = "0.2", default-features = false }
 libtpu-core = { version = "0.0", path = "crates/libtpu-core" }
+libtpu-proto-s0 = { version = "0.0", path = "crates/libtpu-proto-s0" }
+libtpu-proto-s1 = { version = "0.0", path = "crates/libtpu-proto-s1" }
+libtpu-proto-s2 = { version = "0.0", path = "crates/libtpu-proto-s2" }
+libtpu-proto-s3 = { version = "0.0", path = "crates/libtpu-proto-s3" }
+libtpu-proto-s4 = { version = "0.0", path = "crates/libtpu-proto-s4" }
+libtpu-proto-s5 = { version = "0.0", path = "crates/libtpu-proto-s5" }
 memmap2 = { version = "0.9", default-features = false }
 nix = { version = "0.31", default-features = false }
 num-complex = { version = "0.4", default-features = false }
@@ -112,8 +124,10 @@ verbose_file_reads = "deny"
 [profile.dev]
 debug = 0
 incremental = false
+codegen-units = 16
 
 [profile.test]
 debug = 0
 incremental = false
+codegen-units = 16
 

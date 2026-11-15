@@ -4,10 +4,11 @@ use super::CompiledProgram;
 use super::opcode::TpuOpCode;
 use crate::error::{LibTpuError, LibTpuResult, Utf8ErrorWrapper};
 use crate::proto::{
-    BufferAllocationAssignedProto, CompileOptionsProto, DeepseaExecutableProto, IsaProgramProto,
-    LayoutProto, LoadableSegmentProto, ProgramRelocationProto, ProtoSchemaMessage as _, ShapeProto,
+    BufferAllocationAssignedProto, CompileOptionsProto, CompileOptionsProtoExt as _,
+    DeepseaExecutableProto, IsaProgramProto, LayoutProto, LoadableSegmentProto,
+    ProgramRelocationProto, ProgramRelocationProtoExt as _, ProtoSchemaMessage as _, ShapeProto,
     TargetArgumentsProto, TileProto, TpuCoreProgramAbiProto, TpuExecutableProto,
-    TpuSerializedExecutableProto, flat_attribute_proto,
+    TpuGenerationProtoExt as _, TpuSerializedExecutableProto, flat_attribute_proto,
 };
 use crate::types::{ByteSize, DeviceAddress, ElementType};
 

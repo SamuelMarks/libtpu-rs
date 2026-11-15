@@ -5,6 +5,7 @@
 //! `TPU_PREMAPPED_BUFFER_SIZE`, `MEGASCALE_NUM_SLICES`, and `MEGASCALE_SLICE_ID`).
 
 use crate::error::{LibTpuError, LibTpuResult};
+use crate::proto::TpuCompilationEnvironmentProtoExt as _;
 use crate::types::{ByteSize, ChipCoordinates, DeviceId, ProcessIndex, TpuGeneration};
 use lexopt::Arg;
 use parking_lot::Mutex;

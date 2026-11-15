@@ -157,8 +157,11 @@ pub struct PJRT_Device {
 }
 
 /// Opaque C handle wrapping a [`PjrtCoreMemory`].
+#[repr(C)]
 #[derive(Debug)]
 pub struct PJRT_Memory {
+    /// Null C API memory extension header required at offset `0x00` by `OpenXLA` PJRT `>= v0.105`.
+    pub c_api_ext_base: *const std::ffi::c_void,
     /// Underlying core memory space.
     pub inner: PjrtCoreMemory,
     /// Device wrapper pointers that can address this memory space.

@@ -128,7 +128,8 @@ pub type BarnaCoreSparseReduceHeaderOverhead = super::descriptor::generated_pros
 /// Alias for `tpu.TpuMemorySegmentProto.Range`.
 pub type TpuMemorySegmentRangeProto = tpu_memory_segment_proto::Range;
 
-impl ProgramRelocationProto {
+/// Extension helpers on [`ProgramRelocationProto`] for live `IMEM` IOVA patching.
+pub trait ProgramRelocationProtoExt {
     /// Patches live parameter and output IOVA addresses (`param_iovas`, `output_iovas`) into `imem_bytes`
     /// at the 64-byte bundle `self.bundle` and 4-byte slot displacement `self.slot`.
     ///
@@ -137,7 +138,11 @@ impl ProgramRelocationProto {
     /// * `imem_bytes` - Mutable `IMEM` VLIW instruction stream.
     /// * `param_iovas` - Live device HBM/IOVA addresses for program input parameters (`kind == 0`).
     /// * `output_iovas` - Live device HBM/IOVA addresses for program output buffers (`kind != 0`).
-    pub fn apply_to_imem(&self, imem_bytes: &mut [u8], param_iovas: &[u64], output_iovas: &[u64]) {
+    fn apply_to_imem(&self, imem_bytes: &mut [u8], param_iovas: &[u64], output_iovas: &[u64]);
+}
+
+impl ProgramRelocationProtoExt for ProgramRelocationProto {
+    fn apply_to_imem(&self, imem_bytes: &mut [u8], param_iovas: &[u64], output_iovas: &[u64]) {
         let idx = usize::try_from(self.memory_sub_space.max(0)).unwrap_or(0);
         let base_addr = if self.kind == 0 {
             param_iovas.get(idx).copied().unwrap_or(0)
@@ -166,14 +171,19 @@ impl ProgramRelocationProto {
     }
 }
 
-impl TpuChipConfigProto {
-    /// Constructs a canonical [`TpuChipConfigProto`] populated for `generation`.
+/// Extension factory constructing hardware descriptor protos from a [`crate::types::TpuGeneration`].
+pub trait TpuGenerationProtoExt: Sized {
+    /// Constructs a canonical descriptor populated for `generation`.
     ///
     /// # Arguments
     ///
     /// * `generation` - Cloud TPU hardware generation.
     #[must_use]
-    pub fn from_generation(generation: crate::types::TpuGeneration) -> Self {
+    fn from_generation(generation: crate::types::TpuGeneration) -> Self;
+}
+
+impl TpuGenerationProtoExt for TpuChipConfigProto {
+    fn from_generation(generation: crate::types::TpuGeneration) -> Self {
         use crate::types::TpuGeneration;
         let megacore = matches!(
             generation,
@@ -188,14 +198,8 @@ impl TpuChipConfigProto {
     }
 }
 
-impl TpuChipPartsProto {
-    /// Constructs a canonical [`TpuChipPartsProto`] populated for `generation`.
-    ///
-    /// # Arguments
-    ///
-    /// * `generation` - Cloud TPU hardware generation.
-    #[must_use]
-    pub fn from_generation(generation: crate::types::TpuGeneration) -> Self {
+impl TpuGenerationProtoExt for TpuChipPartsProto {
+    fn from_generation(generation: crate::types::TpuGeneration) -> Self {
         use crate::types::TpuGeneration;
         let variant_name = match generation {
             TpuGeneration::V2 => "jellyfish",
@@ -235,7 +239,8 @@ impl TpuChipPartsProto {
     }
 }
 
-impl TargetArgumentsProto {
+/// Extension factory constructing [`TargetArgumentsProto`] from chip configuration and parts.
+pub trait TargetArgumentsProtoExt: Sized {
     /// Constructs a wire-compatible [`TargetArgumentsProto`] from [`TpuChipConfigProto`] and [`TpuChipPartsProto`].
     ///
     /// # Arguments
@@ -243,10 +248,11 @@ impl TargetArgumentsProto {
     /// * `config` - Chip configuration descriptor.
     /// * `parts` - Physical chip parts descriptor.
     #[must_use]
-    pub fn from_chip_config_and_parts(
-        config: &TpuChipConfigProto,
-        parts: &TpuChipPartsProto,
-    ) -> Self {
+    fn from_chip_config_and_parts(config: &TpuChipConfigProto, parts: &TpuChipPartsProto) -> Self;
+}
+
+impl TargetArgumentsProtoExt for TargetArgumentsProto {
+    fn from_chip_config_and_parts(config: &TpuChipConfigProto, parts: &TpuChipPartsProto) -> Self {
         Self {
             tpu_topology_args: Some(super::tpu::TpuTopologyArgsProto {
                 version: Some(config.version),
@@ -268,14 +274,10 @@ impl TargetArgumentsProto {
             multislice_topology: None,
         }
     }
+}
 
-    /// Constructs a wire-compatible [`TargetArgumentsProto`] for `generation`.
-    ///
-    /// # Arguments
-    ///
-    /// * `generation` - Target Cloud TPU hardware generation.
-    #[must_use]
-    pub fn from_generation(generation: crate::types::TpuGeneration) -> Self {
+impl TpuGenerationProtoExt for TargetArgumentsProto {
+    fn from_generation(generation: crate::types::TpuGeneration) -> Self {
         let config = TpuChipConfigProto::from_generation(generation);
         let parts = TpuChipPartsProto::from_generation(generation);
         Self::from_chip_config_and_parts(&config, &parts)

@@ -83,7 +83,8 @@ pub type AutotuneResultsEntryProto =
 /// Alias for `xla.PjRtValueTypeProto.IntVector`.
 pub type PjRtValueIntVectorProto = pj_rt_value_type_proto::IntVector;
 
-impl CompileOptionsProto {
+/// Extension helpers on [`CompileOptionsProto`] for empty-tolerant wire decoding.
+pub trait CompileOptionsProtoExt: Sized {
     /// Decodes a [`CompileOptionsProto`] from `bytes`, returning [`CompileOptionsProto::default()`]
     /// if `bytes` is empty.
     ///
@@ -94,7 +95,11 @@ impl CompileOptionsProto {
     /// # Errors
     ///
     /// Returns [`crate::error::LibTpuError::ProtobufDecodeError`] if `bytes` is non-empty and malformed.
-    pub fn decode_or_empty(bytes: &[u8]) -> LibTpuResult<Self> {
+    fn decode_or_empty(bytes: &[u8]) -> LibTpuResult<Self>;
+}
+
+impl CompileOptionsProtoExt for CompileOptionsProto {
+    fn decode_or_empty(bytes: &[u8]) -> LibTpuResult<Self> {
         if bytes.is_empty() {
             Ok(Self::default())
         } else {

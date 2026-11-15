@@ -791,7 +791,7 @@ pub static EXT_17_PROFILER: PJRT_Profiler_Extension = PJRT_Profiler_Extension {
         pad: 0,
         next: ptr::null(),
     },
-    profiler_api: ptr::addr_of!(GLOBAL_PLUGIN_PROFILER_API),
+    profiler_api: ptr::addr_of!(profiler::NEGOTIATED_PLUGIN_PROFILER_API),
     traceme_context_id: 0,
 };
 

@@ -42,7 +42,7 @@ mod phase5_tests;
 #[cfg(test)]
 mod phase6_tests;
 
-use crate::proto::ProtoSchemaMessage as _;
+use crate::proto::{CompileOptionsProtoExt as _, ProtoSchemaMessage as _};
 
 pub use self::middle_end::{
     AlgebraicSimplifierPass, AsyncCollectiveFusionPass, AsyncCollectiveReport,

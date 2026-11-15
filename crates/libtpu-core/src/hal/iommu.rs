@@ -407,6 +407,39 @@ pub struct PinnedDmaBuffer {
     pub is_hugetlb: bool,
 }
 
+/// Platform `MAP_HUGETLB` flag (`libc::MAP_HUGETLB` on Linux, `0` on non-Linux POSIX).
+#[cfg(target_os = "linux")]
+const PLATFORM_MAP_HUGETLB_FLAG: libc::c_int = libc::MAP_HUGETLB;
+
+/// Platform `MAP_HUGETLB` flag (`0` on non-Linux POSIX).
+#[cfg(not(target_os = "linux"))]
+const PLATFORM_MAP_HUGETLB_FLAG: libc::c_int = 0;
+
+/// Invokes anonymous private `libc::mmap` with optional `MAP_HUGETLB` hint.
+///
+/// # Arguments
+///
+/// * `size_bytes` - Mapping byte length.
+/// * `request_hugetlb` - Whether to include [`PLATFORM_MAP_HUGETLB_FLAG`] in `mmap` flags.
+pub(crate) fn os_mmap_anonymous(size_bytes: usize, request_hugetlb: bool) -> *mut libc::c_void {
+    let hugetlb_bits = if request_hugetlb {
+        PLATFORM_MAP_HUGETLB_FLAG
+    } else {
+        0
+    };
+    // SAFETY: Anonymous private mmap with read/write permissions and `fd = -1`.
+    unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            size_bytes,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | hugetlb_bits,
+            -1,
+            0,
+        )
+    }
+}
+
 impl PinnedDmaBuffer {
     /// Allocates a page-aligned (attempting `2 MiB` `MAP_HUGETLB` on Linux when `len >= 2 MiB`)
     /// pinned host DMA buffer of at least `len` bytes.
@@ -419,40 +452,40 @@ impl PinnedDmaBuffer {
     ///
     /// Returns [`LibTpuError::HardwareIoError`] if anonymous `mmap` fails.
     pub fn allocate(len: usize) -> LibTpuResult<Self> {
-        let aligned_4k = len.max(4096).div_ceil(4096) * 4096;
-        #[cfg(target_os = "linux")]
-        if aligned_4k >= 2_097_152 {
-            let aligned_2m = aligned_4k.div_ceil(2_097_152) * 2_097_152;
-            // SAFETY: Anonymous private hugepage mmap with read/write permissions and fd = -1.
-            let huge_ptr = unsafe {
-                libc::mmap(
-                    std::ptr::null_mut(),
-                    aligned_2m,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_HUGETLB,
-                    -1,
-                    0,
-                )
-            };
-            if huge_ptr != libc::MAP_FAILED && !huge_ptr.is_null() {
+        let mut os_mapper = os_mmap_anonymous;
+        Self::allocate_with_mapper(len, cfg!(target_os = "linux"), &mut os_mapper)
+    }
+
+    /// Allocates a [`PinnedDmaBuffer`] using an injectable `mapper(size_bytes, request_hugetlb)`
+    /// trait object for deterministic testing of hugepage grant, fallback, and `MAP_FAILED` paths.
+    ///
+    /// # Arguments
+    ///
+    /// * `len` - Minimum buffer capacity in bytes (`>= 1`).
+    /// * `attempt_hugetlb` - Whether to attempt a `2 MiB` hugepage mapping when `len >= 2 MiB`.
+    /// * `mapper` - Mutable trait-object closure returning an `mmap` pointer or `libc::MAP_FAILED`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareIoError`] if the fallback `4 KiB` mapping returns `MAP_FAILED`.
+    pub(crate) fn allocate_with_mapper(
+        len: usize,
+        attempt_hugetlb: bool,
+        mapper: &mut dyn FnMut(usize, bool) -> *mut libc::c_void,
+    ) -> LibTpuResult<Self> {
+        let page_aligned_bytes = len.max(4096).div_ceil(4096) * 4096;
+        if attempt_hugetlb && page_aligned_bytes >= 2_097_152 {
+            let hugepage_aligned_bytes = page_aligned_bytes.div_ceil(2_097_152) * 2_097_152;
+            let huge_ptr = mapper(hugepage_aligned_bytes, true);
+            if huge_ptr != libc::MAP_FAILED {
                 return Ok(Self {
                     vaddr: huge_ptr as usize,
-                    mapped_len: aligned_2m,
+                    mapped_len: hugepage_aligned_bytes,
                     is_hugetlb: true,
                 });
             }
         }
-        // SAFETY: Anonymous private 4 KiB page-aligned mmap with read/write permissions and fd = -1.
-        let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                aligned_4k,
-                libc::PROT_READ | libc::PROT_WRITE,
-                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-                -1,
-                0,
-            )
-        };
+        let ptr = mapper(page_aligned_bytes, false);
         if ptr == libc::MAP_FAILED {
             return Err(LibTpuError::HardwareIoError {
                 operation: "mmap(PinnedDmaBuffer)",
@@ -462,7 +495,7 @@ impl PinnedDmaBuffer {
         }
         Ok(Self {
             vaddr: ptr as usize,
-            mapped_len: aligned_4k,
+            mapped_len: page_aligned_bytes,
             is_hugetlb: false,
         })
     }

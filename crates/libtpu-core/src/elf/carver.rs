@@ -1315,6 +1315,7 @@ pub fn synthesize_protodesc_cold_293_section_bytes() -> Vec<u8> {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use crate::proto::TpuGenerationProtoExt as _;
     use prost_types::{
         DescriptorProto, EnumDescriptorProto, EnumValueDescriptorProto, FieldDescriptorProto,
     };

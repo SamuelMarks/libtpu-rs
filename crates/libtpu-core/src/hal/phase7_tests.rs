@@ -418,6 +418,65 @@ fn phase7_iommu_buddy_slab_hugepage_dmabuf_vfio_and_gasket_sessions() -> LibTpuR
 }
 
 #[test]
+fn phase7_pinned_dma_hugetlb_and_eventfd_fallback_branches() -> LibTpuResult<()> {
+    /// Stub returning a valid non-negative eventfd.
+    fn stub_eventfd_ok() -> i32 {
+        77
+    }
+    /// Stub returning `-1` to exercise the POSIX pipe fallback.
+    fn stub_eventfd_err() -> i32 {
+        -1
+    }
+
+    let granted_huge = PinnedDmaBuffer::allocate_with_mapper(2_097_152, true, &mut |sz, _huge| {
+        super::iommu::os_mmap_anonymous(sz, false)
+    })?;
+    assert!(granted_huge.is_hugetlb);
+    assert_eq!(granted_huge.capacity(), 2_097_152);
+    drop(granted_huge);
+
+    let fallback_4k = PinnedDmaBuffer::allocate_with_mapper(2_097_152, true, &mut |sz, huge| {
+        if huge {
+            let probe = super::iommu::os_mmap_anonymous(4096, true);
+            if probe != libc::MAP_FAILED {
+                // SAFETY: `probe` is a valid 4096-byte mapping returned by `os_mmap_anonymous`.
+                let _ = unsafe { libc::munmap(probe, 4096) };
+            }
+            libc::MAP_FAILED
+        } else {
+            super::iommu::os_mmap_anonymous(sz, false)
+        }
+    })?;
+    assert!(!fallback_4k.is_hugetlb);
+    drop(fallback_4k);
+
+    let small_with_hugetlb = PinnedDmaBuffer::allocate_with_mapper(4096, true, &mut |sz, huge| {
+        assert!(!huge);
+        super::iommu::os_mmap_anonymous(sz, false)
+    })?;
+    assert!(!small_with_hugetlb.is_hugetlb);
+    drop(small_with_hugetlb);
+
+    assert!(
+        PinnedDmaBuffer::allocate_with_mapper(4096, false, &mut |_sz, _huge| libc::MAP_FAILED)
+            .is_err()
+    );
+
+    let direct_ev = super::syscall::select_eventfd_or_pipe(
+        stub_eventfd_ok,
+        super::syscall::create_posix_pipe_read_fd,
+    );
+    assert_eq!(direct_ev.0, 77);
+    let fallback_ev = super::syscall::select_eventfd_or_pipe(
+        stub_eventfd_err,
+        super::syscall::create_posix_pipe_read_fd,
+    );
+    assert!(fallback_ev.0 >= 0);
+    let _ = PosixKernelDriverBackend.close_device(fallback_ev.0);
+    Ok(())
+}
+
+#[test]
 fn phase7_iommu_dmabuf_vfio_and_gasket_sessions() -> LibTpuResult<()> {
     let base_a = DeviceAddress(0x1000_0000);
     let mut reg = DmaBufPeerRegistry::new();

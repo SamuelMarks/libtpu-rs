@@ -512,12 +512,12 @@ typedef struct PJRT_Client_Create_Args {
   const void *kv_put_callback;
   /** @brief User argument for `kv_put_callback`. */
   void *kv_put_user_arg;
+  /** @brief Output created `PJRT_Client*`. */
+  PJRT_Client *client;
   /** @brief Optional non-blocking key-value try-get callback. */
   const void *kv_try_get_callback;
   /** @brief User argument for `kv_try_get_callback`. */
   void *kv_try_get_user_arg;
-  /** @brief Output created `PJRT_Client*`. */
-  PJRT_Client *client;
 } PJRT_Client_Create_Args;
 
 /**

@@ -61,6 +61,18 @@ enum RawV6Attr {
     CmpDir(&'static str),
     /// `stablehlo` dot dimension numbers (`(lhs_batch, rhs_batch, lhs_contract, rhs_contract)`).
     DotDims(Vec<i64>, Vec<i64>, Vec<i64>, Vec<i64>),
+    /// Shardy `sdy::MeshAxisAttr` (`axis_name`, `size`).
+    SdyMeshAxis(String, i64),
+    /// Shardy `sdy::MeshAttr` (`axis_attr_indices`).
+    SdyMesh(Vec<usize>),
+    /// Shardy `sdy::AxisRefAttr` (`axis_name`).
+    SdyAxisRef(String),
+    /// Shardy `sdy::DimensionShardingAttr` (`axis_ref_attr_indices`).
+    SdyDimSharding(Vec<usize>),
+    /// Shardy `sdy::TensorShardingAttr` (`mesh_ref_attr_idx`, `dim_sharding_attr_indices`).
+    SdyTensorSharding(usize, Vec<usize>),
+    /// Shardy `sdy::TensorShardingPerValueAttr` (`tensor_sharding_attr_indices`).
+    SdyShardingPerValue(Vec<usize>),
     /// Ignored location or opaque metadata attribute.
     Opaque,
 }
@@ -310,11 +322,45 @@ fn decode_vhlo_attr(tag: u64, mut cur: &[u8], strings: &[String]) -> RawV6Attr {
     }
 }
 
-/// Decodes a single `builtin`, `vhlo`, or `stablehlo` custom attribute slice from Section `2`.
+/// Decodes a `sdy` custom attribute slice from Section `2`.
 ///
 /// # Arguments
 ///
-/// * `dialect` - Dialect name owning the attribute (`"builtin"`, `"vhlo"`, `"stablehlo"`).
+/// * `tag` - Shardy attribute discriminant tag.
+/// * `cur` - Remaining attribute payload bytes after `tag`.
+/// * `strings` - Decoded Section-0 string table.
+fn decode_sdy_attr(tag: u64, mut cur: &[u8], strings: &[String]) -> RawV6Attr {
+    match tag {
+        1 => {
+            let sidx =
+                usize::try_from(decode_mlir_prefix_varint(&mut cur).unwrap_or(0)).unwrap_or(0);
+            RawV6Attr::SdyMeshAxis(
+                strings.get(sidx).cloned().unwrap_or_default(),
+                read_svarint(&mut cur).unwrap_or(1),
+            )
+        }
+        2 => RawV6Attr::SdyMesh(read_uvarint_list(&mut cur).unwrap_or_default()),
+        4 => {
+            let sidx =
+                usize::try_from(decode_mlir_prefix_varint(&mut cur).unwrap_or(0)).unwrap_or(0);
+            RawV6Attr::SdyAxisRef(strings.get(sidx).cloned().unwrap_or_default())
+        }
+        5 => RawV6Attr::SdyDimSharding(read_uvarint_list(&mut cur).unwrap_or_default()),
+        6 => {
+            let mesh_idx =
+                usize::try_from(decode_mlir_prefix_varint(&mut cur).unwrap_or(0)).unwrap_or(0);
+            RawV6Attr::SdyTensorSharding(mesh_idx, read_uvarint_list(&mut cur).unwrap_or_default())
+        }
+        7 => RawV6Attr::SdyShardingPerValue(read_uvarint_list(&mut cur).unwrap_or_default()),
+        _ => RawV6Attr::Opaque,
+    }
+}
+
+/// Decodes a single `builtin`, `vhlo`, `sdy`, or `stablehlo` custom attribute slice from Section `2`.
+///
+/// # Arguments
+///
+/// * `dialect` - Dialect name owning the attribute (`"builtin"`, `"vhlo"`, `"sdy"`, `"stablehlo"`).
 /// * `slice` - Raw custom-encoded byte slice for one attribute.
 /// * `strings` - Decoded Section-0 string table.
 fn decode_v6_attr(dialect: &str, slice: &[u8], strings: &[String]) -> RawV6Attr {
@@ -324,6 +370,9 @@ fn decode_v6_attr(dialect: &str, slice: &[u8], strings: &[String]) -> RawV6Attr 
     };
     if dialect == "vhlo" {
         return decode_vhlo_attr(tag, cur, strings);
+    }
+    if dialect == "sdy" {
+        return decode_sdy_attr(tag, cur, strings);
     }
     if dialect == "stablehlo" || dialect == "mhlo" {
         return match tag {
@@ -403,6 +452,83 @@ fn decode_v6_attr(dialect: &str, slice: &[u8], strings: &[String]) -> RawV6Attr 
 }
 
 impl V6Tables {
+    /// Formats a Shardy `SdyTensorSharding` attribute at `sharding_idx` into a canonical GSPMD
+    /// `OpSharding` string (`"{replicated}"` or `"{devices=[...]<=[...]}"`).
+    ///
+    /// # Arguments
+    ///
+    /// * `sharding_idx` - Attribute index of a [`RawV6Attr::SdyTensorSharding`] in `self.attrs`.
+    fn fmt_sdy_tensor_sharding_as_op_sharding(&self, sharding_idx: usize) -> String {
+        let Some(RawV6Attr::SdyTensorSharding(mesh_ref_idx, dim_idxs)) =
+            self.attrs.get(sharding_idx)
+        else {
+            return String::from("{replicated}");
+        };
+        let mesh_name = match self.attrs.get(*mesh_ref_idx) {
+            Some(RawV6Attr::SymRef(s) | RawV6Attr::Str(s)) => s.as_str(),
+            _ => "",
+        };
+        let axis_idxs = self
+            .props
+            .iter()
+            .find_map(|pv| {
+                let m_i = usize::try_from(*pv.first()?).ok()?;
+                let n_i = usize::try_from(*pv.get(1)?).ok()?;
+                if let (Some(RawV6Attr::SdyMesh(axes)), Some(RawV6Attr::Str(nm))) =
+                    (self.attrs.get(m_i), self.attrs.get(n_i))
+                    && nm == mesh_name
+                {
+                    return Some(axes.as_slice());
+                }
+                None
+            })
+            .unwrap_or(&[]);
+        let mut factors = Vec::with_capacity(dim_idxs.len());
+        for &d_idx in dim_idxs {
+            let mut factor = 1_i64;
+            if let Some(RawV6Attr::SdyDimSharding(ax_refs)) = self.attrs.get(d_idx) {
+                for &ar_idx in ax_refs {
+                    if let Some(RawV6Attr::SdyAxisRef(ax_name)) = self.attrs.get(ar_idx) {
+                        for &ma_idx in axis_idxs {
+                            if let Some(RawV6Attr::SdyMeshAxis(m_ax, sz)) = self.attrs.get(ma_idx)
+                                && m_ax == ax_name
+                            {
+                                factor = factor.saturating_mul((*sz).max(1));
+                            }
+                        }
+                    }
+                }
+            }
+            factors.push(factor);
+        }
+        if factors.iter().all(|&f| f <= 1) {
+            String::from("{replicated}")
+        } else {
+            let total: i64 = factors.iter().fold(1_i64, |a, &b| a.saturating_mul(b));
+            let dims_s = factors
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{{devices=[{dims_s}]<=[{total}]}}")
+        }
+    }
+
+    /// Resolves a `SdyShardingPerValue` attribute at `attr_idx` into per-value `OpSharding` strings.
+    ///
+    /// # Arguments
+    ///
+    /// * `attr_idx` - Attribute index in `self.attrs`.
+    fn sdy_per_value_op_shardings(&self, attr_idx: usize) -> Vec<String> {
+        match self.attrs.get(attr_idx) {
+            Some(RawV6Attr::SdyShardingPerValue(sh_idxs)) => sh_idxs
+                .iter()
+                .map(|&si| self.fmt_sdy_tensor_sharding_as_op_sharding(si))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Formats `types[idx]` into canonical MLIR type syntax (e.g., `"tensor<2x3xf32>"`).
     ///
     /// # Arguments
@@ -912,17 +1038,20 @@ fn emit_v6_op(
         }
         "stablehlo.dot_general" => {
             let (lb, rb, lc, rc) = if prop_vals.len() >= 5 {
-                // VHLO `dot_general_v1`: [lhs_batch, lhs_contract, precision, rhs_batch, rhs_contract]
-                let i0 = usize::try_from(prop_vals.first().copied().unwrap_or(0)).unwrap_or(0);
-                let i1 = usize::try_from(prop_vals.get(1).copied().unwrap_or(0)).unwrap_or(0);
-                let i3 = usize::try_from(prop_vals.get(3).copied().unwrap_or(0)).unwrap_or(0);
-                let i4 = usize::try_from(prop_vals.get(4).copied().unwrap_or(0)).unwrap_or(0);
-                (
-                    tables.attr_as_i64_vec(i0),
-                    tables.attr_as_i64_vec(i3),
-                    tables.attr_as_i64_vec(i1),
-                    tables.attr_as_i64_vec(i4),
-                )
+                // VHLO `dot_general_v2` (12 alphabetical ODS properties): [2, 4, 8, 10]
+                // VHLO `dot_general_v1` (5 alphabetical ODS properties):  [0, 1, 3, 4]
+                let slots = if prop_vals.len() >= 12 {
+                    [2_usize, 4, 8, 10]
+                } else {
+                    [0_usize, 1, 3, 4]
+                };
+                let fetch_dims = |pos: usize| -> Vec<i64> {
+                    let s_idx = slots.get(pos).copied().unwrap_or(0);
+                    let a_idx =
+                        usize::try_from(prop_vals.get(s_idx).copied().unwrap_or(0)).unwrap_or(0);
+                    tables.attr_as_i64_vec(a_idx)
+                };
+                (fetch_dims(0), fetch_dims(2), fetch_dims(1), fetch_dims(3))
             } else {
                 let d_idx = usize::try_from(prop_vals.first().copied().unwrap_or(0)).unwrap_or(0);
                 match tables.attrs.get(d_idx) {
@@ -1366,6 +1495,63 @@ fn emit_v6_op(
                 );
             }
         }
+        "sdy.manual_computation" if let Some(reg) = op.regions.first() => {
+            let in_sh_list = prop_vals
+                .first()
+                .and_then(|&pv| usize::try_from(pv).ok())
+                .map(|idx| tables.sdy_per_value_op_shardings(idx))
+                .unwrap_or_default();
+            let out_sh_list = prop_vals
+                .get(2)
+                .and_then(|&pv| usize::try_from(pv).ok())
+                .map(|idx| tables.sdy_per_value_op_shardings(idx))
+                .unwrap_or_default();
+            let mut local_ssa = if reg.is_isolated {
+                Vec::new()
+            } else {
+                ssa_names.to_vec()
+            };
+            let base = *next_tmp;
+            *next_tmp += 1;
+            for (i, &ty_i) in reg.arg_types.iter().enumerate() {
+                let outer_opnd = opnd_strs.get(i).map_or("%arg0", String::as_str);
+                let in_sh = in_sh_list.get(i).map_or("{replicated}", String::as_str);
+                let local_ty = tables.fmt_type(ty_i, 0);
+                let shard_ssa = format!("%mc_in{base}_{i}");
+                let _ = writeln!(
+                    out,
+                    r#"{pad}{shard_ssa} = stablehlo.custom_call @SPMDFullToShardShape({outer_opnd}) {{call_target_name = "SPMDFullToShardShape", mhlo.sharding = "{in_sh}"}} : () -> {local_ty}"#,
+                );
+                local_ssa.push(shard_ssa);
+            }
+            let body_end = reg
+                .ops
+                .iter()
+                .position(|sub| sub.name == "sdy.return")
+                .unwrap_or(reg.ops.len());
+            let body_slice = reg.ops.get(..body_end).unwrap_or(&[]);
+            emit_v6_ops(body_slice, tables, &mut local_ssa, next_tmp, indent, out);
+            let ret_op = reg.ops.get(body_end);
+            let ret_val_idx = ret_op
+                .and_then(|ro| ro.operands.first().copied())
+                .unwrap_or(0);
+            let ret_ssa = local_ssa.get(ret_val_idx).map_or("%arg0", String::as_str);
+            let local_out_ty = body_slice
+                .iter()
+                .rev()
+                .find(|lo| lo.name != "builtin.unrealized_conversion_cast")
+                .and_then(|lo| lo.result_types.first().copied())
+                .or_else(|| reg.arg_types.first().copied())
+                .map(|ti| tables.fmt_type(ti, 0))
+                .or_else(|| res_tys.first().cloned())
+                .unwrap_or_else(|| String::from("tensor<f32>"));
+            let out_sh = out_sh_list.first().map_or("{replicated}", String::as_str);
+            let _ = writeln!(
+                out,
+                r#"{pad}{res_lhs}stablehlo.custom_call @SPMDShardToFullShape({ret_ssa}) {{call_target_name = "SPMDShardToFullShape", mhlo.sharding = "{out_sh}"}} : () -> {local_out_ty}"#,
+            );
+        }
+        "builtin.unrealized_conversion_cast" => {}
         _ => {
             let rty = if res_tys.len() <= 1 {
                 res_tys
@@ -1406,6 +1592,18 @@ fn emit_v6_ops(
 ) {
     let mut lhs_list = Vec::with_capacity(ops.len());
     for op in ops {
+        if op.name == "builtin.unrealized_conversion_cast" {
+            for (idx, _) in op.result_types.iter().enumerate() {
+                let aliased = op
+                    .operands
+                    .get(idx)
+                    .and_then(|&id| ssa_names.get(id))
+                    .map_or("%arg0", String::as_str);
+                ssa_names.push(String::from(aliased));
+            }
+            lhs_list.push(String::new());
+            continue;
+        }
         let n_res = op.result_types.len();
         if n_res == 0 {
             lhs_list.push(String::new());
@@ -1990,26 +2188,44 @@ pub fn decode_llvm_mlir_v6_to_text(bytes: &[u8]) -> Option<String> {
                 .prop_idx
                 .and_then(|pi| tables.props.get(pi))
                 .map_or(&[][..], Vec::as_slice);
-            if let Some(&ra_raw) = fp.get(2) {
-                let raw_adj = if (ra_raw & 1) != 0
-                    && usize::try_from(ra_raw).unwrap_or(usize::MAX) >= tables.attrs.len()
-                {
-                    ra_raw >> 1
-                } else {
-                    ra_raw
-                };
-                let ra_idx = usize::try_from(raw_adj).unwrap_or(usize::MAX);
-                if let Some(RawV6Attr::Array(dicts)) = tables.attrs.get(ra_idx) {
-                    for &d_idx in dicts {
-                        if let Some(RawV6Attr::Dict(pairs)) = tables.attrs.get(d_idx) {
-                            for &(k_i, v_i) in pairs {
-                                if let (Some(RawV6Attr::Str(ks)), Some(RawV6Attr::Str(vs))) =
-                                    (tables.attrs.get(k_i), tables.attrs.get(v_i))
-                                    && ks.contains("sharding")
-                                    && !vs.is_empty()
-                                    && !vs.contains("manual")
-                                {
-                                    mod_attrs.push(format!("mhlo.sharding = \"{vs}\""));
+            let res_slot = if fp.len() >= 6 { 3 } else { 2 };
+            let has_manual_comp = fn_op
+                .regions
+                .first()
+                .is_some_and(|r| r.ops.iter().any(|o| o.name == "sdy.manual_computation"));
+            for slot in [0, res_slot] {
+                if let Some(&ra_raw) = fp.get(slot) {
+                    let raw_adj = if (ra_raw & 1) != 0
+                        && usize::try_from(ra_raw).unwrap_or(usize::MAX) >= tables.attrs.len()
+                    {
+                        ra_raw >> 1
+                    } else {
+                        ra_raw
+                    };
+                    let ra_idx = usize::try_from(raw_adj).unwrap_or(usize::MAX);
+                    if let Some(RawV6Attr::Array(dicts)) = tables.attrs.get(ra_idx) {
+                        for &d_idx in dicts {
+                            if let Some(RawV6Attr::Dict(pairs)) = tables.attrs.get(d_idx) {
+                                for &(k_i, v_i) in pairs {
+                                    if let Some(RawV6Attr::Str(ks)) = tables.attrs.get(k_i)
+                                        && ks.contains("sharding")
+                                    {
+                                        match tables.attrs.get(v_i) {
+                                            Some(RawV6Attr::Str(vs))
+                                                if !vs.is_empty() && !vs.contains("manual") =>
+                                            {
+                                                mod_attrs.push(format!("mhlo.sharding = \"{vs}\""));
+                                            }
+                                            Some(RawV6Attr::SdyTensorSharding(_, _))
+                                                if !has_manual_comp =>
+                                            {
+                                                let s = tables
+                                                    .fmt_sdy_tensor_sharding_as_op_sharding(v_i);
+                                                mod_attrs.push(format!("mhlo.sharding = \"{s}\""));
+                                            }
+                                            _ => {}
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2036,15 +2252,19 @@ pub fn decode_llvm_mlir_v6_to_text(bytes: &[u8]) -> Option<String> {
                 .prop_idx
                 .and_then(|pi| tables.props.get(pi))
                 .map_or(&[][..], Vec::as_slice);
-            // props on func.func: [arg_attrs(opt), function_type(attr_idx), res_attrs(opt), sym_name(attr_idx), sym_vis(opt)]
+            // props on func.func:
+            // - MLIR 19–23 (5): [arg_attrs(opt), function_type, res_attrs(opt), sym_name, sym_vis(opt)]
+            // - MLIR 24+   (6): [arg_attrs(opt), function_type, no_inline(opt), res_attrs(opt), sym_name, sym_vis(opt)]
+            let (name_slot, vis_slot) = if fp.len() >= 6 { (4, 5) } else { (3, 4) };
             let fn_ty_attr_idx = usize::try_from(fp.get(1).copied().unwrap_or(0)).unwrap_or(0);
-            let fn_name_attr_idx = usize::try_from(fp.get(3).copied().unwrap_or(0)).unwrap_or(0);
+            let fn_name_attr_idx =
+                usize::try_from(fp.get(name_slot).copied().unwrap_or(0)).unwrap_or(0);
             let fn_name = match tables.attrs.get(fn_name_attr_idx) {
                 Some(RawV6Attr::Str(s)) if !s.is_empty() => s.as_str(),
                 _ => "main",
             };
             let vis = fp
-                .get(4)
+                .get(vis_slot)
                 .copied()
                 .and_then(|v| {
                     let direct = usize::try_from(v).ok().and_then(|i| tables.attrs.get(i));
@@ -4118,5 +4338,266 @@ mod tests {
             trunc_s3_c.extend(spayload);
         }
         assert!(decode_llvm_mlir_v6_to_text(&trunc_s3_c).is_none());
+    }
+
+    #[test]
+    fn test_v6_shardy_sdy_attrs_dot_general_v2_and_mlir24_func() {
+        let strs = vec![String::from("x"), String::from("mesh")];
+        let a_axis = decode_v6_attr("sdy", &[uv(1), uv(0), sv(4)].concat(), &strs);
+        assert!(matches!(a_axis, RawV6Attr::SdyMeshAxis(_, 4)));
+        let a_mesh = decode_v6_attr("sdy", &[uv(2), ulist(&[0])].concat(), &strs);
+        assert!(matches!(a_mesh, RawV6Attr::SdyMesh(_)));
+        let a_ref = decode_v6_attr("sdy", &[uv(4), uv(0)].concat(), &strs);
+        assert!(matches!(a_ref, RawV6Attr::SdyAxisRef(_)));
+        let a_dim = decode_v6_attr("sdy", &[uv(5), ulist(&[2])].concat(), &strs);
+        assert!(matches!(a_dim, RawV6Attr::SdyDimSharding(_)));
+        let a_ts = decode_v6_attr("sdy", &[uv(6), uv(1), ulist(&[3])].concat(), &strs);
+        assert!(matches!(a_ts, RawV6Attr::SdyTensorSharding(1, _)));
+        let a_pv = decode_v6_attr("sdy", &[uv(7), ulist(&[4])].concat(), &strs);
+        assert!(matches!(a_pv, RawV6Attr::SdyShardingPerValue(_)));
+        assert!(matches!(
+            decode_v6_attr("sdy", &uv(99), &strs),
+            RawV6Attr::Opaque
+        ));
+
+        let sdy_tables = V6Tables {
+            attrs: vec![
+                RawV6Attr::SdyMeshAxis(String::from("x"), 4),    // 0
+                RawV6Attr::SdyMeshAxis(String::from("y"), 2),    // 1
+                RawV6Attr::SdyMesh(vec![0, 1, 99]),              // 2
+                RawV6Attr::Str(String::from("mesh")),            // 3
+                RawV6Attr::SymRef(String::from("mesh")),         // 4
+                RawV6Attr::SdyAxisRef(String::from("x")),        // 5
+                RawV6Attr::SdyDimSharding(vec![5, 99]),          // 6: {"x"}
+                RawV6Attr::SdyDimSharding(Vec::new()),           // 7: {}
+                RawV6Attr::SdyTensorSharding(4, vec![6, 7, 99]), // 8: [{"x"}, {}, ?]
+                RawV6Attr::SdyTensorSharding(99, vec![7, 7]),    // 9: [{}, {}] unknown mesh
+                RawV6Attr::SdyShardingPerValue(vec![8]),         // 10
+                RawV6Attr::SdyShardingPerValue(vec![9]),         // 11
+                RawV6Attr::DenseArray(1, 0_i64.to_le_bytes().to_vec()), // 12
+                RawV6Attr::DenseArray(0, Vec::new()),            // 13
+                RawV6Attr::Str(String::from("sdy.sharding")),    // 14
+                RawV6Attr::Dict(vec![(14, 8)]),                  // 15
+                RawV6Attr::Array(vec![15]),                      // 16
+                RawV6Attr::TypeRef(2),                           // 17: fn type
+                RawV6Attr::Str(String::from("main")),            // 18
+                RawV6Attr::Str(String::from("public")),          // 19
+            ],
+            types: vec![
+                RawV6Type::Float("f32"),
+                RawV6Type::Tensor(vec![4, 4], 0),
+                RawV6Type::Func(vec![1], vec![1]),
+            ],
+            props: vec![
+                vec![99],                                     // 0: short prop
+                vec![2, 99],                                  // 1: non-Str name
+                vec![2, 3],                                   // 2: sdy.mesh @mesh
+                vec![10, 0, 11],                              // 3: sdy.manual_computation props
+                vec![0, 0, 13, 0, 12, 0, 0, 0, 13, 0, 12, 0], // 4: vhlo.dot_general_v2 (12 props)
+            ],
+        };
+        assert_eq!(
+            sdy_tables.fmt_sdy_tensor_sharding_as_op_sharding(99),
+            "{replicated}"
+        );
+        assert_eq!(
+            sdy_tables.fmt_sdy_tensor_sharding_as_op_sharding(8),
+            "{devices=[4,1,1]<=[4]}"
+        );
+        assert_eq!(
+            sdy_tables.fmt_sdy_tensor_sharding_as_op_sharding(9),
+            "{replicated}"
+        );
+        assert_eq!(
+            sdy_tables.sdy_per_value_op_shardings(0),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            sdy_tables.sdy_per_value_op_shardings(10),
+            vec![String::from("{devices=[4,1,1]<=[4]}")]
+        );
+        emit_sdy_manual_computation_test_ops(&sdy_tables);
+    }
+
+    /// Exercises `sdy.manual_computation`, `builtin.unrealized_conversion_cast`, and 12-property
+    /// `vhlo.dot_general_v2` emission in [`emit_v6_ops`].
+    ///
+    /// # Arguments
+    ///
+    /// * `sdy_tables` - Prepopulated [`V6Tables`] containing Shardy mesh/sharding attributes.
+    fn emit_sdy_manual_computation_test_ops(sdy_tables: &V6Tables) {
+        let mc_ops = vec![
+            V6OpNode {
+                name: String::from("builtin.unrealized_conversion_cast"),
+                dict_attr_idx: None,
+                prop_idx: None,
+                result_types: vec![1],
+                operands: vec![0],
+                regions: Vec::new(),
+            },
+            V6OpNode {
+                name: String::from("stablehlo.dot_general"),
+                dict_attr_idx: None,
+                prop_idx: Some(4),
+                result_types: vec![1],
+                operands: vec![1, 1],
+                regions: Vec::new(),
+            },
+            V6OpNode {
+                name: String::from("sdy.manual_computation"),
+                dict_attr_idx: None,
+                prop_idx: Some(3),
+                result_types: vec![1],
+                operands: vec![2],
+                regions: vec![V6Region {
+                    is_isolated: true,
+                    arg_types: vec![1],
+                    ops: vec![
+                        V6OpNode {
+                            name: String::from("stablehlo.negate"),
+                            dict_attr_idx: None,
+                            prop_idx: None,
+                            result_types: vec![1],
+                            operands: vec![0],
+                            regions: Vec::new(),
+                        },
+                        V6OpNode {
+                            name: String::from("builtin.unrealized_conversion_cast"),
+                            dict_attr_idx: None,
+                            prop_idx: None,
+                            result_types: vec![1],
+                            operands: vec![1],
+                            regions: Vec::new(),
+                        },
+                        V6OpNode {
+                            name: String::from("sdy.return"),
+                            dict_attr_idx: None,
+                            prop_idx: None,
+                            result_types: Vec::new(),
+                            operands: vec![2],
+                            regions: Vec::new(),
+                        },
+                    ],
+                }],
+            },
+            V6OpNode {
+                name: String::from("sdy.manual_computation"),
+                dict_attr_idx: None,
+                prop_idx: None,
+                result_types: vec![1],
+                operands: Vec::new(),
+                regions: vec![V6Region {
+                    is_isolated: false,
+                    arg_types: Vec::new(),
+                    ops: Vec::new(),
+                }],
+            },
+            V6OpNode {
+                name: String::from("sdy.manual_computation"),
+                dict_attr_idx: None,
+                prop_idx: None,
+                result_types: vec![1],
+                operands: Vec::new(),
+                regions: Vec::new(),
+            },
+        ];
+        let mut ssa = vec![String::from("%arg0")];
+        let mut tmp = 0_usize;
+        let mut emitted = String::new();
+        emit_v6_ops(&mc_ops, sdy_tables, &mut ssa, &mut tmp, 2, &mut emitted);
+        assert!(
+            emitted.contains("lhs_contracting_dimensions = [0], rhs_contracting_dimensions = [0]")
+        );
+        assert!(emitted.contains("SPMDFullToShardShape"));
+        assert!(emitted.contains("SPMDShardToFullShape"));
+    }
+
+    #[test]
+    fn test_v6_mlir24_six_prop_func_and_sdy_mesh_containers() {
+        let mlir24_strings = [
+            "builtin",
+            "sdy",
+            "func",
+            "module",
+            "mesh",
+            "manual_computation",
+            "return",
+            "x",
+            "main",
+            "public",
+            "sdy.sharding",
+        ];
+        let mlir24_dials: &[DialectTestSpec<'_>] = &[
+            ("builtin", None, &["module"]),
+            ("sdy", None, &["mesh", "manual_computation"]),
+            ("func", None, &["func", "return"]),
+        ];
+        let mlir24_attrs: &[AttrTestSpec] = &[
+            (1, true, [uv(1), uv(7), sv(4)].concat()), // 0: SdyMeshAxis("x", 4)
+            (1, true, [uv(2), ulist(&[0])].concat()),  // 1: SdyMesh([0])
+            (0, true, [uv(2), uv(4)].concat()),        // 2: Str("mesh")
+            (0, true, [uv(4), uv(2)].concat()),        // 3: SymRef(@mesh)
+            (1, true, [uv(4), uv(7)].concat()),        // 4: SdyAxisRef("x")
+            (1, true, [uv(5), ulist(&[4])].concat()),  // 5: SdyDimSharding([4])
+            (1, true, [uv(6), uv(3), ulist(&[5])].concat()), // 6: SdyTensorSharding(@mesh, [{"x"}])
+            (0, true, [uv(2), uv(10)].concat()),       // 7: Str("sdy.sharding")
+            (0, true, [uv(1), uv(2), uv(0), uv(6), uv(7), uv(6)].concat()), // 8: Dict {0: 6, sdy.sharding: 6}
+            (0, true, [uv(0), uv(1), uv(8)].concat()),                      // 9: Array([8])
+            (0, true, [uv(6), uv(2)].concat()),                             // 10: TypeVal(2)
+            (0, true, [uv(2), uv(8)].concat()),                             // 11: Str("main")
+            (0, true, [uv(2), uv(9)].concat()),                             // 12: Str("public")
+        ];
+        let mlir24_types: &[(usize, Vec<u8>)] = &[
+            (0, [uv(1), uv(2)].concat()),                      // 0: f32
+            (0, [uv(13), ulist(&[4]), uv(0)].concat()),        // 1: tensor<4xf32>
+            (0, [uv(5), uv(1), uv(1), uv(1), uv(1)].concat()), // 2: (tensor<4xf32>) -> tensor<4xf32>
+        ];
+        let mlir24_props = vec![
+            vec![1, 2],                                      // 0: sdy.mesh @mesh
+            vec![(9 << 1) | 1, 10, 0, 0, 11, (12 << 1) | 1], // 1: 6-prop func.func
+        ];
+        let ret_ir = [uv(4), vec![0x00], uv(0)].concat();
+        let fn_reg = [uv(1), uv(0), uv(1 << 1), ret_ir.clone()].concat();
+        let fn_ir = [uv(3), vec![0x50], uv(0), uv(1), uv(1 << 1), fn_reg].concat();
+        let mesh_ir = [uv(1), vec![0x40], uv(0), uv(0)].concat();
+        let mod_reg = [uv(1), uv(0), uv(2 << 1), mesh_ir.clone(), fn_ir].concat();
+        let root_ir = [uv(0), vec![0x10], uv(0), uv(1 << 1), mod_reg].concat();
+        let mlir24_bc = build_container(
+            6,
+            "MLIR24.0.0git",
+            &mlir24_strings,
+            mlir24_dials,
+            mlir24_attrs,
+            mlir24_types,
+            &mlir24_props,
+            &root_ir,
+            false,
+        );
+        let txt24 = decode_llvm_mlir_v6_to_text(&mlir24_bc);
+        assert!(
+            txt24
+                .as_deref()
+                .is_some_and(|s| s.contains("devices=[4]<=[4]"))
+        );
+
+        // Second container with `sdy.manual_computation` inside `func.func` (`has_manual_comp == true`)
+        let mc_inner_reg = uv(0);
+        let mc_op_ir = [uv(2), vec![0x10], uv(0), uv(1 << 1), mc_inner_reg].concat();
+        let fn_mc_reg = [uv(1), uv(0), uv(2 << 1), mc_op_ir, ret_ir].concat();
+        let fn_mc_ir = [uv(3), vec![0x50], uv(0), uv(1), uv(1 << 1), fn_mc_reg].concat();
+        let mod_mc_reg = [uv(1), uv(0), uv(2 << 1), mesh_ir, fn_mc_ir].concat();
+        let root_mc_ir = [uv(0), vec![0x10], uv(0), uv(1 << 1), mod_mc_reg].concat();
+        let mlir24_mc_bc = build_container(
+            6,
+            "MLIR24.0.0git",
+            &mlir24_strings,
+            mlir24_dials,
+            mlir24_attrs,
+            mlir24_types,
+            &mlir24_props,
+            &root_mc_ir,
+            false,
+        );
+        assert!(decode_llvm_mlir_v6_to_text(&mlir24_mc_bc).is_some());
     }
 }

@@ -43,7 +43,7 @@ use crate::compiler::sparsecore::{
 use crate::compiler::{CompiledProgram, TpuOpCode};
 use crate::config::TpuInitConfig;
 use crate::error::{LibTpuError, LibTpuResult};
-use crate::proto::ProtoSchemaMessage as _;
+use crate::proto::{ProgramRelocationProtoExt as _, ProtoSchemaMessage as _};
 use crate::types::{
     ByteSize, ChipCoordinates, ChipId, CoreId, DeviceAddress, DeviceId, EventFdHandle, HostId,
     LocalHardwareId, MemoryKind, MmioOffset, ProcessIndex, TpuGeneration,

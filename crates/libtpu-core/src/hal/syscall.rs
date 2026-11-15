@@ -986,20 +986,49 @@ impl PosixKernelDriverBackend {
     /// or pipe read end on macOS/BSD).
     #[must_use]
     pub fn create_eventfd(&self) -> EventFdHandle {
-        #[cfg(target_os = "linux")]
-        {
-            // SAFETY: `libc::eventfd` with `EFD_NONBLOCK | EFD_CLOEXEC` creates a valid kernel eventfd.
-            let fd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
-            if fd >= 0 {
-                return EventFdHandle(fd);
-            }
-        }
-        let mut fds = [0_i32; 2];
-        // SAFETY: `fds` points to a valid 2-element `c_int` array.
-        let _ = unsafe { posix_libc::pipe(fds.as_mut_ptr()) };
-        // SAFETY: Closing the write end of the newly created pipe when only a single handle is requested.
-        let _ = unsafe { posix_libc::close(fds[1]) };
-        EventFdHandle(fds[0])
+        select_eventfd_or_pipe(try_os_eventfd, create_posix_pipe_read_fd)
+    }
+}
+
+/// Attempts `libc::eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)` on Linux.
+#[cfg(target_os = "linux")]
+fn try_os_eventfd() -> i32 {
+    // SAFETY: `libc::eventfd` with `EFD_NONBLOCK | EFD_CLOEXEC` creates a valid kernel eventfd.
+    unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) }
+}
+
+/// Returns `-1` on non-Linux platforms where `SYS_eventfd2` is unavailable.
+#[cfg(not(target_os = "linux"))]
+const fn try_os_eventfd() -> i32 {
+    -1
+}
+
+/// Allocates a POSIX `pipe()` pair, closes the write descriptor, and returns the read descriptor.
+pub(crate) fn create_posix_pipe_read_fd() -> i32 {
+    let mut fds = [0_i32; 2];
+    // SAFETY: `fds` points to a valid 2-element `c_int` array.
+    let _ = unsafe { posix_libc::pipe(fds.as_mut_ptr()) };
+    // SAFETY: Closing the write end of the newly created pipe when only a single handle is requested.
+    let _ = unsafe { posix_libc::close(fds[1]) };
+    fds[0]
+}
+
+/// Selects a valid `eventfd` (`>= 0`) when available or falls back to `make_pipe_fd()`.
+///
+/// # Arguments
+///
+/// * `try_eventfd` - Function pointer returning a non-negative `eventfd` or negative sentinel.
+/// * `make_pipe_fd` - Fallback function pointer returning a POSIX pipe read descriptor.
+#[must_use]
+pub(crate) fn select_eventfd_or_pipe(
+    try_eventfd: fn() -> i32,
+    make_pipe_fd: fn() -> i32,
+) -> EventFdHandle {
+    let fd = try_eventfd();
+    if fd >= 0 {
+        EventFdHandle(fd)
+    } else {
+        EventFdHandle(make_pipe_fd())
     }
 }
 

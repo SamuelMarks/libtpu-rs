@@ -2,7 +2,8 @@
 
 use super::*;
 
-/// Applies `PJRT_Client_Create_Args.create_options` (`node_id` / `process_index`) onto `cfg`.
+/// Applies `PJRT_Client_Create_Args.create_options` (`node_id` / `process_index` / `num_nodes`)
+/// onto `cfg`, returning `true` when multi-host KV exchange (`num_nodes > 1`) is enabled.
 ///
 /// # Arguments
 ///
@@ -15,7 +16,8 @@ use super::*;
 unsafe fn apply_client_create_options(
     cfg: &mut libtpu_core::config::TpuInitConfig,
     args: &PJRT_Client_Create_Args,
-) {
+) -> bool {
+    let mut multihost_kv = false;
     if !args.create_options.is_null() {
         // SAFETY: `args.create_options` points to `args.num_options` elements of `PJRT_NamedValue`.
         let opts = unsafe {
@@ -35,10 +37,14 @@ unsafe fn apply_client_create_options(
                     let val = i64::from_ne_bytes(opt.value_payload.to_ne_bytes());
                     cfg.process_index =
                         libtpu_core::types::ProcessIndex(i32::try_from(val).unwrap_or(0));
+                } else if name.as_ref() == "num_nodes" {
+                    let val = i64::from_ne_bytes(opt.value_payload.to_ne_bytes());
+                    multihost_kv = val > 1;
                 }
             }
         }
     }
+    multihost_kv
 }
 
 /// Strongly-typed [`PJRT_Client_Create`] implementation parameterized over `base_cfg`.
@@ -61,7 +67,7 @@ pub(super) unsafe fn handle_client_create_with_config(
 ) -> Result<(), LibTpuError> {
     let mut cfg = base_cfg?;
     // SAFETY: `args` is a valid `PJRT_Client_Create_Args`.
-    unsafe { apply_client_create_options(&mut cfg, args) };
+    let multihost_kv = unsafe { apply_client_create_options(&mut cfg, args) };
     let inner = PjrtCoreClient::from_config(&cfg);
     let platform_name = to_c_string(&inner.topology.spec.platform_name);
     let platform_version = to_c_string(&inner.topology.spec.platform_version);
@@ -69,6 +75,7 @@ pub(super) unsafe fn handle_client_create_with_config(
     let mut memory_ptrs = Vec::with_capacity(inner.memories.len());
     for m in &inner.memories {
         memory_ptrs.push(Box::into_raw(Box::new(PJRT_Memory {
+            c_api_ext_base: ptr::null(),
             inner: m.clone(),
             addressable_by_device_ptrs: Vec::new(),
         })));
@@ -116,8 +123,8 @@ pub(super) unsafe fn handle_client_create_with_config(
         ext_arena: parking_lot::Mutex::new(Vec::new()),
     }));
 
-    if args.struct_size >= 88 {
-        // SAFETY: When `args.struct_size >= 88` and `kv_put_callback` is non-null, invoke KV put callback.
+    if args.struct_size >= 88 && multihost_kv {
+        // SAFETY: When `multihost_kv` is true, `WrapClientAroundCApi` initialized `kv_put_callback`.
         unsafe {
             notify_kv_put_topology_ready(
                 args.kv_put_callback,
@@ -127,11 +134,8 @@ pub(super) unsafe fn handle_client_create_with_config(
         }
     }
 
-    let (kv_try_cb, kv_try_arg) = if args.struct_size >= 88 {
-        (args.kv_try_get_callback, args.kv_try_get_user_arg)
-    } else {
-        (ptr::null(), ptr::null_mut())
-    };
+    let (kv_cb_get, kv_arg_get, kv_cb_put, kv_arg_put, kv_try_cb, kv_try_arg) =
+        select_multihost_kv_callbacks(args, multihost_kv);
     let client_box = Box::new(PJRT_Client {
         inner,
         platform_name,
@@ -140,21 +144,62 @@ pub(super) unsafe fn handle_client_create_with_config(
         addressable_device_ptrs,
         memory_ptrs,
         topology_ptr,
-        kv_get_callback: args.kv_get_callback,
-        kv_get_user_arg: args.kv_get_user_arg,
-        kv_put_callback: args.kv_put_callback,
-        kv_put_user_arg: args.kv_put_user_arg,
+        kv_get_callback: kv_cb_get,
+        kv_get_user_arg: kv_arg_get,
+        kv_put_callback: kv_cb_put,
+        kv_put_user_arg: kv_arg_put,
         kv_try_get_callback: kv_try_cb,
         kv_try_get_user_arg: kv_try_arg,
         ext_arena: parking_lot::Mutex::new(crate::pjrt_types::ClientExtensionArena::default()),
     });
-    let raw_client = Box::into_raw(client_box);
-    if args.struct_size >= 88 {
-        args.client = raw_client;
-    } else {
-        args.kv_try_get_callback = raw_client.cast::<std::ffi::c_void>();
-    }
+    args.client = Box::into_raw(client_box);
     Ok(())
+}
+
+/// Tuple of `(kv_get_cb, kv_get_arg, kv_put_cb, kv_put_arg, kv_try_get_cb, kv_try_get_arg)`.
+type ClientKvCallbacks = (
+    *const std::ffi::c_void,
+    *mut std::ffi::c_void,
+    *const std::ffi::c_void,
+    *mut std::ffi::c_void,
+    *const std::ffi::c_void,
+    *mut std::ffi::c_void,
+);
+
+/// Extracts KV store callback pointers from `args` only when `multihost_kv` is enabled.
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_Create_Args`] structure.
+/// * `multihost_kv` - Whether multi-host KV exchange (`num_nodes > 1`) is enabled.
+const fn select_multihost_kv_callbacks(
+    args: &PJRT_Client_Create_Args,
+    multihost_kv: bool,
+) -> ClientKvCallbacks {
+    if multihost_kv {
+        let (try_cb, try_arg) = if args.struct_size >= 88 {
+            (args.kv_try_get_callback, args.kv_try_get_user_arg)
+        } else {
+            (ptr::null(), ptr::null_mut())
+        };
+        (
+            args.kv_get_callback,
+            args.kv_get_user_arg,
+            args.kv_put_callback,
+            args.kv_put_user_arg,
+            try_cb,
+            try_arg,
+        )
+    } else {
+        (
+            ptr::null(),
+            ptr::null_mut(),
+            ptr::null(),
+            ptr::null_mut(),
+            ptr::null(),
+            ptr::null_mut(),
+        )
+    }
 }
 
 /// Strongly-typed handler for [`PJRT_Client_Create`].
@@ -179,8 +224,8 @@ pub(super) unsafe fn handle_client_create(
     }
 }
 
-/// Invokes an optional `PJRT_KeyValuePutCallback` to publish `"tpu_topology_ready"` = `"1"`
-/// and `"local_topology_proto"` = `local_topo_bytes`.
+/// Invokes an optional `PJRT_KeyValuePutCallback` using canonical [`crate::pjrt_types::PJRT_KeyValuePutCallback_Args`]
+/// to publish `"tpu_topology_ready"` = `"1"` and `"local_topology_proto"` = `local_topo_bytes`.
 ///
 /// # Arguments
 ///
@@ -198,11 +243,7 @@ unsafe fn notify_kv_put_topology_ready(
 ) {
     /// C callback type for `PJRT_KeyValuePutCallback`.
     type KvPutCallbackFn = unsafe extern "C" fn(
-        *const std::ffi::c_char,
-        usize,
-        *const std::ffi::c_char,
-        usize,
-        *mut std::ffi::c_void,
+        *mut crate::pjrt_types::PJRT_KeyValuePutCallback_Args,
     ) -> *mut PJRT_Error;
     if kv_put_callback.is_null() {
         return;
@@ -213,16 +254,18 @@ unsafe fn notify_kv_put_topology_ready(
         (&b"tpu_topology_ready"[..], &b"1"[..]),
         (&b"local_topology_proto"[..], local_topo_bytes),
     ] {
-        // SAFETY: Invoking caller's KV put callback with valid byte slices and `kv_put_user_arg`.
-        let kv_err = unsafe {
-            kv_put(
-                key.as_ptr().cast::<std::ffi::c_char>(),
-                key.len(),
-                val.as_ptr().cast::<std::ffi::c_char>(),
-                val.len(),
-                kv_put_user_arg,
-            )
+        let mut cb_args = crate::pjrt_types::PJRT_KeyValuePutCallback_Args {
+            struct_size: size_of::<crate::pjrt_types::PJRT_KeyValuePutCallback_Args>(),
+            extension_start: ptr::null_mut(),
+            key: key.as_ptr().cast::<std::ffi::c_char>(),
+            key_size: key.len(),
+            value: val.as_ptr().cast::<std::ffi::c_char>(),
+            value_size: val.len(),
+            user_arg: kv_put_user_arg,
+            callback_error: ptr::null_mut(),
         };
+        // SAFETY: Invoking caller's KV put callback with valid `PJRT_KeyValuePutCallback_Args`.
+        let kv_err = unsafe { kv_put(ptr::addr_of_mut!(cb_args)) };
         if !kv_err.is_null() {
             // SAFETY: `kv_err` is a heap-allocated `PJRT_Error` returned by the callback.
             unsafe {

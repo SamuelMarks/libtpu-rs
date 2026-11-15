@@ -87,6 +87,15 @@ mod tests {
                 crate::pjrt_types::PJRT_NamedValue {
                     struct_size: size_of::<crate::pjrt_types::PJRT_NamedValue>(),
                     extension_start: ptr::null_mut(),
+                    name: c"num_nodes".as_ptr(),
+                    name_size: 9,
+                    value_type_and_pad: 0,
+                    value_payload: 2,
+                    value_size: 1,
+                },
+                crate::pjrt_types::PJRT_NamedValue {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_NamedValue>(),
+                    extension_start: ptr::null_mut(),
                     name: c"other".as_ptr(),
                     name_size: 5,
                     value_type_and_pad: 1,
@@ -105,12 +114,10 @@ mod tests {
             ];
 
             unsafe extern "C" fn mock_kv_put_ok(
-                _key: *const std::ffi::c_char,
-                _key_len: usize,
-                _val: *const std::ffi::c_char,
-                _val_len: usize,
-                user_arg: *mut std::ffi::c_void,
+                cb_args: *mut crate::pjrt_types::PJRT_KeyValuePutCallback_Args,
             ) -> *mut PJRT_Error {
+                // SAFETY: `cb_args` is a valid `PJRT_KeyValuePutCallback_Args` with `user_arg` pointing to `kv_called`.
+                let user_arg = unsafe { (*cb_args).user_arg };
                 if !user_arg.is_null() {
                     // SAFETY: `user_arg` points to `kv_called` in test stack frame.
                     unsafe {
@@ -121,12 +128,10 @@ mod tests {
             }
 
             unsafe extern "C" fn mock_kv_put_err(
-                _key: *const std::ffi::c_char,
-                _key_len: usize,
-                _val: *const std::ffi::c_char,
-                _val_len: usize,
-                _user_arg: *mut std::ffi::c_void,
+                cb_args: *mut crate::pjrt_types::PJRT_KeyValuePutCallback_Args,
             ) -> *mut PJRT_Error {
+                // SAFETY: `cb_args` is non-null in test.
+                let _ = unsafe { &*cb_args };
                 box_pjrt_error(LibTpuError::InvalidArgument {
                     parameter: "kv_put",
                     reason: String::from("simulated kv_put failure"),
@@ -143,9 +148,9 @@ mod tests {
                 kv_get_user_arg: ptr::null_mut(),
                 kv_put_callback: mock_kv_put_ok as *const std::ffi::c_void,
                 kv_put_user_arg: ptr::addr_of_mut!(kv_called).cast(),
+                client: ptr::null_mut(),
                 kv_try_get_callback: ptr::null(),
                 kv_try_get_user_arg: ptr::null_mut(),
-                client: ptr::null_mut(),
             };
             assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args_opts).cast()).is_null());
             assert_eq!(kv_called, 2);
@@ -160,6 +165,18 @@ mod tests {
             create_args_opts.kv_put_user_arg = ptr::null_mut();
             create_args_opts.client = ptr::null_mut();
             assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args_opts).cast()).is_null());
+            destroy_opts_client.client = create_args_opts.client;
+            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_opts_client).cast()).is_null());
+
+            create_args_opts.kv_put_callback = ptr::null();
+            create_args_opts.client = ptr::null_mut();
+            assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args_opts).cast()).is_null());
+            destroy_opts_client.client = create_args_opts.client;
+            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_opts_client).cast()).is_null());
+
+            create_args_opts.struct_size = 72;
+            create_args_opts.client = ptr::null_mut();
+            assert!(client::handle_client_create(&mut create_args_opts).is_ok());
             destroy_opts_client.client = create_args_opts.client;
             assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_opts_client).cast()).is_null());
 
@@ -923,6 +940,7 @@ mod tests {
             libtpu_rs_buffer_destroy(h2d_sz88.out_buffer);
 
             let mut orphan_mem = PJRT_Memory {
+                c_api_ext_base: ptr::null(),
                 inner: (*first_mem).inner.clone(),
                 addressable_by_device_ptrs: Vec::new(),
             };
@@ -952,11 +970,11 @@ mod tests {
                 kv_try_get_user_arg: ptr::null_mut(),
             };
             assert!(client::handle_client_create(&mut legacy_cli_args).is_ok());
-            assert!(!legacy_cli_args.kv_try_get_callback.is_null());
+            assert!(!legacy_cli_args.client.is_null());
             let mut destroy_legacy_cli = PJRT_Client_Destroy_Args {
                 struct_size: 24,
                 extension_start: ptr::null_mut(),
-                client: legacy_cli_args.kv_try_get_callback.cast_mut().cast(),
+                client: legacy_cli_args.client,
             };
             assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_legacy_cli).cast()).is_null());
 

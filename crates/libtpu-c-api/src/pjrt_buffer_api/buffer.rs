@@ -25,7 +25,7 @@ unsafe fn handle_buffer_to_host_buffer(
             unsafe {
                 ptr::copy_nonoverlapping(bytes.as_ptr(), args.dst.cast::<u8>(), copy_len);
             }
-            args.event = ptr::null_mut();
+            args.event = crate::pjrt_error_api::immortal_ready_pjrt_event_ptr();
         }
     }
     Ok(())

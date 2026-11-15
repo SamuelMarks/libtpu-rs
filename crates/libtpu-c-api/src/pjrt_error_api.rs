@@ -177,6 +177,27 @@ pub unsafe extern "C" fn PJRT_Plugin_Attributes(
     }
 }
 
+/// Wrapper making the static ready [`crate::pjrt_types::PJRT_Event`] `Sync`.
+struct ImmortalPjrtEvent(crate::pjrt_types::PJRT_Event);
+
+// SAFETY: `PjrtCoreEvent` inside `PJRT_Event` uses `AtomicBool` and `parking_lot::Mutex` exclusively.
+unsafe impl Sync for ImmortalPjrtEvent {}
+
+/// Process-lifetime completed `PJRT_Event` returned by synchronous `PJRT_Buffer_ToHostBuffer` transfers.
+static IMMORTAL_READY_PJRT_EVENT: std::sync::OnceLock<ImmortalPjrtEvent> =
+    std::sync::OnceLock::new();
+
+/// Returns a non-null `PJRT_Event*` pointing to the static completed [`IMMORTAL_READY_PJRT_EVENT`].
+#[must_use]
+pub(crate) fn immortal_ready_pjrt_event_ptr() -> *mut crate::pjrt_types::PJRT_Event {
+    let slot = IMMORTAL_READY_PJRT_EVENT.get_or_init(|| {
+        ImmortalPjrtEvent(crate::pjrt_types::PJRT_Event {
+            inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
+        })
+    });
+    ptr::from_ref(&slot.0).cast_mut()
+}
+
 /// Strongly-typed handler for [`PJRT_Event_Destroy`].
 ///
 /// # Arguments
@@ -185,11 +206,11 @@ pub unsafe extern "C" fn PJRT_Plugin_Attributes(
 ///
 /// # Safety
 ///
-/// `args.event` must be null or a heap-allocated `PJRT_Event*`.
+/// `args.event` must be null, [`immortal_ready_pjrt_event_ptr`], or a heap-allocated `PJRT_Event*`.
 unsafe fn handle_event_destroy(
     args: &mut crate::pjrt_types::PJRT_Event_Destroy_Args,
 ) -> Result<(), LibTpuError> {
-    if !args.event.is_null() {
+    if !args.event.is_null() && args.event != immortal_ready_pjrt_event_ptr() {
         // SAFETY: `args.event` was allocated as `Box<PJRT_Event>`.
         unsafe {
             drop(Box::from_raw(args.event));
@@ -736,6 +757,13 @@ mod tests {
             on_ready_args.event = ptr::null_mut();
             assert!(PJRT_Event_OnReady(ptr::addr_of_mut!(on_ready_args).cast()).is_null());
             assert_eq!(cb_hits, 2);
+
+            let mut immortal_del = PJRT_Event_Destroy_Args {
+                struct_size: size_of::<PJRT_Event_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                event: immortal_ready_pjrt_event_ptr(),
+            };
+            assert!(PJRT_Event_Destroy(ptr::addr_of_mut!(immortal_del).cast()).is_null());
 
             let mut ev_create2 = PJRT_Event_Create_Args {
                 struct_size: size_of::<PJRT_Event_Create_Args>(),

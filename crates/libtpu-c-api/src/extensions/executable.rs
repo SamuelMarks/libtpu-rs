@@ -538,7 +538,7 @@ pub unsafe extern "C" fn PJRT_Shardings_OutputShardings(
 unsafe fn handle_tpu_executable_target_arguments(
     args: &mut PJRT_TpuExecutable_TargetArguments_Args,
 ) {
-    use libtpu_core::proto::ProtoSchemaMessage as _;
+    use libtpu_core::proto::{ProtoSchemaMessage as _, TpuGenerationProtoExt as _};
     let tpu_gen = global_init_config().generation;
     let target_bytes =
         libtpu_core::proto::TargetArgumentsProto::from_generation(tpu_gen).encode_proto();

@@ -870,7 +870,7 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
 
     create_words = (ctypes.c_uint64 * 11)(88, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
     assert fn_client_create(ctypes.byref(create_words)) is None
-    raw_pjrt_client = int(create_words[10])
+    raw_pjrt_client = int(create_words[8])
     assert raw_pjrt_client != 0
 
     in_floats = (ctypes.c_float * 4)(2.0, 4.0, 6.0, 8.0)

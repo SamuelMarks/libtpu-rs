@@ -1,7 +1,7 @@
 //! Ergonomic `libtpu_rs_*` C/C++/Python FFI helper entrypoints.
 
 use super::*;
-use libtpu_core::proto::ProtoSchemaMessage;
+use libtpu_core::proto::{ProtoSchemaMessage, TpuGenerationProtoExt as _};
 
 // ============================================================================
 // Clean C / C++20 FFI Entrypoints (`libtpu_rs_*`)

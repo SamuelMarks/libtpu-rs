@@ -456,6 +456,12 @@ dependencies = [
  "indexmap",
  "lexopt",
  "libc",
+ "libtpu-proto-s0",
+ "libtpu-proto-s1",
+ "libtpu-proto-s2",
+ "libtpu-proto-s3",
+ "libtpu-proto-s4",
+ "libtpu-proto-s5",
  "memmap2",
  "nix",
  "num-complex",
@@ -475,6 +481,87 @@ dependencies = [
  "sha2",
  "smallvec",
  "winnow",
+]
+
+[[package]]
+name = "libtpu-proto-s0"
+version = "0.0.52"
+dependencies = [
+ "heck",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "protox",
+]
+
+[[package]]
+name = "libtpu-proto-s1"
+version = "0.0.52"
+dependencies = [
+ "heck",
+ "libtpu-proto-s0",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "protox",
+]
+
+[[package]]
+name = "libtpu-proto-s2"
+version = "0.0.52"
+dependencies = [
+ "heck",
+ "libtpu-proto-s0",
+ "libtpu-proto-s1",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "protox",
+]
+
+[[package]]
+name = "libtpu-proto-s3"
+version = "0.0.52"
+dependencies = [
+ "heck",
+ "libtpu-proto-s0",
+ "libtpu-proto-s1",
+ "libtpu-proto-s2",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "protox",
+]
+
+[[package]]
+name = "libtpu-proto-s4"
+version = "0.0.52"
+dependencies = [
+ "heck",
+ "libtpu-proto-s0",
+ "libtpu-proto-s1",
+ "libtpu-proto-s2",
+ "libtpu-proto-s3",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "protox",
+]
+
+[[package]]
+name = "libtpu-proto-s5"
+version = "0.0.52"
+dependencies = [
+ "heck",
+ "libtpu-proto-s0",
+ "libtpu-proto-s1",
+ "libtpu-proto-s2",
+ "libtpu-proto-s3",
+ "libtpu-proto-s4",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "protox",
 ]
 
 [[package]]

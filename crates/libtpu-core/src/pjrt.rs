@@ -8,7 +8,7 @@ use crate::compiler::{CompiledMemoryStats, CompiledProgram, CostAnalysis};
 use crate::config::TpuInitConfig;
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::hal::{DeviceMemoryStats, DeviceSpec, SimulatedTpuHal, TopologySpec, TpuHal};
-use crate::proto::ProtoSchemaMessage as _;
+use crate::proto::{CompileOptionsProtoExt as _, ProtoSchemaMessage as _};
 use crate::types::{
     BufferId, ByteSize, DeviceAddress, DeviceId, ElementType, EventId, ExecutableId, MemoryKind,
     MemorySpaceId, ProcessIndex, Shape,
