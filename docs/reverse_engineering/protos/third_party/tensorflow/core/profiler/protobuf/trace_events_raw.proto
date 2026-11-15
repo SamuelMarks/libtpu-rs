@@ -1,0 +1,3 @@
+syntax = "proto2";
+package tensorflow.profiler;
+import public "third_party/xprof/plugin/tensorboard_plugin_profile/protobuf/trace_events_raw.proto";

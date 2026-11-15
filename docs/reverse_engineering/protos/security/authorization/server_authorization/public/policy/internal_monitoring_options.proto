@@ -1,0 +1,5 @@
+syntax = "proto3";
+package server_authz;
+message InternalMonitoringOptions {
+  string caller_tag = 1;
+}

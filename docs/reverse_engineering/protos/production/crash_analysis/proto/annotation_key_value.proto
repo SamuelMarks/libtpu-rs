@@ -1,0 +1,8 @@
+syntax = "proto3";
+package coroner.collection;
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+import "third_party/protobuf/cpp_features.proto";
+message AnnotationKeyValue {
+  string key = 1;
+  string value = 2;
+}

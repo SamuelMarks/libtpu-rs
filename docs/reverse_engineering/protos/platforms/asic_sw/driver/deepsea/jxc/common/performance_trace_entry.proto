@@ -1,0 +1,484 @@
+syntax = "proto2";
+package asic_sw.driver.deepsea.jxc;
+message nf_descriptor_trace_entry {
+  enum TracePoint {
+    TENSORCORE = 0;
+    BARNACORE = 1;
+    HIB = 2;
+  }
+  enum descriptor_source_value {
+    DESCRIPTOR_SOURCE_BARNA_CORE = 1;
+    DESCRIPTOR_SOURCE_HIB = 2;
+    DESCRIPTOR_SOURCE_HIB_HBM_QUEUE = 3;
+    DESCRIPTOR_SOURCE_TENSOR_CORE = 0;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 2;
+  }
+  optional .asic_sw.driver.deepsea.jxc.nf_descriptor_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 trace_id = 3;
+  optional .asic_sw.driver.deepsea.jxc.nf_descriptor_trace_entry.descriptor_source_value descriptor_source = 4;
+  optional uint32 node_id = 5;
+  optional uint32 chip_id = 6;
+  optional uint32 program_counter = 7;
+  optional uint32 source_offset = 8;
+  optional uint32 source_resource = 9;
+  optional uint32 destination_offset = 10;
+  optional uint32 destination_resource = 11;
+  optional uint32 destination_node_id = 12;
+  optional uint32 destination_chip_id = 13;
+  optional uint32 length = 14;
+  optional uint32 destination_is_multicast = 15;
+  optional uint32 destination_is_segmented = 16;
+  optional uint32 destination_update = 17;
+  optional uint32 destination_update_sync_flag = 18;
+  optional uint32 destination_update_resource = 19;
+  optional uint32 source_update = 20;
+  optional uint32 source_update_sync_flag = 21;
+  optional uint32 source_update_resource = 22;
+  optional uint32 ack_update = 23;
+  optional uint32 ack_update_sync_flag = 24;
+  optional uint32 ack_update_resource = 25;
+  optional uint32 hib_update = 26;
+  optional uint32 hib_ack_update = 27;
+}
+message nf_control_message_trace_entry {
+  enum TracePoint {
+    TENSORCORE = 28;
+    BARNACORE = 29;
+  }
+  enum descriptor_source_value {
+    DESCRIPTOR_SOURCE_BARNA_CORE = 1;
+    DESCRIPTOR_SOURCE_HIB = 2;
+    DESCRIPTOR_SOURCE_HIB_HBM_QUEUE = 3;
+    DESCRIPTOR_SOURCE_TENSOR_CORE = 0;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.nf_control_message_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 trace_id = 3;
+  optional .asic_sw.driver.deepsea.jxc.nf_control_message_trace_entry.descriptor_source_value descriptor_source = 4;
+  optional uint32 node_id = 5;
+  optional uint32 chip_id = 6;
+  optional uint32 address = 7;
+  optional uint32 tc_sync = 8;
+}
+message nf_ici_trace_entry {
+  enum TracePoint {
+    RECEIVE_START = 24;
+    RECEIVE_END = 25;
+    ICI_SEND_START = 26;
+  }
+  enum descriptor_source_value {
+    DESCRIPTOR_SOURCE_BARNA_CORE = 1;
+    DESCRIPTOR_SOURCE_HIB = 2;
+    DESCRIPTOR_SOURCE_HIB_HBM_QUEUE = 3;
+    DESCRIPTOR_SOURCE_TENSOR_CORE = 0;
+  }
+  enum vc_value {
+    VC_CONTROL = 0;
+    VC_DATA = 1;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.nf_ici_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 trace_id = 3;
+  optional .asic_sw.driver.deepsea.jxc.nf_ici_trace_entry.descriptor_source_value descriptor_source = 4;
+  optional uint32 node_id = 5;
+  optional uint32 chip_id = 6;
+  optional uint32 first = 7;
+  optional uint32 last = 8;
+  optional .asic_sw.driver.deepsea.jxc.nf_ici_trace_entry.vc_value vc = 9;
+}
+message nf_trace_entry {
+  enum TracePoint {
+    HBM_READ_COMMAND = 3;
+    HBM_WRITE_COMMAND = 4;
+    HBM_WRITE_DATA_END = 5;
+    VMEM_HBM_READ_COMMAND = 6;
+    VMEM_HBM_WRITE_COMMAND = 7;
+    VMEM_HBM_WRITE_DATA_END = 8;
+    VMEM_ICI_READ_COMMAND = 9;
+    VMEM_ICI_WRITE_COMMAND = 10;
+    VMEM_ICI_WRITE_DATA_END = 11;
+    SMEM_READ_COMMAND = 12;
+    SMEM_WRITE_COMMAND = 13;
+    SMEM_WRITE_DATA_END = 14;
+    IMEM_WRITE_COMMAND = 15;
+    IMEM_WRITE_DATA_END = 16;
+    BMEM_READ_COMMAND = 17;
+    BMEM_WRITE_COMMAND = 18;
+    BMEM_WRITE_DATA_END = 19;
+    HIB_WRITE_RECEIVE = 20;
+    HIB_WRITE_COMMAND = 22;
+    HIB_WRITE_DATA_END = 23;
+    ICI_SEND_END = 27;
+  }
+  enum descriptor_source_value {
+    DESCRIPTOR_SOURCE_BARNA_CORE = 1;
+    DESCRIPTOR_SOURCE_HIB = 2;
+    DESCRIPTOR_SOURCE_HIB_HBM_QUEUE = 3;
+    DESCRIPTOR_SOURCE_TENSOR_CORE = 0;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.nf_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 trace_id = 3;
+  optional .asic_sw.driver.deepsea.jxc.nf_trace_entry.descriptor_source_value descriptor_source = 4;
+  optional uint32 node_id = 5;
+  optional uint32 chip_id = 6;
+  optional uint32 first = 7;
+  optional uint32 last = 8;
+}
+message hbm_mux_switch_trace_entry {
+  enum TracePoint {
+    EVENT = 40;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.hbm_mux_switch_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 fsm = 3;
+}
+message ici_packet_trace_entry {
+  enum TracePoint {
+    HEADER_FLIT_INGRESS = 0;
+    TAIL_FLIT_INGRESS = 1;
+    HEADER_FLIT_EGRESS = 2;
+    TAIL_FLIT_EGRESS = 3;
+    REQUEST_NEXT_HOP_QUEUES = 4;
+    ACQUIRE_NEXT_HOP_QUEUES = 5;
+    REQUEST_NODE_FABRIC_VIRTUAL_CHANNEL = 6;
+    ACQUIRE_NODE_FABRIC_VIRTUAL_CHANNEL = 7;
+  }
+  enum descriptor_source_value {
+    DESCRIPTOR_SOURCE_BARNA_CORE = 1;
+    DESCRIPTOR_SOURCE_HIB = 2;
+    DESCRIPTOR_SOURCE_HIB_HBM_QUEUE = 3;
+    DESCRIPTOR_SOURCE_TENSOR_CORE = 0;
+  }
+  enum router_port_id_value {
+    ROUTER_PORT_ID_EXTERNAL_PORT_0 = 0;
+    ROUTER_PORT_ID_EXTERNAL_PORT_1 = 1;
+    ROUTER_PORT_ID_EXTERNAL_PORT_2 = 2;
+    ROUTER_PORT_ID_EXTERNAL_PORT_3 = 3;
+    ROUTER_PORT_ID_NODE_FABRIC_0 = 4;
+    ROUTER_PORT_ID_NODE_FABRIC_1 = 5;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.ici_packet_trace_entry.TracePoint id = 1;
+  optional uint32 trace_id = 2;
+  optional .asic_sw.driver.deepsea.jxc.ici_packet_trace_entry.descriptor_source_value descriptor_source = 3;
+  optional uint32 source_chip_id = 4;
+  optional uint32 source_node_id = 5;
+  optional uint32 destination_chip_id = 6;
+  optional uint32 destination_node_id = 7;
+  optional uint32 update_control_resource = 8;
+  optional uint32 update_sync_flag = 9;
+  optional uint32 destination_data_resource = 10;
+  optional uint32 same_cycle_arb_request_grant = 11;
+  optional uint32 queue_id = 12;
+  optional .asic_sw.driver.deepsea.jxc.ici_packet_trace_entry.router_port_id_value router_port_id = 13;
+  optional uint32 virtual_channel = 14;
+  optional uint32 first = 15;
+  optional uint32 last = 16;
+}
+message cs_external_sync_flag_update_trace_entry {
+  enum TracePoint {
+    DMA_DONE = 60;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.cs_external_sync_flag_update_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 updated_sync_flag_value = 3;
+  optional uint32 sync_flag_number = 4;
+  optional uint32 program_counter = 5;
+  optional uint32 successful_sync_unblock = 6;
+  optional uint32 successful_sync = 7;
+  optional uint32 last_sync_for_dma = 8;
+  optional uint32 last_sync_was_add = 9;
+  optional uint32 was_csr_update = 10;
+  optional uint32 trace_bit_set = 11;
+}
+message cs_internal_trace_entry {
+  enum TracePoint {
+    SET_SYNC_FLAG = 61;
+    ADD_SYNC_FLAG = 62;
+    HOST_INTERRUPT = 63;
+    SET_TRACEMARK = 64;
+    TRACE_INSTRUCTION = 65;
+    UNSUCCESSFUL_SYNC_ATTEMPT = 66;
+    SUCCESSFUL_SYNC_ATTEMPT = 67;
+    READ_SYNC_FLAG = 68;
+    SCALAR_FENCE_START = 69;
+    SCALAR_FENCE_END = 70;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.cs_internal_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 data_field = 3;
+  optional uint32 sync_flag_number = 4;
+  optional uint32 program_counter = 5;
+  optional uint32 sfence_end = 6;
+  optional uint32 sfence_start = 7;
+}
+message brn_fabric_sync_trace_entry {
+  enum TracePoint {
+    EVENT = 112;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.brn_fabric_sync_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 new_sync_value = 3;
+  optional uint32 sync_flag_id = 4;
+}
+message brn_sync_wait_trace_entry {
+  enum TracePoint {
+    EVENT = 113;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.brn_sync_wait_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 pc_tag = 3;
+  optional uint32 sync_flag_id = 4;
+  optional uint32 wait_cycles = 5;
+  optional uint32 is_flag_cleared = 6;
+  optional uint32 is_non_blocking = 7;
+}
+message brn_perf1_trace_entry {
+  enum TracePoint {
+    CONCAT = 109;
+    PROCESS_HOSTID = 110;
+    SPARSE_REDUCE = 111;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 2;
+  }
+  optional .asic_sw.driver.deepsea.jxc.brn_perf1_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 pc_tag = 3;
+  optional uint32 cycles_of_execution = 4;
+  optional uint32 input0_stall_cycles = 5;
+  optional uint32 input1_stall_cycles = 6;
+  optional uint32 output_stall_cycles = 7;
+  optional uint32 sync_flag_location = 8;
+  optional uint32 is_sync_update = 9;
+}
+message brn_perf2_trace_entry {
+  enum TracePoint {
+    CHANNEL0 = 100;
+    CHANNEL1 = 101;
+    CHANNEL2 = 102;
+    CHANNEL3 = 103;
+    CHANNEL4 = 104;
+    CHANNEL5 = 105;
+    CHANNEL6 = 106;
+    CHANNEL7 = 107;
+    PROCESS_BRNID = 108;
+    CHANNEL8 = 114;
+    CHANNEL9 = 115;
+    CHANNEL10 = 116;
+    CHANNEL11 = 117;
+    CHANNEL12 = 118;
+    CHANNEL13 = 119;
+    CHANNEL14 = 120;
+    CHANNEL15 = 121;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 2;
+  }
+  optional .asic_sw.driver.deepsea.jxc.brn_perf2_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 pc_tag = 3;
+  optional uint32 cycles_of_execution = 4;
+  optional uint32 input_stall_cycles = 5;
+  optional uint32 output0_stall_cycles = 6;
+  optional uint32 output1_stall_cycles = 7;
+  optional uint32 sync_flag_location = 8;
+  optional uint32 is_sync_update = 9;
+}
+message bcs_internal_trace_entry {
+  enum TracePoint {
+    BRN_TRACE_INSTRUCTION = 122;
+    BRN_SET_TRACEMARK = 123;
+    BRN_SYNC_START_STOP_TRACE = 124;
+    BRN_HOST_INTERRUPT = 125;
+    BRN_FENCE_START = 126;
+    BRN_FENCE_END = 127;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.bcs_internal_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 data_field = 3;
+  optional uint32 sync_flag_number = 4;
+  optional uint32 program_counter = 5;
+  optional uint32 sync_sfence_end = 6;
+  optional uint32 sync_sfence_start = 7;
+}
+message hib_request_trace_entry {
+  enum TracePoint {
+    READ_REQUEST = 80;
+    READ_COMPLETION = 81;
+    WRITE_REQUEST = 82;
+    WRITE_COMPLETION = 83;
+  }
+  enum requester_tag_value {
+    REQUESTER_TAG_BC_FSMQ = 5;
+    REQUESTER_TAG_BC_INFQ = 2;
+    REQUESTER_TAG_BC_OFQ = 3;
+    REQUESTER_TAG_CHIP_DEBUGQ = 7;
+    REQUESTER_TAG_HBM_WRQ = 4;
+    REQUESTER_TAG_NF_DESCRQ = 6;
+    REQUESTER_TAG_NF_OFQ = 8;
+    REQUESTER_TAG_TC_INFQ = 0;
+    REQUESTER_TAG_TC_OFQ = 1;
+  }
+  enum requester_id_value {
+    REQUESTER_ID_BC_FSM = 8;
+    REQUESTER_ID_BC_INF = 6;
+    REQUESTER_ID_BC_OF = 1;
+    REQUESTER_ID_CHIP_DEBUG = 3;
+    REQUESTER_ID_HBM_WR = 7;
+    REQUESTER_ID_NF_OF = 2;
+    REQUESTER_ID_PAGE_TABLE_REQ = 10;
+    REQUESTER_ID_QUEUE_FETCH = 9;
+    REQUESTER_ID_STATUS_BLOCK_WRITE = 4;
+    REQUESTER_ID_TC_INF = 5;
+    REQUESTER_ID_TC_OF = 0;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 2;
+  }
+  optional .asic_sw.driver.deepsea.jxc.hib_request_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional .asic_sw.driver.deepsea.jxc.hib_request_trace_entry.requester_tag_value requester_tag = 3;
+  optional .asic_sw.driver.deepsea.jxc.hib_request_trace_entry.requester_id_value requester_id = 4;
+  optional uint32 chunk_id = 5;
+  optional uint32 num_chunks = 6;
+  optional uint32 length = 7;
+  optional uint64 virt_addr = 8;
+}
+message hib_interrupt_trace_entry {
+  enum TracePoint {
+    INTERRUPT = 84;
+    INTERRUPT_ACTUAL = 85;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.hib_interrupt_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 chip_debug_queue = 3;
+  optional uint32 nf_descriptor_queue = 4;
+  optional uint32 tc_halted = 5;
+  optional uint32 tc_host = 6;
+  optional uint32 hbm_write_queue = 7;
+  optional uint32 bc_fsm_microcode_queue = 8;
+  optional uint32 nf_outfeed_queue = 9;
+  optional uint32 bc_outfeed_queue = 10;
+  optional uint32 bc_infeed_queue = 11;
+  optional uint32 tc_outfeed_queue = 12;
+  optional uint32 tc_infeed_queue = 13;
+  optional uint32 bc_host = 14;
+}
+message hib_sync_update_trace_entry {
+  enum TracePoint {
+    SYNC_UPDATE = 86;
+  }
+  enum descriptor_source_value {
+    DESCRIPTOR_SOURCE_BARNA_CORE = 1;
+    DESCRIPTOR_SOURCE_HIB = 2;
+    DESCRIPTOR_SOURCE_HIB_HBM_QUEUE = 3;
+    DESCRIPTOR_SOURCE_TENSOR_CORE = 0;
+  }
+  enum sf_rsrc_value {
+    SF_RSRC_BARNA_CORE = 1;
+    SF_RSRC_TENSOR_CORE = 0;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 1;
+  }
+  optional .asic_sw.driver.deepsea.jxc.hib_sync_update_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 qid = 3;
+  optional uint32 trace_id = 4;
+  optional .asic_sw.driver.deepsea.jxc.hib_sync_update_trace_entry.descriptor_source_value descriptor_source = 5;
+  optional uint32 trace = 6;
+  optional uint32 last = 7;
+  optional uint32 sf_incr = 8;
+  optional uint32 sf_addr = 9;
+  optional .asic_sw.driver.deepsea.jxc.hib_sync_update_trace_entry.sf_rsrc_value sf_rsrc = 10;
+  optional uint32 sf_nodeid = 11;
+  optional uint32 sf_chipid = 12;
+}
+message hib_hbm_write_trace_entry {
+  enum TracePoint {
+    HBM_WRITE = 87;
+  }
+  enum descriptor_source_value {
+    DESCRIPTOR_SOURCE_BARNA_CORE = 1;
+    DESCRIPTOR_SOURCE_HIB = 2;
+    DESCRIPTOR_SOURCE_HIB_HBM_QUEUE = 3;
+    DESCRIPTOR_SOURCE_TENSOR_CORE = 0;
+  }
+  enum queue_type_value {
+    QUEUE_TYPE_BC_INFEED = 1;
+    QUEUE_TYPE_HBM_WRITE = 2;
+    QUEUE_TYPE_TC_INFEED = 0;
+  }
+  enum Constants {
+    NUM_LOG_LINES = 2;
+  }
+  optional .asic_sw.driver.deepsea.jxc.hib_hbm_write_trace_entry.TracePoint id = 1;
+  optional uint32 tensor_node = 2;
+  optional uint32 trace_id = 3;
+  optional .asic_sw.driver.deepsea.jxc.hib_hbm_write_trace_entry.descriptor_source_value descriptor_source = 4;
+  optional uint64 virt_addr = 5;
+  optional uint32 hbm_addr_1kib = 6;
+  optional uint32 length_1kib = 7;
+  optional .asic_sw.driver.deepsea.jxc.hib_hbm_write_trace_entry.queue_type_value queue_type = 8;
+  optional uint32 buffer_free = 9;
+}
+message PerformanceTraceEntry {
+  oneof entry_data {
+    .asic_sw.driver.deepsea.jxc.nf_descriptor_trace_entry nf_descriptor = 3;
+    .asic_sw.driver.deepsea.jxc.nf_control_message_trace_entry nf_control_message = 4;
+    .asic_sw.driver.deepsea.jxc.nf_ici_trace_entry nf_ici = 5;
+    .asic_sw.driver.deepsea.jxc.nf_trace_entry nf = 6;
+    .asic_sw.driver.deepsea.jxc.hbm_mux_switch_trace_entry hbm_mux_switch = 7;
+    .asic_sw.driver.deepsea.jxc.ici_packet_trace_entry ici_packet = 8;
+    .asic_sw.driver.deepsea.jxc.cs_external_sync_flag_update_trace_entry cs_external_sync_flag_update = 9;
+    .asic_sw.driver.deepsea.jxc.cs_internal_trace_entry cs_internal = 10;
+    .asic_sw.driver.deepsea.jxc.brn_fabric_sync_trace_entry brn_fabric_sync = 11;
+    .asic_sw.driver.deepsea.jxc.brn_sync_wait_trace_entry brn_sync_wait = 12;
+    .asic_sw.driver.deepsea.jxc.brn_perf1_trace_entry brn_perf1 = 13;
+    .asic_sw.driver.deepsea.jxc.brn_perf2_trace_entry brn_perf2 = 14;
+    .asic_sw.driver.deepsea.jxc.bcs_internal_trace_entry bcs_internal = 15;
+    .asic_sw.driver.deepsea.jxc.hib_request_trace_entry hib_request = 16;
+    .asic_sw.driver.deepsea.jxc.hib_interrupt_trace_entry hib_interrupt = 17;
+    .asic_sw.driver.deepsea.jxc.hib_sync_update_trace_entry hib_sync_update = 18;
+    .asic_sw.driver.deepsea.jxc.hib_hbm_write_trace_entry hib_hbm_write = 19;
+  }
+  optional uint64 timestamp = 1;
+  optional uint32 chip_id = 2;
+}

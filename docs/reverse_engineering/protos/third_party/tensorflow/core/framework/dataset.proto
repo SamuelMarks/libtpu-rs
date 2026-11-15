@@ -1,0 +1,19 @@
+syntax = "proto3";
+package tensorflow.data;
+import "third_party/tensorflow/core/framework/tensor.proto";
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+message CompressedComponentMetadata {
+  reserved 3;
+  .tensorflow.DataType dtype = 1;
+  .tensorflow.TensorShapeProto tensor_shape = 2;
+  repeated uint64 uncompressed_bytes = 4;
+}
+message CompressedElement {
+  bytes data = 1;
+  repeated .tensorflow.data.CompressedComponentMetadata component_metadata = 2;
+  int32 version = 3;
+}
+message UncompressedElement {
+  repeated .tensorflow.TensorProto components = 1;
+}

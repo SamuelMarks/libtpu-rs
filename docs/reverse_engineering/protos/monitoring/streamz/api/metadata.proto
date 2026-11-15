@@ -1,0 +1,16 @@
+syntax = "proto3";
+package monitoring.streamz;
+message MetadataPb {
+  bool is_constant = 1;
+  bool is_cumulative = 2;
+  string denominator_metric = 3;
+  string deprecation = 4;
+  string description = 5;
+  bool is_for_eyes_only = 6;
+  bool is_gauge = 7;
+  bool is_public = 8;
+  string unit = 9;
+  bool is_timestamp = 10;
+  bool is_huge = 11;
+  bool hide_data_from_eyes = 12;
+}

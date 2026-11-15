@@ -2,17 +2,20 @@
 
 use super::*;
 
-/// Strongly-typed handler for [`PJRT_Client_Create`].
+/// Applies `PJRT_Client_Create_Args.create_options` (`node_id` / `process_index`) onto `cfg`.
 ///
 /// # Arguments
 ///
+/// * `cfg` - Mutable [`libtpu_core::config::TpuInitConfig`] to update.
 /// * `args` - Validated [`PJRT_Client_Create_Args`] structure.
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_Client_Create_Args`].
-unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(), LibTpuError> {
-    let mut cfg = libtpu_core::config::global_init_config();
+/// When `args.create_options` is non-null, it must point to `args.num_options` valid `PJRT_NamedValue`s.
+unsafe fn apply_client_create_options(
+    cfg: &mut libtpu_core::config::TpuInitConfig,
+    args: &PJRT_Client_Create_Args,
+) {
     if !args.create_options.is_null() {
         // SAFETY: `args.create_options` points to `args.num_options` elements of `PJRT_NamedValue`.
         let opts = unsafe {
@@ -36,6 +39,29 @@ unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(),
             }
         }
     }
+}
+
+/// Strongly-typed [`PJRT_Client_Create`] implementation parameterized over `base_cfg`.
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_Create_Args`] structure.
+/// * `base_cfg` - Resolved initial [`libtpu_core::config::TpuInitConfig`] result.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError`] if `base_cfg` fails validation.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Client_Create_Args`].
+pub(super) unsafe fn handle_client_create_with_config(
+    args: &mut PJRT_Client_Create_Args,
+    base_cfg: Result<libtpu_core::config::TpuInitConfig, LibTpuError>,
+) -> Result<(), LibTpuError> {
+    let mut cfg = base_cfg?;
+    // SAFETY: `args` is a valid `PJRT_Client_Create_Args`.
+    unsafe { apply_client_create_options(&mut cfg, args) };
     let inner = PjrtCoreClient::from_config(&cfg);
     let platform_name = to_c_string(&inner.topology.spec.platform_name);
     let platform_version = to_c_string(&inner.topology.spec.platform_version);
@@ -86,17 +112,26 @@ unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(),
     let topology_ptr = Box::into_raw(Box::new(PJRT_TopologyDescription {
         inner: inner.topology.clone(),
         desc_ptrs: topo_descs,
+        is_subslice: std::sync::atomic::AtomicBool::new(false),
+        ext_arena: parking_lot::Mutex::new(Vec::new()),
     }));
 
-    // SAFETY: `args.kv_put_callback` is null or a valid `PJRT_KeyValuePutCallback` pointer.
-    unsafe {
-        notify_kv_put_topology_ready(
-            args.kv_put_callback,
-            args.kv_put_user_arg,
-            &inner.build_local_topology_proto().encode(),
-        );
+    if args.struct_size >= 88 {
+        // SAFETY: When `args.struct_size >= 88` and `kv_put_callback` is non-null, invoke KV put callback.
+        unsafe {
+            notify_kv_put_topology_ready(
+                args.kv_put_callback,
+                args.kv_put_user_arg,
+                &inner.build_local_topology_proto().encode(),
+            );
+        }
     }
 
+    let (kv_try_cb, kv_try_arg) = if args.struct_size >= 88 {
+        (args.kv_try_get_callback, args.kv_try_get_user_arg)
+    } else {
+        (ptr::null(), ptr::null_mut())
+    };
     let client_box = Box::new(PJRT_Client {
         inner,
         platform_name,
@@ -109,11 +144,39 @@ unsafe fn handle_client_create(args: &mut PJRT_Client_Create_Args) -> Result<(),
         kv_get_user_arg: args.kv_get_user_arg,
         kv_put_callback: args.kv_put_callback,
         kv_put_user_arg: args.kv_put_user_arg,
-        kv_try_get_callback: args.kv_try_get_callback,
-        kv_try_get_user_arg: args.kv_try_get_user_arg,
+        kv_try_get_callback: kv_try_cb,
+        kv_try_get_user_arg: kv_try_arg,
+        ext_arena: parking_lot::Mutex::new(crate::pjrt_types::ClientExtensionArena::default()),
     });
-    args.client = Box::into_raw(client_box);
+    let raw_client = Box::into_raw(client_box);
+    if args.struct_size >= 88 {
+        args.client = raw_client;
+    } else {
+        args.kv_try_get_callback = raw_client.cast::<std::ffi::c_void>();
+    }
     Ok(())
+}
+
+/// Strongly-typed handler for [`PJRT_Client_Create`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Client_Create_Args`] structure.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError`] if runtime environment configuration is malformed.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Client_Create_Args`].
+pub(super) unsafe fn handle_client_create(
+    args: &mut PJRT_Client_Create_Args,
+) -> Result<(), LibTpuError> {
+    // SAFETY: `args` is a valid `PJRT_Client_Create_Args`.
+    unsafe {
+        handle_client_create_with_config(args, libtpu_core::config::effective_global_init_config())
+    }
 }
 
 /// Invokes an optional `PJRT_KeyValuePutCallback` to publish `"tpu_topology_ready"` = `"1"`
@@ -583,11 +646,23 @@ unsafe fn handle_client_compile(args: &mut PJRT_Client_Compile_Args) -> Result<(
     let loaded = client
         .inner
         .compile_and_load(&fmt_str, code_slice, opts_slice)?;
+    let exec_dev_ptrs: Vec<*mut PJRT_Device> = loaded
+        .addressable_devices
+        .iter()
+        .filter_map(|&did| {
+            client
+                .addressable_device_ptrs
+                .iter()
+                .copied()
+                // SAFETY: Every pointer in `addressable_device_ptrs` is owned by `client`.
+                .find(|&p| unsafe { (*p).inner.description.spec.device_id == did })
+        })
+        .collect();
     let exec_ptr = Box::into_raw(Box::new(PJRT_Executable::new(loaded.executable.clone())));
     let loaded_ptr = Box::into_raw(Box::new(PJRT_LoadedExecutable::new(
         loaded,
         exec_ptr,
-        client.addressable_device_ptrs.clone(),
+        exec_dev_ptrs,
     )));
     args.executable = loaded_ptr;
     Ok(())

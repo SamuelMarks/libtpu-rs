@@ -1,0 +1,21 @@
+syntax = "proto3";
+package tensorflow.quantization;
+import "third_party/tensorflow/core/framework/graph.proto";
+import "third_party/tensorflow/core/protobuf/meta_graph.proto";
+import "third_party/tensorflow/core/protobuf/saver.proto";
+message ExportedModel {
+  reserved 3;
+  reserved 4;
+  reserved 7;
+  reserved 9;
+  reserved "variable_shared_names";
+  reserved "restore_node_name";
+  reserved "save_node_name";
+  reserved "file_prefix_tensor_name";
+  .tensorflow.GraphDef graph_def = 1;
+  string init_node_name = 2;
+  string checkpoint_dir = 5;
+  map<string, string> function_aliases = 6;
+  repeated .tensorflow.AssetFileDef asset_file_defs = 8;
+  .tensorflow.SaverDef saver_def = 10;
+}

@@ -3,6 +3,9 @@
 from libtpu import (
     get_sdk_c_api_capsule as get_sdk_c_api_capsule,
 )
+from libtpu import (
+    load_native_sdk_module as load_native_sdk_module,
+)
 from libtpu.sdk import (
     debug as debug,
 )
@@ -51,6 +54,7 @@ __all__ = [
     "get_metric",
     "get_sdk_c_api_capsule",
     "list_supported_metrics",
+    "load_native_sdk_module",
     "sdk_slice",
     "tpumonitoring",
     "tpuz",

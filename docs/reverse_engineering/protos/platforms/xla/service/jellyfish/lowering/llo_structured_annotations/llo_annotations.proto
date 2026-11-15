@@ -1,0 +1,21 @@
+syntax = "proto2";
+package xla.jellyfish.annotations;
+import public "platforms/xla/service/jellyfish/lowering/llo_structured_annotations/payloads/debug_note_annotation.proto";
+import public "platforms/xla/service/jellyfish/lowering/llo_structured_annotations/payloads/hppt_annotation.proto";
+import public "platforms/xla/service/jellyfish/lowering/llo_structured_annotations/payloads/megacore_barrier_annotation.proto";
+import public "platforms/xla/service/jellyfish/lowering/llo_structured_annotations/payloads/remote_sync_flag_locality_annotation.proto";
+import public "platforms/xla/service/jellyfish/lowering/llo_structured_annotations/payloads/self_chip_id_annotation.proto";
+import public "platforms/xla/service/jellyfish/lowering/llo_structured_annotations/payloads/sync_flag_provenance_annotation.proto";
+import public "platforms/xla/service/jellyfish/lowering/llo_structured_annotations/payloads/sync_flag_wait_annotation.proto";
+message LloAnnotationProto {
+  reserved 1;
+  reserved 2;
+  reserved 3;
+  optional .xla.jellyfish.annotations.HpptAnnotationProto hppt_annotation = 4;
+  optional .xla.jellyfish.annotations.SyncFlagWaitAnnotationProto sync_flag_wait_annotation = 5;
+  optional .xla.jellyfish.annotations.DebugNoteAnnotationProto debug_note = 6;
+  optional .xla.jellyfish.annotations.MegacoreBarrierAnnotationProto megacore_barrier = 7;
+  optional .xla.jellyfish.annotations.SyncFlagProvenanceAnnotationProto sync_flag_provenance = 8;
+  optional .xla.jellyfish.annotations.RemoteSyncFlagLocalityAnnotationProto remote_sync_flag_locality = 9;
+  optional .xla.jellyfish.annotations.SelfChipIdAnnotationProto self_chip_id = 10;
+}

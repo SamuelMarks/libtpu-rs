@@ -4,30 +4,213 @@
 
 use super::*;
 
-/// Executes `loaded_ref` on a single `dev_ptr` (`dev_id`), reading `num_args` from `dev_args_ptr`
-/// and writing outputs to `dev_outs_ptr` and optional completion event to `complete_ev_out`.
+/// Deleter freeing a heap-allocated `Vec<u8>` passed inside a [`crate::pjrt_types::PJRT_Chunk`] to a host `PJRT_SendCallback`.
 ///
 /// # Arguments
 ///
-/// * `loaded_ref` - Loaded executable engine reference.
-/// * `dev_id` - Target logical device ID.
+/// * `_data` - Data pointer inside the `Vec<u8>`.
+/// * `deleter_arg` - Raw `Box<Vec<u8>>` pointer.
+///
+/// # Safety
+///
+/// `deleter_arg` must be null or a pointer returned by `Box::into_raw(Box::new(Vec<u8>))`.
+unsafe extern "C" fn free_vec_chunk_deleter(
+    _data: *mut std::ffi::c_void,
+    deleter_arg: *mut std::ffi::c_void,
+) {
+    if !deleter_arg.is_null() {
+        // SAFETY: Reclaiming `Box<Vec<u8>>` created immediately prior to `send_callback`.
+        unsafe {
+            drop(Box::from_raw(deleter_arg.cast::<Vec<u8>>()));
+        }
+    }
+}
+
+/// Callback error constructor passed to `PJRT_SendCallback` (`PJRT_CallbackError*`).
+///
+/// # Arguments
+///
+/// * `code` - PJRT error code discriminant.
+/// * `message` - UTF-8 error message pointer.
+/// * `message_size` - Byte length of `message`.
+///
+/// # Safety
+///
+/// `message` must be null or valid for `message_size` bytes.
+unsafe extern "C" fn pjrt_send_callback_error_ctor(
+    code: i32,
+    message: *const std::ffi::c_char,
+    message_size: usize,
+) -> *mut PJRT_Error {
+    let msg = if message.is_null() || message_size == 0 {
+        String::from("host send callback error")
+    } else {
+        // SAFETY: `message` is non-null and valid for `message_size` bytes.
+        let sl = unsafe { std::slice::from_raw_parts(message.cast::<u8>(), message_size) };
+        String::from_utf8_lossy(sl).into_owned()
+    };
+    let _ = code;
+    crate::box_pjrt_error(LibTpuError::ExecutionFailed {
+        device_id: 0,
+        reason: msg,
+    })
+}
+
+/// Invokes a host `PJRT_SendCallback` for `channel_id` on `dev_idx`.
+///
+/// # Arguments
+///
+/// * `opts` - Host [`crate::pjrt_types::PJRT_ExecuteOptions`] carrying callback arrays.
+/// * `dev_idx` - Device slot index (`0..num_devices`).
+/// * `channel_id` - Host transfer channel identifier.
+/// * `bytes` - Device-to-host byte payload.
+///
+/// # Safety
+///
+/// `opts.send_callbacks` must point to valid `PJRT_SendCallbackInfo` rows when non-null.
+unsafe fn invoke_pjrt_host_send_callback(
+    opts: &crate::pjrt_types::PJRT_ExecuteOptions,
+    dev_idx: usize,
+    channel_id: i64,
+    bytes: &[u8],
+) -> Result<(), LibTpuError> {
+    if !opts.send_callbacks.is_null() && opts.num_send_ops > 0 {
+        // SAFETY: `send_callbacks[dev_idx]` points to `opts.num_send_ops` `PJRT_SendCallbackInfo` entries.
+        let dev_sends = unsafe {
+            let row = *opts.send_callbacks.add(dev_idx);
+            if row.is_null() {
+                &[][..]
+            } else {
+                std::slice::from_raw_parts(row, opts.num_send_ops)
+            }
+        };
+        if let Some(info) = dev_sends
+            .iter()
+            .find(|i| i.channel_id == channel_id)
+            .or_else(|| dev_sends.first())
+            && !info.send_callback.is_null()
+        {
+            type SendCbFn = unsafe extern "C" fn(
+                *mut crate::pjrt_types::PJRT_Chunk,
+                unsafe extern "C" fn(i32, *const std::ffi::c_char, usize) -> *mut PJRT_Error,
+                usize,
+                bool,
+                *mut std::ffi::c_void,
+            ) -> *mut PJRT_Error;
+            let mut owned = Box::new(bytes.to_vec());
+            let data_ptr = owned.as_mut_ptr().cast::<std::ffi::c_void>();
+            let total_len = owned.len();
+            let del_arg = Box::into_raw(owned).cast::<std::ffi::c_void>();
+            let mut chunk = crate::pjrt_types::PJRT_Chunk {
+                data: data_ptr,
+                size: total_len,
+                deleter: Some(free_vec_chunk_deleter),
+                deleter_arg: del_arg,
+            };
+            // SAFETY: Transmuting non-null C function pointer matching `PJRT_SendCallback` ABI.
+            let cb: SendCbFn = unsafe { std::mem::transmute(info.send_callback) };
+            // SAFETY: Invoking host `PJRT_SendCallback` with owned `PJRT_Chunk`.
+            let err_ptr = unsafe {
+                cb(
+                    ptr::addr_of_mut!(chunk),
+                    pjrt_send_callback_error_ctor,
+                    total_len,
+                    true,
+                    info.user_arg,
+                )
+            };
+            if !err_ptr.is_null() {
+                // SAFETY: Reclaiming `PJRT_Error*` returned by `pjrt_send_callback_error_ctor`.
+                let boxed_err = unsafe { Box::from_raw(err_ptr) };
+                return Err(boxed_err.error);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Invokes a host `PJRT_RecvCallback` for `channel_id` on `dev_idx`.
+///
+/// # Arguments
+///
+/// * `opts` - Host [`crate::pjrt_types::PJRT_ExecuteOptions`] carrying callback arrays.
+/// * `dev_idx` - Device slot index (`0..num_devices`).
+/// * `channel_id` - Host transfer channel identifier.
+///
+/// # Safety
+///
+/// `opts.recv_callbacks` must point to valid `PJRT_RecvCallbackInfo` rows when non-null.
+unsafe fn invoke_pjrt_host_recv_callback(
+    opts: &crate::pjrt_types::PJRT_ExecuteOptions,
+    dev_idx: usize,
+    channel_id: i64,
+) -> Result<Vec<u8>, LibTpuError> {
+    if !opts.recv_callbacks.is_null() && opts.num_recv_ops > 0 {
+        // SAFETY: `recv_callbacks[dev_idx]` points to `opts.num_recv_ops` `PJRT_RecvCallbackInfo` entries.
+        let dev_recvs = unsafe {
+            let row = *opts.recv_callbacks.add(dev_idx);
+            if row.is_null() {
+                &[][..]
+            } else {
+                std::slice::from_raw_parts(row, opts.num_recv_ops)
+            }
+        };
+        if let Some(info) = dev_recvs
+            .iter()
+            .find(|i| i.channel_id == channel_id)
+            .or_else(|| dev_recvs.first())
+            && !info.recv_callback.is_null()
+        {
+            type RecvCbFn = unsafe extern "C" fn(
+                *mut crate::pjrt_types::PJRT_CopyToDeviceStream,
+                *mut std::ffi::c_void,
+            );
+            let core_stream = libtpu_core::pjrt::PjrtCoreCopyToDeviceStream::new(1 << 30, 1);
+            let shared = core_stream.shared_staged_bytes();
+            let stream_ptr = Box::into_raw(Box::new(crate::pjrt_types::PJRT_CopyToDeviceStream {
+                inner: core_stream,
+            }));
+            // SAFETY: Transmuting non-null C function pointer matching `PJRT_RecvCallback` ABI.
+            let cb: RecvCbFn = unsafe { std::mem::transmute(info.recv_callback) };
+            // SAFETY: Invoking host `PJRT_RecvCallback` which streams bytes via `AddChunk` and destroys `stream_ptr`.
+            unsafe {
+                cb(stream_ptr, info.user_arg);
+            }
+            let out_vec = shared.lock().clone();
+            return Ok(out_vec);
+        }
+    }
+    Ok(Vec::new())
+}
+
+/// Executes a loaded program on a single device slot, writing output buffers and completion event.
+///
+/// # Arguments
+///
+/// * `loaded_ref` - Core loaded executable.
+/// * `dev_idx` - Device slot index (`0..num_devices`).
+/// * `dev_id` - Target [`libtpu_core::types::DeviceId`].
 /// * `dev_ptr` - Target `PJRT_Device*`.
 /// * `num_args` - Number of input buffers.
 /// * `dev_args_ptr` - Pointer to input `PJRT_Buffer*` array.
 /// * `dev_outs_ptr` - Pointer to output `PJRT_Buffer*` array.
 /// * `complete_ev_out` - Optional output `PJRT_Event*` pointer.
+/// * `exec_options` - Optional `PJRT_ExecuteOptions*` carrying host `send_callbacks`/`recv_callbacks`.
 ///
 /// # Safety
 ///
-/// `dev_ptr`, `dev_args_ptr`, `dev_outs_ptr`, and `complete_ev_out` (when non-null) must be valid pointers.
+/// `dev_ptr`, `dev_args_ptr`, `dev_outs_ptr`, `complete_ev_out`, and `exec_options` (when non-null) must be valid pointers.
+#[allow(clippy::too_many_arguments)]
 unsafe fn execute_single_device_slot(
     loaded_ref: &libtpu_core::pjrt::PjrtCoreLoadedExecutable,
+    dev_idx: usize,
     dev_id: libtpu_core::types::DeviceId,
     dev_ptr: *mut PJRT_Device,
     num_args: usize,
     dev_args_ptr: *const *const PJRT_Buffer,
     dev_outs_ptr: *mut *mut PJRT_Buffer,
     complete_ev_out: *mut *mut crate::pjrt_types::PJRT_Event,
+    exec_options: *const crate::pjrt_types::PJRT_ExecuteOptions,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `dev_ptr` is a valid `PJRT_Device*` owned by the client.
     let mem_ptr = unsafe { (*dev_ptr).default_memory_ptr };
@@ -36,14 +219,33 @@ unsafe fn execute_single_device_slot(
     let mut core_inputs: smallvec::SmallVec<[&libtpu_core::pjrt::PjrtCoreBuffer; 8]> =
         smallvec::SmallVec::with_capacity(arg_slice.len());
     for &b_ptr in arg_slice {
-        // SAFETY: `b_ptr` is a valid `PJRT_Buffer*`.
+        if b_ptr.is_null() {
+            return Err(LibTpuError::NullPointer {
+                parameter: "argument_buffer",
+            });
+        }
+        // SAFETY: `b_ptr` was checked non-null and is a valid `PJRT_Buffer*`.
         core_inputs.push(unsafe { &(*b_ptr).inner });
     }
-    let outs = loaded_ref.execute_on_device(
-        dev_id,
-        libtpu_core::types::MemorySpaceId(i32::try_from(dev_id.0 * 3).unwrap_or(0)),
-        &core_inputs,
-    )?;
+    let mem_space = libtpu_core::types::MemorySpaceId(i32::try_from(dev_id.0 * 3).unwrap_or(0));
+    // SAFETY: `exec_options` is null or a valid `PJRT_ExecuteOptions*`.
+    let opts_opt = unsafe { exec_options.as_ref() };
+    let has_host_cb = opts_opt.is_some_and(|o| o.num_send_ops > 0 || o.num_recv_ops > 0);
+    let outs = if let Some(opts) = opts_opt.filter(|_| has_host_cb) {
+        loaded_ref.execute_on_device_with_host_io(
+            dev_id,
+            mem_space,
+            &core_inputs,
+            // SAFETY: `opts` was validated as a live `PJRT_ExecuteOptions` reference.
+            |channel_id, bytes| unsafe {
+                invoke_pjrt_host_send_callback(opts, dev_idx, channel_id, bytes)
+            },
+            // SAFETY: `opts` was validated as a live `PJRT_ExecuteOptions` reference.
+            |channel_id| unsafe { invoke_pjrt_host_recv_callback(opts, dev_idx, channel_id) },
+        )?
+    } else {
+        loaded_ref.execute_on_device(dev_id, mem_space, &core_inputs)?
+    };
     for (idx, out_buf) in outs.into_iter().enumerate() {
         let out_handle = Box::into_raw(Box::new(PJRT_Buffer::new(out_buf, dev_ptr, mem_ptr)));
         // SAFETY: Writing output buffer handle at `idx`.
@@ -58,6 +260,68 @@ unsafe fn execute_single_device_slot(
         // SAFETY: `complete_ev_out` points to a valid `PJRT_Event*` slot.
         unsafe {
             *complete_ev_out = ev;
+        }
+    }
+    Ok(())
+}
+
+/// Executes a lock-step SPMD program simultaneously across all `n_devs` addressable devices.
+///
+/// # Arguments
+///
+/// * `loaded` - Loaded C-ABI executable handle.
+/// * `args` - Validated [`crate::pjrt_types::PJRT_LoadedExecutable_Execute_Args`] structure.
+/// * `n_devs` - Number of participating devices.
+/// * `num_args` - Number of per-device input buffers.
+///
+/// # Safety
+///
+/// `args.argument_lists`, `args.output_lists`, and `args.device_complete_events` (when non-null) must be valid for `n_devs` devices.
+unsafe fn execute_multi_device_spmd(
+    loaded: &crate::pjrt_types::PJRT_LoadedExecutable,
+    args: &mut crate::pjrt_types::PJRT_LoadedExecutable_Execute_Args,
+    n_devs: usize,
+    num_args: usize,
+) -> Result<(), LibTpuError> {
+    let mut per_dev_vecs: Vec<Vec<&libtpu_core::pjrt::PjrtCoreBuffer>> = Vec::with_capacity(n_devs);
+    for dev_idx in 0..n_devs {
+        // SAFETY: `args.argument_lists` has `n_devs` rows of `num_args` buffer pointers.
+        let row_ptr = unsafe { *args.argument_lists.add(dev_idx) };
+        // SAFETY: `row_ptr` points to `num_args` valid `PJRT_Buffer*` handles.
+        let arg_slice = unsafe { std::slice::from_raw_parts(row_ptr, num_args) };
+        let mut dev_in = Vec::with_capacity(num_args);
+        for &b_ptr in arg_slice {
+            // SAFETY: `b_ptr` is a valid `PJRT_Buffer*`.
+            dev_in.push(unsafe { &(*b_ptr).inner });
+        }
+        per_dev_vecs.push(dev_in);
+    }
+    let per_dev_slices: Vec<&[&libtpu_core::pjrt::PjrtCoreBuffer]> =
+        per_dev_vecs.iter().map(Vec::as_slice).collect();
+    let all_outs = loaded
+        .inner
+        .execute_all_devices(libtpu_core::types::MemorySpaceId(0), &per_dev_slices)?;
+    for (dev_idx, (dev_outs, &dev_ptr)) in all_outs.into_iter().zip(&loaded.device_ptrs).enumerate()
+    {
+        // SAFETY: `dev_ptr` is owned by the client.
+        let mem_ptr = unsafe { (*dev_ptr).default_memory_ptr };
+        // SAFETY: `args.output_lists` has `n_devs` rows.
+        let dev_outs_ptr = unsafe { *args.output_lists.add(dev_idx) };
+        for (o_idx, out_buf) in dev_outs.into_iter().enumerate() {
+            let out_handle = Box::into_raw(Box::new(PJRT_Buffer::new(out_buf, dev_ptr, mem_ptr)));
+            // SAFETY: Writing output buffer handle at `o_idx`.
+            unsafe {
+                *dev_outs_ptr.add(o_idx) = out_handle;
+            }
+        }
+        if !args.device_complete_events.is_null() {
+            let ev = Box::into_raw(Box::new(crate::pjrt_types::PJRT_Event {
+                inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
+            }));
+            // SAFETY: Writing completion event for `dev_idx`.
+            unsafe {
+                *args.device_complete_events.add(dev_idx) = ev;
+            }
         }
     }
     Ok(())
@@ -100,12 +364,14 @@ unsafe fn handle_loaded_executable_execute(
             return unsafe {
                 execute_single_device_slot(
                     loaded_ref,
+                    0,
                     dev_id,
                     dev_ptr,
                     num_args,
                     dev_args_ptr,
                     dev_outs_ptr,
                     args.device_complete_events,
+                    args.options,
                 )
             };
         }
@@ -114,11 +380,16 @@ unsafe fn handle_loaded_executable_execute(
                 device_id: u32::try_from(args.num_devices).unwrap_or(99),
             });
         }
+        let n_devs = args.num_devices.max(1);
+        if n_devs > 1 && n_devs == loaded_ref.addressable_devices.len() {
+            // SAFETY: Pointers validated for `n_devs` devices above.
+            return unsafe { execute_multi_device_spmd(loaded, args, n_devs, num_args) };
+        }
         for (dev_idx, (&dev_id, &dev_ptr)) in loaded_ref
             .addressable_devices
             .iter()
             .zip(&loaded.device_ptrs)
-            .take(args.num_devices.max(1))
+            .take(n_devs)
             .enumerate()
         {
             // SAFETY: `args.argument_lists` points to `dev_idx`'s input buffer pointer array.
@@ -135,12 +406,14 @@ unsafe fn handle_loaded_executable_execute(
             unsafe {
                 execute_single_device_slot(
                     loaded_ref,
+                    dev_idx,
                     dev_id,
                     dev_ptr,
                     num_args,
                     dev_args_ptr,
                     dev_outs_ptr,
                     ev_slot,
+                    args.options,
                 )?;
             }
         }
@@ -568,6 +841,162 @@ pub unsafe extern "C" fn PJRT_Executable_OutputMemoryKinds(
     }
 }
 
+/// Converts a [`libtpu_core::types::Shape`] into an `OpenXLA` [`libtpu_core::proto::ShapeProto`] with default minor-to-major layout.
+///
+/// # Arguments
+///
+/// * `sh` - Core tensor [`libtpu_core::types::Shape`].
+fn core_shape_to_xla_proto(sh: &libtpu_core::types::Shape) -> libtpu_core::proto::ShapeProto {
+    let rank = sh.dims.len();
+    let minor_to_major: Vec<i64> = (0..rank)
+        .rev()
+        .map(|d| i64::try_from(d).unwrap_or(0))
+        .collect();
+    libtpu_core::proto::ShapeProto {
+        element_type: sh.element_type.as_raw(),
+        dimensions: sh.dims.clone(),
+        is_dynamic_dimension: vec![false; rank],
+        layout: Some(Box::new(libtpu_core::proto::LayoutProto {
+            minor_to_major,
+            ..libtpu_core::proto::LayoutProto::default()
+        })),
+        ..libtpu_core::proto::ShapeProto::default()
+    }
+}
+
+/// Builds `parameter` HLO instructions, parameter `ShapeProto`s, names, and operand IDs.
+///
+/// # Arguments
+///
+/// * `param_shapes` - Slice of parameter [`libtpu_core::types::Shape`]s.
+/// * `param_shardings` - Optional per-parameter `OpShardingProto` entries.
+fn build_hlo_parameter_instructions(
+    param_shapes: &[libtpu_core::types::Shape],
+    param_shardings: &[libtpu_core::proto::OpShardingProto],
+) -> (
+    Vec<libtpu_core::proto::HloInstructionProto>,
+    Vec<libtpu_core::proto::ShapeProto>,
+    Vec<String>,
+    Vec<i64>,
+) {
+    let mut insts = Vec::with_capacity(param_shapes.len() + 2);
+    let mut param_protos = Vec::with_capacity(param_shapes.len());
+    let mut param_names = Vec::with_capacity(param_shapes.len());
+    let mut operand_ids = Vec::with_capacity(param_shapes.len());
+    for (idx, psh) in param_shapes.iter().enumerate() {
+        let id = i64::try_from(idx + 1).unwrap_or(1);
+        let sp = core_shape_to_xla_proto(psh);
+        let pname = format!("Arg_{idx}");
+        param_protos.push(sp.clone());
+        param_names.push(pname.clone());
+        operand_ids.push(id);
+        insts.push(libtpu_core::proto::HloInstructionProto {
+            name: pname,
+            opcode: String::from("parameter"),
+            shape: Some(sp),
+            id,
+            parameter_number: i64::try_from(idx).unwrap_or(0),
+            sharding: param_shardings.get(idx).cloned(),
+            ..libtpu_core::proto::HloInstructionProto::default()
+        });
+    }
+    (insts, param_protos, param_names, operand_ids)
+}
+
+/// Synthesizes a wire-valid `xla::HloModuleProtoWithConfig` byte vector for [`PJRT_Executable_OptimizedProgram`].
+///
+/// # Arguments
+///
+/// * `exec_opt` - Optional reference to the queried [`PJRT_Executable`].
+fn build_optimized_hlo_with_config_bytes(exec_opt: Option<&PJRT_Executable>) -> Vec<u8> {
+    use libtpu_core::proto::{
+        HloComputationProto, HloInstructionProto, HloModuleConfigProto, HloModuleProto,
+        HloModuleProtoWithConfig, ProgramShapeProto, ProtoSchemaMessage as _, ShapeProto,
+    };
+    let default_f32_4 = libtpu_core::types::Shape {
+        element_type: libtpu_core::types::ElementType::F32,
+        dims: vec![4],
+        dynamic_dims: vec![false],
+        layout: libtpu_core::types::MemoryLayout::default_tpu_tiled(1),
+    };
+    let fallback_params = [default_f32_4.clone(), default_f32_4.clone()];
+    let fallback_outs = [default_f32_4.clone()];
+    let p_opt = exec_opt.map(|e| &e.inner.program);
+    let mod_name = p_opt.map_or_else(|| String::from("tpu_optimized"), |p| p.name.clone());
+    let src_bytes = p_opt.map_or_else(
+        || b"module @tpu_optimized { stablehlo.add }".to_vec(),
+        |p| p.source_bytes.clone(),
+    );
+    let param_shapes: &[libtpu_core::types::Shape] =
+        p_opt.map_or(&fallback_params, |p| &p.parameter_shapes);
+    let out_shapes: &[libtpu_core::types::Shape] =
+        p_opt.map_or(&fallback_outs, |p| &p.output_shapes);
+    let param_shardings = p_opt.map_or_else(Vec::new, |p| p.parameter_shardings.clone());
+    let out_shardings = p_opt.map_or(&[][..], |p| p.output_shardings.as_slice());
+    let (n_rep, n_part) = p_opt.map_or((1_usize, 1_usize), |p| (p.num_replicas, p.num_partitions));
+
+    let (mut insts, param_protos, param_names, operand_ids) =
+        build_hlo_parameter_instructions(param_shapes, &param_shardings);
+    let result_shape = if out_shapes.len() == 1 {
+        core_shape_to_xla_proto(out_shapes.first().unwrap_or(&default_f32_4))
+    } else {
+        ShapeProto {
+            element_type: libtpu_core::types::ElementType::Tuple.as_raw(),
+            tuple_shapes: out_shapes.iter().map(core_shape_to_xla_proto).collect(),
+            ..ShapeProto::default()
+        }
+    };
+    let root_id = i64::try_from(param_shapes.len() + 1).unwrap_or(1);
+    insts.push(HloInstructionProto {
+        name: String::from("tpu_kernel_root"),
+        opcode: String::from("custom-call"),
+        shape: Some(result_shape.clone()),
+        operand_ids,
+        id: root_id,
+        custom_call_target: String::from("tpu_llo_kernel"),
+        backend_config: src_bytes,
+        sharding: out_shardings.first().cloned(),
+        ..HloInstructionProto::default()
+    });
+    let prog_shape = ProgramShapeProto {
+        parameters: param_protos,
+        result: Some(result_shape),
+        parameter_names: param_names,
+    };
+    let entry_comp = HloComputationProto {
+        name: String::from("main"),
+        instructions: insts,
+        program_shape: Some(prog_shape.clone()),
+        id: 1,
+        root_id,
+        execution_thread: String::from("main"),
+        ..HloComputationProto::default()
+    };
+    let hlo_mod = HloModuleProto {
+        name: mod_name,
+        entry_computation_name: String::from("main"),
+        entry_computation_id: 1,
+        computations: vec![entry_comp],
+        host_program_shape: Some(prog_shape.clone()),
+        id: 1,
+        spmd_output_sharding: out_shardings.first().cloned(),
+        spmd_parameters_shardings: param_shardings,
+        ..HloModuleProto::default()
+    };
+    let cfg = HloModuleConfigProto {
+        entry_computation_layout: Some(prog_shape),
+        replica_count: i64::try_from(n_rep.max(1)).unwrap_or(1),
+        num_partitions: i64::try_from(n_part.max(1)).unwrap_or(1),
+        use_spmd_partitioning: n_part > 1,
+        ..HloModuleConfigProto::default()
+    };
+    HloModuleProtoWithConfig {
+        hlo_module: Some(hlo_mod),
+        config: Some(cfg),
+    }
+    .encode_proto()
+}
+
 /// Populates [`crate::pjrt_types::PJRT_Executable_OptimizedProgram_Args`].
 ///
 /// # Arguments
@@ -581,10 +1010,8 @@ unsafe fn handle_executable_optimized_program(
     args: &mut crate::pjrt_types::PJRT_Executable_OptimizedProgram_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `executable` is null or a valid `PJRT_Executable*`.
-    let src_bytes: &[u8] = unsafe { args.executable.as_ref() }
-        .map_or(b"module @tpu_optimized { stablehlo.add }", |e| {
-            e.inner.program.source_bytes.as_slice()
-        });
+    let encoded = build_optimized_hlo_with_config_bytes(unsafe { args.executable.as_ref() });
+    let src_bytes = encoded.as_slice();
     // SAFETY: `args.program` is null or a valid `PJRT_Program*`.
     if let Some(prog) = unsafe { args.program.as_mut() } {
         prog.format = c"hlo_with_config".as_ptr();
@@ -1261,6 +1688,7 @@ pub unsafe extern "C" fn PJRT_Executable_GetCompiledMemoryStats(
 unsafe fn handle_loaded_executable_get_device_assignment(
     args: &mut crate::pjrt_types::PJRT_LoadedExecutable_GetDeviceAssignment_Args,
 ) -> Result<(), LibTpuError> {
+    use libtpu_core::proto::ProtoSchemaMessage as _;
     // SAFETY: `executable` is null or a valid `PJRT_LoadedExecutable*`.
     let da_bytes = unsafe { args.executable.as_ref() }.map_or_else(
         || {
@@ -1271,24 +1699,32 @@ unsafe fn handle_loaded_executable_get_device_assignment(
                     replica_device_ids: vec![0],
                 }],
             }
-            .encode()
+            .encode_proto()
         },
         |le| {
-            let replica_device_ids: Vec<i64> = le
-                .inner
-                .addressable_devices
-                .iter()
-                .map(|d| i64::from(d.0))
-                .collect();
-            libtpu_core::proto::DeviceAssignmentProto {
-                replica_count: i32::try_from(le.inner.executable.program.num_replicas).unwrap_or(1),
-                computation_count: i32::try_from(le.inner.executable.program.num_partitions)
-                    .unwrap_or(1),
-                computation_devices: vec![libtpu_core::proto::ComputationDeviceProto {
-                    replica_device_ids,
-                }],
+            let num_replicas = le.inner.executable.program.num_replicas.max(1);
+            let num_partitions = le.inner.executable.program.num_partitions.max(1);
+            let mut computation_devices = Vec::with_capacity(num_partitions);
+            for p in 0..num_partitions {
+                let mut replica_device_ids = Vec::with_capacity(num_replicas);
+                for r in 0..num_replicas {
+                    let fallback_id = i64::try_from(p).unwrap_or(0);
+                    let dev_id = le
+                        .inner
+                        .addressable_devices
+                        .get(r * num_partitions + p)
+                        .map_or(fallback_id, |d| i64::from(d.0));
+                    replica_device_ids.push(dev_id);
+                }
+                computation_devices
+                    .push(libtpu_core::proto::ComputationDeviceProto { replica_device_ids });
             }
-            .encode()
+            libtpu_core::proto::DeviceAssignmentProto {
+                replica_count: i32::try_from(num_replicas).unwrap_or(1),
+                computation_count: i32::try_from(num_partitions).unwrap_or(1),
+                computation_devices,
+            }
+            .encode_proto()
         },
     );
     let (ptr, len, holder) = crate::box_serialized_artifact(da_bytes);
@@ -1333,6 +1769,7 @@ pub unsafe extern "C" fn PJRT_LoadedExecutable_GetDeviceAssignment(
 unsafe fn handle_executable_get_compile_options(
     args: &mut crate::pjrt_types::PJRT_Executable_GetCompileOptions_Args,
 ) -> Result<(), LibTpuError> {
+    use libtpu_core::proto::ProtoSchemaMessage as _;
     // SAFETY: `executable` is null or a valid `PJRT_Executable*`.
     let co_bytes = unsafe { args.executable.as_ref() }.map_or_else(
         || {
@@ -1353,7 +1790,7 @@ unsafe fn handle_executable_get_compile_options(
                 serialized_multi_slice_config: Vec::new(),
                 ..libtpu_core::proto::CompileOptionsProto::default()
             }
-            .encode()
+            .encode_proto()
         },
         |e| e.inner.program.compile_options_bytes.clone(),
     );
@@ -1679,7 +2116,6 @@ mod tests {
                 program: ptr::null_mut(),
             };
             assert!(PJRT_Executable_OptimizedProgram(ptr::addr_of_mut!(ex_opt).cast()).is_null());
-            let mut opt_prog_buf = [0_u8; 256];
             let mut opt_prog = PJRT_Program {
                 struct_size: size_of::<PJRT_Program>(),
                 extension_start: ptr::null_mut(),
@@ -1692,6 +2128,7 @@ mod tests {
             assert!(PJRT_Executable_OptimizedProgram(ptr::addr_of_mut!(ex_opt).cast()).is_null());
             assert!(opt_prog.code_size > 0);
             let req_opt_size = opt_prog.code_size;
+            let mut opt_prog_buf = vec![0_u8; req_opt_size + 64];
             opt_prog.code = opt_prog_buf.as_mut_ptr().cast();
             opt_prog.code_size = 1;
             drop(Box::from_raw(PJRT_Executable_OptimizedProgram(
@@ -1700,10 +2137,13 @@ mod tests {
             opt_prog.code_size = opt_prog_buf.len();
             assert!(PJRT_Executable_OptimizedProgram(ptr::addr_of_mut!(ex_opt).cast()).is_null());
             assert_eq!(opt_prog.code_size, req_opt_size);
-            assert_eq!(
-                opt_prog_buf.get(..req_opt_size),
-                Some(code_bytes.as_slice())
-            );
+            {
+                use libtpu_core::proto::ProtoSchemaMessage as _;
+                let decoded_opt = libtpu_core::proto::HloModuleProtoWithConfig::decode_proto(
+                    opt_prog_buf.get(..req_opt_size).unwrap_or_default(),
+                );
+                assert!(decoded_opt.is_ok());
+            }
 
             let mut ex_ser = crate::pjrt_types::PJRT_Executable_Serialize_Args {
                 struct_size: size_of::<crate::pjrt_types::PJRT_Executable_Serialize_Args>(),
@@ -2081,6 +2521,522 @@ mod tests {
                 client,
             };
             assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_client_args).cast()).is_null());
+        }
+    }
+
+    #[test]
+    fn test_pjrt_executable_host_callbacks_spmd_and_tuple_optimized_hlo() {
+        use crate::pjrt_types::PJRT_LoadedExecutable_Execute_Args;
+        unsafe extern "C" fn ok_send_cb(
+            chunk: *mut crate::pjrt_types::PJRT_Chunk,
+            _err_fn: unsafe extern "C" fn(i32, *const std::ffi::c_char, usize) -> *mut PJRT_Error,
+            _total: usize,
+            _done: bool,
+            user_arg: *mut std::ffi::c_void,
+        ) -> *mut PJRT_Error {
+            if !user_arg.is_null() {
+                // SAFETY: `user_arg` points to a test `usize` counter.
+                unsafe {
+                    *user_arg.cast::<usize>() += 1;
+                }
+            }
+            if !chunk.is_null() {
+                // SAFETY: `chunk` is a valid `PJRT_Chunk*`.
+                let c = unsafe { &*chunk };
+                if let Some(del) = c.deleter {
+                    // SAFETY: Invoking chunk deleter with owned `deleter_arg`.
+                    unsafe {
+                        del(c.data, c.deleter_arg);
+                    }
+                }
+            }
+            ptr::null_mut()
+        }
+
+        unsafe extern "C" fn fail_send_cb(
+            chunk: *mut crate::pjrt_types::PJRT_Chunk,
+            err_fn: unsafe extern "C" fn(i32, *const std::ffi::c_char, usize) -> *mut PJRT_Error,
+            _total: usize,
+            _done: bool,
+            _user_arg: *mut std::ffi::c_void,
+        ) -> *mut PJRT_Error {
+            if !chunk.is_null() {
+                // SAFETY: `chunk` is valid.
+                let c = unsafe { &*chunk };
+                if let Some(del) = c.deleter {
+                    // SAFETY: Reclaiming owned `Vec<u8>`.
+                    unsafe {
+                        del(c.data, c.deleter_arg);
+                    }
+                }
+            }
+            let msg = b"custom_send_failure";
+            // SAFETY: Calling callback error constructor with valid UTF-8 slice.
+            unsafe { err_fn(2, msg.as_ptr().cast(), msg.len()) }
+        }
+
+        unsafe extern "C" fn ok_recv_cb(
+            stream: *mut crate::pjrt_types::PJRT_CopyToDeviceStream,
+            _user_arg: *mut std::ffi::c_void,
+        ) {
+            let vals = [10.0_f32, 20.0, 30.0, 40.0];
+            let bytes: Vec<u8> = vals.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let mut boxed = Box::new(bytes);
+            let data_ptr = boxed.as_mut_ptr().cast::<std::ffi::c_void>();
+            let len = boxed.len();
+            let del_arg = Box::into_raw(boxed).cast::<std::ffi::c_void>();
+            let mut chunk = crate::pjrt_types::PJRT_Chunk {
+                data: data_ptr,
+                size: len,
+                deleter: Some(free_vec_chunk_deleter),
+                deleter_arg: del_arg,
+            };
+            let mut add_args = crate::pjrt_types::PJRT_CopyToDeviceStream_AddChunk_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_CopyToDeviceStream_AddChunk_Args>(),
+                extension_start: ptr::null_mut(),
+                stream,
+                chunk: ptr::addr_of_mut!(chunk),
+                transfer_complete: ptr::null_mut(),
+            };
+            // SAFETY: Streaming 16 bytes into `stream` and destroying completion event and stream.
+            unsafe {
+                assert!(
+                    crate::pjrt_buffer_api::PJRT_CopyToDeviceStream_AddChunk(
+                        ptr::addr_of_mut!(add_args).cast()
+                    )
+                    .is_null()
+                );
+                if !add_args.transfer_complete.is_null() {
+                    drop(Box::from_raw(add_args.transfer_complete));
+                }
+                let mut del_stream = crate::pjrt_types::PJRT_CopyToDeviceStream_Destroy_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_CopyToDeviceStream_Destroy_Args>(
+                    ),
+                    extension_start: ptr::null_mut(),
+                    stream,
+                };
+                assert!(
+                    crate::pjrt_buffer_api::PJRT_CopyToDeviceStream_Destroy(
+                        ptr::addr_of_mut!(del_stream).cast()
+                    )
+                    .is_null()
+                );
+            }
+        }
+
+        // SAFETY: All FFI structures and pointers are stack/heap-allocated with valid sizes and lifetimes.
+        unsafe {
+            free_vec_chunk_deleter(ptr::null_mut(), ptr::null_mut());
+            let err_empty = pjrt_send_callback_error_ctor(2, ptr::null(), 0);
+            assert!(!err_empty.is_null());
+            drop(Box::from_raw(err_empty));
+            let err_zero_len = pjrt_send_callback_error_ctor(2, c"x".as_ptr(), 0);
+            assert!(!err_zero_len.is_null());
+            drop(Box::from_raw(err_zero_len));
+
+            let base_empty_opts = crate::pjrt_types::PJRT_ExecuteOptions {
+                struct_size: size_of::<crate::pjrt_types::PJRT_ExecuteOptions>(),
+                extension_start: ptr::null_mut(),
+                send_callbacks: ptr::null(),
+                recv_callbacks: ptr::null(),
+                num_send_ops: 0,
+                num_recv_ops: 0,
+                launch_id: 0,
+                pad: 0,
+                non_donatable_input_indices: ptr::null(),
+                num_non_donatable_input_indices: 0,
+                context: ptr::null_mut(),
+            };
+            assert!(invoke_pjrt_host_send_callback(&base_empty_opts, 0, 1, &[1, 2]).is_ok());
+            assert!(invoke_pjrt_host_recv_callback(&base_empty_opts, 0, 1).is_ok());
+
+            let non_null_zero_ops = crate::pjrt_types::PJRT_ExecuteOptions {
+                send_callbacks: std::ptr::dangling::<*const crate::pjrt_types::PJRT_SendCallbackInfo>(
+                ),
+                recv_callbacks: std::ptr::dangling::<*const crate::pjrt_types::PJRT_RecvCallbackInfo>(
+                ),
+                num_send_ops: 0,
+                num_recv_ops: 0,
+                ..base_empty_opts
+            };
+            assert!(invoke_pjrt_host_send_callback(&non_null_zero_ops, 0, 1, &[1]).is_ok());
+            assert!(invoke_pjrt_host_recv_callback(&non_null_zero_ops, 0, 1).is_ok());
+
+            let null_send_row: *const crate::pjrt_types::PJRT_SendCallbackInfo = ptr::null();
+            let null_recv_row: *const crate::pjrt_types::PJRT_RecvCallbackInfo = ptr::null();
+            let null_row_opts = crate::pjrt_types::PJRT_ExecuteOptions {
+                send_callbacks: ptr::addr_of!(null_send_row),
+                recv_callbacks: ptr::addr_of!(null_recv_row),
+                num_send_ops: 1,
+                num_recv_ops: 1,
+                ..base_empty_opts
+            };
+            assert!(invoke_pjrt_host_send_callback(&null_row_opts, 0, 1, &[1]).is_ok());
+            assert!(invoke_pjrt_host_recv_callback(&null_row_opts, 0, 1).is_ok());
+
+            let null_cb_send = crate::pjrt_types::PJRT_SendCallbackInfo {
+                channel_id: 99,
+                user_arg: ptr::null_mut(),
+                send_callback: ptr::null(),
+                extension_start: ptr::null_mut(),
+            };
+            let null_cb_recv = crate::pjrt_types::PJRT_RecvCallbackInfo {
+                channel_id: 99,
+                user_arg: ptr::null_mut(),
+                recv_callback: ptr::null(),
+                extension_start: ptr::null_mut(),
+            };
+            let null_cb_send_row = ptr::addr_of!(null_cb_send);
+            let null_cb_recv_row = ptr::addr_of!(null_cb_recv);
+            let null_cb_opts = crate::pjrt_types::PJRT_ExecuteOptions {
+                send_callbacks: ptr::addr_of!(null_cb_send_row),
+                recv_callbacks: ptr::addr_of!(null_cb_recv_row),
+                num_send_ops: 1,
+                num_recv_ops: 1,
+                ..base_empty_opts
+            };
+            assert!(invoke_pjrt_host_send_callback(&null_cb_opts, 0, 1, &[1]).is_ok());
+            assert!(invoke_pjrt_host_recv_callback(&null_cb_opts, 0, 1).is_ok());
+
+            let mut send_counter = 0_usize;
+            let live_send_info = crate::pjrt_types::PJRT_SendCallbackInfo {
+                channel_id: 7,
+                user_arg: ptr::addr_of_mut!(send_counter).cast(),
+                send_callback: ok_send_cb as *const std::ffi::c_void,
+                extension_start: ptr::null_mut(),
+            };
+            let live_recv_info = crate::pjrt_types::PJRT_RecvCallbackInfo {
+                channel_id: 8,
+                user_arg: ptr::null_mut(),
+                recv_callback: ok_recv_cb as *const std::ffi::c_void,
+                extension_start: ptr::null_mut(),
+            };
+            let live_send_row = ptr::addr_of!(live_send_info);
+            let live_recv_row = ptr::addr_of!(live_recv_info);
+            let live_cb_opts = crate::pjrt_types::PJRT_ExecuteOptions {
+                send_callbacks: ptr::addr_of!(live_send_row),
+                recv_callbacks: ptr::addr_of!(live_recv_row),
+                num_send_ops: 1,
+                num_recv_ops: 1,
+                ..base_empty_opts
+            };
+            assert!(invoke_pjrt_host_send_callback(&live_cb_opts, 0, 7, &[1, 2, 3, 4]).is_ok());
+            let mut no_user_send_info = live_send_info;
+            no_user_send_info.user_arg = ptr::null_mut();
+            let no_user_send_row = ptr::addr_of!(no_user_send_info);
+            let no_user_opts = crate::pjrt_types::PJRT_ExecuteOptions {
+                send_callbacks: ptr::addr_of!(no_user_send_row),
+                ..live_cb_opts
+            };
+            assert!(invoke_pjrt_host_send_callback(&no_user_opts, 0, 7, &[1]).is_ok());
+            assert_eq!(send_counter, 1);
+
+            let mut create_args = crate::pjrt_types::PJRT_Client_Create_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                create_options: ptr::null(),
+                num_options: 0,
+                kv_get_callback: ptr::null(),
+                kv_get_user_arg: ptr::null_mut(),
+                kv_put_callback: ptr::null(),
+                kv_put_user_arg: ptr::null_mut(),
+                client: ptr::null_mut(),
+                kv_try_get_callback: ptr::null(),
+                kv_try_get_user_arg: ptr::null_mut(),
+            };
+            assert!(
+                crate::pjrt_client_api::PJRT_Client_Create(ptr::addr_of_mut!(create_args).cast())
+                    .is_null()
+            );
+            let client = create_args.client;
+
+            let host_ir = br"module @host_io {
+  func.func @main(%arg0: tensor<4xf32>) -> (tensor<4xf32>, tensor<4xf32>) {
+    %tok0 = stablehlo.send %arg0 {channel_id = 7} : (tensor<4xf32>) -> tensor<4xf32>
+    %rec = stablehlo.recv %tok0 {channel_id = 8} : (tensor<4xf32>) -> tensor<4xf32>
+    func.return %arg0, %rec : tensor<4xf32>, tensor<4xf32>
+  }
+}";
+            let prog = PJRT_Program {
+                struct_size: size_of::<PJRT_Program>(),
+                extension_start: ptr::null_mut(),
+                code: host_ir.as_ptr().cast(),
+                code_size: host_ir.len(),
+                format: b"mlir".as_ptr().cast(),
+                format_size: 4,
+            };
+            let mut comp_args = crate::pjrt_types::PJRT_Client_Compile_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Client_Compile_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                program: ptr::addr_of!(prog),
+                compile_options: ptr::null(),
+                compile_options_size: 0,
+                executable: ptr::null_mut(),
+            };
+            assert!(
+                crate::pjrt_client_api::PJRT_Client_Compile(ptr::addr_of_mut!(comp_args).cast())
+                    .is_null()
+            );
+            let loaded_exec = comp_args.executable;
+
+            let mut get_ex = crate::pjrt_types::PJRT_LoadedExecutable_GetExecutable_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_LoadedExecutable_GetExecutable_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                loaded_executable: loaded_exec,
+                executable: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_LoadedExecutable_GetExecutable(ptr::addr_of_mut!(get_ex).cast()).is_null()
+            );
+            let mut opt_prog = PJRT_Program {
+                struct_size: size_of::<PJRT_Program>(),
+                extension_start: ptr::null_mut(),
+                code: ptr::null(),
+                code_size: 0,
+                format: ptr::null(),
+                format_size: 0,
+            };
+            let mut ex_opt = crate::pjrt_types::PJRT_Executable_OptimizedProgram_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Executable_OptimizedProgram_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: get_ex.executable,
+                program: ptr::addr_of_mut!(opt_prog),
+            };
+            assert!(PJRT_Executable_OptimizedProgram(ptr::addr_of_mut!(ex_opt).cast()).is_null());
+            assert!(opt_prog.code_size > 0);
+            let mut del_base_ex = crate::pjrt_types::PJRT_Executable_Destroy_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Executable_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: get_ex.executable,
+            };
+            assert!(PJRT_Executable_Destroy(ptr::addr_of_mut!(del_base_ex).cast()).is_null());
+
+            let cli_ref = &*client;
+            let host_vals = [1.0_f32, 2.0, 3.0, 4.0];
+            let dims = [4_i64];
+            let mut dev_bufs = Vec::with_capacity(4);
+            for &dev_p in cli_ref.device_ptrs.iter().take(4) {
+                let mut h2d = crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args {
+                    struct_size: size_of::<crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args>(
+                    ),
+                    extension_start: ptr::null_mut(),
+                    client,
+                    data: host_vals.as_ptr().cast(),
+                    element_type: 11,
+                    pad0: 0,
+                    dims: dims.as_ptr(),
+                    num_dims: 1,
+                    byte_strides: ptr::null(),
+                    num_byte_strides: 0,
+                    host_buffer_semantics: 0,
+                    pad1: 0,
+                    device: dev_p,
+                    memory: ptr::null_mut(),
+                    device_layout: ptr::null(),
+                    done_with_host_buffer: ptr::null_mut(),
+                    out_buffer: ptr::null_mut(),
+                };
+                assert!(
+                    crate::pjrt_client_api::PJRT_Client_BufferFromHostBuffer(
+                        ptr::addr_of_mut!(h2d).cast()
+                    )
+                    .is_null()
+                );
+                dev_bufs.push(h2d.out_buffer);
+            }
+            let db0 = dev_bufs.first().copied().unwrap_or(ptr::null_mut());
+            let db1 = dev_bufs.get(1).copied().unwrap_or(ptr::null_mut());
+            let db2 = dev_bufs.get(2).copied().unwrap_or(ptr::null_mut());
+            let db3 = dev_bufs.get(3).copied().unwrap_or(ptr::null_mut());
+            let dev0_ptr = cli_ref
+                .device_ptrs
+                .first()
+                .copied()
+                .unwrap_or(ptr::null_mut());
+
+            let null_buf_ptr: *const PJRT_Buffer = ptr::null();
+            let null_arg_row = [null_buf_ptr];
+            let null_arg_lists = [null_arg_row.as_ptr()];
+            let mut out_row0 = [ptr::null_mut::<PJRT_Buffer>(); 2];
+            let mut out_lists0 = [out_row0.as_mut_ptr()];
+            let mut null_arg_exec = PJRT_LoadedExecutable_Execute_Args {
+                struct_size: size_of::<PJRT_LoadedExecutable_Execute_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: loaded_exec,
+                options: ptr::addr_of!(base_empty_opts),
+                argument_lists: null_arg_lists.as_ptr(),
+                num_devices: 1,
+                num_args: 1,
+                output_lists: out_lists0.as_mut_ptr(),
+                device_complete_events: ptr::null_mut(),
+                execute_device: dev0_ptr,
+            };
+            let null_arg_err =
+                PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(null_arg_exec).cast());
+            assert!(!null_arg_err.is_null());
+            drop(Box::from_raw(null_arg_err));
+
+            let valid_arg_row0 = [db0.cast_const()];
+            let valid_arg_lists0 = [valid_arg_row0.as_ptr()];
+            let mut empty_opts_exec = PJRT_LoadedExecutable_Execute_Args {
+                argument_lists: valid_arg_lists0.as_ptr(),
+                ..null_arg_exec
+            };
+            assert!(
+                PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(empty_opts_exec).cast()).is_null()
+            );
+            for b in out_row0 {
+                crate::rust_ergonomic_api::libtpu_rs_buffer_destroy(b);
+            }
+
+            out_row0 = [ptr::null_mut(); 2];
+            let mut recv_only_opts = live_cb_opts;
+            recv_only_opts.num_send_ops = 0;
+            let mut recv_only_exec = PJRT_LoadedExecutable_Execute_Args {
+                options: ptr::addr_of!(recv_only_opts),
+                ..empty_opts_exec
+            };
+            assert!(
+                PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(recv_only_exec).cast()).is_null()
+            );
+            for b in out_row0 {
+                crate::rust_ergonomic_api::libtpu_rs_buffer_destroy(b);
+            }
+
+            out_row0 = [ptr::null_mut(); 2];
+            let mut live_cb_exec = PJRT_LoadedExecutable_Execute_Args {
+                options: ptr::addr_of!(live_cb_opts),
+                ..empty_opts_exec
+            };
+            assert!(
+                PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(live_cb_exec).cast()).is_null()
+            );
+            for b in out_row0 {
+                crate::rust_ergonomic_api::libtpu_rs_buffer_destroy(b);
+            }
+
+            let fail_send_info = crate::pjrt_types::PJRT_SendCallbackInfo {
+                channel_id: 7,
+                user_arg: ptr::null_mut(),
+                send_callback: fail_send_cb as *const std::ffi::c_void,
+                extension_start: ptr::null_mut(),
+            };
+            let fail_send_row = ptr::addr_of!(fail_send_info);
+            let fail_cb_opts = crate::pjrt_types::PJRT_ExecuteOptions {
+                send_callbacks: ptr::addr_of!(fail_send_row),
+                recv_callbacks: ptr::null(),
+                num_send_ops: 1,
+                num_recv_ops: 0,
+                ..base_empty_opts
+            };
+            let mut fail_cb_exec = PJRT_LoadedExecutable_Execute_Args {
+                options: ptr::addr_of!(fail_cb_opts),
+                ..empty_opts_exec
+            };
+            let fail_cb_err = PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(fail_cb_exec).cast());
+            assert!(!fail_cb_err.is_null());
+            drop(Box::from_raw(fail_cb_err));
+
+            let r0 = [db0.cast_const()];
+            let r1 = [db1.cast_const()];
+            let r2 = [db2.cast_const()];
+            let r3 = [db3.cast_const()];
+            let spmd_arg_ptrs = [r0.as_ptr(), r1.as_ptr(), r2.as_ptr(), r3.as_ptr()];
+            let mut o0 = [ptr::null_mut::<PJRT_Buffer>(); 2];
+            let mut o1 = [ptr::null_mut::<PJRT_Buffer>(); 2];
+            let mut o2 = [ptr::null_mut::<PJRT_Buffer>(); 2];
+            let mut o3 = [ptr::null_mut::<PJRT_Buffer>(); 2];
+            let mut spmd_out_ptrs = [
+                o0.as_mut_ptr(),
+                o1.as_mut_ptr(),
+                o2.as_mut_ptr(),
+                o3.as_mut_ptr(),
+            ];
+            let mut spmd_events = [ptr::null_mut::<crate::pjrt_types::PJRT_Event>(); 4];
+
+            let mut two_dev_exec = PJRT_LoadedExecutable_Execute_Args {
+                struct_size: size_of::<PJRT_LoadedExecutable_Execute_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: loaded_exec,
+                options: ptr::null(),
+                argument_lists: spmd_arg_ptrs.as_ptr(),
+                num_devices: 2,
+                num_args: 1,
+                output_lists: spmd_out_ptrs.as_mut_ptr(),
+                device_complete_events: ptr::null_mut(),
+                execute_device: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(two_dev_exec).cast()).is_null()
+            );
+            for row in [&mut o0, &mut o1] {
+                for b in row {
+                    crate::rust_ergonomic_api::libtpu_rs_buffer_destroy(*b);
+                    *b = ptr::null_mut();
+                }
+            }
+
+            let mut four_dev_no_ev = PJRT_LoadedExecutable_Execute_Args {
+                num_devices: 4,
+                ..two_dev_exec
+            };
+            assert!(
+                PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(four_dev_no_ev).cast()).is_null()
+            );
+            for row in [&mut o0, &mut o1, &mut o2, &mut o3] {
+                for b in row {
+                    crate::rust_ergonomic_api::libtpu_rs_buffer_destroy(*b);
+                    *b = ptr::null_mut();
+                }
+            }
+
+            let mut four_dev_with_ev = PJRT_LoadedExecutable_Execute_Args {
+                device_complete_events: spmd_events.as_mut_ptr(),
+                ..four_dev_no_ev
+            };
+            assert!(
+                PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(four_dev_with_ev).cast()).is_null()
+            );
+            for row in [&mut o0, &mut o1, &mut o2, &mut o3] {
+                for b in row {
+                    crate::rust_ergonomic_api::libtpu_rs_buffer_destroy(*b);
+                    *b = ptr::null_mut();
+                }
+            }
+            for ev in spmd_events {
+                if !ev.is_null() {
+                    drop(Box::from_raw(ev));
+                }
+            }
+
+            let mut del_first = crate::pjrt_types::PJRT_Buffer_Delete_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Buffer_Delete_Args>(),
+                extension_start: ptr::null_mut(),
+                buffer: db0,
+            };
+            assert!(PJRT_Buffer_Delete(ptr::addr_of_mut!(del_first).cast()).is_null());
+            let spmd_del_err =
+                PJRT_LoadedExecutable_Execute(ptr::addr_of_mut!(four_dev_no_ev).cast());
+            assert!(!spmd_del_err.is_null());
+            drop(Box::from_raw(spmd_del_err));
+
+            for b in dev_bufs {
+                crate::rust_ergonomic_api::libtpu_rs_buffer_destroy(b);
+            }
+            let mut del_exec = PJRT_LoadedExecutable_Destroy_Args {
+                struct_size: size_of::<PJRT_LoadedExecutable_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: loaded_exec,
+            };
+            assert!(PJRT_LoadedExecutable_Destroy(ptr::addr_of_mut!(del_exec).cast()).is_null());
+            let mut destroy_cli = PJRT_Client_Destroy_Args {
+                struct_size: size_of::<PJRT_Client_Destroy_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+            };
+            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_cli).cast()).is_null());
         }
     }
 }

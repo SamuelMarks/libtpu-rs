@@ -1,0 +1,20 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.gfc.isa;
+message SparseCoreVectorScalar {
+  message NoInstructions {
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreVectorScalar.NoInstructions no_instructions = 12;
+  }
+  optional uint32 vs0 = 1;
+  optional bool vs0_used = 2;
+  optional uint32 vs1 = 3;
+  optional bool vs1_used = 4;
+  optional uint32 vs2 = 5;
+  optional bool vs2_used = 6;
+  optional uint32 vs3 = 7;
+  optional bool vs3_used = 8;
+  optional uint32 latency = 9;
+  map<string, uint32> resource_usage = 10;
+  optional uint32 bit_width = 11;
+}

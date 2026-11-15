@@ -1,0 +1,32 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.barna_core;
+import "google/protobuf/timestamp.proto";
+import "third_party/tensorflow/compiler/xla/tpu/protobuf/tpu_embedding_configuration.proto";
+message EmbeddingLookupStatistics {
+  reserved 2;
+  reserved 4;
+  message TableStatistics {
+    reserved 7;
+    reserved 9;
+    message LoadBalanceStatistics {
+      reserved 3;
+      message TaskLookupStatistics {
+        repeated float normalized_lookup_frequency_by_column = 1;
+        repeated float normalized_unique_lookup_frequency_by_column = 2;
+      }
+      repeated .platforms_deepsea.jellyfish.barna_core.EmbeddingLookupStatistics.TableStatistics.LoadBalanceStatistics.TaskLookupStatistics lookup_statistics_by_task = 1;
+      optional .tensorflow.tpu.TPUEmbeddingConfiguration.ShardingStrategy sharding_strategy = 2;
+    }
+    optional float lookup_frequency = 1;
+    optional float unique_lookup_frequency = 2;
+    optional float frequent_lookup_frequency = 6;
+    optional float unique_frequent_lookup_frequency = 8;
+    repeated float kth_frequent_lookup_frequencies = 10;
+    repeated .platforms_deepsea.jellyfish.barna_core.EmbeddingLookupStatistics.TableStatistics.LoadBalanceStatistics load_balance_statistics = 5;
+    repeated float load_imbalance_factor_by_shard = 3;
+    repeated float unique_load_imbalance_factor_by_shard = 4;
+    optional .google.protobuf.Timestamp timestamp = 11;
+  }
+  repeated .platforms_deepsea.jellyfish.barna_core.EmbeddingLookupStatistics.TableStatistics table_statistics = 1;
+  optional .tensorflow.tpu.TPUEmbeddingConfiguration.ShardingStrategy sharding_strategy = 3;
+}

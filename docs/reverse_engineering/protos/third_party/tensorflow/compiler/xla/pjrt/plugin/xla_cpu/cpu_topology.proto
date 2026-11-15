@@ -1,0 +1,12 @@
+syntax = "proto3";
+package xla;
+import "third_party/tensorflow/compiler/xla/service/cpu/executable.proto";
+message CpuTopologyProto {
+  reserved 4;
+  message CpuDevice {
+    int32 process_index = 2;
+    int32 local_hardware_id = 3;
+  }
+  repeated .xla.CpuTopologyProto.CpuDevice cpu_devices = 1;
+  .xla.cpu.TargetMachineOptionsProto target_machine_options = 5;
+}

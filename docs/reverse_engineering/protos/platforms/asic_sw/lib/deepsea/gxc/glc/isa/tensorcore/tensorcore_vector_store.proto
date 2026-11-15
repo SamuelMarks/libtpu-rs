@@ -1,0 +1,142 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.glc.isa;
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_common_encodings.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/common_encodings.proto";
+message TensorCoreVectorStore {
+  message VectorStore {
+    optional uint32 source_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 4;
+  }
+  message VectorStoreBase {
+    optional uint32 source_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+  }
+  message VectorStoreMasked {
+    optional uint32 vmsk = 1;
+    optional uint32 source_vreg = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+  }
+  message VectorStoreBaseMasked {
+    optional uint32 vmsk = 1;
+    optional uint32 source_vreg = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 5;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 6;
+  }
+  message VectorStoreShuffled {
+    optional uint32 source_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 4;
+  }
+  message VectorStoreShuffledBase {
+    optional uint32 source_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+  }
+  message VectorStoreShuffledMasked {
+    optional uint32 vmsk = 1;
+    optional uint32 source_vreg = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+  }
+  message VectorStoreShuffledBaseMasked {
+    optional uint32 vmsk = 1;
+    optional uint32 source_vreg = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 5;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 6;
+  }
+  message VectorStoreIndexed0 {
+    optional uint32 source_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+  }
+  message VectorStoreIndexed1 {
+    optional uint32 source_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+  }
+  message VectorStoreIndexed0Masked {
+    optional uint32 vmsk = 1;
+    optional uint32 source_vreg = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 5;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 6;
+  }
+  message VectorStoreIndexed1Masked {
+    optional uint32 vmsk = 1;
+    optional uint32 source_vreg = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 5;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 6;
+  }
+  message SetLaneIar0 {
+    optional uint32 source_vreg = 1;
+  }
+  message SetLaneIar1 {
+    optional uint32 source_vreg = 1;
+  }
+  message SetSublaneIar0 {
+    optional uint32 source_vreg = 1;
+  }
+  message SetSublaneIar1 {
+    optional uint32 source_vreg = 1;
+  }
+  message SetRawIar0 {
+    optional uint32 source_vreg = 1;
+  }
+  message SetRawIar1 {
+    optional uint32 source_vreg = 1;
+  }
+  message PushV2s {
+    optional uint32 source_vreg = 1;
+  }
+  message SetPrng {
+    optional uint32 source_vreg = 1;
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStore vector_store = 5;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStoreBase vector_store_base = 6;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStoreMasked vector_store_masked = 7;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStoreBaseMasked vector_store_base_masked = 8;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStoreShuffled vector_store_shuffled = 9;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStoreShuffledBase vector_store_shuffled_base = 10;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStoreShuffledMasked vector_store_shuffled_masked = 11;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStoreShuffledBaseMasked vector_store_shuffled_base_masked = 12;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStoreIndexed0 vector_store_indexed_0 = 13;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStoreIndexed1 vector_store_indexed_1 = 14;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStoreIndexed0Masked vector_store_indexed_0_masked = 15;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.VectorStoreIndexed1Masked vector_store_indexed_1_masked = 16;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.SetLaneIar0 set_lane_iar_0 = 17;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.SetLaneIar1 set_lane_iar_1 = 18;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.SetSublaneIar0 set_sublane_iar_0 = 19;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.SetSublaneIar1 set_sublane_iar_1 = 20;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.SetRawIar0 set_raw_iar_0 = 21;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.SetRawIar1 set_raw_iar_1 = 22;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.PushV2s push_v2s = 23;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore.SetPrng set_prng = 24;
+  }
+  optional .asic_sw.deepsea.gxc.glc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional uint32 latency = 2 [default = 1];
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

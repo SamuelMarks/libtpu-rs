@@ -210,13 +210,13 @@ pub struct PJRT_Client_BufferFromHostBuffer_Args {
     pub pad1: i32,
     /// Target `PJRT_Device*`.
     pub device: *mut PJRT_Device,
-    /// Optional target `PJRT_Memory*`.
+    /// Optional target `PJRT_Memory*` (`0x58`).
     pub memory: *mut PJRT_Memory,
-    /// Optional `PJRT_Buffer_MemoryLayout*`.
+    /// Optional `PJRT_Buffer_MemoryLayout*` (`0x60`).
     pub device_layout: *const PJRT_Buffer_MemoryLayout,
-    /// Output host buffer completion `PJRT_Event*`.
+    /// Output host buffer completion `PJRT_Event*` (`0x68`).
     pub done_with_host_buffer: *mut PJRT_Event,
-    /// Output `buffer` (`PJRT_Buffer*`).
+    /// Output `buffer` (`PJRT_Buffer*`, `0x70`).
     pub out_buffer: *mut PJRT_Buffer,
 }
 
@@ -492,7 +492,9 @@ pub struct PJRT_Client_Load_Args {
     pub loaded_executable: *mut PJRT_LoadedExecutable,
 }
 
-impl PjrtArgsStruct for PJRT_Client_Create_Args {}
+impl PjrtArgsStruct for PJRT_Client_Create_Args {
+    const LEGACY_MIN_STRUCT_SIZE: usize = 72;
+}
 impl PjrtArgsStruct for PJRT_Client_Destroy_Args {}
 impl PjrtArgsStruct for PJRT_Client_PlatformStr_Args {}
 impl PjrtArgsStruct for PJRT_Client_ProcessIndex_Args {
@@ -503,7 +505,9 @@ impl PjrtArgsStruct for PJRT_Client_LookupDevice_Args {}
 impl PjrtArgsStruct for PJRT_Client_AddressableMemories_Args {}
 impl PjrtArgsStruct for PJRT_Client_Compile_Args {}
 impl PjrtArgsStruct for PJRT_Client_DefaultDeviceAssignment_Args {}
-impl PjrtArgsStruct for PJRT_Client_BufferFromHostBuffer_Args {}
+impl PjrtArgsStruct for PJRT_Client_BufferFromHostBuffer_Args {
+    const LEGACY_MIN_STRUCT_SIZE: usize = 112;
+}
 impl PjrtArgsStruct for PJRT_Compile_Args {}
 impl PjrtArgsStruct for PJRT_Client_CreateViewOfDeviceBuffer_Args {
     const MIN_STRUCT_SIZE: usize = 72;
@@ -541,6 +545,11 @@ const _: () =
     assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, byte_strides) == 0x38);
 const _: () = assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, device) == 0x50);
 const _: () = assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, memory) == 0x58);
+const _: () =
+    assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, device_layout) == 0x60);
+const _: () = assert!(
+    std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, done_with_host_buffer) == 0x68
+);
 const _: () =
     assert!(std::mem::offset_of!(PJRT_Client_BufferFromHostBuffer_Args, out_buffer) == 0x70);
 

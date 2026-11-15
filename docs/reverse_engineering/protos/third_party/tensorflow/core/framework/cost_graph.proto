@@ -1,0 +1,40 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+message CostGraphDef {
+  message Node {
+    message InputInfo {
+      int32 preceding_node = 1;
+      int32 preceding_port = 2;
+    }
+    message OutputInfo {
+      int64 size = 1;
+      int64 alias_input_port = 2;
+      .tensorflow.TensorShapeProto shape = 3;
+      .tensorflow.DataType dtype = 4;
+    }
+    string name = 1;
+    string device = 2;
+    int32 id = 3;
+    repeated .tensorflow.CostGraphDef.Node.InputInfo input_info = 4;
+    repeated .tensorflow.CostGraphDef.Node.OutputInfo output_info = 5;
+    int64 temporary_memory_size = 6;
+    int64 persistent_memory_size = 12;
+    int64 host_temp_memory_size = 10;
+    int64 device_temp_memory_size = 11;
+    int64 device_persistent_memory_size = 16;
+    int64 compute_cost = 9;
+    int64 compute_time = 14;
+    int64 memory_time = 15;
+    bool is_final = 7;
+    repeated int32 control_input = 8;
+    bool inaccurate = 17;
+  }
+  message AggregatedCost {
+    float cost = 1;
+    string dimension = 2;
+  }
+  repeated .tensorflow.CostGraphDef.Node node = 1;
+  repeated .tensorflow.CostGraphDef.AggregatedCost cost = 2;
+}

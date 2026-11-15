@@ -1,0 +1,55 @@
+syntax = "proto3";
+package platforms_deepsea.jellyfish.barna_core;
+import "platforms/deepsea/jellyfish/barna_core/hot_id/hot_id_replication_structures.proto";
+import "third_party/protobuf/cpp_features.proto";
+enum PayloadVariant {
+  PAYLOAD_VARIANT_UNSPECIFIED = 0;
+  PAYLOAD_VARIANT_MAIN = 1;
+  PAYLOAD_VARIANT_DENSIFIED = 2;
+}
+message MetadataResponse {
+  repeated int32 host_ids_size_bytes = 1;
+  repeated int32 padded_host_ids_size_bytes = 4;
+  repeated int32 partitioned_barna_core_ids_size_bytes = 5;
+  repeated int32 partitioned_deduplicated_barna_core_ids_size_bytes = 6;
+  int32 gradients_size_bytes = 7;
+  repeated int32 host_ids_scratchpad_size_bytes = 8;
+  repeated int32 partitioned_reduced_gradients_size_bytes = 9;
+  repeated int32 barna_core_ids_size_bytes = 2;
+  repeated int32 reduced_gradients_size_bytes = 3;
+}
+message GeneratePayloadsForWorkItemRequest {
+  reserved 1;
+  reserved 2;
+  reserved 3;
+  reserved 4;
+  int32 client_partition_column = 5;
+  int32 client_core_id = 12;
+  int32 user_sample_count = 8;
+  int32 feature_count_per_user_sample = 9;
+  bytes user_batch_feature_starts = 10;
+  bytes user_batch_payloads = 11;
+  uint64 config_fingerprint = 6;
+  uint64 build_changelist = 7;
+  .platforms_deepsea.jellyfish.barna_core.hot_id.CompressedHotIdAssignmentsForCoreProto hot_id_assignments = 13;
+  .platforms_deepsea.jellyfish.barna_core.PayloadVariant payload_variant = 14;
+}
+message GeneratePayloadsForWorkItemResponse {
+  reserved 1;
+  reserved 2;
+  reserved 3;
+  message ResponseForRow {
+    message ResponseForTpuBatch {
+      reserved 4;
+      int32 tpu_sample_count = 1;
+      .platforms_deepsea.jellyfish.barna_core.MetadataResponse metadata = 2;
+      bytes payload = 3;
+    }
+    repeated .platforms_deepsea.jellyfish.barna_core.GeneratePayloadsForWorkItemResponse.ResponseForRow.ResponseForTpuBatch responses_by_tpu_batch = 1;
+  }
+  repeated .platforms_deepsea.jellyfish.barna_core.GeneratePayloadsForWorkItemResponse.ResponseForRow responses_by_row = 4;
+  bytes linearized_deduplication_literals = 5;
+}
+service BarnaCoreOffloadWorker {
+  rpc GeneratePayloadsForWorkItemRpc(.platforms_deepsea.jellyfish.barna_core.GeneratePayloadsForWorkItemRequest) returns (.platforms_deepsea.jellyfish.barna_core.GeneratePayloadsForWorkItemResponse);
+}

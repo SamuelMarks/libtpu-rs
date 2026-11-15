@@ -1,0 +1,41 @@
+syntax = "proto3";
+package grpc.channelz.v2;
+import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+message PropertyList {
+  message Element {
+    string key = 1;
+    .grpc.channelz.v2.PropertyValue value = 2;
+  }
+  repeated .grpc.channelz.v2.PropertyList.Element properties = 1;
+}
+message PropertyGrid {
+  message Row {
+    string label = 1;
+    repeated .grpc.channelz.v2.PropertyValue value = 2;
+  }
+  repeated string columns = 1;
+  repeated .grpc.channelz.v2.PropertyGrid.Row rows = 2;
+}
+message PropertyTable {
+  message Row {
+    repeated .grpc.channelz.v2.PropertyValue value = 1;
+  }
+  repeated string columns = 1;
+  repeated .grpc.channelz.v2.PropertyTable.Row rows = 2;
+}
+message PropertyValue {
+  oneof kind {
+    .google.protobuf.Empty empty_value = 1;
+    .google.protobuf.Any any_value = 2;
+    string string_value = 3;
+    int64 int64_value = 4;
+    uint64 uint64_value = 5;
+    double double_value = 6;
+    bool bool_value = 7;
+    .google.protobuf.Timestamp timestamp_value = 8;
+    .google.protobuf.Duration duration_value = 9;
+  }
+}

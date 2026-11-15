@@ -1,0 +1,6 @@
+syntax = "proto3";
+package stream_executor;
+message RuntimeAbiVersionProto {
+  string platform_name = 1;
+  bytes platform_specific_version = 2;
+}

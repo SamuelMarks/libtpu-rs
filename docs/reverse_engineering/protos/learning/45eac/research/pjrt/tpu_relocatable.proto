@@ -1,0 +1,17 @@
+syntax = "proto3";
+package xla;
+import "third_party/tensorflow/compiler/xla/pjrt/proto/pjrt_partial_program.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message TpuRelocatableProto {
+  message ParameterOutputAlias {
+    int64 parameter_index = 1;
+    int64 output_index = 2;
+  }
+  string name = 1;
+  string build_id = 2;
+  .xla.ProgramShapeProto shape = 3;
+  bytes call_backend_config = 4;
+  bool has_side_effects = 5;
+  repeated .xla.TpuRelocatableProto.ParameterOutputAlias parameter_output_aliases = 6;
+  repeated .xla.PjRtPartialProgramProto programs = 7;
+}

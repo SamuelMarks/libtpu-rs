@@ -1,0 +1,13 @@
+syntax = "proto3";
+package platforms_deepsea.jellyfish.barna_core.proto;
+message TpuBatchStrategy {
+  message Fixed {
+    int32 input_sample_count = 1;
+  }
+  message Dynamic {
+  }
+  oneof strategy {
+    .platforms_deepsea.jellyfish.barna_core.proto.TpuBatchStrategy.Fixed fixed = 1;
+    .platforms_deepsea.jellyfish.barna_core.proto.TpuBatchStrategy.Dynamic dynamic = 2;
+  }
+}

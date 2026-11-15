@@ -64,19 +64,44 @@ mod tests {
                 SetGlobalTPUArrayOp_DoWork(4, ptr::null(), ptr::null_mut()),
                 -1
             );
-            let topo_proto = libtpu_core::proto::TpuTopologyArgsProto {
-                version: 5,
-                num_hosts: 1,
-                chips_per_host: 4,
-                mesh_bounds: vec![2, 2, 1],
-                platform_version: String::from("TPU v5 lite"),
-                fingerprint: String::from("1"),
-            }
-            .encode();
+            let topo_proto = libtpu_core::proto::ProtoSchemaMessage::encode_proto(
+                &libtpu_core::proto::TpuTopologyArgsProto {
+                    version: Some(5),
+                    chips_per_host_bounds: Some(libtpu_core::proto::TpuDimensionsProto {
+                        x: 2,
+                        y: 2,
+                        z: 1,
+                        w: 1,
+                    }),
+                    host_bounds: Some(libtpu_core::proto::TpuDimensionsProto {
+                        x: 1,
+                        y: 1,
+                        z: 1,
+                        w: 1,
+                    }),
+                    variant: Some(String::from("TPU v5 lite")),
+                    chip_config_name: Some(String::from("1")),
+                    ..libtpu_core::proto::TpuTopologyArgsProto::default()
+                },
+            );
             assert_eq!(
                 SetGlobalTPUArrayOp_DoWork(
                     topo_proto.len(),
                     topo_proto.as_ptr().cast(),
+                    ptr::null_mut()
+                ),
+                0
+            );
+            let bare_topo_proto = libtpu_core::proto::ProtoSchemaMessage::encode_proto(
+                &libtpu_core::proto::TpuTopologyArgsProto {
+                    version: Some(5),
+                    ..libtpu_core::proto::TpuTopologyArgsProto::default()
+                },
+            );
+            assert_eq!(
+                SetGlobalTPUArrayOp_DoWork(
+                    bare_topo_proto.len(),
+                    bare_topo_proto.as_ptr().cast(),
                     ptr::null_mut()
                 ),
                 0

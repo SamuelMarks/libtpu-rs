@@ -1,0 +1,71 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+import "platforms/xla/megascale/runtime/executor/tpu_buffer_details.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message Endpoint {
+  int32 slice_id = 1;
+  int32 host_id = 2;
+}
+message TransferInfo {
+  reserved 1;
+  reserved 2;
+  reserved 3;
+  reserved 7;
+  message Transfer {
+    reserved 4;
+    message Peer {
+      string key = 1;
+      .xla.megascale.runtime.Endpoint destination = 2;
+    }
+    message RaggedOutputMetadata {
+      optional int64 output_offset = 3;
+      optional int64 output_size = 4;
+    }
+    int64 offset = 1;
+    int64 size = 2;
+    .xla.megascale.runtime.TransferInfo.Transfer.Peer peer = 3;
+    optional .xla.megascale.runtime.TransferInfo.Transfer.RaggedOutputMetadata ragged_output_metadata = 5;
+    optional int32 multi_recv_count = 7;
+  }
+  .xla.megascale.runtime.TransferInfo.Transfer transfer = 4;
+  int32 dcn_topology_level = 8;
+}
+message HostCommandActions {
+  enum Operation {
+    UNDEFINED = 0;
+    DEVICE_TO_HOST = 1;
+    HOST_TO_DEVICE = 2;
+  }
+  enum RaggedDataType {
+    RAGGED_DATA_TYPE_UNSPECIFIED = 0;
+    DATA = 1;
+    INPUT_SIZE = 2;
+    INPUT_OFFSET = 3;
+    OUTPUT_SIZE = 4;
+    OUTPUT_OFFSET = 5;
+  }
+  message Action {
+    reserved 3;
+    reserved 5;
+    .xla.megascale.runtime.TpuBufferDetails buffer = 2;
+    string transfer_key = 4;
+    string network_recv_key = 6;
+    bool handle_d2h_dma_in_hch = 8;
+  }
+  message SyncFlag {
+    int32 word_offset = 1;
+    uint32 value = 2;
+    uint64 expected_transfer_size = 3;
+  }
+  .xla.megascale.runtime.HostCommandActions.Operation operation = 5;
+  repeated .xla.megascale.runtime.HostCommandActions.Action actions = 1;
+  .xla.megascale.runtime.HostCommandActions.SyncFlag completion_sync_flag = 2;
+  string graph_id = 3;
+  .xla.megascale.runtime.Endpoint host_location = 4;
+  int64 channel_group_id = 6;
+  bool is_custom_call = 7;
+  int64 count = 8;
+  optional .xla.megascale.runtime.HostCommandActions.RaggedDataType ragged_data_type = 9;
+  optional .xla.PrimitiveType ragged_primitive_type = 10;
+  optional uint64 ragged_data_chunk_num_elements = 11;
+}

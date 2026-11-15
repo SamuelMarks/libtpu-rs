@@ -1,0 +1,15 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+message TpuSharedMemoryPartsProto {
+  .tpu.TpuVersionProto version = 1;
+  .tpu.TpuSharedMemoryTypeProto type = 2;
+  int32 bytes_per_word = 3;
+  int64 word_count = 4;
+  int32 frequency_mhz = 5;
+  int32 channel_count = 6;
+  int32 ports_per_channel = 7;
+  int32 bytes_per_port = 8;
+  int64 bytes_per_second = 9;
+}

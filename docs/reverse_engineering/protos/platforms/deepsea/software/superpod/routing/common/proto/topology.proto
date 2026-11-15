@@ -1,0 +1,62 @@
+syntax = "proto2";
+package superpod.routing.proto;
+import "platforms/accel_ssw/deepsea/common/proto/dimension.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/chip_coordinate.proto";
+enum TwistedTorusShape {
+  TWIST_SHAPE_UNSPECIFIED = 0;
+  TWIST_SHAPE_K_K_2K = 1;
+  TWIST_SHAPE_K_2K_2K = 2;
+  TWIST_SHAPE_K_2K_NK = 3;
+  TWIST_SHAPE_CUSTOMIZED = 4;
+}
+message ToroidalTopology {
+  message IciLink {
+    optional .superpod.routing.proto.ChipCoordinate src = 1;
+    optional .superpod.routing.proto.ChipCoordinate dest = 2;
+    optional .accel_ssw.deepsea.proto.Direction direction = 3;
+  }
+  message Faults {
+    repeated .superpod.routing.proto.ChipCoordinate faulty_vertices = 1;
+    repeated .superpod.routing.proto.ToroidalTopology.IciLink faulty_links = 2;
+  }
+  message TwistedDimension {
+    optional int32 dim_index = 1;
+    repeated int32 offset_dim_indices = 2;
+  }
+  optional int64 x_dimension = 1 [default = 1];
+  optional int64 y_dimension = 2 [default = 1];
+  optional int64 z_dimension = 3 [default = 0];
+  optional int64 a_dimension = 9 [default = 0];
+  optional int64 b_dimension = 10 [default = 0];
+  optional int64 c_dimension = 11 [default = 0];
+  optional bool x_wrapping = 4 [default = false];
+  optional bool y_wrapping = 5 [default = false];
+  optional bool z_wrapping = 6 [default = false];
+  optional bool a_wrapping = 12 [default = false];
+  optional bool b_wrapping = 13 [default = false];
+  optional bool c_wrapping = 14 [default = false];
+  optional .superpod.routing.proto.TwistedTorusShape twisted_torus_shape = 7;
+  optional .superpod.routing.proto.ToroidalTopology.Faults faults = 8;
+  repeated .superpod.routing.proto.ToroidalTopology.TwistedDimension twisted_dims = 15;
+}
+message Topology {
+  reserved 1;
+  reserved 2;
+  reserved 3;
+  reserved 11;
+  reserved 12;
+  reserved 13;
+  reserved 22;
+  reserved 31;
+  reserved "x_dimension";
+  reserved "y_dimension";
+  reserved "z_dimension";
+  reserved "x_wrapping";
+  reserved "y_wrapping";
+  reserved "z_wrapping";
+  reserved "faults";
+  reserved "twisted_torus_shape";
+  oneof topology_type {
+    .superpod.routing.proto.ToroidalTopology toroidal_topology = 4;
+  }
+}

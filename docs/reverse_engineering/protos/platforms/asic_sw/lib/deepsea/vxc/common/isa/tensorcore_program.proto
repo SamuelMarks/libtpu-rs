@@ -1,0 +1,6 @@
+syntax = "proto2";
+package asic_sw.deepsea.vxc.isa;
+import "platforms/asic_sw/lib/deepsea/vxc/common/isa/tensorcore_bundle.proto";
+message TensorCoreProgram {
+  repeated .asic_sw.deepsea.vxc.isa.TensorCoreBundle bundles = 1;
+}

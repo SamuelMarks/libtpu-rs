@@ -1,0 +1,161 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.glc.isa;
+import "platforms/asic_sw/lib/deepsea/common/isa/common_encodings.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/common_encodings.proto";
+enum CoreType {
+  CORE_TYPE_TEC_SCS = 0;
+  CORE_TYPE_TAC = 1;
+}
+enum IndirectListType {
+  INDIRECT_LIST_TYPE_WORD_OFFSET = 0;
+  INDIRECT_LIST_TYPE_ROW_OFFSET = 1;
+}
+enum OffTileMemoryType {
+  OFF_TILE_MEMORY_TYPE_SPMEM = 0;
+  OFF_TILE_MEMORY_TYPE_TILE_SPMEM_N = 1;
+  OFF_TILE_MEMORY_TYPE_HBM = 2;
+  OFF_TILE_MEMORY_TYPE_HBM_4B = 3;
+  OFF_TILE_MEMORY_TYPE_RESERVED_0 = 4;
+  OFF_TILE_MEMORY_TYPE_RESERVED_1 = 5;
+  OFF_TILE_MEMORY_TYPE_RESERVED_2 = 6;
+  OFF_TILE_MEMORY_TYPE_RESERVED_3 = 7;
+}
+enum StreamOpcode {
+  STREAM_OPCODE_GATHER = 0;
+  STREAM_OPCODE_GATHER_INTEGER_ADD = 1;
+  STREAM_OPCODE_GATHER_FLOAT_ADD = 2;
+  STREAM_OPCODE_RESERVED_0 = 3;
+  STREAM_OPCODE_SCATTER = 4;
+  STREAM_OPCODE_SCATTER_INTEGER_ADD = 5;
+  STREAM_OPCODE_SCATTER_FLOAT_ADD = 6;
+  STREAM_OPCODE_RESERVED_1 = 7;
+}
+enum SyncFlagCountType {
+  SYNC_FLAG_COUNT_TYPE_WORD_4B = 0;
+  SYNC_FLAG_COUNT_TYPE_DESCRIPTOR = 1;
+}
+enum TileLocalMemoryType {
+  TILE_LOCAL_MEMORY_TYPE_SMEM = 0;
+  TILE_LOCAL_MEMORY_TYPE_TILE_SPMEM = 1;
+}
+enum TileLocalStreamType {
+  TILE_LOCAL_STREAM_TYPE_LINEAR = 0;
+  TILE_LOCAL_STREAM_TYPE_CIRCULAR_BUFFER = 1;
+}
+enum TileLocalStride {
+  TILE_LOCAL_STRIDE_STRIDE_32B = 0;
+  TILE_LOCAL_STRIDE_STRIDE_64B = 1;
+  TILE_LOCAL_STRIDE_STRIDE_128B = 2;
+  TILE_LOCAL_STRIDE_STRIDE_256B = 3;
+  TILE_LOCAL_STRIDE_STRIDE_512B = 4;
+  TILE_LOCAL_STRIDE_STRIDE_1024B = 5;
+  TILE_LOCAL_STRIDE_STRIDE_2048B = 6;
+  TILE_LOCAL_STRIDE_NO_STRIDE = 7;
+}
+message SparseCoreStream {
+  message LinearStream {
+    optional bool off_tile_start_offset_valid = 1 [default = true];
+    optional uint32 off_tile_start_offset = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.CoreType sync_flag_core_type = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SyncFlagCountType sync_flag_count_type = 4;
+    optional bool set_done_bit = 5;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalStride tile_local_stride = 6;
+    optional bool post_update_circular_buffer = 7;
+    optional .asic_sw.deepsea.gxc.glc.isa.IndirectListType indirect_list_type = 8;
+    optional uint32 indirect_list_stride = 9;
+    optional bool indirect_filter_en = 10;
+    optional bool trace_en = 11;
+    optional .asic_sw.deepsea.gxc.glc.isa.StreamOpcode stream_opcode = 12;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalMemoryType tile_local_memory_type = 13;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalStreamType tile_local_stream_type = 14;
+    optional .asic_sw.deepsea.gxc.glc.isa.OffTileMemoryType off_tile_memory_type = 15;
+    optional bool gather_scatter_add_is_b16 = 16 [default = false];
+    optional uint32 s0_x = 17;
+    optional .asic_sw.deepsea.isa.ScalarY s0_y = 18;
+    optional uint32 s1_x = 19;
+    optional .asic_sw.deepsea.isa.ScalarY s1_y = 20;
+  }
+  message StridedStream {
+    optional bool stride_size_valid = 1 [default = true];
+    optional uint32 stride_size = 2;
+    optional bool stride_length_and_offset_valid = 3 [default = true];
+    optional uint32 stride_length_and_offset = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.CoreType sync_flag_core_type = 5;
+    optional .asic_sw.deepsea.gxc.glc.isa.SyncFlagCountType sync_flag_count_type = 6;
+    optional bool set_done_bit = 7;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalStride tile_local_stride = 8;
+    optional bool post_update_circular_buffer = 9;
+    optional .asic_sw.deepsea.gxc.glc.isa.IndirectListType indirect_list_type = 10;
+    optional uint32 indirect_list_stride = 11;
+    optional bool indirect_filter_en = 12;
+    optional bool trace_en = 13;
+    optional .asic_sw.deepsea.gxc.glc.isa.StreamOpcode stream_opcode = 14;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalMemoryType tile_local_memory_type = 15;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalStreamType tile_local_stream_type = 16;
+    optional .asic_sw.deepsea.gxc.glc.isa.OffTileMemoryType off_tile_memory_type = 17;
+    optional bool gather_scatter_add_is_b16 = 18 [default = false];
+    optional uint32 s0_x = 19;
+    optional .asic_sw.deepsea.isa.ScalarY s0_y = 20;
+    optional uint32 s1_x = 21;
+    optional .asic_sw.deepsea.isa.ScalarY s1_y = 22;
+  }
+  message IndirectStream {
+    optional bool indirect_offset_valid = 1 [default = true];
+    optional uint32 indirect_offset = 2;
+    optional bool indirect_size_and_hbm4b_offset_valid = 3 [default = true];
+    optional uint32 indirect_size_and_hbm4b_offset = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.CoreType sync_flag_core_type = 5;
+    optional .asic_sw.deepsea.gxc.glc.isa.SyncFlagCountType sync_flag_count_type = 6;
+    optional bool set_done_bit = 7;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalStride tile_local_stride = 8;
+    optional bool post_update_circular_buffer = 9;
+    optional .asic_sw.deepsea.gxc.glc.isa.IndirectListType indirect_list_type = 10;
+    optional uint32 indirect_list_stride = 11;
+    optional bool indirect_filter_en = 12;
+    optional bool trace_en = 13;
+    optional .asic_sw.deepsea.gxc.glc.isa.StreamOpcode stream_opcode = 14;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalMemoryType tile_local_memory_type = 15;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalStreamType tile_local_stream_type = 16;
+    optional .asic_sw.deepsea.gxc.glc.isa.OffTileMemoryType off_tile_memory_type = 17;
+    optional bool gather_scatter_add_is_b16 = 18 [default = false];
+    optional uint32 s0_x = 19;
+    optional .asic_sw.deepsea.isa.ScalarY s0_y = 20;
+    optional uint32 s1_x = 21;
+    optional .asic_sw.deepsea.isa.ScalarY s1_y = 22;
+  }
+  message IndirectVregStream {
+    optional uint32 indirect_offsets = 1;
+    optional uint32 valid_offset_mask = 2;
+    optional bool off_tile_start_offset_valid = 3 [default = true];
+    optional uint32 off_tile_start_offset = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.CoreType sync_flag_core_type = 5;
+    optional .asic_sw.deepsea.gxc.glc.isa.SyncFlagCountType sync_flag_count_type = 6;
+    optional bool set_done_bit = 7;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalStride tile_local_stride = 8;
+    optional bool post_update_circular_buffer = 9;
+    optional .asic_sw.deepsea.gxc.glc.isa.IndirectListType indirect_list_type = 10;
+    optional uint32 indirect_list_stride = 11;
+    optional bool indirect_filter_en = 12;
+    optional bool trace_en = 13;
+    optional .asic_sw.deepsea.gxc.glc.isa.StreamOpcode stream_opcode = 14;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalMemoryType tile_local_memory_type = 15;
+    optional .asic_sw.deepsea.gxc.glc.isa.TileLocalStreamType tile_local_stream_type = 16;
+    optional .asic_sw.deepsea.gxc.glc.isa.OffTileMemoryType off_tile_memory_type = 17;
+    optional bool gather_scatter_add_is_b16 = 18 [default = false];
+    optional uint32 s0_x = 19;
+    optional .asic_sw.deepsea.isa.ScalarY s0_y = 20;
+    optional uint32 s1_x = 21;
+    optional .asic_sw.deepsea.isa.ScalarY s1_y = 22;
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreStream.LinearStream linear_stream = 6;
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreStream.StridedStream strided_stream = 7;
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreStream.IndirectStream indirect_stream = 8;
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreStream.IndirectVregStream indirect_vreg_stream = 9;
+  }
+  optional .asic_sw.deepsea.gxc.glc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional bool predication_inversion = 2;
+  optional uint32 latency = 3 [default = 1];
+  map<string, uint32> resource_usage = 4;
+  optional uint32 bit_width = 5;
+}

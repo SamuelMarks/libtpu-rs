@@ -1,0 +1,10 @@
+syntax = "proto3";
+package xla.jellyfish;
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message OpLayoutProposedProto {
+  .xla.LayoutProto output = 1;
+  repeated .xla.LayoutProto inputs = 2;
+}
+message LayoutProfileProto {
+  map<int64, .xla.jellyfish.OpLayoutProposedProto> entries = 1;
+}

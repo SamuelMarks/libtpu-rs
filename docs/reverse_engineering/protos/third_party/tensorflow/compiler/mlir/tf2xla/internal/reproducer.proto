@@ -1,0 +1,13 @@
+syntax = "proto3";
+package tensorflow.mlir.tf2xla.internal;
+import "third_party/tensorflow/core/framework/function.proto";
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/protobuf/tpu/compile_metadata.proto";
+message LegalizeMlirToHloReproducer {
+  oneof computation {
+    string mlir_module = 3;
+    .tensorflow.FunctionDefLibrary function_def_library = 4;
+  }
+  .tensorflow.tpu.TPUCompileMetadataProto compile_metadata = 1;
+  repeated .tensorflow.TensorShapeProto input_shapes = 2;
+}

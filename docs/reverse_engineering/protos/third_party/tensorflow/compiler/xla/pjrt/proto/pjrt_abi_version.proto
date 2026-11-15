@@ -1,0 +1,10 @@
+syntax = "proto3";
+package xla;
+message PjRtRuntimeAbiVersionProto {
+  uint64 platform = 1;
+  bytes version = 2;
+}
+message PjRtExecutableAbiVersionProto {
+  uint64 platform = 1;
+  bytes version = 2;
+}

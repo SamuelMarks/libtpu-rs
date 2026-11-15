@@ -1,0 +1,34 @@
+syntax = "proto2";
+package rpc;
+import "security/credentials/proto/authenticator.proto";
+import "security/credentials/proto/end_user_credentials.proto";
+import "security/credentials/proto/iam_request_attributes.proto";
+message RpcAuthorityProto {
+  message Self {
+    repeated .security.credentials.DataAccessReason reason = 1;
+    optional .security.credentials.IAMRequestAttributes iam_attributes = 2;
+  }
+  message FromContext {
+  }
+  message Legacy {
+    optional string call_site = 1;
+  }
+  message Legacyf30f044 {
+    optional string call_site = 1;
+  }
+  oneof authority {
+    .rpc.RpcAuthorityProto.Self self = 1;
+    .rpc.RpcAuthorityProto.FromContext from_context = 2;
+    .security.credentials.EndUserCredentialsProto end_user_creds = 3;
+    .rpc.RpcAuthorityProto.Legacy legacy = 4;
+    .rpc.RpcAuthorityProto.Legacyf30f044 legacy_f30f044 = 5;
+  }
+}
+message AuthorityFromEnvironment {
+  enum EnvVars {
+    END_USER_CREDS_FILE = 1;
+    IAM_REQUEST_ATTRS_FILE = 2;
+    DATA_ACCESS_REASONS_FILE = 4;
+    DATA_ACCESS_TARGET_RESOURCES_FILE = 5;
+  }
+}

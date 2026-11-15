@@ -1,0 +1,85 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/shared_isa_base.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_isa_base.proto";
+message TensorCoreVectorLoad {
+  message Noop {
+  }
+  message VmemLoad {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemLoadShuffled {
+    enum ShuffleSelector {
+      SHUFFLE_SELECTOR_VS0 = 1;
+      SHUFFLE_SELECTOR_VS1 = 2;
+      SHUFFLE_SELECTOR_VS2 = 3;
+      SHUFFLE_SELECTOR_IMM1_IMM0 = 4;
+      SHUFFLE_SELECTOR_IMM3_IMM2 = 5;
+      SHUFFLE_SELECTOR_IMM5_IMM4 = 6;
+    }
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.TensorCoreVectorLoad.VmemLoadShuffled.ShuffleSelector shuffle = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm0 = 9;
+    optional uint32 imm1 = 10;
+    optional uint32 imm2 = 11;
+    optional uint32 imm3 = 12;
+    optional uint32 imm4 = 13;
+    optional uint32 imm5 = 14;
+  }
+  message VmemLoadIndexedIar0 {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemLoadIndexedIar1 {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  oneof inst {
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorLoad.Noop noop = 5;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorLoad.VmemLoad vmem_load = 6;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorLoad.VmemLoadShuffled vmem_load_shuffled = 7;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorLoad.VmemLoadIndexedIar0 vmem_load_indexed_iar0 = 8;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorLoad.VmemLoadIndexedIar1 vmem_load_indexed_iar1 = 9;
+  }
+  optional .asic_sw.deepsea.pxc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional uint32 latency = 2 [default = 1];
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

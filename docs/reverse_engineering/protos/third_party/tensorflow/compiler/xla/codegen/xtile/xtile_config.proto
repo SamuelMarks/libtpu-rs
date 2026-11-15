@@ -1,0 +1,23 @@
+syntax = "proto3";
+package xla.xtile;
+message Tile {
+  repeated int64 sizes = 1;
+}
+message CustomFusionConfig {
+  string name = 1;
+  int32 kernel_index = 2;
+}
+message BlockLevelFusionConfig {
+  reserved 1;
+  repeated .xla.xtile.Tile output_tiles = 3;
+  int64 num_warps = 2;
+  int32 num_ctas = 4;
+  int32 num_stages = 5;
+  bool is_tma_allowed = 6;
+  bool is_warp_specialization_allowed = 7;
+  int32 waves_per_eu = 8;
+  int32 num_tiles_per_pid = 9;
+  int32 group_size = 10;
+  repeated int64 sequential_tile_sizes = 11;
+  int32 mfma_size = 12;
+}

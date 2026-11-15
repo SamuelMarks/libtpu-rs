@@ -1,0 +1,22 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.barna_core;
+message SyncFlagUsage {
+  enum Event {
+    INVALID = 0;
+    SCATTER_IDS = 1;
+    LOCAL_GATHER = 2;
+    SPARSE_REDUCE = 3;
+    SCATTER_GRADIENTS = 4;
+    UPDATE_PARAMETERS = 5;
+    DEDUPLICATION_DATA_TRANSFER = 15;
+    RECV_EMBEDDING_IDS_STALL = 6;
+    RECV_EMBEDDING_ACTIVATIONS_STALL = 7;
+    RECV_EMBEDDING_GRADIENTS_STALL = 8;
+    DMA_STALL_FORWARD = 9;
+    DMA_STALL_BACKWARD = 10;
+    TENSOR_CORE_STALL = 11;
+    HOST_DATA_STALL = 12;
+    SCALAR_MEM_WRITE = 14;
+  }
+  map<int32, .platforms_deepsea.jellyfish.barna_core.SyncFlagUsage.Event> sync_flag_to_event_map = 1;
+}

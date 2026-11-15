@@ -1,0 +1,94 @@
+syntax = "proto3";
+package tensorflow;
+import "google/protobuf/any.proto";
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+import "third_party/tensorflow/core/framework/variable.proto";
+import "third_party/tensorflow/core/framework/versions.proto";
+import "third_party/tensorflow/core/protobuf/struct.proto";
+import "third_party/tensorflow/core/protobuf/trackable_object_graph.proto";
+message SavedObjectGraph {
+  repeated .tensorflow.SavedObject nodes = 1;
+  map<string, .tensorflow.SavedConcreteFunction> concrete_functions = 2;
+}
+message SavedObject {
+  reserved 2;
+  reserved "attributes";
+  oneof kind {
+    .tensorflow.SavedUserObject user_object = 4;
+    .tensorflow.SavedAsset asset = 5;
+    .tensorflow.SavedFunction function = 6;
+    .tensorflow.SavedVariable variable = 7;
+    .tensorflow.SavedBareConcreteFunction bare_concrete_function = 8;
+    .tensorflow.SavedConstant constant = 9;
+    .tensorflow.SavedResource resource = 10;
+    .tensorflow.CapturedTensor captured_tensor = 12;
+  }
+  repeated .tensorflow.TrackableObjectGraph.TrackableObject.ObjectReference children = 1;
+  repeated .tensorflow.TrackableObjectGraph.TrackableObject.ObjectReference dependencies = 15;
+  repeated .tensorflow.TrackableObjectGraph.TrackableObject.SlotVariableReference slot_variables = 3;
+  map<string, .tensorflow.SaveableObject> saveable_objects = 11;
+  string registered_name = 13;
+  .google.protobuf.Any serialized_user_proto = 14;
+  string registered_saver = 16;
+}
+message SavedUserObject {
+  string identifier = 1;
+  .tensorflow.VersionDef version = 2;
+  string metadata = 3;
+}
+message SavedAsset {
+  int32 asset_file_def_index = 1;
+}
+message SavedFunction {
+  repeated string concrete_functions = 1;
+  .tensorflow.FunctionSpec function_spec = 2;
+}
+message CapturedTensor {
+  string name = 1;
+  string concrete_function = 2;
+}
+message SavedConcreteFunction {
+  repeated int32 bound_inputs = 2;
+  .tensorflow.StructuredValue canonicalized_input_signature = 3;
+  .tensorflow.StructuredValue output_signature = 4;
+}
+message SavedBareConcreteFunction {
+  string concrete_function_name = 1;
+  repeated string argument_keywords = 2;
+  int64 allowed_positional_arguments = 3;
+  .tensorflow.FunctionSpec function_spec = 4;
+}
+message SavedConstant {
+  string operation = 1;
+}
+message SavedVariable {
+  .tensorflow.DataType dtype = 1;
+  .tensorflow.TensorShapeProto shape = 2;
+  bool trainable = 3;
+  .tensorflow.VariableSynchronization synchronization = 4;
+  .tensorflow.VariableAggregation aggregation = 5;
+  string name = 6;
+  string device = 7;
+  repeated .tensorflow.SavedVariable experimental_distributed_variable_components = 8;
+}
+message FunctionSpec {
+  reserved 3;
+  reserved 4;
+  enum JitCompile {
+    DEFAULT = 0;
+    ON = 1;
+    OFF = 2;
+  }
+  .tensorflow.StructuredValue fullargspec = 1;
+  bool is_method = 2;
+  .tensorflow.StructuredValue input_signature = 5;
+  .tensorflow.FunctionSpec.JitCompile jit_compile = 6;
+}
+message SavedResource {
+  string device = 1;
+}
+message SaveableObject {
+  int32 save_function = 2;
+  int32 restore_function = 3;
+}

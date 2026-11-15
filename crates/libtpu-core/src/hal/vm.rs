@@ -282,55 +282,57 @@ impl TpuCoreVmState {
         self.vreg_tiles.insert(dst_vreg, packed);
     }
 
-    /// Steps the `TensorCore` VLIW sequencer through a slice of 64-byte [`crate::compiler::TensorCoreVliwBundle`]s
+    /// Steps the `TensorCore` VLIW sequencer through a slice of [`crate::compiler::LloBundle`]s
     /// using a PC-driven fetch-decode-execute loop (`opcode == 5` unconditional jump, `opcode == 6` predicated branch
     /// on `PREG[dst_sreg]`, `opcode == 7` halt, `opcode == 8` `CALL` saving return PC in `SREG[31]`, `opcode == 9` `RET`),
     /// executing `S0`, `V0`, `M0`, `X0`, and `D0` slots in lockstep.
     ///
     /// # Arguments
     ///
-    /// * `bundles` - Slice of 64-byte architectural VLIW instruction bundles.
+    /// * `bundles` - Slice of architectural VLIW [`crate::compiler::LloBundle`]s.
     #[allow(clippy::indexing_slicing)]
-    pub fn execute_vliw_stream(&mut self, bundles: &[crate::compiler::TensorCoreVliwBundle]) {
+    pub fn execute_vliw_stream(&mut self, bundles: &[crate::compiler::LloBundle]) {
         let num_bundles = bundles.len();
         let mut cur_idx = 0_usize;
         while let Some(bundle) = bundles.get(cur_idx) {
+            self.pc = u32::try_from(cur_idx * 64).unwrap_or(0);
             self.step_vliw_bundle(bundle);
-            let preg_idx = usize::from(bundle.scalar_slot.dst_sreg) & 15;
-            if bundle.scalar_slot.opcode == 5 {
-                let target_idx = ((bundle.scalar_slot.imm32 as usize) / 64).max(cur_idx + 1);
+            let s0 = bundle.scalar_slot();
+            let preg_idx = usize::from(s0.dst_sreg) & 15;
+            if s0.opcode == 5 {
+                let target_idx = ((s0.imm32 as usize) / 64).max(cur_idx + 1);
                 cur_idx = target_idx.min(num_bundles);
                 continue;
-            } else if bundle.scalar_slot.opcode == 6 && self.preg[preg_idx] {
-                self.pc = bundle.scalar_slot.imm32;
-                let target_idx = ((bundle.scalar_slot.imm32 as usize) / 64).max(cur_idx + 1);
+            } else if s0.opcode == 6 && self.preg[preg_idx] {
+                self.pc = s0.imm32;
+                let target_idx = ((s0.imm32 as usize) / 64).max(cur_idx + 1);
                 cur_idx = target_idx.min(num_bundles);
                 continue;
-            } else if bundle.scalar_slot.opcode == 7 {
+            } else if s0.opcode == 7 {
                 break;
             }
             cur_idx += 1;
         }
     }
 
-    /// Decodes a generation-specific `IMEM` binary bitstream (`32B` `JfcV2V3BundleWord`, `40B` `PfcV4BundleWord`,
-    /// `52B` `VfcV5BundleWord`, or `64B` `VfkV6V7BundleWord`) for `generation` and executes all decoded VLIW bundles
+    /// Decodes a generation-specific `IMEM` binary bitstream (`32B` `jfc`/`dfc`, `40B` `pfc`,
+    /// `52B` `vfc`, or `64B` `gfc`/`iwc`) for `generation` and executes all decoded VLIW bundles
     /// on this [`TpuCoreVmState`].
     ///
     /// # Arguments
     ///
     /// * `generation` - Target Cloud TPU generation (`V2..=V7x`).
-    /// * `bitstream` - Raw generation-specific `IMEM` bitstream produced by [`crate::compiler::TensorCoreVliwBundle::encode_generation_bitstream`].
+    /// * `bitstream` - Raw generation-specific `IMEM` bitstream produced by [`crate::compiler::LloBundle::encode_generation_bitstream`].
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError`] if `bitstream` has a corrupted CRC-8 parity header or invalid bundle length.
+    /// Returns [`LibTpuError`] if `bitstream` has a corrupted `HighwayHash64` tag or invalid bundle length.
     pub fn execute_generation_imem_bitstream(
         &mut self,
         generation: crate::types::TpuGeneration,
         bitstream: &[u8],
     ) -> LibTpuResult<usize> {
-        let width = crate::compiler::TensorCoreVliwBundle::generation_bundle_byte_width(generation);
+        let width = crate::compiler::LloBundle::generation_bundle_byte_width(generation);
         if bitstream.len() % width != 0 {
             return Err(LibTpuError::InvalidExecutableFormat {
                 reason: format!(
@@ -342,32 +344,33 @@ impl TpuCoreVmState {
         }
         let mut bundles = Vec::with_capacity(bitstream.len() / width);
         for chunk in bitstream.chunks_exact(width) {
-            bundles.push(
-                crate::compiler::TensorCoreVliwBundle::decode_generation_bitstream(
-                    generation, chunk,
-                )?,
-            );
+            bundles.push(crate::compiler::LloBundle::decode_generation_bitstream(
+                generation, chunk,
+            )?);
         }
         let count = bundles.len();
         self.execute_vliw_stream(&bundles);
         Ok(count)
     }
 
-    /// Steps a single 64-byte architectural [`crate::compiler::TensorCoreVliwBundle`] across
+    /// Steps a single architectural [`crate::compiler::LloBundle`] across
     /// `S0`, `V0`, `X0`, `M0`, and `D0` functional units.
     ///
     /// # Arguments
     ///
-    /// * `bundle` - 64-byte architectural VLIW instruction bundle to execute.
+    /// * `bundle` - Architectural VLIW [`crate::compiler::LloBundle`] to execute.
     #[allow(clippy::indexing_slicing, clippy::too_many_lines)]
-    pub fn step_vliw_bundle(&mut self, bundle: &crate::compiler::TensorCoreVliwBundle) {
-        self.pc = bundle.header.pc_offset;
+    pub fn step_vliw_bundle(&mut self, bundle: &crate::compiler::LloBundle) {
+        let s0 = bundle.scalar_slot();
+        let v0 = bundle.vector_slot();
+        let m0 = bundle.matrix_slot();
+        let x0 = bundle.xunary_slot();
         // S0: Scalar ALU & SMEM scratchpad update
-        let s_dst = usize::from(bundle.scalar_slot.dst_sreg) & 31;
-        let s_src0 = self.sreg[usize::from(bundle.scalar_slot.src0_sreg) & 31];
-        let s_src1 = self.sreg[usize::from(bundle.scalar_slot.src1_sreg) & 31];
-        let s_imm = u64::from(bundle.scalar_slot.imm32);
-        let s_val = match bundle.scalar_slot.opcode {
+        let s_dst = usize::from(s0.dst_sreg) & 31;
+        let s_src0 = self.sreg[usize::from(s0.src0_sreg) & 31];
+        let s_src1 = self.sreg[usize::from(s0.src1_sreg) & 31];
+        let s_imm = u64::from(s0.imm32);
+        let s_val = match s0.opcode {
             2 => s_src0.wrapping_sub(s_src1),
             3 => s_src0.wrapping_mul(s_src1.max(1)),
             4 => u64::from(s_src0 < s_src1.max(s_imm)),
@@ -376,20 +379,28 @@ impl TpuCoreVmState {
             9 => self.sreg[31],
             _ => s_src0.wrapping_add(s_imm),
         };
-        if bundle.scalar_slot.opcode == 8 {
+        if s0.opcode == 8 {
             self.sreg[31] = s_val;
         }
         self.sreg[s_dst] = s_val;
         self.smem_words[s_dst & 63] = s_val;
         self.preg[s_dst & 15] = s_val != 0;
 
+        let pre_step_attr = self.imem_attr_table.get(&self.pc).cloned().map(|entry| {
+            let mut op_vecs: Vec<Vec<u8>> = Vec::with_capacity(entry.bundle.operand_slots.len());
+            for &slot in &entry.bundle.operand_slots {
+                #[allow(clippy::cast_possible_truncation)]
+                let reg_key = (slot & 255) as u8;
+                op_vecs.push(self.vreg_tiles.get(&reg_key).cloned().unwrap_or_default());
+            }
+            (entry, op_vecs)
+        });
+
         // V0: Vector ALU & VMEM scratchpad update
-        let v_dst = usize::try_from(bundle.vector_slot.dst_vreg).unwrap_or(0) & 63;
-        let v_src0 =
-            self.vreg_words[usize::try_from(bundle.vector_slot.src0_vreg).unwrap_or(0) & 63];
-        let v_src1 =
-            self.vreg_words[usize::try_from(bundle.vector_slot.src1_vreg).unwrap_or(0) & 63];
-        let v_op_decoded = u8::try_from(bundle.vector_slot.opcode)
+        let v_dst = usize::try_from(v0.dst_vreg).unwrap_or(0) & 63;
+        let v_src0 = self.vreg_words[usize::try_from(v0.src0_vreg).unwrap_or(0) & 63];
+        let v_src1 = self.vreg_words[usize::try_from(v0.src1_vreg).unwrap_or(0) & 63];
+        let v_op_decoded = u8::try_from(v0.opcode)
             .ok()
             .and_then(|b| crate::compiler::TpuOpCode::try_from(b).ok());
         let v_res = match v_op_decoded {
@@ -415,19 +426,19 @@ impl TpuCoreVmState {
             Some(crate::compiler::TpuOpCode::Abs) => f32::from_bits(v_src0).abs().to_bits(),
             _ => v_src0
                 .wrapping_add(v_src1)
-                .wrapping_add(u32::from(bundle.vector_slot.opcode)),
+                .wrapping_add(u32::from(v0.opcode)),
         };
         self.vreg_words[v_dst] = v_res;
         self.vmem_words[v_dst & 255] = v_res;
-        self.vmask[v_dst & 7] = (bundle.vector_slot.lane_mask & 1) != 0;
-        self.step_v0_tile(&bundle.vector_slot, v_op_decoded);
+        self.vmask[v_dst & 7] = (v0.lane_mask & 1) != 0;
+        self.step_v0_tile(v0, v_op_decoded);
 
         // X0: Extended Unary / Transcendental Pipeline (EUP)
-        if bundle.xunary_slot.opcode != 0 {
-            let x_dst = usize::from(bundle.xunary_slot.dst_vreg) & 63;
-            let x_src_bits = self.vreg_words[usize::from(bundle.xunary_slot.src_vreg) & 63];
+        if x0.opcode != 0 {
+            let x_dst = usize::from(x0.dst_vreg) & 63;
+            let x_src_bits = self.vreg_words[usize::from(x0.src_vreg) & 63];
             let x_src = f32::from_bits(x_src_bits);
-            let x_op_decoded = crate::compiler::TpuOpCode::try_from(bundle.xunary_slot.opcode).ok();
+            let x_op_decoded = crate::compiler::TpuOpCode::try_from(x0.opcode).ok();
             let x_res = match x_op_decoded {
                 Some(crate::compiler::TpuOpCode::ExpF32) => x_src.exp().to_bits(),
                 Some(crate::compiler::TpuOpCode::TanhF32) => x_src.tanh().to_bits(),
@@ -436,28 +447,44 @@ impl TpuCoreVmState {
                 Some(crate::compiler::TpuOpCode::Rsqrt) => (1.0 / x_src.sqrt()).to_bits(),
                 Some(crate::compiler::TpuOpCode::Sine) => x_src.sin().to_bits(),
                 Some(crate::compiler::TpuOpCode::Cosine) => x_src.cos().to_bits(),
-                _ => x_src_bits.wrapping_add(u32::from(bundle.xunary_slot.opcode)),
+                _ => x_src_bits.wrapping_add(u32::from(x0.opcode)),
             };
             self.vreg_words[x_dst] = x_res;
-            let elem_type = ElementType::from_raw(i32::from(bundle.vector_slot.element_type))
-                .unwrap_or(ElementType::F32);
-            self.step_x0_tile(bundle.xunary_slot, x_op_decoded, elem_type);
+            let elem_type =
+                ElementType::from_raw(i32::from(v0.element_type)).unwrap_or(ElementType::F32);
+            self.step_x0_tile(*x0, x_op_decoded, elem_type);
         }
 
         // M0: Systolic Matrix Multiply Unit (MXU)
-        if bundle.matrix_slot.opcode != 0 {
-            let m_idx = usize::from(bundle.matrix_slot.acc_vreg) & 15;
-            let k_tiles = f32::from(bundle.matrix_slot.k_tiles.max(1));
+        if m0.opcode != 0 {
+            let m_idx = usize::from(m0.acc_vreg) & 15;
+            let k_tiles = f32::from(m0.k_tiles.max(1));
             self.mxu_accum[m_idx] += k_tiles;
-            let elem_type = ElementType::from_raw(i32::from(bundle.vector_slot.element_type))
-                .unwrap_or(ElementType::F32);
-            self.step_m0_tile(&bundle.matrix_slot, elem_type);
+            let elem_type =
+                ElementType::from_raw(i32::from(v0.element_type)).unwrap_or(ElementType::F32);
+            self.step_m0_tile(m0, elem_type);
+        }
+
+        // Secondary Co-Issue Slots: S1, V1, and M1 (MXU1)
+        let (s1_op, v1_op, m1_acc) = bundle.dual_issue_slots();
+        if s1_op != 0 {
+            let sec_scalar_idx = usize::from(s0.src1_sreg) & 31;
+            self.sreg[sec_scalar_idx] = self.sreg[sec_scalar_idx].wrapping_add(u64::from(s1_op));
+        }
+        if v1_op != 0 {
+            let sec_vec_idx = usize::try_from(v0.src2_vreg).unwrap_or(0) & 63;
+            self.vreg_words[sec_vec_idx] =
+                self.vreg_words[sec_vec_idx].wrapping_add(u32::from(v1_op));
+        }
+        if m1_acc != 0 {
+            let sec_mxu_idx = usize::from(m1_acc) & 15;
+            self.mxu_accum[sec_mxu_idx] += 1.0;
         }
 
         // D0: Async DMA & SyncFlag completion barrier
         if bundle.dma_slot.dma_opcode != 0 {
             let space_off = u64::from(bundle.dma_slot.src_space) * 32;
-            let sreg_off = u64::from(bundle.scalar_slot.imm32);
+            let sreg_off = u64::from(s0.imm32);
             let tile_opt = self
                 .vmem_allocations
                 .get(&space_off)
@@ -465,21 +492,13 @@ impl TpuCoreVmState {
                 .cloned();
             if let Some(tile) = tile_opt {
                 #[allow(clippy::cast_possible_truncation)]
-                let dst_reg = (bundle.vector_slot.dst_vreg & 255) as u8;
+                let dst_reg = (v0.dst_vreg & 255) as u8;
                 self.vreg_2d_file
                     .insert(dst_reg, VregTile2D::from_bytes(&tile, 0xFF));
                 self.vreg_tiles.insert(dst_reg, tile);
             }
         }
-        if let Some(attr_entry) = self.imem_attr_table.get(&self.pc).cloned() {
-            let mut op_vecs: Vec<Vec<u8>> =
-                Vec::with_capacity(attr_entry.bundle.operand_slots.len());
-            for &slot in &attr_entry.bundle.operand_slots {
-                #[allow(clippy::cast_possible_truncation)]
-                let reg_key = (slot & 255) as u8;
-                let tile = self.vreg_tiles.get(&reg_key).cloned().unwrap_or_default();
-                op_vecs.push(tile);
-            }
+        if let Some((attr_entry, op_vecs)) = pre_step_attr {
             let op_slices: Vec<&[u8]> = op_vecs.iter().map(Vec::as_slice).collect();
             let micro_out = SimulatedTpuHal::eval_bundle_with_attrs(
                 &attr_entry.bundle,
@@ -494,10 +513,8 @@ impl TpuCoreVmState {
             self.vmem_words[dst_slot & 255] = word0;
             #[allow(clippy::cast_possible_truncation)]
             let dst_key = (dst_slot & 255) as u8;
-            self.vreg_2d_file.insert(
-                dst_key,
-                VregTile2D::from_bytes(&micro_out, bundle.vector_slot.lane_mask),
-            );
+            self.vreg_2d_file
+                .insert(dst_key, VregTile2D::from_bytes(&micro_out, v0.lane_mask));
             self.vreg_tiles.insert(dst_key, micro_out.clone());
             self.vmem_allocations
                 .insert((dst_slot as u64) * 256, micro_out);
@@ -965,7 +982,7 @@ impl TpuCoreVmState {
         self.vreg_tiles.insert(acc_key, packed);
     }
 
-    /// Decodes a binary `IMEM` image of 64-byte [`crate::compiler::TensorCoreVliwBundle`] words and steps
+    /// Decodes a binary `IMEM` image of 64-byte [`crate::compiler::LloBundle`] words and steps
     /// the [`TpuCoreVmState`] VLIW execution engine through every bundle.
     ///
     /// # Arguments
@@ -976,7 +993,7 @@ impl TpuCoreVmState {
         self.execute_vliw_stream(&bundles);
     }
 
-    /// Executes a binary `IMEM` stream of 64-byte [`crate::compiler::TensorCoreVliwBundle`] words
+    /// Executes a binary `IMEM` stream of 64-byte [`crate::compiler::LloBundle`] words
     /// directly via a PC-driven instruction fetch loop (`self.pc`), performing real `D0` DMA transfers
     /// between `hbm` and `self.vmem_allocations`, `S0` scalar ALU and conditional PC branching,
     /// `V0` vector tile arithmetic, `X0` transcendental/permute operations, and `M0` systolic array contractions.
@@ -1012,6 +1029,7 @@ impl TpuCoreVmState {
 
         while cur_idx < num_bundles {
             let bundle = &bundles[cur_idx];
+            self.pc = u32::try_from(cur_idx * 64).unwrap_or(0);
             // If D0 DMA is active (dma_opcode == 1: HBM -> VMEM), stage HBM slice into VMEM
             if bundle.dma_slot.dma_opcode == 1 {
                 let req_bytes = usize::try_from(bundle.dma_slot.sync_flag_id)
@@ -1027,7 +1045,7 @@ impl TpuCoreVmState {
             // If D0 DMA is VMEM -> HBM writeback (dma_opcode == 2), write result tile to HBM
             if bundle.dma_slot.dma_opcode == 2 {
                 #[allow(clippy::cast_possible_truncation)]
-                let dst_reg = (bundle.vector_slot.dst_vreg & 255) as u8;
+                let dst_reg = (bundle.vector_slot().dst_vreg & 255) as u8;
                 let default_tile = vec![0_u8; 16];
                 let tile = self.vreg_tiles.get(&dst_reg).unwrap_or(&default_tile);
                 let copy_len = hbm.len().min(tile.len());
@@ -1035,31 +1053,32 @@ impl TpuCoreVmState {
                 dma_transfers += 1;
             }
             bundles_retired += 1;
-            if bundle.scalar_slot.opcode == 5 {
-                let target_idx = (bundle.scalar_slot.imm32 as usize) / 64;
+            let s0 = bundle.scalar_slot();
+            if s0.opcode == 5 {
+                let target_idx = (s0.imm32 as usize) / 64;
                 cur_idx = target_idx.min(num_bundles);
                 continue;
             }
-            let preg_idx = usize::from(bundle.scalar_slot.dst_sreg) & 15;
-            if bundle.scalar_slot.opcode == 6 && self.preg[preg_idx] {
-                let target_idx = (bundle.scalar_slot.imm32 as usize) / 64;
+            let preg_idx = usize::from(s0.dst_sreg) & 15;
+            if s0.opcode == 6 && self.preg[preg_idx] {
+                let target_idx = (s0.imm32 as usize) / 64;
                 cur_idx = target_idx.min(num_bundles);
                 continue;
             }
-            if bundle.scalar_slot.opcode == 7 {
+            if s0.opcode == 7 {
                 // Architectural Halt
                 break;
             }
-            if bundle.scalar_slot.opcode == 8 {
+            if s0.opcode == 8 {
                 #[allow(clippy::cast_possible_truncation)]
                 {
                     self.sreg[31] = ((cur_idx + 1) * 64) as u64;
                 }
-                let target_idx = (bundle.scalar_slot.imm32 as usize) / 64;
+                let target_idx = (s0.imm32 as usize) / 64;
                 cur_idx = target_idx.min(num_bundles);
                 continue;
             }
-            if bundle.scalar_slot.opcode == 9 {
+            if s0.opcode == 9 {
                 let ret_idx = usize::try_from(self.sreg[31] / 64).unwrap_or(num_bundles);
                 cur_idx = ret_idx.min(num_bundles);
                 continue;
@@ -1103,11 +1122,11 @@ impl TpuCoreVmState {
                 ),
             });
         }
-        let vliw_bundles = CompiledProgram::decode_architectural_imem(imem_bytes);
-        let mut ir_bundles = Vec::with_capacity(vliw_bundles.len());
+        let mut ir_bundles = Vec::with_capacity(imem_bytes.len() / 64);
         let mut output_slots = Vec::new();
-        for vb in &vliw_bundles {
-            let ib = vb.to_instruction_bundle()?;
+        for (idx, chunk) in imem_bytes.chunks_exact(64).enumerate() {
+            let vb = crate::compiler::decode_canonical_64b_bundle(chunk, idx * 64)?;
+            let ib = TpuInstructionBundle::from_llo_bundle(&vb, u32::try_from(idx).unwrap_or(0))?;
             output_slots.push(ib.output_slot);
             ir_bundles.push(ib);
         }
@@ -1160,12 +1179,12 @@ impl TpuCoreVmState {
     /// * `ds_exec` - Compiled [`crate::proto::DeepseaExecutableProto`] payload.
     #[allow(clippy::indexing_slicing)]
     pub fn execute_deepsea_proto(&mut self, ds_exec: &crate::proto::DeepseaExecutableProto) {
-        for sf in &ds_exec.sync_flags {
-            let idx = (sf.sync_flag_id as usize) & 255;
-            self.sync_flags[idx] = sf.initial_value;
-        }
-        for overlay in &ds_exec.overlays {
-            self.execute_imem_bytes(&overlay.encoded_bundles);
+        if let Some(ref core_prog) = ds_exec.core_program {
+            for seg_set in &core_prog.memory_segments {
+                if !seg_set.initialized_data.is_empty() {
+                    self.execute_imem_bytes(&seg_set.initialized_data);
+                }
+            }
         }
     }
 
@@ -1197,76 +1216,56 @@ impl TpuCoreVmState {
     #[must_use]
     pub fn synthesize_coredump_proto(&self, reason: &str) -> crate::proto::CoreDumpProto {
         crate::proto::CoreDumpProto {
-            machine_info: Some(crate::proto::CoreDumpMachineInfoProto {
-                machine_name: String::from("tpu-node-0"),
-                kernel_version: String::from("6.6.0-gasket"),
-                reason_for_collection: String::from(reason),
+            generic_results: Some(crate::proto::CoredumpResultsProto {
+                general: Some(crate::proto::CoredumpGeneralInfoProto {
+                    machine_name: Some(String::from("tpu-node-0")),
+                    kernel_version: Some(String::from("6.6.0-gasket")),
+                    ..crate::proto::CoredumpGeneralInfoProto::default()
+                }),
+                anomalies: vec![crate::proto::CoredumpInfoProto {
+                    category: Some(0),
+                    description: Some(format!("Core 0 at PC={:#x} ({reason})", self.pc)),
+                    tag: vec![String::from("ACTIVE"), String::from(reason)],
+                    print: Some(true),
+                }],
+                ..crate::proto::CoredumpResultsProto::default()
             }),
-            timestamps: Some(crate::proto::CoreDumpTimestampInfoProto {
-                collection_start_sec: 1_762_600_000,
-                collection_end_sec: 1_762_600_001,
-                boot_time_sec: 1_762_500_000,
-                device_start_sec: 1_762_500_010,
-            }),
-            hardware: Some(crate::proto::CoreDumpHardwareInfoProto { pstate: vec![0] }),
-            core_states: vec![crate::proto::CoreStateDumpProto {
-                core_type: String::from("TC"),
-                core_id: 0,
-                pc: u64::from(self.pc),
-                hlo_name: format!("bundle_pc_{}", self.pc),
-                registers: vec![
-                    crate::proto::CoreDumpRegisterDumpProto {
-                        register_name: String::from("SREG0"),
-                        register_offset: 0x0403_a000,
-                        register_value: self.sreg.first().copied().unwrap_or(0),
-                    },
-                    crate::proto::CoreDumpRegisterDumpProto {
-                        register_name: String::from("CYCLES_EXECUTED"),
-                        register_offset: 0x0403_a058,
-                        register_value: self.cycles_executed,
-                    },
-                ],
-            }],
-            analyzer_reports: vec![crate::proto::CoreDumpAnalyzerReportProto {
-                analyzer_name: String::from("GeneralInfo"),
-                category: String::from("RUN_STATUS"),
-                tag: String::from("ACTIVE"),
-                message: format!("Core 0 at PC={:#x} ({reason})", self.pc),
-            }],
+            chip_specific: None,
         }
     }
 
-    /// Synthesizes a structured [`crate::proto::AllCoreStateSummariesProto`] (`libtpu.sdk.tpu_telemetry.AllCoreStateSummaries`)
+    /// Synthesizes a structured [`crate::proto::AllCoreStateSummariesProto`] (`platforms_deepsea.jellyfish.xdb.tpu_telemetry.AllCoreStateSummaries`)
     /// capturing the active `PC` and `SyncFlag` wait state of this `TensorCore`.
     #[must_use]
     pub fn synthesize_stall_summary_proto(&self) -> crate::proto::AllCoreStateSummariesProto {
         let sync0 = self.sync_flags.first().copied().unwrap_or(0);
+        let mut core_states = BTreeMap::new();
+        core_states.insert(
+            0,
+            crate::proto::CoreStallSummaryProto {
+                core_id: Some(crate::proto::TelemetryCoreIdentifierProto {
+                    global_core_id: Some(0),
+                    chip_id: Some(0),
+                    core_on_chip: None,
+                }),
+                xdb_server_running: Some(false),
+                error_message: Some(format!("pc={:#06x} sync0={sync0}", self.pc)),
+                ..crate::proto::CoreStallSummaryProto::default()
+            },
+        );
         crate::proto::AllCoreStateSummariesProto {
-            core_stall_summaries: vec![crate::proto::CoreStallSummaryProto {
-                core_key: String::from("core_0"),
-                global_core_id: 0,
-                chip_id: 0,
-                core_on_chip_type: String::from("TPU_CORE_TYPE_TENSOR_CORE"),
-                core_on_chip_index: 0,
-                xdb_server_running: false,
-                pc: u64::from(self.pc),
-                hlo_location: format!("pc_{:#06x}", self.pc),
-                error_message: String::new(),
-                active_sync_waits: vec![crate::proto::ActiveSyncFlagWaitProto {
-                    sync_flag_id: 0,
-                    expected_value: sync0.saturating_add(1),
-                    current_value: sync0,
-                }],
-            }],
-            hostname: String::from("tpu-node-0"),
-            harvest_start_time_unix_micros: 1_762_600_000_000_000,
-            harvest_end_time_unix_micros: 1_762_600_000_000_500,
-            libtpu_build: String::from("libtpu-rs-0.0.52"),
+            core_states,
+            artifact_metadata: Some(crate::proto::StallArtifactMetadataProto {
+                harvest_start_time_unix_micros: Some(1_762_600_000_000_000),
+                harvest_end_time_unix_micros: Some(1_762_600_000_000_500),
+                hostname: Some(String::from("tpu-node-0")),
+                ..crate::proto::StallArtifactMetadataProto::default()
+            }),
         }
     }
 
     /// Steps a lowered [`crate::compiler::TpuInstructionBundle`] inside this [`TpuCoreVmState`]
-    /// (`DeepSeaVm`), decoding and stepping the 64-byte [`crate::compiler::TensorCoreVliwBundle`]
+    /// (`DeepSeaVm`), decoding and stepping the [`crate::compiler::LloBundle`]
     /// across `S0`, `V0`, `M0`, `X0`, and `D0` functional units, stepping nested `While` /
     /// `Conditional` / `Call` sub-computation VLIW streams when present, and returning the
     /// resulting output tile bytes stored in `vreg_tiles` and `vmem_allocations`.
@@ -1299,29 +1298,234 @@ impl TpuCoreVmState {
             self.mxu_weights = bundle_elem_type.unpack_to_f64_vec(rhs_bytes);
         }
         let arch_bundle = bundle.encode_architectural_bundle();
+        for sub_prog in &bundle.attrs.sub_computations {
+            for sub_b in sub_prog {
+                let sub_arch = sub_b.encode_architectural_bundle();
+                self.pc = sub_b.pc_offset;
+                self.step_vliw_bundle(&sub_arch);
+            }
+        }
+        self.pc = bundle.pc_offset;
         self.imem_attr_table.insert(
-            arch_bundle.header.pc_offset,
+            bundle.pc_offset,
             ImemAttributeEntry {
                 bundle: bundle.clone(),
                 elem_type: bundle_elem_type,
             },
         );
-        for sub_prog in &bundle.attrs.sub_computations {
-            for sub_b in sub_prog {
-                let sub_arch = sub_b.encode_architectural_bundle();
-                self.step_vliw_bundle(&sub_arch);
-            }
-        }
         self.step_vliw_bundle(&arch_bundle);
         #[allow(clippy::cast_possible_truncation)]
         let dst_key = (bundle.output_slot & 255) as u8;
         self.vreg_tiles.get(&dst_key).cloned().unwrap_or_default()
     }
 
-    /// Executes a [`CompiledProgram`] inside this [`TpuCoreVmState`] (`DeepSeaVm`), loading
-    /// `input_buffers` into VMEM registers, stepping each architectural 64-byte VLIW instruction
-    /// bundle in lockstep with tensor evaluation, and returning the output tensor buffers for
-    /// `output_count` outputs.
+    /// Computes the maximum register slot referenced across `bundles` and all nested `sub_computations`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bundles` - Slice of [`crate::compiler::TpuInstructionBundle`]s.
+    #[must_use]
+    pub fn max_slot_in_bundles(bundles: &[TpuInstructionBundle]) -> usize {
+        let mut mx = 0_usize;
+        for b in bundles {
+            mx = mx.max(b.output_slot);
+            for &s in &b.operand_slots {
+                mx = mx.max(s);
+            }
+            for &s in &b.attrs.while_state_slots {
+                mx = mx.max(s);
+            }
+            if let Some(cs) = b.attrs.while_cond_slot {
+                mx = mx.max(cs);
+            }
+            for &s in &b.attrs.while_body_slots {
+                mx = mx.max(s);
+            }
+            for &s in &b.attrs.conditional_result_slots {
+                mx = mx.max(s);
+            }
+            for br in &b.attrs.branch_output_slots {
+                for &s in br {
+                    mx = mx.max(s);
+                }
+            }
+            for sub in &b.attrs.sub_computations {
+                mx = mx.max(Self::max_slot_in_bundles(sub));
+            }
+        }
+        mx
+    }
+
+    /// Executes a nested `While` loop bundle over the shared flat `registers` file.
+    ///
+    /// # Arguments
+    ///
+    /// * `bundle` - `While` [`TpuInstructionBundle`] carrying condition and body sub-computations.
+    /// * `default_elem_type` - Fallback element type.
+    /// * `registers` - Mutable flat register file shared across outer and nested scopes.
+    /// * `last_result` - Mutable tracker for the most recently produced buffer.
+    fn step_while_bundle(
+        &mut self,
+        bundle: &TpuInstructionBundle,
+        default_elem_type: ElementType,
+        registers: &mut [Vec<u8>],
+        last_result: &mut Vec<u8>,
+    ) {
+        for (&st_slot, &in_slot) in bundle
+            .attrs
+            .while_state_slots
+            .iter()
+            .zip(bundle.operand_slots.iter())
+        {
+            let init_val = registers.get(in_slot).cloned().unwrap_or_default();
+            if let Some(dst) = registers.get_mut(st_slot) {
+                *dst = init_val;
+            }
+        }
+        let cond_bundles = bundle
+            .attrs
+            .sub_computations
+            .first()
+            .map_or(&[][..], Vec::as_slice);
+        let body_bundles = bundle
+            .attrs
+            .sub_computations
+            .get(1)
+            .map_or(&[][..], Vec::as_slice);
+        for _ in 0..1024_usize {
+            self.step_bundles_on_registers(cond_bundles, default_elem_type, registers, last_result);
+            let keep_going = bundle
+                .attrs
+                .while_cond_slot
+                .and_then(|cs| registers.get(cs))
+                .is_some_and(|bytes| bytes.iter().any(|&b| b != 0));
+            if !keep_going {
+                break;
+            }
+            self.step_bundles_on_registers(body_bundles, default_elem_type, registers, last_result);
+            let next_vals: Vec<Vec<u8>> = bundle
+                .attrs
+                .while_body_slots
+                .iter()
+                .map(|&bs| registers.get(bs).cloned().unwrap_or_default())
+                .collect();
+            for (&st_slot, next_val) in bundle.attrs.while_state_slots.iter().zip(next_vals) {
+                last_result.clone_from(&next_val);
+                if let Some(dst) = registers.get_mut(st_slot) {
+                    *dst = next_val;
+                }
+            }
+        }
+    }
+
+    /// Executes a nested `Conditional` branch bundle over the shared flat `registers` file.
+    ///
+    /// # Arguments
+    ///
+    /// * `bundle` - `Conditional` [`TpuInstructionBundle`] carrying branch sub-computations.
+    /// * `default_elem_type` - Fallback element type.
+    /// * `registers` - Mutable flat register file shared across outer and nested scopes.
+    /// * `last_result` - Mutable tracker for the most recently produced buffer.
+    fn step_conditional_bundle(
+        &mut self,
+        bundle: &TpuInstructionBundle,
+        default_elem_type: ElementType,
+        registers: &mut [Vec<u8>],
+        last_result: &mut Vec<u8>,
+    ) {
+        let sel_bytes = bundle
+            .operand_slots
+            .first()
+            .and_then(|&s| registers.get(s))
+            .map_or(&[][..], Vec::as_slice);
+        let num_br = bundle.attrs.sub_computations.len();
+        let branch_idx = if bundle.attrs.conditional_is_indexed {
+            let sel_ty = bundle
+                .attrs
+                .input_shapes
+                .first()
+                .map_or(ElementType::S32, |s| s.element_type);
+            let raw_i = sel_ty
+                .unpack_to_i128_vec(sel_bytes)
+                .first()
+                .copied()
+                .unwrap_or(0);
+            if raw_i < 0 {
+                num_br.saturating_sub(1)
+            } else {
+                let max_br = num_br.saturating_sub(1);
+                usize::try_from(raw_i).unwrap_or(max_br).min(max_br)
+            }
+        } else if sel_bytes.iter().any(|&b| b != 0) {
+            0
+        } else {
+            1.min(num_br.saturating_sub(1))
+        };
+        let chosen = bundle
+            .attrs
+            .sub_computations
+            .get(branch_idx)
+            .map_or(&[][..], Vec::as_slice);
+        self.step_bundles_on_registers(chosen, default_elem_type, registers, last_result);
+        if let Some(br_outs) = bundle.attrs.branch_output_slots.get(branch_idx) {
+            let vals: Vec<Vec<u8>> = br_outs
+                .iter()
+                .map(|&s| registers.get(s).cloned().unwrap_or_default())
+                .collect();
+            for (&dst_s, val) in bundle.attrs.conditional_result_slots.iter().zip(vals) {
+                last_result.clone_from(&val);
+                if let Some(dst) = registers.get_mut(dst_s) {
+                    *dst = val;
+                }
+            }
+        }
+    }
+
+    /// Evaluates a slice of [`TpuInstructionBundle`]s over a shared flat `registers` slice,
+    /// supporting nested `While` and `Conditional` sub-computations cleanly.
+    ///
+    /// # Arguments
+    ///
+    /// * `bundles` - Slice of instruction bundles to execute sequentially.
+    /// * `default_elem_type` - Fallback element type.
+    /// * `registers` - Mutable flat register file shared across outer and nested scopes.
+    /// * `last_result` - Mutable tracker for the most recently produced buffer.
+    pub fn step_bundles_on_registers(
+        &mut self,
+        bundles: &[TpuInstructionBundle],
+        default_elem_type: ElementType,
+        registers: &mut [Vec<u8>],
+        last_result: &mut Vec<u8>,
+    ) {
+        for bundle in bundles {
+            if bundle.opcode == crate::compiler::TpuOpCode::While
+                && !bundle.attrs.while_state_slots.is_empty()
+                && bundle.attrs.sub_computations.len() >= 2
+            {
+                self.step_while_bundle(bundle, default_elem_type, registers, last_result);
+                continue;
+            }
+            if bundle.opcode == crate::compiler::TpuOpCode::Conditional
+                && !bundle.attrs.conditional_result_slots.is_empty()
+                && !bundle.attrs.sub_computations.is_empty()
+            {
+                self.step_conditional_bundle(bundle, default_elem_type, registers, last_result);
+                continue;
+            }
+            let mut op_slices: Vec<&[u8]> = Vec::with_capacity(bundle.operand_slots.len());
+            for &slot in &bundle.operand_slots {
+                let slice = registers.get(slot).map_or(&[][..], Vec::as_slice);
+                op_slices.push(slice);
+            }
+            let evaluated = self.step_bundle_with_attrs(bundle, default_elem_type, &op_slices);
+            last_result.clone_from(&evaluated);
+            if let Some(dst) = registers.get_mut(bundle.output_slot) {
+                *dst = evaluated;
+            }
+        }
+    }
+
+    /// Executes a [`CompiledProgram`] across `input_buffers` and returns `output_count` output buffers.
     ///
     /// # Arguments
     ///
@@ -1354,27 +1558,18 @@ impl TpuCoreVmState {
         }
 
         let mut registers = input_buffers;
-        let max_slot = program
-            .instruction_bundles
-            .iter()
-            .map(|b| b.output_slot)
-            .chain(program.output_slots.iter().copied())
-            .max()
-            .unwrap_or(0);
+        let max_slot = Self::max_slot_in_bundles(&program.instruction_bundles)
+            .max(program.output_slots.iter().copied().max().unwrap_or(0));
         let total_slots = (max_slot + 1).max(registers.len());
         registers.resize_with(total_slots, Vec::new);
         let mut last_result = registers.first().cloned().unwrap_or_default();
 
-        for bundle in &program.instruction_bundles {
-            let mut op_slices: Vec<&[u8]> = Vec::with_capacity(bundle.operand_slots.len());
-            for &slot in &bundle.operand_slots {
-                let slice = registers.get(slot).map_or(&[][..], Vec::as_slice);
-                op_slices.push(slice);
-            }
-            let evaluated = self.step_bundle_with_attrs(bundle, default_elem_type, &op_slices);
-            last_result.clone_from(&evaluated);
-            registers[bundle.output_slot] = evaluated;
-        }
+        self.step_bundles_on_registers(
+            &program.instruction_bundles,
+            default_elem_type,
+            &mut registers,
+            &mut last_result,
+        );
 
         (0..output_count)
             .map(|out_idx| {
@@ -1411,12 +1606,7 @@ impl TpuCoreVmState {
                 reason: String::from("CompiledProgram has no declared output_slots"),
             });
         }
-        let max_produced_slot = program
-            .instruction_bundles
-            .iter()
-            .map(|b| b.output_slot)
-            .max()
-            .unwrap_or(0);
+        let max_produced_slot = Self::max_slot_in_bundles(&program.instruction_bundles);
         for &slot in &program.output_slots {
             if slot > max_produced_slot.max(input_buffers.len().saturating_sub(1)) {
                 return Err(LibTpuError::ExecutionFailed {

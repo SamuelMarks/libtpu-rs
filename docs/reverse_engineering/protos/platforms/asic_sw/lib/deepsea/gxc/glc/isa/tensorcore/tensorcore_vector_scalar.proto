@@ -1,0 +1,16 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.glc.isa;
+message TensorCoreVectorScalar {
+  message NoInstructions {
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorScalar.NoInstructions no_instructions = 8;
+  }
+  optional uint32 vs0 = 1;
+  optional uint32 vs1 = 2;
+  optional uint32 vs2 = 3;
+  optional uint32 vs3 = 4;
+  optional uint32 latency = 5;
+  map<string, uint32> resource_usage = 6;
+  optional uint32 bit_width = 7;
+}

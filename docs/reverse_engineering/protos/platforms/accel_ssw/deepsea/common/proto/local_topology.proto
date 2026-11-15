@@ -1,0 +1,14 @@
+syntax = "proto2";
+package accel_ssw.deepsea.proto;
+import "platforms/accel_ssw/deepsea/common/proto/port_name.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+message LocalTopology {
+  message LinkInfo {
+    optional .accel_ssw.deepsea.proto.PortName local_name = 1;
+    optional .accel_ssw.deepsea.proto.PortName remote_name = 2;
+    optional bool is_external = 3;
+    optional bool is_high_latency = 4;
+  }
+  optional .asic_sw.proto.ChipLocation location = 1;
+  repeated .accel_ssw.deepsea.proto.LocalTopology.LinkInfo link_info = 2;
+}

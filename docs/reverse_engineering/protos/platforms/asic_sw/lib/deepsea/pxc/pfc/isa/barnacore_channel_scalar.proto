@@ -1,0 +1,50 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.pfc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_isa_base.proto";
+message BarnaCoreChannelScalar {
+  message NormalOp {
+  }
+  message LoopStart {
+    optional uint32 pipeline_depth = 1;
+    optional uint32 loop_instruction_count = 2;
+  }
+  message OpBranch {
+    enum BranchType {
+      BRANCH_TYPE_ABSOLUTE = 0;
+      BRANCH_TYPE_RELATIVE = 1;
+    }
+    optional .asic_sw.deepsea.pxc.pfc.isa.BarnacoreChannelPredication branch_pred = 1 [default = BARNACORE_CHANNEL_PREDICATION_NEVER];
+    optional .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelScalar.OpBranch.BranchType branch_type = 2;
+    optional uint32 branch_target_pc = 3;
+  }
+  message LoopAndBranchInvalid {
+  }
+  oneof inst {
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelScalar.NormalOp normal_op = 23;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelScalar.LoopStart loop_start = 24;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelScalar.OpBranch op_branch = 25;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelScalar.LoopAndBranchInvalid loop_and_branch_invalid = 26;
+  }
+  optional bool op_shift = 1;
+  optional uint32 op_shift_pipeline_stage = 2;
+  optional bool op_push = 3;
+  optional uint32 pred_feature_id = 4;
+  optional bool add_loop_index_to_vld_dst = 5;
+  optional bool add_loop_index_to_vst_src = 6;
+  optional bool add_loop_index_to_v0_x = 7;
+  optional bool add_loop_index_to_v1_x = 8;
+  optional bool add_loop_index_to_v0_y_reg = 9;
+  optional bool add_loop_index_to_v1_y_reg = 10;
+  optional bool add_loop_index_to_v0_dst = 11;
+  optional bool add_loop_index_to_v1_dst = 12;
+  optional bool add_loop_index_to_v1_vselect_mask = 13;
+  optional bool add_loop_index_to_v0_vselect_mask = 14;
+  optional uint32 add_loop_index_to_shift_amount = 15;
+  optional uint32 vs0 = 16;
+  optional uint32 vs1 = 17;
+  optional uint32 vs2 = 18;
+  optional bool prog_end = 19;
+  optional uint32 latency = 20;
+  map<string, uint32> resource_usage = 21;
+  optional uint32 bit_width = 22;
+}

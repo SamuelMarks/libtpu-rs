@@ -1,0 +1,44 @@
+syntax = "proto3";
+package webutil.io;
+message JSTableData {
+  message Group {
+    string title = 1;
+    int32 startcolumn = 2;
+    int32 numcolumns = 3;
+  }
+  message Column {
+    string title = 1;
+    string style = 2;
+    string sorter = 3;
+    string renderer = 4;
+    string tooltip = 5;
+    bool descending = 6;
+    bool hidden = 7;
+  }
+  message HtmlCellClassSpec {
+    int32 cell = 1;
+    string cell_class = 2;
+  }
+  message HtmlRowClassSpec {
+    int32 row = 1;
+    string row_class = 2;
+    repeated .webutil.io.JSTableData.HtmlCellClassSpec cells_classes = 3;
+  }
+  message Row {
+    repeated string values = 1;
+  }
+  string id = 1;
+  int32 rows_to_display = 2;
+  int32 header_rows = 3;
+  int32 footer_rows = 4;
+  int32 sort_column = 5;
+  bool descending = 6;
+  int32 presorted_column = 7;
+  bool column_filter = 8;
+  string row_filter_function = 9;
+  string initial_row_filter_regex = 10;
+  repeated .webutil.io.JSTableData.Group groups = 11;
+  repeated .webutil.io.JSTableData.Column columns = 12;
+  repeated .webutil.io.JSTableData.HtmlRowClassSpec html_classes = 13;
+  repeated .webutil.io.JSTableData.Row rows = 14;
+}

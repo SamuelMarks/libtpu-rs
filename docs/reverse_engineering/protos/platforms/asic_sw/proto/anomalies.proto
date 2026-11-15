@@ -1,0 +1,71 @@
+syntax = "proto2";
+package asic_sw.proto;
+message Anomaly {
+  oneof details {
+    .asic_sw.proto.GeneralErrorAnomaly general_error = 3;
+    .asic_sw.proto.EccErrorAnomaly ecc_error = 4;
+    .asic_sw.proto.UnknownErrorAnomaly unknown_error = 5;
+    .asic_sw.proto.CustomAnomaly custom = 6;
+  }
+  optional string location = 1;
+  optional string detailed_location = 2;
+}
+message EccErrorAnomaly {
+  enum Category {
+    UNKNOWN = 0;
+    ECC_CORRECTABLE = 1;
+    ECC_UNCORRECTABLE = 2;
+  }
+  message FirstErrorInfo {
+    optional uint64 timestamp = 1 [default = 18446744073709551615];
+    optional uint64 syndrome = 2;
+    optional uint64 address = 3;
+  }
+  optional .asic_sw.proto.EccErrorAnomaly.Category category = 1;
+  optional uint64 count = 2;
+  optional uint64 ram = 3;
+  optional string mnemonic = 4;
+  optional .asic_sw.proto.EccErrorAnomaly.FirstErrorInfo first_error_info = 5;
+  optional string memory_class = 6;
+}
+message GeneralErrorAnomaly {
+  enum Category {
+    UNKNOWN = 0;
+    USER = 1;
+    INTERNAL = 2;
+    FIRMWARE = 3;
+    PCIE = 4;
+    THERMAL = 5;
+    ICI_LINK_FATAL = 6;
+    SYSTEM_SOFTWARE = 7;
+    SYSTEM_HARDWARE = 8;
+    NETWORK = 9;
+    POWER = 10;
+  }
+  message FirstErrorInfo {
+    optional uint64 timestamp = 1 [default = 18446744073709551615];
+  }
+  optional .asic_sw.proto.GeneralErrorAnomaly.Category category = 1;
+  optional uint64 error_bits = 2;
+  optional uint64 raw_value = 3;
+  optional string description = 4;
+  optional .asic_sw.proto.GeneralErrorAnomaly.FirstErrorInfo first_error_info = 5;
+  optional int32 location_index = 6;
+  map<uint64, uint64> scratch_registers = 7;
+}
+message UnknownErrorAnomaly {
+  oneof category {
+    .asic_sw.proto.EccErrorAnomaly.Category ecc = 1;
+    .asic_sw.proto.GeneralErrorAnomaly.Category general = 2;
+  }
+  optional uint64 unexplained_bits = 3;
+  optional uint64 raw_value = 4;
+  optional string additional_info = 5;
+}
+message CustomAnomaly {
+  map<string, string> info = 1;
+  optional string description = 2;
+}
+message Anomalies {
+  repeated .asic_sw.proto.Anomaly anomalies = 1;
+}

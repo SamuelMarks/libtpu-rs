@@ -1,0 +1,35 @@
+syntax = "proto3";
+package operations_research;
+import "google/protobuf/duration.proto";
+message SetCoverProto {
+  reserved 3;
+  message Subset {
+    optional double cost = 1;
+    repeated int64 element = 2 [packed = true];
+  }
+  repeated .operations_research.SetCoverProto.Subset subset = 1;
+  optional string name = 2;
+}
+message SetCoverSolutionResponse {
+  reserved 6;
+  reserved 7;
+  enum Status {
+    UNDEFINED = 0;
+    OPTIMAL = 1;
+    FEASIBLE = 2;
+    INFEASIBLE = 3;
+    INVALID = 4;
+  }
+  optional .operations_research.SetCoverSolutionResponse.Status status = 1;
+  optional int64 num_subsets = 2;
+  repeated int64 subset = 3 [packed = true];
+  optional double cost = 4;
+  optional double cost_lower_bound = 5;
+  optional .google.protobuf.Duration duration_to_best = 8;
+  optional .google.protobuf.Duration total_duration = 9;
+  optional string algorithm_name = 10;
+  optional string problem_name = 11;
+  optional bool is_unicost = 12;
+  optional bool is_optimal = 13;
+  optional int64 solution_cardinality = 14;
+}

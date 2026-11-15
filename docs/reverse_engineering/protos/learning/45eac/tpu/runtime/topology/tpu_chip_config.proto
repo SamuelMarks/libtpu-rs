@@ -1,0 +1,189 @@
+syntax = "proto3";
+package tpu;
+import "google/protobuf/duration.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_chip_parts_locators.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_core_parts.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_memory_reservation.proto";
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+import "platforms/asic_sw/lib/deepsea/common/sync_flag.proto";
+message TpuChipConfigProto {
+  message SharedMemoryRegion {
+    .tpu.TpuSharedMemoryOnChipProto shared_memory = 1;
+    int64 word_count = 2;
+    int64 word_offset = 3;
+  }
+  message BounceBuffer {
+    .tpu.TpuChipConfigProto.SharedMemoryRegion shared_memory_region = 1;
+    repeated .tpu.TpuCoreOnChipProto cores = 2;
+  }
+  message SyncFlag {
+    bool is_host = 1;
+    int32 word_offset = 2;
+  }
+  message InfeedQueue {
+    message PerCore {
+      .tpu.TpuChipConfigProto.SharedMemoryRegion shared_memory_region = 1;
+    }
+    message Hardware {
+      message PerCore {
+        int32 consumer_host_sync_flag_word_offset = 2;
+      }
+      repeated .tpu.TpuChipConfigProto.InfeedQueue.Hardware.PerCore per_core = 2;
+    }
+    message Software {
+      int32 host_interrupt_number = 1;
+      int32 consumer_sync_flag_word_offset = 2;
+      .google.protobuf.Duration interrupt_coalescing_interval = 3;
+    }
+    oneof subtype {
+      .tpu.TpuChipConfigProto.InfeedQueue.Hardware hardware = 5;
+      .tpu.TpuChipConfigProto.InfeedQueue.Software software = 6;
+    }
+    .tpu.TpuCoreTypeProto core_type = 1;
+    int32 max_in_flight = 2;
+    int32 producer_sync_flag_word_offset = 3;
+    repeated .tpu.TpuChipConfigProto.InfeedQueue.PerCore per_core = 4;
+  }
+  message ContinuationQueue {
+    reserved 2;
+    message PerCore {
+      .tpu.TpuChipConfigProto.SharedMemoryRegion shared_memory_region = 1;
+      .asic_sw.deepsea.SyncFlag consumer_sync_flag = 2;
+    }
+    .tpu.TpuCoreTypeProto core_type = 1;
+    int32 completion_state_sync_flag_word_offset = 3;
+    int32 error_ack_sync_flag_word_offset = 4;
+    int32 overwritten_error_sync_flag_word_offset = 5;
+    int32 completion_interrupt_number = 6;
+    repeated .tpu.TpuChipConfigProto.ContinuationQueue.PerCore per_core = 7;
+    int32 producer_sync_flag_min_descriptor_word_offset = 8;
+    int32 producer_sync_flag_remaining_descriptors_word_offset = 9;
+    int32 producer_sync_flag_count = 10;
+    int32 producer_sync_flag_index_word_offset = 11;
+  }
+  message OutfeedQueue {
+    message Hardware {
+      message OutfeedManager {
+        int32 max_pending_outfeeds = 1;
+        int32 max_completed_outfeeds = 2;
+        int64 max_bytes_per_entry = 3;
+      }
+      .tpu.TpuChipConfigProto.OutfeedQueue.Hardware.OutfeedManager outfeed_manager = 2;
+    }
+    message Software {
+      int32 host_interrupt_number = 1;
+      int32 consumer_sync_flag_word_offset = 2;
+      int64 host_buffer_byte_count = 3;
+    }
+    oneof subtype {
+      .tpu.TpuChipConfigProto.OutfeedQueue.Hardware hardware = 3;
+      .tpu.TpuChipConfigProto.OutfeedQueue.Software software = 4;
+    }
+    .tpu.TpuCoreTypeProto core_type = 1;
+    int32 max_in_flight = 2;
+  }
+  message ReservedOutfeedQueue {
+    int32 max_in_flight = 1;
+  }
+  message UserSharedMemoryRegion {
+    .tpu.TpuChipConfigProto.SharedMemoryRegion shared_memory_region = 1;
+    int64 allocation_alignment_word_count = 2;
+  }
+  message UserStack {
+    repeated .tpu.TpuCoreOnChipProto cores = 1;
+    .tpu.TpuSegmentMemoryOnChipProto segment_memory = 2;
+    int64 initial_word_count = 3;
+    bool dynamic = 4;
+  }
+  message UserInterrupts {
+    .tpu.TpuCoreTypeProto core_type = 1;
+    repeated int32 interrupt_numbers = 2;
+  }
+  message SpecialPurposeSyncFlags {
+    .tpu.TpuCoreTypeProto core_type = 1;
+    repeated int32 compiler_reserved = 3;
+    int32 sequencer_overlay = 4;
+    int32 tile_overlay = 5;
+    int32 global_barrier_sflag = 6;
+    int32 local_barrier_sflag = 7;
+  }
+  message UhiSyncFlags {
+    int32 imem_transfer = 1;
+  }
+  message HostCommand {
+    message Queue {
+      int32 consumer_sync_flag_word_offset = 1;
+      int32 issue_queue_depth = 2;
+      int32 pending_commands_limit = 3;
+    }
+    message NonQueue {
+      int32 sync_flag_word_offset = 1;
+      int32 interrupt_number = 2;
+    }
+    oneof subtype {
+      .tpu.TpuChipConfigProto.HostCommand.Queue queue = 2;
+      .tpu.TpuChipConfigProto.HostCommand.NonQueue non_queue = 3;
+    }
+    .tpu.TpuCoreTypeProto core_type = 1;
+  }
+  message BarnaCore {
+    message Queue {
+      message PerCore {
+        int32 consumer_host_sync_flag_word_offset = 1;
+      }
+      int32 max_in_flight = 1;
+      int32 producer_sync_flag_word_offset = 2;
+      int32 buffer_byte_count = 3;
+      repeated .tpu.TpuChipConfigProto.BarnaCore.Queue.PerCore per_core = 4;
+    }
+    message Embedding {
+      .tpu.TpuBarnaCoreHbmAddressModeProto hbm_address_mode = 1;
+      .tpu.TpuBarnaCoreForwardPassModeProto forward_pass_mode = 2;
+      .tpu.TpuChipConfigProto.BarnaCore.Queue queue = 3;
+    }
+    message Offloading {
+    }
+    oneof mode {
+      .tpu.TpuChipConfigProto.BarnaCore.Embedding embedding = 1;
+      .tpu.TpuChipConfigProto.BarnaCore.Offloading offloading = 2;
+    }
+  }
+  message OnDeviceTransfer {
+    .tpu.TpuSyncFlagRangeOnChipProto recv_sync_flag_range = 1;
+    .tpu.TpuSyncFlagRangeOnChipProto send_sync_flag_range = 2;
+  }
+  message HostRamAccess {
+    .tpu.TpuCoreTypeProto core_type = 1;
+    int32 sync_flag_low_word_offset = 2;
+    int32 sync_flag_mid_word_offset = 3;
+    int32 sync_flag_high_word_offset = 4;
+    int32 interrupt_number = 5;
+    uint32 dva_mask_low = 6;
+    uint32 dva_mask_high = 7;
+  }
+  .tpu.TpuVersionProto version = 1;
+  int64 chip_config_abi_version = 24;
+  bool megacore = 2;
+  repeated .tpu.TpuChipConfigProto.BounceBuffer bounce_buffers = 3;
+  repeated .tpu.TpuChipConfigProto.InfeedQueue infeed_queues = 5;
+  repeated .tpu.TpuChipConfigProto.ContinuationQueue continuation_queues = 4;
+  repeated .tpu.TpuChipConfigProto.OutfeedQueue outfeed_queues = 6;
+  .tpu.TpuChipConfigProto.ReservedOutfeedQueue reserved_outfeed_queue = 8;
+  repeated .tpu.TpuChipConfigProto.UserSharedMemoryRegion user_shared_memory_regions = 9;
+  repeated .tpu.TpuChipConfigProto.UserStack user_stacks = 10;
+  repeated .tpu.TpuChipConfigProto.UserInterrupts user_interrupts = 11;
+  repeated .tpu.TpuChipConfigProto.UserInterrupts user_error_interrupts = 22;
+  repeated .tpu.TpuMemoryReservationProto memory_reservations = 12;
+  repeated .tpu.TpuChipConfigProto.SpecialPurposeSyncFlags special_purpose_sync_flags = 13;
+  .tpu.TpuChipConfigProto.UhiSyncFlags uhi_sync_flags = 14;
+  repeated .tpu.TpuChipConfigProto.HostCommand host_commands = 15;
+  .tpu.TpuChipConfigProto.BarnaCore barna_core = 16;
+  repeated .tpu.TpuChipConfigProto.OnDeviceTransfer on_device_transfers = 17;
+  repeated .tpu.TpuChipConfigProto.HostRamAccess host_ram_access = 18;
+  repeated .tpu.TpuChipConfigProto.SharedMemoryRegion compaction_buffers = 19;
+  bool megachip = 21;
+  bool megachip_next = 26;
+  bool tc_control = 23;
+  repeated .tpu.TpuChipConfigProto.SharedMemoryRegion megachip_regions = 25;
+}

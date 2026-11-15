@@ -1,0 +1,76 @@
+syntax = "proto2";
+package asic_sw.deepsea;
+import "platforms/asic_sw/lib/deepsea/common/hardware_attributes.proto";
+import "platforms/asic_sw/lib/deepsea/common/sync_flag.proto";
+enum Completion {
+  COMPLETION_UNSPECIFIED = 0;
+  SOURCE_COMPLETE = 1;
+  DESTINATION_COMPLETE = 2;
+}
+enum SyncFlagUpdateMode {
+  SYNC_FLAG_MODE_UNSPECIFIED = 0;
+  SYNC_FLAG_MODE_COUNT_WORDS = 1;
+  SYNC_FLAG_MODE_COUNT_DONES = 2;
+}
+enum MemoryOrderingModel {
+  MEMORY_ORDERING_UNSPECIFIED = 0;
+  MEMORY_ORDERING_STRICT_CROSS_DMA_THREAD = 1;
+  MEMORY_ORDERING_RELAXED = 2;
+}
+enum AtomicOperation {
+  ATOMIC_UNSET = 0;
+  ATOMIC_COMPARE_AND_SWAP = 1;
+  ATOMIC_READ_AND_ADD = 2;
+  ATOMIC_ADD_FP32 = 3;
+  ATOMIC_ADD_BF16 = 4;
+  ATOMIC_ADD_E4M3 = 5;
+}
+enum CryptoMode {
+  CRYPTO_MODE_UNSPECIFIED = 0;
+  CRYPTO_MODE_ENCRYPT = 1;
+  CRYPTO_MODE_DECRYPT = 3;
+}
+message Location {
+  optional .asic_sw.deepsea.Core core = 1;
+  optional int32 core_index = 2;
+  optional .asic_sw.deepsea.Memory memory = 3;
+  optional uint64 byte_offset = 4;
+  optional uint64 host_address = 5;
+}
+message Stride {
+  optional int64 source_stride = 1 [default = 1];
+  optional int64 destination_stride = 2 [default = 1];
+  optional int64 next_steps_per_stride = 3 [default = 1];
+}
+message Memset {
+  enum MemsetType {
+    MEMSET_UNSPECIFIED = 0;
+    INSTRUCTION = 1;
+    DATA = 2;
+  }
+  optional .asic_sw.deepsea.Memset.MemsetType type = 1;
+  optional uint32 data = 2;
+}
+message Dma {
+  oneof target_chip_id {
+    int32 destination_chip_id = 7;
+    int32 source_chip_id = 16;
+    int32 multicast_id = 17;
+  }
+  optional .asic_sw.deepsea.Location source = 1;
+  optional .asic_sw.deepsea.Location destination = 2;
+  optional uint64 length_bytes = 3;
+  repeated .asic_sw.deepsea.Stride strides = 4;
+  repeated .asic_sw.deepsea.SyncFlag source_sync_flags = 5;
+  repeated .asic_sw.deepsea.SyncFlag destination_sync_flags = 6;
+  optional .asic_sw.deepsea.Memset memset = 8;
+  optional bool enable_tracing = 9 [default = false];
+  optional .asic_sw.deepsea.Completion completion = 10;
+  optional .asic_sw.deepsea.SyncFlagUpdateMode sync_flag_mode = 11;
+  optional .asic_sw.deepsea.MemoryOrderingModel memory_ordering = 12;
+  optional uint32 thread_index = 13;
+  optional .asic_sw.deepsea.AtomicOperation atomic_operation = 14 [default = ATOMIC_UNSET];
+  optional bool execution_order_required = 15 [default = false];
+  optional .asic_sw.deepsea.CryptoMode crypto_mode = 18 [default = CRYPTO_MODE_UNSPECIFIED];
+  optional uint32 crypto_key_id = 19 [default = 0];
+}

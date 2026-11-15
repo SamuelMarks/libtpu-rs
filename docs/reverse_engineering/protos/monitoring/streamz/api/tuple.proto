@@ -1,0 +1,18 @@
+syntax = "proto2";
+package streamz;
+import "monitoring/streamz/api/distribution.proto";
+message Tuple {
+  message Element {
+    oneof element_value {
+      bool bool_value = 4;
+      int64 int64_value = 5;
+      double double_value = 6;
+      bytes string_value = 7;
+      .streamz.Distribution distribution_value = 8;
+      bytes message_value = 9;
+      .streamz.Tuple tuple_value = 11;
+    }
+    optional int32 message_type_id = 10;
+  }
+  repeated .streamz.Tuple.Element element = 1;
+}

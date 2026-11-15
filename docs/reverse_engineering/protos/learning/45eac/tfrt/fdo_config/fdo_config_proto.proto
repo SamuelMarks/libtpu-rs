@@ -1,0 +1,30 @@
+syntax = "proto3";
+package tfrt.fdo_config;
+import "platforms/xla/service/jellyfish/tpu_compilation_environment.proto";
+message FdoConfigProto {
+  int64 version = 1;
+  .xla.jellyfish.SparseDenseMatmulFdoConfig sparse_dense_matmul_fdo_config = 2;
+}
+message SharedFdoConfigProto {
+  message SparseDenseMatmulSharedFdoConfig {
+    message FeatureStats {
+      string feature_id = 1;
+      int64 num_sparse_core = 2;
+      repeated int64 max_unique_ids_per_core = 3;
+      repeated int64 max_ids_per_core = 4;
+    }
+    repeated .tfrt.fdo_config.SharedFdoConfigProto.SparseDenseMatmulSharedFdoConfig.FeatureStats feature_stats = 1;
+  }
+  .tfrt.fdo_config.SharedFdoConfigProto.SparseDenseMatmulSharedFdoConfig sparse_dense_matmul_shared_fdo_config = 3;
+}
+message SharedFdoConfig {
+  string table_id = 1;
+  int64 num_sparse_core = 2;
+  int64 num_features = 3;
+  int64 batch_size = 4;
+  repeated int64 max_unique_ids_per_core = 5;
+  repeated int64 max_ids_per_core = 6;
+  repeated int64 sum_unique_ids_per_core = 7;
+  repeated int64 sum_ids_per_core = 8;
+  int64 num_batches_visited = 9;
+}

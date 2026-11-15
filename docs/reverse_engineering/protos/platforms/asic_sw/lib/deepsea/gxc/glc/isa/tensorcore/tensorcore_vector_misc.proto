@@ -1,0 +1,428 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.glc.isa;
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_common_encodings.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/common_encodings.proto";
+enum Operand {
+  OPERAND_ZERO = 0;
+  OPERAND_VS0 = 1;
+  OPERAND_VS1 = 2;
+  OPERAND_VS2 = 3;
+  OPERAND_VS3 = 4;
+  OPERAND_IMM0 = 5;
+  OPERAND_IMM1 = 6;
+  OPERAND_IMM2 = 7;
+  OPERAND_IMM3 = 8;
+  OPERAND_IMM4 = 9;
+  OPERAND_IMM5 = 10;
+  OPERAND_RESERVED_0 = 11;
+  OPERAND_RESERVED_1 = 12;
+  OPERAND_RESERVED_2 = 13;
+  OPERAND_RESERVED_3 = 14;
+  OPERAND_RESERVED_4 = 15;
+}
+enum VmiscSourcePortEncoding {
+  VMISC_SOURCE_PORT_ENCODING_V0_Y_VREG = 0;
+  VMISC_SOURCE_PORT_ENCODING_V0_X = 1;
+  VMISC_SOURCE_PORT_ENCODING_V1_Y_VREG = 2;
+  VMISC_SOURCE_PORT_ENCODING_V1_X = 3;
+  VMISC_SOURCE_PORT_ENCODING_V2_Y_VREG = 4;
+  VMISC_SOURCE_PORT_ENCODING_V2_X = 5;
+  VMISC_SOURCE_PORT_ENCODING_V3_Y_VREG = 6;
+  VMISC_SOURCE_PORT_ENCODING_V3_X = 7;
+}
+message TensorCoreVectorMisc {
+  message VectorLoad {
+    optional uint32 dest_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 4;
+  }
+  message VectorLoadBase {
+    optional uint32 dest_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+  }
+  message VectorLoadShuffled {
+    optional uint32 dest_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 4;
+  }
+  message VectorLoadShuffledBase {
+    optional uint32 dest_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+  }
+  message VectorMiscStore {
+    optional .asic_sw.deepsea.gxc.glc.isa.VmiscSourcePortEncoding source_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+    optional uint32 v3_x = 12;
+  }
+  message VectorMiscStoreBase {
+    optional .asic_sw.deepsea.gxc.glc.isa.VmiscSourcePortEncoding source_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+    optional uint32 v0_y_vreg = 6;
+    optional uint32 v0_x = 7;
+    optional uint32 v1_y_vreg = 8;
+    optional uint32 v1_x = 9;
+    optional uint32 v2_y_vreg = 10;
+    optional uint32 v2_x = 11;
+    optional uint32 v3_y_vreg = 12;
+    optional uint32 v3_x = 13;
+  }
+  message VectorMiscStoreMasked {
+    optional uint32 vmsk = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VmiscSourcePortEncoding source_vreg = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+    optional uint32 v0_y_vreg = 6;
+    optional uint32 v0_x = 7;
+    optional uint32 v1_y_vreg = 8;
+    optional uint32 v1_x = 9;
+    optional uint32 v2_y_vreg = 10;
+    optional uint32 v2_x = 11;
+    optional uint32 v3_y_vreg = 12;
+    optional uint32 v3_x = 13;
+  }
+  message VectorMiscStoreBaseMasked {
+    optional uint32 vmsk = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VmiscSourcePortEncoding source_vreg = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 5;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+    optional uint32 v3_x = 14;
+  }
+  message VectorMiscStoreShuffled {
+    optional .asic_sw.deepsea.gxc.glc.isa.VmiscSourcePortEncoding source_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+    optional uint32 v3_x = 12;
+  }
+  message VectorMiscStoreShuffledBase {
+    optional .asic_sw.deepsea.gxc.glc.isa.VmiscSourcePortEncoding source_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+    optional uint32 v0_y_vreg = 6;
+    optional uint32 v0_x = 7;
+    optional uint32 v1_y_vreg = 8;
+    optional uint32 v1_x = 9;
+    optional uint32 v2_y_vreg = 10;
+    optional uint32 v2_x = 11;
+    optional uint32 v3_y_vreg = 12;
+    optional uint32 v3_x = 13;
+  }
+  message VectorMiscStoreShuffledMasked {
+    optional uint32 vmsk = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VmiscSourcePortEncoding source_vreg = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+    optional uint32 v0_y_vreg = 6;
+    optional uint32 v0_x = 7;
+    optional uint32 v1_y_vreg = 8;
+    optional uint32 v1_x = 9;
+    optional uint32 v2_y_vreg = 10;
+    optional uint32 v2_x = 11;
+    optional uint32 v3_y_vreg = 12;
+    optional uint32 v3_x = 13;
+  }
+  message VectorMiscStoreShuffledBaseMasked {
+    optional uint32 vmsk = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VmiscSourcePortEncoding source_vreg = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 5;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+    optional uint32 v3_x = 14;
+  }
+  message ReadPrng {
+    optional uint32 dest_vreg = 1;
+  }
+  message GenerateRandomNumbers {
+    optional uint32 dest_vreg = 1;
+  }
+  message SetSync {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SetSyncDone {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SetSyncDoneInverted {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message AddSync {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message AddSyncDone {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message AddSyncDoneInverted {
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 2;
+  }
+  message AtomicRemoteWrite {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource destination_address = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message AtomicRemoteAdd {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource destination_address = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message AtomicRemoteWriteSetDone {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource destination_address = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message AtomicRemoteAddSetDone {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource destination_address = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message AtomicRemoteWriteSetDoneInverted {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource destination_address = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message AtomicRemoteAddSetDoneInverted {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource destination_address = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SyncEqual {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SyncEqualYieldable {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SyncNotEqual {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SyncNotEqualYieldable {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SyncGreaterThan {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SyncGreaterThanYieldable {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SyncGreaterEqual {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SyncGreaterEqualYieldable {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SyncLessThan {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SyncLessThanYieldable {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SyncDone {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+  }
+  message SyncDoneYieldable {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+  }
+  message SyncNotDone {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+  }
+  message SyncNotDoneYieldable {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+  }
+  message VmskMove {
+    optional uint32 destination = 1;
+    optional uint32 first_operand = 2;
+  }
+  message VmskNegate {
+    optional uint32 destination = 1;
+    optional uint32 first_operand = 2;
+  }
+  message VmskAnd {
+    optional uint32 destination = 1;
+    optional uint32 first_operand = 2;
+    optional uint32 second_operand = 3;
+  }
+  message VmskOr {
+    optional uint32 destination = 1;
+    optional uint32 first_operand = 2;
+    optional uint32 second_operand = 3;
+  }
+  message VmskXor {
+    optional uint32 destination = 1;
+    optional uint32 first_operand = 2;
+    optional uint32 second_operand = 3;
+  }
+  message VmskPackLow {
+    optional uint32 destination = 1;
+    optional uint32 first_operand = 2;
+    optional uint32 second_operand = 3;
+  }
+  message VmskPackEven {
+    optional uint32 destination = 1;
+    optional uint32 first_operand = 2;
+    optional uint32 second_operand = 3;
+  }
+  message ReadSync {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+  }
+  message ReadSyncDone {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+  }
+  message ReadSyncPublicAccess {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+  }
+  message CoreInterrupt {
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 1;
+  }
+  message DelayShortImmediate {
+    optional uint32 delay_cycles = 1;
+  }
+  message VectorDelay {
+    enum Operand {
+      OPERAND_ONE = 0;
+      OPERAND_VS0 = 1;
+      OPERAND_VS1 = 2;
+      OPERAND_VS2 = 3;
+      OPERAND_VS3 = 4;
+      OPERAND_IMM_0 = 5;
+      OPERAND_IMM_1 = 6;
+      OPERAND_IMM_2 = 7;
+      OPERAND_IMM_3 = 8;
+      OPERAND_IMM_4 = 9;
+      OPERAND_IMM_5 = 10;
+      OPERAND_RESERVED_0 = 11;
+      OPERAND_RESERVED_1 = 12;
+      OPERAND_RESERVED_2 = 13;
+      OPERAND_RESERVED_3 = 14;
+      OPERAND_RESERVED_4 = 15;
+    }
+    optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorDelay.Operand operand = 1;
+  }
+  message SetTracemark {
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 1;
+  }
+  message Trace {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource upper_operand_field = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  message SetPublicAccess {
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorSource sync_flag_number = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.Operand operand = 2;
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorLoad vector_load = 5;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorLoadBase vector_load_base = 6;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorLoadShuffled vector_load_shuffled = 7;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorLoadShuffledBase vector_load_shuffled_base = 8;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorMiscStore vector_misc_store = 9;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorMiscStoreBase vector_misc_store_base = 10;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorMiscStoreMasked vector_misc_store_masked = 11;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorMiscStoreBaseMasked vector_misc_store_base_masked = 12;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorMiscStoreShuffled vector_misc_store_shuffled = 13;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorMiscStoreShuffledBase vector_misc_store_shuffled_base = 14;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorMiscStoreShuffledMasked vector_misc_store_shuffled_masked = 15;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorMiscStoreShuffledBaseMasked vector_misc_store_shuffled_base_masked = 16;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.ReadPrng read_prng = 17;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.GenerateRandomNumbers generate_random_numbers = 18;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SetSync set_sync = 19;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SetSyncDone set_sync_done = 20;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SetSyncDoneInverted set_sync_done_inverted = 21;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.AddSync add_sync = 22;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.AddSyncDone add_sync_done = 23;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.AddSyncDoneInverted add_sync_done_inverted = 24;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.AtomicRemoteWrite atomic_remote_write = 25;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.AtomicRemoteAdd atomic_remote_add = 26;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.AtomicRemoteWriteSetDone atomic_remote_write_set_done = 27;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.AtomicRemoteAddSetDone atomic_remote_add_set_done = 28;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.AtomicRemoteWriteSetDoneInverted atomic_remote_write_set_done_inverted = 29;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.AtomicRemoteAddSetDoneInverted atomic_remote_add_set_done_inverted = 30;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncEqual sync_equal = 31;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncEqualYieldable sync_equal_yieldable = 32;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncNotEqual sync_not_equal = 33;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncNotEqualYieldable sync_not_equal_yieldable = 34;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncGreaterThan sync_greater_than = 35;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncGreaterThanYieldable sync_greater_than_yieldable = 36;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncGreaterEqual sync_greater_equal = 37;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncGreaterEqualYieldable sync_greater_equal_yieldable = 38;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncLessThan sync_less_than = 39;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncLessThanYieldable sync_less_than_yieldable = 40;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncDone sync_done = 41;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncDoneYieldable sync_done_yieldable = 42;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncNotDone sync_not_done = 43;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SyncNotDoneYieldable sync_not_done_yieldable = 44;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VmskMove vmsk_move = 45;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VmskNegate vmsk_negate = 46;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VmskAnd vmsk_and = 47;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VmskOr vmsk_or = 48;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VmskXor vmsk_xor = 49;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VmskPackLow vmsk_pack_low = 50;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VmskPackEven vmsk_pack_even = 51;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.ReadSync read_sync = 52;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.ReadSyncDone read_sync_done = 53;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.ReadSyncPublicAccess read_sync_public_access = 54;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.CoreInterrupt core_interrupt = 55;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.DelayShortImmediate delay_short_immediate = 56;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.VectorDelay vector_delay = 57;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SetTracemark set_tracemark = 58;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.Trace trace = 59;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc.SetPublicAccess set_public_access = 60;
+  }
+  optional .asic_sw.deepsea.gxc.glc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional uint32 latency = 2 [default = 1];
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

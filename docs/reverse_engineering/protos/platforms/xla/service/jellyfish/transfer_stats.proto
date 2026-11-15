@@ -1,0 +1,24 @@
+syntax = "proto3";
+package xla;
+message DmaBucketsProto {
+  map<uint64, int64> d2h = 1;
+  map<uint64, int64> h2d = 2;
+  int64 unknown_size_dmas = 3;
+}
+message TransferBucketsProto {
+  map<uint64, int64> d2h = 1;
+  map<uint64, int64> h2d = 2;
+}
+message DmaSizesProto {
+  .xla.DmaBucketsProto non_loop_buckets = 1;
+  .xla.DmaBucketsProto loop_buckets = 2;
+}
+message TransferSizesProto {
+  .xla.TransferBucketsProto non_loop_buckets = 1;
+  .xla.TransferBucketsProto loop_buckets = 2;
+}
+message TransferStatsProto {
+  .xla.DmaSizesProto host_dma_sizes = 1;
+  .xla.TransferSizesProto host_transfer_sizes = 2;
+  .xla.TransferSizesProto host_execution_transfer_sizes = 3;
+}

@@ -1,0 +1,40 @@
+syntax = "proto3";
+package asic_sw.tools.deepsea.pxc;
+message IndirectStateIds {
+  enum Ids {
+    UNKNOWN = 0;
+    TCS = 1;
+    TCS_WIDE = 2;
+    XLU = 3;
+    BXC_4B = 4;
+    BXC_32B = 5;
+    VPU_4B = 6;
+    HBM = 7;
+    CMEM_16B = 8;
+    VPU_64B = 9;
+    TC0_TCS = 10;
+    TC0_TCS_WIDE = 11;
+    TC0_XLU = 12;
+    TC0_VPU_4B = 13;
+    TC0_VPU_64B = 14;
+    TC1_TCS = 15;
+    TC1_TCS_WIDE = 16;
+    TC1_XLU = 17;
+    TC1_VPU_4B = 18;
+    TC1_VPU_64B = 19;
+    BC0_BXC_4B = 20;
+    BC0_BXC_32B = 21;
+    BC0_BCH_32B = 22;
+    BC1_BXC_4B = 23;
+    BC1_BXC_32B = 24;
+    BC1_BCH_32B = 25;
+    BC2_BXC_4B = 26;
+    BC2_BXC_32B = 27;
+    BC2_BCH_32B = 28;
+    BC3_BXC_4B = 29;
+    BC3_BXC_32B = 30;
+    BC3_BCH_32B = 31;
+    TC0_MXU = 32;
+    TC1_MXU = 33;
+  }
+}

@@ -47,19 +47,14 @@ pub use profiler::*;
 pub use topology::*;
 
 use crate::box_pjrt_error;
+use crate::pjrt_helpers::{ffi_catch_unwind, ffi_panic_pjrt_error};
 use crate::pjrt_types::{PJRT_Error, PJRT_Extension_Base, PjrtFn};
-use libtpu_core::driver::TpuCoreProfiler;
 use libtpu_core::error::LibTpuError;
-use parking_lot::Mutex;
 use std::ptr;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Monotonic counter recording extension invocations across all 138 extension and profiler entrypoints.
+/// Monotonic counter recording extension invocations across all extension and profiler entrypoints.
 static EXTENSION_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-/// Process-wide [`TpuCoreProfiler`] backing `PLUGIN_Profiler_Api`.
-static EXTENSION_PROFILER: OnceLock<Mutex<TpuCoreProfiler>> = OnceLock::new();
 
 /// Returns the total number of extension invocations recorded so far.
 pub fn extension_call_count() -> u64 {
@@ -79,8 +74,10 @@ pub fn extension_call_count() -> u64 {
 pub unsafe extern "C" fn PJRT_Extension_ValidateArgs(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
-    // SAFETY: Caller upholds `raw_args` contract.
-    unsafe { validate_extension_args_size(raw_args, size_of::<usize>()) }
+    ffi_catch_unwind(ptr::null_mut(), || {
+        // SAFETY: Caller upholds `raw_args` contract.
+        unsafe { validate_extension_args_size(raw_args, size_of::<usize>()) }
+    })
 }
 
 /// Validates that `raw_args` is non-null and its leading `struct_size` field is at least `min_size`.
@@ -115,122 +112,34 @@ unsafe fn validate_extension_args_size(
     ptr::null_mut()
 }
 
-/// Stateful coordinator and registry backing the 17 TPU PJRT extension structures.
-#[derive(Debug, Default)]
-pub struct ExtensionRuntimeState {
-    /// Number of registered XLA HLO transform passes (`PJRT_XlaTransform_Extension`).
-    pub registered_transforms: usize,
-    /// Map of registered XLA HLO transform pass names to registration IDs.
-    pub transform_passes: std::collections::BTreeMap<String, usize>,
-    /// Number of active ICI/DCN collective communicators (`PJRT_Collectives_Extension`).
-    pub active_communicators: usize,
-    /// Total collective operations executed across communicators.
-    pub collective_ops_executed: usize,
-    /// Number of active Megascale client contexts (`PJRT_Megascale_Extension`).
-    pub megascale_contexts: usize,
-    /// Number of active Megascale multi-slice configs.
-    pub megascale_configs: usize,
-    /// Number of completed Megascale multi-slice barriers.
-    pub megascale_barriers: usize,
-    /// Number of registered Megascale error handlers.
-    pub megascale_error_handlers: usize,
-    /// Optional registered Megascale C error callback function pointer (`void (*)(*mut c_void)`).
-    pub megascale_error_callback_fn: usize,
-    /// Configured Megascale transport type (`0` = Default/ICI, `1` = DCN).
-    pub megascale_transport_type: usize,
-    /// Number of configured `TpuCompilationEnvironmentProto` field overrides.
-    pub tpu_compilation_env_overrides: usize,
-    /// Active mutable [`libtpu_core::proto::TpuCompilationEnvironmentProto`] instance.
-    pub tpu_compilation_env: libtpu_core::proto::TpuCompilationEnvironmentProto,
-    /// Number of registered `PJRT_Callback_Extension` callbacks.
-    pub registered_callbacks: usize,
-    /// Registered callback function pointer and user context per callback type.
-    pub callback_registry: std::collections::BTreeMap<i64, (usize, usize)>,
-    /// Number of active `PJRT_PhaseCompiler` instances.
-    pub phase_compilers: usize,
-    /// Number of completed cross-host buffer transfers.
-    pub cross_host_transfers: usize,
-    /// Keyed cross-host tensor payload mailboxes (`tag -> bytes`) for `PJRT_CrossHostTransfers_Extension`.
-    pub cross_host_mailboxes: std::collections::BTreeMap<usize, Vec<u8>>,
-    /// Set of cancelled cross-host transfer tags and their status codes.
-    pub cross_host_cancelled_tags: std::collections::BTreeMap<usize, i32>,
-    /// Number of active `PJRT_RawBuffer` alias handles.
-    pub raw_buffers: usize,
-    /// Whether the active TPU topology is a subslice topology.
-    pub is_subslice_topology: bool,
-    /// Bounded 64-slot ring buffer of heap-allocated byte slices backing extension queries without unbounded growth.
-    pub serialized_artifacts: Vec<Box<[u8]>>,
-    /// Write cursor into `serialized_artifacts`.
-    pub serialized_artifact_cursor: usize,
-    /// Keyed registry of buffers allocated by `PJRT_PhaseCompile_Extension` freed by `PJRT_PhaseCompile_CBuffersDestroy`.
-    pub phase_compile_buffers: std::collections::BTreeMap<usize, Box<[u8]>>,
-    /// Bounded 16-slot ring of sharding pointer address arrays for `PJRT_Shardings_Extension`.
-    pub sharding_ptr_arrays: Vec<Box<[usize]>>,
-    /// Bounded 16-slot ring of sharding size arrays for `PJRT_Shardings_Extension`.
-    pub sharding_size_arrays: Vec<Box<[usize]>>,
-}
-
-/// Process-wide [`ExtensionRuntimeState`] singleton.
-static EXTENSION_STATE: OnceLock<Mutex<ExtensionRuntimeState>> = OnceLock::new();
-
-/// Returns the singleton [`Mutex<ExtensionRuntimeState>`] backing all 17 PJRT extensions.
-pub(super) fn extension_state() -> &'static Mutex<ExtensionRuntimeState> {
-    EXTENSION_STATE.get_or_init(|| Mutex::new(ExtensionRuntimeState::default()))
-}
-
-/// Allocates an immutable heap-backed byte slice registered in the bounded 64-slot ring buffer
-/// [`ExtensionRuntimeState::serialized_artifacts`] so sequential extension queries never leak memory.
-///
-/// # Arguments
-///
-/// * `bytes` - Serialized protobuf or string payload bytes.
-pub(super) fn alloc_extension_bytes(bytes: Vec<u8>) -> (*const u8, usize) {
-    let boxed: Box<[u8]> = bytes.into_boxed_slice();
-    let ptr = boxed.as_ptr();
-    let len = boxed.len();
-    let mut st = extension_state().lock();
-    let idx = st.serialized_artifact_cursor & 63;
-    if let Some(slot) = st.serialized_artifacts.get_mut(idx) {
-        *slot = boxed;
-        st.serialized_artifact_cursor = st.serialized_artifact_cursor.wrapping_add(1);
-    } else {
-        st.serialized_artifacts.push(boxed);
-    }
-    drop(st);
-    (ptr, len)
-}
-
-/// Allocates a heap-backed C buffer registered in [`ExtensionRuntimeState::phase_compile_buffers`]
-/// so [`PJRT_PhaseCompile_CBuffersDestroy`] frees the exact buffer passed to it.
+/// Allocates an owned C byte buffer handle freed explicitly by [`free_phase_compile_buffer`]
+/// (`PJRT_PhaseCompile_CBuffersDestroy`) without any global mutable map or ring buffer.
 ///
 /// # Arguments
 ///
 /// * `bytes` - Phase compilation output bytes.
-pub(super) fn alloc_phase_compile_buffer(bytes: Vec<u8>) -> (*const u8, usize) {
+pub(super) fn alloc_phase_compile_buffer(
+    bytes: Vec<u8>,
+) -> (*mut std::ffi::c_void, *const u8, usize) {
     let boxed: Box<[u8]> = bytes.into_boxed_slice();
     let ptr = boxed.as_ptr();
     let len = boxed.len();
-    let mut st = extension_state().lock();
-    st.phase_compile_buffers.insert(ptr as usize, boxed);
-    drop(st);
-    (ptr, len)
+    let handle = Box::into_raw(Box::new(boxed)).cast::<std::ffi::c_void>();
+    (handle, ptr, len)
 }
 
-/// Frees a phase compilation buffer previously allocated by [`alloc_phase_compile_buffer`].
+/// Frees a phase compilation buffer handle previously allocated by [`alloc_phase_compile_buffer`].
 ///
 /// # Arguments
 ///
-/// * `handle` - Buffer pointer to remove and drop.
+/// * `handle` - Heap handle returned by [`alloc_phase_compile_buffer`].
 pub(super) fn free_phase_compile_buffer(handle: *mut std::ffi::c_void) {
     if !handle.is_null() {
-        let mut st = extension_state().lock();
-        let _ = st.phase_compile_buffers.remove(&(handle as usize));
+        // SAFETY: `handle` was allocated via `Box::into_raw(Box::new(Box<[u8]>))` in `alloc_phase_compile_buffer`.
+        unsafe {
+            drop(Box::from_raw(handle.cast::<Box<[u8]>>()));
+        }
     }
-}
-
-/// Returns the singleton [`Mutex<TpuCoreProfiler>`] backing `PLUGIN_Profiler_Api`.
-pub(super) fn extension_profiler() -> &'static Mutex<TpuCoreProfiler> {
-    EXTENSION_PROFILER.get_or_init(|| Mutex::new(TpuCoreProfiler::new()))
 }
 
 /// Invokes a strongly-typed `unsafe fn(&mut T)` from a type-erased reference.
@@ -267,21 +176,24 @@ unsafe fn invoke_typed_extension_handler<T>(
 /// # Safety
 ///
 /// `raw_args` must be null or point to a valid extension `_Args` structure of type `T`.
-unsafe fn dispatch_erased_extension_args(
+pub(crate) unsafe fn dispatch_erased_extension_args(
     raw_args: *mut std::ffi::c_void,
     min_size: usize,
     handler_ref: *const std::ffi::c_void,
     invoker: unsafe fn(*mut std::ffi::c_void, *const std::ffi::c_void),
 ) -> *mut PJRT_Error {
-    // SAFETY: Caller upholds `raw_args` precondition.
-    let err = unsafe { validate_extension_args_size(raw_args, min_size) };
-    if err.is_null() {
-        // SAFETY: `raw_args` was validated non-null and `>= min_size` by `validate_extension_args_size`.
-        unsafe {
-            invoker(raw_args, handler_ref);
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: Caller upholds `raw_args` precondition.
+        let err = unsafe { validate_extension_args_size(raw_args, min_size) };
+        if err.is_null() {
+            // SAFETY: `raw_args` was validated non-null and `>= min_size` by `validate_extension_args_size`.
+            unsafe {
+                invoker(raw_args, handler_ref);
+            }
         }
-    }
-    err
+        err
+    }))
+    .unwrap_or_else(|_| ffi_panic_pjrt_error())
 }
 
 /// Validates a typed `#[repr(C)]` PJRT extension argument structure and invokes `handler(&mut T)`.
@@ -539,7 +451,7 @@ pub struct PJRT_TpuExecutable_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_TpuExecutable_Extension {}
 
-/// Node 9 (`ext_type = 16`, `272` bytes): `PJRT_TpuTopology_Extension`.
+/// Node 9 (`ext_type = 16`, `280` bytes): `PJRT_TpuTopology_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_TpuTopology_Extension {
@@ -830,6 +742,46 @@ const _: () =
     assert!(std::mem::offset_of!(PJRT_RawBuffer_Extension, copy_raw_device_to_host) == 0x48);
 const _: () = assert!(size_of::<PJRT_Profiler_Extension>() == 40);
 const _: () = assert!(std::mem::offset_of!(PJRT_Profiler_Extension, traceme_context_id) == 0x20);
+
+/// `OpenXLA` `PJRT_FFI_Extension` (`ext_type = 3`, `48` bytes) for `xla::ffi` custom calls.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_FFI_Extension {
+    /// 24-byte `PJRT_Extension_Base` header (`ext_type = 3`).
+    pub base: PJRT_Extension_Base,
+    /// Slot 1 (`0x18`): `PJRT_FFI_TypeID_Register`.
+    pub type_id_register: PjrtFn,
+    /// Slot 2 (`0x20`): `PJRT_FFI_UserData_Add`.
+    pub user_data_add: PjrtFn,
+    /// Slot 3 (`0x28`): `PJRT_FFI_Register_Handler`.
+    pub register_handler: PjrtFn,
+}
+
+// SAFETY: Immutable static vtable structure.
+unsafe impl Sync for PJRT_FFI_Extension {}
+
+const _: () = assert!(size_of::<PJRT_FFI_Extension>() == 48);
+const _: () = assert!(std::mem::offset_of!(PJRT_FFI_Extension, register_handler) == 0x28);
+
+/// Static `PJRT_FFI_Extension` descriptor (`ext_type = 3`, `48` bytes).
+pub static GLOBAL_PJRT_FFI_EXTENSION: PJRT_FFI_Extension = PJRT_FFI_Extension {
+    base: PJRT_Extension_Base {
+        struct_size: 48,
+        ext_type: 3,
+        pad: 0,
+        next: ptr::null(),
+    },
+    type_id_register: PJRT_FFI_TypeID_Register,
+    user_data_add: PJRT_FFI_UserData_Add,
+    register_handler: PJRT_FFI_Register_Handler,
+};
+
+/// Returns the static [`PJRT_FFI_Extension`] descriptor (`PJRT_FFI_GetExtension`).
+#[unsafe(no_mangle)]
+#[must_use]
+pub extern "C" fn PJRT_FFI_GetExtension() -> *const PJRT_FFI_Extension {
+    ffi_catch_unwind(ptr::null(), || ptr::addr_of!(GLOBAL_PJRT_FFI_EXTENSION))
+}
 
 /// Static Node 17 (`PJRT_Profiler_Extension`).
 pub static EXT_17_PROFILER: PJRT_Profiler_Extension = PJRT_Profiler_Extension {
@@ -1397,7 +1349,14 @@ mod tests {
             };
             assert!(PLUGIN_Profiler_Destroy(ptr::addr_of_mut!(prof_destroy_args).cast()).is_null());
             assert!(prof_destroy_args.profiler.is_null());
-            assert_ne!(format!("{:?}", ExtensionRuntimeState::default()), "");
+            assert_ne!(
+                format!(
+                    "{:?}{:?}",
+                    crate::pjrt_types::ClientExtensionArena::default(),
+                    crate::pjrt_types::ExecutableExtensionArena::default()
+                ),
+                ""
+            );
 
             let ext_destroy_args = PJRT_Megascale_Handle_Args {
                 struct_size: 24,
@@ -2244,9 +2203,6 @@ mod tests {
             assert!(PJRT_PhaseCompile_RunPhase(ptr::addr_of_mut!(pc_run_real).cast()).is_null());
             pc_run_real.phase_name = c"spmd_partitioning".as_ptr();
             assert!(PJRT_PhaseCompile_RunPhase(ptr::addr_of_mut!(pc_run_real).cast()).is_null());
-            for i in 0..70_u8 {
-                let _ = alloc_extension_bytes(vec![i]);
-            }
             let mut ms_tr = PJRT_Megascale_Query_Args {
                 struct_size: size_of::<PJRT_Megascale_Query_Args>(),
                 extension_start: ptr::null_mut(),
@@ -2263,8 +2219,8 @@ mod tests {
             assert!(
                 PJRT_PhaseCompile_DestroyCompiler(ptr::addr_of_mut!(pc_del_real).cast()).is_null()
             );
-            let (pc_buf_ptr, _) = alloc_phase_compile_buffer(vec![1, 2, 3, 4]);
-            pc_del_real.handle = pc_buf_ptr.cast_mut().cast();
+            let (pc_buf_handle, _, _) = alloc_phase_compile_buffer(vec![1, 2, 3, 4]);
+            pc_del_real.handle = pc_buf_handle;
             assert!(
                 PJRT_PhaseCompile_CBuffersDestroy(ptr::addr_of_mut!(pc_del_real).cast()).is_null()
             );
@@ -2281,6 +2237,44 @@ mod tests {
                     .is_null()
             );
             assert_ne!(ms_ctx_create.out_value, 0);
+            // Exercise context-bound barrier, transport, DCN topology, collect metrics, and reset metrics
+            let mut ms_bar_ctx = PJRT_Megascale_Barrier_Args {
+                struct_size: size_of::<PJRT_Megascale_Barrier_Args>(),
+                extension_start: ptr::null_mut(),
+                barrier_id: ms_ctx_create.out_value,
+                completed_barriers: 0,
+            };
+            assert!(PJRT_Megascale_Barrier(ptr::addr_of_mut!(ms_bar_ctx).cast()).is_null());
+            assert_eq!(ms_bar_ctx.completed_barriers, 1);
+            let mut ms_dcn_ctx = PJRT_Megascale_GetDcnTopology_Args {
+                struct_size: size_of::<PJRT_Megascale_GetDcnTopology_Args>(),
+                extension_start: ptr::null_mut(),
+                context: ms_ctx_create.out_value,
+                serialized_size: 0,
+            };
+            assert!(PJRT_Megascale_GetDcnTopology(ptr::addr_of_mut!(ms_dcn_ctx).cast()).is_null());
+            let mut ms_tr_ctx = PJRT_Megascale_GetTransportType_Args {
+                struct_size: size_of::<PJRT_Megascale_GetTransportType_Args>(),
+                extension_start: ptr::null_mut(),
+                context: ms_ctx_create.out_value,
+                transport_type_out: 0,
+            };
+            assert!(PJRT_Megascale_GetTransportType(ptr::addr_of_mut!(ms_tr_ctx).cast()).is_null());
+            let mut ms_col_ctx = PJRT_Megascale_CollectMetrics_Args {
+                struct_size: size_of::<PJRT_Megascale_CollectMetrics_Args>(),
+                extension_start: ptr::null_mut(),
+                context: ms_ctx_create.out_value,
+                serialized_metrics_ptr: 0,
+                serialized_metrics_size: 0,
+            };
+            assert!(PJRT_Megascale_CollectMetrics(ptr::addr_of_mut!(ms_col_ctx).cast()).is_null());
+            assert!(ms_col_ctx.serialized_metrics_size > 0);
+            let mut ms_rst_ctx = PJRT_Megascale_ResetMetrics_Args {
+                struct_size: size_of::<PJRT_Megascale_ResetMetrics_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: ms_ctx_create.out_value as *mut std::ffi::c_void,
+            };
+            assert!(PJRT_Megascale_ResetMetrics(ptr::addr_of_mut!(ms_rst_ctx).cast()).is_null());
             let mut ms_ctx_del = PJRT_Megascale_Handle_Args {
                 struct_size: size_of::<PJRT_Megascale_Handle_Args>(),
                 extension_start: ptr::null_mut(),
@@ -2738,12 +2732,183 @@ mod tests {
                 out_smem_bytes: 0,
             };
             assert!(PJRT_Triton_Compile(ptr::addr_of_mut!(triton_call).cast()).is_null());
+            PJRT_Triton_FreeCompiledAsm(triton_call.out_asm, triton_call.out_asm_size);
             triton_call.module = triton_src.as_ptr().cast();
             triton_call.module_size = triton_src.len();
             assert!(PJRT_Triton_Compile(ptr::addr_of_mut!(triton_call).cast()).is_null());
             assert!(triton_call.out_asm_size > 0);
             assert_eq!(triton_call.out_smem_bytes, 4096);
+            PJRT_Triton_FreeCompiledAsm(triton_call.out_asm, triton_call.out_asm_size);
+            PJRT_Triton_FreeCompiledAsm(ptr::null(), 0);
             drop(Box::from_raw(PJRT_Triton_Compile(ptr::null_mut())));
+
+            // Exercise executable-bound compilation env arena, client-bound cross-host arena, subslice topology, & PJRT_FFI_Extension
+            let exec_raw = (*comp_args.executable).executable_ptr;
+            let mut env_set = PJRT_Megascale_Query_Args {
+                struct_size: size_of::<PJRT_Megascale_Query_Args>(),
+                extension_start: ptr::null_mut(),
+                handle: exec_raw as usize,
+                out_value: 0,
+            };
+            assert!(
+                PJRT_TpuExecutable_SetTpuCompilationEnv(ptr::addr_of_mut!(env_set).cast())
+                    .is_null()
+            );
+            assert_eq!(env_set.out_value, 1);
+            let mut env_get = PJRT_TpuExecutable_Serialize_Args {
+                struct_size: size_of::<PJRT_TpuExecutable_Serialize_Args>(),
+                extension_start: ptr::null_mut(),
+                executable: exec_raw.cast(),
+                serialized_bytes: 0,
+                serialized_bytes_size: 0,
+                holder: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString(
+                    ptr::addr_of_mut!(env_get).cast()
+                )
+                .is_null()
+            );
+            assert!(env_get.serialized_bytes_size > 0);
+
+            let mut xhost_real = PJRT_CrossHostTransfers_Args {
+                struct_size: size_of::<PJRT_CrossHostTransfers_Args>(),
+                extension_start: ptr::null_mut(),
+                client: client.cast(),
+                buffers: 0xABCD,
+                num_buffers: 1,
+                remote_device: 3,
+                out_event: 0,
+            };
+            assert!(
+                PJRT_CrossHostTransfers_SendBuffers(ptr::addr_of_mut!(xhost_real).cast()).is_null()
+            );
+            drop(Box::from_raw(
+                xhost_real.out_event as *mut crate::pjrt_types::PJRT_Event,
+            ));
+
+            let mut sub_topo_q = PJRT_TpuTopology_ScalarQuery_Args {
+                struct_size: size_of::<PJRT_TpuTopology_ScalarQuery_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                out_value: 0,
+            };
+            assert!(PJRT_TpuTopology_Subslice(ptr::addr_of_mut!(sub_topo_q).cast()).is_null());
+            let mut is_sub_q = PJRT_TpuTopology_IsSubsliceTopology_Args {
+                struct_size: size_of::<PJRT_TpuTopology_IsSubsliceTopology_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                is_subslice: 0,
+            };
+            assert!(
+                PJRT_TpuTopology_IsSubsliceTopology(ptr::addr_of_mut!(is_sub_q).cast()).is_null()
+            );
+            assert_eq!(is_sub_q.is_subslice, 1);
+            let mut lim_ici_q = PJRT_TpuTopology_HasLimitedIciConnectivity_Args {
+                struct_size: size_of::<PJRT_TpuTopology_HasLimitedIciConnectivity_Args>(),
+                extension_start: ptr::null_mut(),
+                topology: (*client).topology_ptr.cast(),
+                has_limited_ici: 0,
+            };
+            assert!(
+                PJRT_TpuTopology_HasLimitedIciConnectivity(ptr::addr_of_mut!(lim_ici_q).cast())
+                    .is_null()
+            );
+
+            let ffi_ext = PJRT_FFI_GetExtension();
+            assert!(!ffi_ext.is_null());
+            assert_eq!((*ffi_ext).base.ext_type, 3);
+            assert_eq!(GLOBAL_XLA_FFI_API.struct_size, 56);
+            let mut ffi_tid = PJRT_FFI_TypeID_Register_Args {
+                struct_size: size_of::<PJRT_FFI_TypeID_Register_Args>(),
+                extension_start: ptr::null_mut(),
+                type_name: c"MyCustomState".as_ptr(),
+                type_name_size: 13,
+                type_id: 0,
+            };
+            assert!(PJRT_FFI_TypeID_Register(ptr::addr_of_mut!(ffi_tid).cast()).is_null());
+            assert!(ffi_tid.type_id >= 1);
+            ffi_tid.type_name = ptr::null();
+            assert!(PJRT_FFI_TypeID_Register(ptr::addr_of_mut!(ffi_tid).cast()).is_null());
+            drop(Box::from_raw(PJRT_FFI_TypeID_Register(ptr::null_mut())));
+
+            unsafe extern "C" fn sample_user_data_del(ptr: *mut std::ffi::c_void) {
+                if !ptr.is_null() {
+                    // SAFETY: `ptr` points to `ud_del_hits`.
+                    unsafe {
+                        *ptr.cast::<usize>() += 1;
+                    }
+                }
+            }
+            let mut ud_del_hits: usize = 0;
+            let mut ffi_ud = PJRT_FFI_UserData_Add_Args {
+                struct_size: size_of::<PJRT_FFI_UserData_Add_Args>(),
+                extension_start: ptr::null_mut(),
+                context: ptr::null_mut(),
+                type_id: ffi_tid.type_id,
+                data: ptr::addr_of_mut!(ud_del_hits).cast(),
+                deleter: Some(sample_user_data_del),
+            };
+            assert!(PJRT_FFI_UserData_Add(ptr::addr_of_mut!(ffi_ud).cast()).is_null());
+            assert_eq!(ud_del_hits, 1);
+            // Second call has `ffi_ud.data == null` with `Some(sample_user_data_del)`
+            assert!(PJRT_FFI_UserData_Add(ptr::addr_of_mut!(ffi_ud).cast()).is_null());
+            ffi_ud.deleter = None;
+            assert!(PJRT_FFI_UserData_Add(ptr::addr_of_mut!(ffi_ud).cast()).is_null());
+            drop(Box::from_raw(PJRT_FFI_UserData_Add(ptr::null_mut())));
+
+            unsafe extern "C" fn noop_xla_ffi_handler(
+                _frame: *mut XLA_FFI_CallFrame,
+            ) -> *mut PJRT_Error {
+                ptr::null_mut()
+            }
+            let fn_raw: XLA_FFI_Handler = noop_xla_ffi_handler;
+            let mut ffi_reg = PJRT_FFI_Register_Handler_Args {
+                struct_size: size_of::<PJRT_FFI_Register_Handler_Args>(),
+                extension_start: ptr::null_mut(),
+                target_name: c"tpu.ffi_ext_test".as_ptr(),
+                target_name_size: 16,
+                handler: fn_raw as *const std::ffi::c_void,
+                platform_name: c"TPU".as_ptr(),
+                platform_name_size: 3,
+                traits: 0,
+                pad: 0,
+            };
+            assert!(PJRT_FFI_Register_Handler(ptr::addr_of_mut!(ffi_reg).cast()).is_null());
+            ffi_reg.target_name = ptr::null();
+            assert!(PJRT_FFI_Register_Handler(ptr::addr_of_mut!(ffi_reg).cast()).is_null());
+            drop(Box::from_raw(PJRT_FFI_Register_Handler(ptr::null_mut())));
+            assert_ne!(
+                format!("{ffi_tid:?}{ffi_ud:?}{ffi_reg:?}{:?}", *ffi_ext),
+                ""
+            );
+
+            let neg_prof = &NEGOTIATED_PLUGIN_PROFILER_API;
+            assert!((neg_prof.create)(ptr::null_mut()).is_null());
+            assert!((neg_prof.start)(ptr::null_mut()).is_null());
+            assert!((neg_prof.stop)(ptr::null_mut()).is_null());
+            assert!((neg_prof.collect_data)(ptr::null_mut()).is_null());
+            assert!((neg_prof.destroy)(ptr::null_mut()).is_null());
+
+            let mut zero_prof_words = [32_usize, 0, 0, 0];
+            assert!((neg_prof.start)(zero_prof_words.as_mut_ptr().cast()).is_null());
+            assert!((neg_prof.stop)(zero_prof_words.as_mut_ptr().cast()).is_null());
+            assert!((neg_prof.collect_data)(zero_prof_words.as_mut_ptr().cast()).is_null());
+            assert!((neg_prof.destroy)(zero_prof_words.as_mut_ptr().cast()).is_null());
+
+            let mut create_words = [32_usize, 0, 0, 0];
+            assert!((neg_prof.create)(create_words.as_mut_ptr().cast()).is_null());
+            let [_, _, _, prof_inst] = create_words;
+            assert!(prof_inst > 0x1000);
+            let mut op_words = [16_usize, prof_inst];
+            assert!((neg_prof.start)(op_words.as_mut_ptr().cast()).is_null());
+            assert!((neg_prof.stop)(op_words.as_mut_ptr().cast()).is_null());
+            let mut collect_words = [32_usize, prof_inst, 0, 0];
+            assert!((neg_prof.collect_data)(collect_words.as_mut_ptr().cast()).is_null());
+            let [_, _, buf_addr, buf_len] = collect_words;
+            assert!(buf_addr > 0);
+            assert!(buf_len > 0);
+            assert!((neg_prof.destroy)(op_words.as_mut_ptr().cast()).is_null());
 
             let mut del_b_args = PJRT_Buffer_Destroy_Args {
                 struct_size: size_of::<PJRT_Buffer_Destroy_Args>(),

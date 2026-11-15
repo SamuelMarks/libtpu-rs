@@ -7,7 +7,53 @@ use crate::error::{LibTpuError, LibTpuResult};
 use crate::types::hardware::TpuGeneration;
 use derive_more::{Add, Display, From, Into, Sub};
 
+/// Macro implementing checked addition and subtraction returning [`LibTpuResult`] for ID newtypes.
+macro_rules! impl_checked_id_arith {
+    ($($ty:ident),+ $(,)?) => {
+        $(
+            impl $ty {
+                /// Checked addition returning [`LibTpuError::NumericOverflow`] on overflow.
+                ///
+                /// # Arguments
+                ///
+                /// * `rhs` - Right-hand operand to add.
+                ///
+                /// # Errors
+                ///
+                /// Returns [`LibTpuError::NumericOverflow`] if `self.0 + rhs.0` overflows.
+                pub const fn checked_add(self, rhs: Self) -> LibTpuResult<Self> {
+                    match self.0.checked_add(rhs.0) {
+                        Some(v) => Ok(Self(v)),
+                        None => Err(LibTpuError::NumericOverflow {
+                            context: stringify!($ty),
+                        }),
+                    }
+                }
+
+                /// Checked subtraction returning [`LibTpuError::NumericOverflow`] on underflow.
+                ///
+                /// # Arguments
+                ///
+                /// * `rhs` - Right-hand operand to subtract.
+                ///
+                /// # Errors
+                ///
+                /// Returns [`LibTpuError::NumericOverflow`] if `self.0 - rhs.0` underflows.
+                pub const fn checked_sub(self, rhs: Self) -> LibTpuResult<Self> {
+                    match self.0.checked_sub(rhs.0) {
+                        Some(v) => Ok(Self(v)),
+                        None => Err(LibTpuError::NumericOverflow {
+                            context: stringify!($ty),
+                        }),
+                    }
+                }
+            }
+        )+
+    };
+}
+
 /// Unique identifier for a logical TPU device (`PJRT_Device_Id`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -15,6 +61,7 @@ use derive_more::{Add, Display, From, Into, Sub};
 pub struct DeviceId(pub u32);
 
 /// Unique identifier for a physical TPU chip (`ChipId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -22,6 +69,7 @@ pub struct DeviceId(pub u32);
 pub struct ChipId(pub u32);
 
 /// Unique identifier for a `TensorCore` or `SparseCore` on a chip (`CoreId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -29,6 +77,7 @@ pub struct ChipId(pub u32);
 pub struct CoreId(pub u32);
 
 /// Zero-based index of a core on a single physical TPU chip (`CoreIndex`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -44,6 +93,7 @@ pub struct CoreIndex(pub u8);
 pub struct SparseCoreId(pub u32);
 
 /// Unique identifier for a host machine in a TPU pod slice (`HostId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -51,13 +101,23 @@ pub struct SparseCoreId(pub u32);
 pub struct HostId(pub u32);
 
 /// Process index of a PJRT client in a multi-host TPU pod (`ProcessIndex`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
 #[display("{_0}")]
 pub struct ProcessIndex(pub i32);
 
+/// Distributed `CoordinationService` / `MegaScale` worker task identifier (`TaskId`).
+#[repr(transparent)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
+)]
+#[display("{_0}")]
+pub struct TaskId(pub i32);
+
 /// Identifier for a TPU pod slice in a multi-slice Megascale workload (`SliceId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -65,6 +125,7 @@ pub struct ProcessIndex(pub i32);
 pub struct SliceId(pub u32);
 
 /// Replica identifier in a data-parallel computation (`ReplicaId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -72,6 +133,7 @@ pub struct SliceId(pub u32);
 pub struct ReplicaId(pub u32);
 
 /// Partition identifier in an SPMD model-parallel computation (`PartitionId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -79,6 +141,7 @@ pub struct ReplicaId(pub u32);
 pub struct PartitionId(pub u32);
 
 /// Execution launch identifier used for collective barriers and poisoning (`LaunchId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -86,6 +149,7 @@ pub struct PartitionId(pub u32);
 pub struct LaunchId(pub i32);
 
 /// Local hardware ordinal on the current host (`LocalHardwareId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -93,6 +157,7 @@ pub struct LaunchId(pub i32);
 pub struct LocalHardwareId(pub i32);
 
 /// Unique identifier for a PJRT memory space (`MemorySpaceId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -172,6 +237,7 @@ pub struct TraceMeContextId(pub i64);
 pub struct AbiVersionNumber(pub u64);
 
 /// Unique identifier for a device buffer allocation (`BufferId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -179,6 +245,7 @@ pub struct AbiVersionNumber(pub u64);
 pub struct BufferId(pub u64);
 
 /// Unique identifier for a compiled or loaded executable (`ExecutableId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -186,6 +253,7 @@ pub struct BufferId(pub u64);
 pub struct ExecutableId(pub u64);
 
 /// Unique identifier for an asynchronous synchronization event (`EventId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -193,6 +261,7 @@ pub struct ExecutableId(pub u64);
 pub struct EventId(pub u64);
 
 /// Unique identifier for a PJRT execution context (`ContextId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -200,6 +269,7 @@ pub struct EventId(pub u64);
 pub struct ContextId(pub u64);
 
 /// Unique identifier for a host-to-device copy stream (`StreamId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -207,6 +277,7 @@ pub struct ContextId(pub u64);
 pub struct StreamId(pub u64);
 
 /// Unique identifier for an asynchronous host-to-device transfer manager (`TransferManagerId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -214,6 +285,7 @@ pub struct StreamId(pub u64);
 pub struct TransferManagerId(pub u64);
 
 /// Unique identifier for a registered host or debug callback (`CallbackId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -221,6 +293,7 @@ pub struct TransferManagerId(pub u64);
 pub struct CallbackId(pub u64);
 
 /// Unique identifier for a collective communicator (`CommunicatorId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -228,6 +301,7 @@ pub struct CallbackId(pub u64);
 pub struct CommunicatorId(pub u64);
 
 /// Unique identifier for a phased compiler instance (`CompilerId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -235,6 +309,7 @@ pub struct CommunicatorId(pub u64);
 pub struct CompilerId(pub u64);
 
 /// Unique identifier for a registered XLA transform pass (`TransformId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -242,6 +317,7 @@ pub struct CompilerId(pub u64);
 pub struct TransformId(pub u64);
 
 /// Request identifier used by `TfTpuOrdinalSelector` (`RequestId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -249,6 +325,7 @@ pub struct TransformId(pub u64);
 pub struct RequestId(pub i64);
 
 /// Seed value used by `TfTpuOrdinalSelector` (`OrdinalSeed`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -256,6 +333,7 @@ pub struct RequestId(pub i64);
 pub struct OrdinalSeed(pub u64);
 
 /// Unique identifier for a cross-host or collective communication channel (`ChannelId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -263,6 +341,7 @@ pub struct OrdinalSeed(pub u64);
 pub struct ChannelId(pub i64);
 
 /// Unique identifier for an HBM DMA or Megascale collective window (`WindowId`).
+#[repr(transparent)]
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display, From, Into, Add, Sub,
 )]
@@ -362,6 +441,27 @@ pub type GmrAccumId = MatmulAccIndex;
 
 /// Type alias for [`MatmulAccIndex`] representing a physical matrix register ID (`PhysicalMregId`).
 pub type PhysicalMregId = MatmulAccIndex;
+
+/// Type alias for [`MatmulAccIndex`] representing an MXU accumulator register index (`MregIndex`).
+pub type MregIndex = MatmulAccIndex;
+
+/// Type alias for [`PregIndex`] representing a scalar predicate register index (`PredRegIndex`).
+pub type PredRegIndex = PregIndex;
+
+impl_checked_id_arith!(
+    CoreId,
+    ChipId,
+    HostId,
+    SliceId,
+    TaskId,
+    CommunicatorId,
+    ChannelId,
+    SyncFlagId,
+    SregIndex,
+    VregIndex,
+    PregIndex,
+    MatmulAccIndex,
+);
 
 impl SregIndex {
     /// Constructs a checked [`SregIndex`] (`0..32`) for the given register index.
@@ -790,5 +890,92 @@ mod tests {
 
         assert_eq!(MatmulAccIndex::new_checked(3), Ok(MatmulAccIndex(3)));
         assert!(MatmulAccIndex::new_checked(4).is_err());
+
+        let tid = TaskId::from(3_i32) + TaskId(1) - TaskId(1);
+        assert_eq!(i32::from(tid), 3);
+        assert_eq!(tid.to_string(), "3");
+        let mreg: MregIndex = MatmulAccIndex(2);
+        let pred_reg: PredRegIndex = PregIndex(4);
+        assert_eq!((mreg.0, pred_reg.0), (2, 4));
+
+        assert_eq!(CoreId(1).checked_add(CoreId(2)), Ok(CoreId(3)));
+        assert!(CoreId(u32::MAX).checked_add(CoreId(1)).is_err());
+        assert_eq!(CoreId(3).checked_sub(CoreId(2)), Ok(CoreId(1)));
+        assert!(CoreId(0).checked_sub(CoreId(1)).is_err());
+
+        assert_eq!(ChipId(1).checked_add(ChipId(2)), Ok(ChipId(3)));
+        assert!(ChipId(u32::MAX).checked_add(ChipId(1)).is_err());
+        assert_eq!(ChipId(3).checked_sub(ChipId(2)), Ok(ChipId(1)));
+        assert!(ChipId(0).checked_sub(ChipId(1)).is_err());
+
+        assert_eq!(HostId(1).checked_add(HostId(2)), Ok(HostId(3)));
+        assert!(HostId(u32::MAX).checked_add(HostId(1)).is_err());
+        assert_eq!(HostId(3).checked_sub(HostId(2)), Ok(HostId(1)));
+        assert!(HostId(0).checked_sub(HostId(1)).is_err());
+
+        assert_eq!(SliceId(1).checked_add(SliceId(2)), Ok(SliceId(3)));
+        assert!(SliceId(u32::MAX).checked_add(SliceId(1)).is_err());
+        assert_eq!(SliceId(3).checked_sub(SliceId(2)), Ok(SliceId(1)));
+        assert!(SliceId(0).checked_sub(SliceId(1)).is_err());
+
+        assert_eq!(TaskId(1).checked_add(TaskId(2)), Ok(TaskId(3)));
+        assert!(TaskId(i32::MAX).checked_add(TaskId(1)).is_err());
+        assert_eq!(TaskId(3).checked_sub(TaskId(2)), Ok(TaskId(1)));
+        assert!(TaskId(i32::MIN).checked_sub(TaskId(1)).is_err());
+
+        assert_eq!(
+            CommunicatorId(1).checked_add(CommunicatorId(2)),
+            Ok(CommunicatorId(3))
+        );
+        assert!(
+            CommunicatorId(u64::MAX)
+                .checked_add(CommunicatorId(1))
+                .is_err()
+        );
+        assert_eq!(
+            CommunicatorId(3).checked_sub(CommunicatorId(2)),
+            Ok(CommunicatorId(1))
+        );
+        assert!(CommunicatorId(0).checked_sub(CommunicatorId(1)).is_err());
+
+        assert_eq!(ChannelId(1).checked_add(ChannelId(2)), Ok(ChannelId(3)));
+        assert!(ChannelId(i64::MAX).checked_add(ChannelId(1)).is_err());
+        assert_eq!(ChannelId(3).checked_sub(ChannelId(2)), Ok(ChannelId(1)));
+        assert!(ChannelId(i64::MIN).checked_sub(ChannelId(1)).is_err());
+
+        assert_eq!(SyncFlagId(1).checked_add(SyncFlagId(2)), Ok(SyncFlagId(3)));
+        assert!(SyncFlagId(u32::MAX).checked_add(SyncFlagId(1)).is_err());
+        assert_eq!(SyncFlagId(3).checked_sub(SyncFlagId(2)), Ok(SyncFlagId(1)));
+        assert!(SyncFlagId(0).checked_sub(SyncFlagId(1)).is_err());
+
+        assert_eq!(SregIndex(1).checked_add(SregIndex(2)), Ok(SregIndex(3)));
+        assert!(SregIndex(u8::MAX).checked_add(SregIndex(1)).is_err());
+        assert_eq!(SregIndex(3).checked_sub(SregIndex(2)), Ok(SregIndex(1)));
+        assert!(SregIndex(0).checked_sub(SregIndex(1)).is_err());
+
+        assert_eq!(VregIndex(1).checked_add(VregIndex(2)), Ok(VregIndex(3)));
+        assert!(VregIndex(u8::MAX).checked_add(VregIndex(1)).is_err());
+        assert_eq!(VregIndex(3).checked_sub(VregIndex(2)), Ok(VregIndex(1)));
+        assert!(VregIndex(0).checked_sub(VregIndex(1)).is_err());
+
+        assert_eq!(PregIndex(1).checked_add(PregIndex(2)), Ok(PregIndex(3)));
+        assert!(PregIndex(u8::MAX).checked_add(PregIndex(1)).is_err());
+        assert_eq!(PregIndex(3).checked_sub(PregIndex(2)), Ok(PregIndex(1)));
+        assert!(PregIndex(0).checked_sub(PregIndex(1)).is_err());
+
+        assert_eq!(
+            MatmulAccIndex(1).checked_add(MatmulAccIndex(2)),
+            Ok(MatmulAccIndex(3))
+        );
+        assert!(
+            MatmulAccIndex(u8::MAX)
+                .checked_add(MatmulAccIndex(1))
+                .is_err()
+        );
+        assert_eq!(
+            MatmulAccIndex(3).checked_sub(MatmulAccIndex(2)),
+            Ok(MatmulAccIndex(1))
+        );
+        assert!(MatmulAccIndex(0).checked_sub(MatmulAccIndex(1)).is_err());
     }
 }

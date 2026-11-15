@@ -1,0 +1,18 @@
+syntax = "proto3";
+package xprof;
+enum DeviceType {
+  UNKNOWN_DEVICE = 0;
+  NVIDIA_GPU = 1;
+  SEASTAR = 2;
+  JELLYFISH = 3;
+  CPU_ONLY = 4;
+  DRAGONFISH = 5;
+  c_0db79692 = 6;
+  PUFFERFISH = 7;
+  PUFFYLITE = 8;
+  DARWINN = 9;
+  VIPERFISH = 10;
+  VIPERLITE = 11;
+  c_6acc60406 = 12;
+  GHOSTLITE = 13;
+}

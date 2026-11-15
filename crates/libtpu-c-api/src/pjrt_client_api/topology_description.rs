@@ -232,18 +232,29 @@ pub unsafe extern "C" fn PJRT_TopologyDescription_GetDeviceDescriptions(
 unsafe fn handle_topology_serialize(
     args: &mut crate::pjrt_types::PJRT_TopologyDescription_Serialize_Args,
 ) -> Result<(), LibTpuError> {
+    use libtpu_core::proto::ProtoSchemaMessage as _;
     // SAFETY: `topology` is null or a valid `PJRT_TopologyDescription*`.
     let topo_bytes = unsafe { args.topology.as_ref() }.map_or_else(
         || {
             libtpu_core::proto::TpuTopologyArgsProto {
-                platform_version: String::from("0.0.52"),
-                mesh_bounds: vec![2, 2, 1],
-                chips_per_host: 4,
-                num_hosts: 1,
-                version: 5,
-                fingerprint: String::from("00001234"),
+                version: Some(5),
+                variant: Some(String::from("0.0.52")),
+                chip_config_name: Some(String::from("00001234")),
+                chips_per_host_bounds: Some(libtpu_core::proto::TpuDimensionsProto {
+                    x: 2,
+                    y: 2,
+                    z: 1,
+                    w: 1,
+                }),
+                host_bounds: Some(libtpu_core::proto::TpuDimensionsProto {
+                    x: 1,
+                    y: 1,
+                    z: 1,
+                    w: 1,
+                }),
+                ..libtpu_core::proto::TpuTopologyArgsProto::default()
             }
-            .encode()
+            .encode_proto()
         },
         |t| t.inner.serialize(),
     );

@@ -1,0 +1,71 @@
+syntax = "proto2";
+package security_loas_l2;
+import "google/protobuf/any.proto";
+import "security/authorization/server_authorization/arbiter/api/server_authz_policy.proto";
+import "security/loas/l2/proto/common.proto";
+import "security/loas/l2/proto/confidential_security_level.proto";
+import "security/loas/l2/proto/credstype.proto";
+import "security/loas/l2/proto/identity_attributes.proto";
+import "security/loas/l2/proto/identity_types.proto";
+import "security/loas/l2/proto/instance.proto";
+import "security/loas/l2/proto/securitylevel.proto";
+import "security/loas/l2/proto/server_type.proto";
+import "security/loas/l2/proto/usertype.proto";
+import "security/f47fa1c1/proto/core/f47fa1c1_core.proto";
+import "security/util/proto/permission.proto";
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+message IdentityBoundToken {
+  optional string token = 1;
+  extend .security_loas_l2.AuthenticatedOptions {
+    optional .security_loas_l2.IdentityBoundToken identity_bound_token = 1008;
+  }
+}
+message ChannelOptions {
+  repeated .google.protobuf.Any options = 1;
+  extend .security_loas_l2.AuthenticatedOptions {
+    optional .security_loas_l2.ChannelOptions channel_options = 1009;
+  }
+}
+message DirectPathToken {
+  optional string token = 1;
+  extend .security_loas_l2.AuthenticatedOptions {
+    optional .security_loas_l2.DirectPathToken direct_path_token = 1013;
+  }
+}
+message InternalLoas2Context {
+  optional .security_loas_l2.SecurityLevel security_level = 1;
+  optional string next_protocol = 2;
+  optional string mdb_user = 3;
+  optional int64 gaia_id = 4;
+  repeated uint64 revocation_id = 5;
+  optional string local_username = 6;
+  optional string authenticated_host = 7;
+  optional string security_realm = 8;
+  optional .AcctRestrictions primary_role_restriction = 9;
+  optional string unauthenticated_borg_cell = 10;
+  optional string unauthenticated_virtual_borg_cell = 25;
+  optional string unauthenticated_borg_jobname = 11;
+  optional int32 unauthenticated_borg_taskid = 12;
+  optional string unauthenticated_host = 13;
+  repeated string security_tags = 14;
+  optional .security_loas_l2.UserType user_type = 15;
+  optional .security_loas_l2.IdentityAttributes identity_attributes = 34;
+  optional .security_loas_l2.CredentialsType creds_type = 16;
+  optional string application_protocol = 17;
+  optional .security_loas_l2.InstanceInfo instance_info = 18;
+  optional .security_loas_l2.IdentityBoundToken identity_bound_token = 19;
+  optional .security_loas_l2.ChannelOptions channel_options = 20;
+  optional .security_loas_l2.MachineCertDigest machine_cert_digest = 21;
+  optional .security_loas_l2.DirectPathToken direct_path_token = 22;
+  optional .security_loas_l2.HandshakeCipher handshake_cipher = 23;
+  optional .security_loas_l2.ConfidentialSecurityLevel confidential_security_level = 24;
+  optional .f47fa1c1.f47fa1c1 instance_identity_f47fa1c1 = 26;
+  optional bool allows_directpath = 27;
+  optional string universe = 28;
+  optional string transport_protocol = 29;
+  optional bool is_hardened_host = 30;
+  optional bool is_hardened_task = 31;
+  repeated .security_loas_l2.ServerType server_types = 32 [packed = true];
+  optional uint64 unauthenticated_andromeda_endpoint_id = 33;
+  optional .server_authz.ServerAuthzPolicy server_authz_policy = 35;
+}

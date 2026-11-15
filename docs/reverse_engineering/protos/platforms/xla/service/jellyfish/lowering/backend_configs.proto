@@ -1,0 +1,814 @@
+syntax = "proto2";
+package xla.jellyfish;
+import "platforms/xla/service/jellyfish/tpu_compilation_environment.proto";
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+enum FlagType {
+  UNKNOWN = 0;
+  XLA_ENABLE_LRU_FREE_REG_ASSIGNMENT = 1;
+  XLA_SET_SPLIT_INPUT_OUTPUT_DMAS = 2;
+  XLA_TPU_STORE_TO_LOAD_FORWARDING_WINDOW = 4;
+  XLA_TPU_MAX_VMREG_LIVE_RANGE = 5;
+  XLA_TPU_MAX_VLD_LIVE_RANGE = 6;
+  XLA_TPU_EXTRA_HOISTING_RANGE_FOR_REGISTER_PRODUCERS = 7;
+  XLA_TPU_THRESHOLD_FOR_LONG_LIVE_RANGE_IN_FLOWDOWN = 8;
+  XLA_TPU_ROOM_FOR_POTENTIAL_REGISTER_DEPENDENCY = 9;
+  XLA_TPU_MAX_KEPT_SUBLANES_FOR_REDUCE = 10;
+  XLA_TPU_SUBLANE_SHIFT_SCRATCHPAD_SIZE = 11;
+  XLA_TPU_SMALL_OPERAND_COUNT_FOR_LOOP_FUSION = 12;
+  XLA_JF_FUSION_MAX_VMEM_MIB = 13;
+  XLA_TPU_HBM_BW = 14;
+  XLA_TPU_HBM_INITIAL_CYCLE_PENALTY = 15;
+  XLA_TPU_SPLIT_CLUSTER_GAP = 16;
+  XLA_TPU_SPLIT_CLUSTER_SIZE = 17;
+  XLA_TPU_MAX_CLUSTERED_LOADS = 18;
+  XLA_JF_SPAN_SIZE_IN_KIB = 19;
+  XLA_TPU_FORCE_LP_LLO_SCHEDULER = 20;
+  XLA_TPU_EVENLY_DISTRIBUTE_CRITICAL_NODES = 21;
+  XLA_TPU_ENABLE_LLO_SMALL_LOOP_FLATTENING = 23;
+  XLA_TPU_RESCHEDULE_DMA_DONES = 24;
+  XLA_TPU_MAX_INSTS_TO_PREDICATE = 25;
+  XLA_TPU_DISABLE_CRITICAL_PATH_SCHEDULER = 26;
+  XLA_TPU_MATRES_ALAP_SLACK = 30;
+}
+enum ComputeType {
+  COMPUTE_TYPE_DEFAULT = 0;
+  COMPUTE_TYPE_TILE = 1;
+  COMPUTE_TYPE_SCALAR = 2;
+}
+enum IterationSkipperMode {
+  ITERATION_SKIPPER_MODE_UNSPECIFIED = 0;
+  ITERATION_SKIPPER_MODE_ITERATION_INDICES = 1;
+  ITERATION_SKIPPER_MODE_GROUP_STARTS = 2;
+  ITERATION_SKIPPER_MODE_LOWER_TRIANGULAR = 3;
+  ITERATION_SKIPPER_MODE_EARLY_EXIT = 4;
+  ITERATION_SKIPPER_MODE_SLICE = 5;
+  ITERATION_SKIPPER_MODE_GENERAL_LOWER_TRIANGULAR = 6;
+}
+enum Tiling {
+  TILING_UNSPECIFIED = 0;
+  TILING_COMPACT = 1;
+  TILING_FULL = 2;
+  TILING_LINEAR = 3;
+  TILING_SPARSE_CORE = 4;
+  TILING_PADLESS_SECOND_MINOR = 5;
+  TILING_LARGE_SECOND_MINOR = 6;
+  TILING_MATCH_DIMENSION = 7;
+}
+enum Offload {
+  OFFLOAD_UNSPECIFIED = 0;
+  OFFLOAD_EMBEDDING = 1;
+  OFFLOAD_GATHER = 2;
+  OFFLOAD_SCATTER = 3;
+  OFFLOAD_COLLECTIVE = 4;
+  OFFLOAD_DATA_FORMATTING = 5;
+  OFFLOAD_KERNEL = 6;
+  OFFLOAD_SORT = 7;
+  OFFLOAD_COMPUTE = 8;
+  OFFLOAD_MANUAL = 9;
+  OFFLOAD_RESHAPE = 10;
+  OFFLOAD_SLICE = 11;
+  OFFLOAD_SC_TC_PIPELINE = 12;
+}
+enum CoreType {
+  CORE_TYPE_UNSPECIFIED = 0;
+  CORE_TYPE_TC = 1;
+  CORE_TYPE_SC = 2;
+  CORE_TYPE_HOST = 3;
+}
+enum SubcoreType {
+  SUBCORE_TYPE_UNSPECIFIED = 0;
+  SUBCORE_TYPE_SCS = 1;
+  SUBCORE_TYPE_TEC = 2;
+}
+enum LogSeverity {
+  LOG_INFO = 0;
+  LOG_FATAL = 1;
+}
+enum LogOpcodeProto {
+  LOG_OPCODE_MESSAGE = 0;
+  LOG_OPCODE_SDC_EVENT = 1;
+  LOG_OPCODE_SDC_XSC_TRACE = 2;
+  LOG_OPCODE_SFLAG_WAIT_STATS = 3;
+  LOG_OPCODE_PGQ_METRIC = 4;
+  LOG_OPCODE_USER_CALLBACK = 5;
+}
+enum DeviceType {
+  DEVICE_TYPE_INVALID = 0;
+  DEVICE_TYPE_TENSORCORE = 1;
+  DEVICE_TYPE_SPARSECORE = 2;
+  DEVICE_TYPE_HOST = 3;
+}
+enum BarrierType {
+  BARRIER_INVALID = 0;
+  GLOBAL = 1;
+  REPLICA = 2;
+  CUSTOM = 3;
+  MEGACORE = 4;
+}
+enum IciStrategyRingType {
+  ICI_RING_TYPE_INVALID_RING_TYPE = 0;
+  ICI_RING_TYPE_BIDIR = 1;
+  ICI_RING_TYPE_UNIDIR_CW = 2;
+  ICI_RING_TYPE_UNIDIR_CCW = 3;
+  ICI_RING_TYPE_UNIDIR_ALL_TO_ALL_CW = 4;
+  ICI_RING_TYPE_UNIDIR_ALL_TO_ALL_CCW = 5;
+}
+enum IciStrategyRingNeighbor {
+  ICI_RING_NEIGHBOR_INVALID = 0;
+  ICI_RING_NEIGHBOR_EXPLICIT = 1;
+  ICI_RING_NEIGHBOR_IMPLICIT = 2;
+}
+enum IciStrategyRingDim {
+  ICI_RING_DIM_INVALID = 0;
+  ICI_RING_DIM_X_TORUS = 1;
+  ICI_RING_DIM_X_MESH = 2;
+  ICI_RING_DIM_Y_TORUS = 3;
+  ICI_RING_DIM_Y_MESH = 4;
+  ICI_RING_DIM_Z_TORUS = 5;
+  ICI_RING_DIM_Z_MESH = 6;
+  ICI_RING_DIM_D2D = 7;
+}
+enum HierarchicalKind {
+  HIERARCHICAL_KIND_INVALID = 0;
+  HIERARCHICAL_KIND_FUSE_TO_FIRST_PHASE = 1;
+  HIERARCHICAL_KIND_FUSE_TO_LAST_PHASE = 2;
+  HIERARCHICAL_KIND_FUSE_TO_FIRST_AND_LAST_PHASE = 3;
+  HIERARCHICAL_KIND_PREPEND_AS_SEPARATE_PHASE = 4;
+}
+enum FullyConnectedLevel {
+  FULLY_CONNECTED_LEVEL_INVALID = 0;
+  FULLY_CONNECTED_LEVEL_DIE_TO_DIE = 1;
+  FULLY_CONNECTED_LEVEL_INTRA_BOARD = 2;
+  FULLY_CONNECTED_LEVEL_INTER_BOARD = 3;
+  FULLY_CONNECTED_LEVEL_INTER_GROUP = 4;
+}
+enum FullyConnectedHierarchicalMode {
+  FULLY_CONNECTED_HIERARCHICAL_MODE_INVALID = 0;
+  FULLY_CONNECTED_HIERARCHICAL_MODE_DIE_TO_DIE_AND_REST = 1;
+  FULLY_CONNECTED_HIERARCHICAL_MODE_FULL = 2;
+  FULLY_CONNECTED_HIERARCHICAL_MODE_FULL_UNFUSED = 3;
+}
+enum ShardingStrategy {
+  SHARDING_STRATEGY_INVALID = 0;
+  SHARDING_STRATEGY_MOD = 1;
+  SHARDING_STRATEGY_DIV = 2;
+}
+enum AggregateStatus {
+  AGGREGATE_STATUS_INVALID = 0;
+  AGGREGATE_STATUS_DEFER = 1;
+  AGGREGATE_STATUS_ISSUE = 2;
+}
+enum QuantizedAllReduceType {
+  INVALID_QAR = 0;
+  SYMMETRIC_PER_SHARD_QAR = 1;
+}
+enum QuantizedAllReduceStage {
+  INVALID_STAGE = 0;
+  BROADCAST_STAGE = 1;
+  REDUCE_STAGE = 2;
+  EVERY_STAGE = 3;
+}
+message FlagConfig {
+  message Value {
+    oneof value {
+      bool boolean_value = 2;
+      int64 integer_value = 3;
+      double double_value = 4;
+    }
+  }
+  optional .xla.jellyfish.FlagType flag_type = 1;
+  optional .xla.jellyfish.FlagConfig.Value value = 5;
+}
+message AllocateBufferConfig {
+  optional int64 vdelay = 1;
+  optional string replaces_opcode = 2;
+  optional bool replaces_ici_collective = 3;
+  optional bool replaces_continuation_fusion = 4;
+  optional bool replaces_dcn_collective = 5;
+}
+message FusionFormationSource {
+  optional string fusion_creating_compiler_pass = 1;
+  optional int64 fusion_id = 2;
+}
+message DynamicUpdateSliceConfig {
+  optional bool recognize_dus_as_copy = 1;
+}
+message FusionFormationMetadata {
+  optional bool is_output = 1;
+}
+message FloatTypeCorrectionInfo {
+  optional .xla.PrimitiveType original_type = 1;
+  optional .xla.ShapeProto original_shape = 2;
+}
+message OutputChunkBoundConfig {
+  repeated int64 output_chunk_bound = 1;
+}
+message InternalOutputChecksum {
+  repeated int64 shape_index = 1;
+  optional string tag = 2;
+  optional bool processed = 3;
+}
+message SdcCheckerChecksumConfig {
+  repeated .xla.jellyfish.InternalOutputChecksum internal_output_checksums = 1;
+  repeated int64 skip_input_checksums = 2;
+}
+message MaskAggregatorConfig {
+  reserved 5;
+  repeated int64 mask_dim_to_iteration_index = 1;
+  optional bool write_outputs_of_masked_iterations = 2;
+  optional float mask_value = 3;
+  optional .xla.jellyfish.IterationSkipperMode iteration_skipper_mode = 4;
+  optional int64 row_slope = 6;
+  optional int64 col_slope = 7;
+  optional int64 offset = 8;
+}
+message RematerializationConfig {
+  optional int64 remat_group_id = 1;
+  optional bool inside_fusion = 2;
+}
+message BundleAnalysisData {
+  optional int64 estimated_cycles = 1;
+  optional int64 flops = 2;
+  optional int64 scalar_inputs = 3;
+}
+message ScCompilationEnvironment {
+  optional bool enable_hlo_tracing = 1;
+  optional bool enable_hardware_tracing = 2;
+  optional bool enable_sc_log_recorder = 3;
+  optional bool enable_tile_log_recorder = 4;
+  optional string dump_logs_to_dir = 5;
+  optional int64 hbm_logging_buffer_size_bytes = 6;
+  optional int64 xla_tpu_max_fetch_and_add_value = 7;
+  optional bool enable_mlo_verifier = 8;
+  optional bool enable_mosaic_verifier = 9;
+  optional int32 debug_sflag_wait_timeout_ms = 10;
+  optional bool force_bf16_collective_reductions_to_f32 = 11;
+  optional bool force_aligned_buffers = 12;
+  optional bool accurate_exp = 13;
+  optional bool accurate_exp2 = 14;
+  optional bool accurate_expm1 = 15;
+  optional bool accurate_logistic = 16;
+  optional bool accurate_sigshift = 17;
+  optional bool optimize_bf16_math = 18;
+  optional .xla.jellyfish.SparseCoreAssertLevel assert_level = 19;
+  optional bool enable_dense_all_to_all_offload = 20;
+  optional bool mosaic_sc_use_tiled_dmas = 21;
+  optional bool enable_scs_overlays = 22;
+  optional string enable_tile_overlays = 23;
+  optional int32 hbm_spill_stack = 24;
+  optional bool xla_tpu_allow_large_2nd_minor_layout_for_x8 = 25;
+  optional .xla.jellyfish.TristateProto.Value xla_tpu_enable_large_2nd_minor_layout_for_x8 = 26;
+  optional .xla.jellyfish.AutoProto xla_tpu_control_large_2nd_minor_layout_for_x16 = 27;
+  optional bool unsafe_allow_multicore_remote_dma = 28;
+  optional int32 num_dma_credits = 29;
+  optional .xla.jellyfish.SparseCoreBackendOptLevel.Value backend_opt_level = 30;
+  optional uint32 tile_tasks_prefetch_ahead = 31;
+  optional bool verify_machineinstrs = 32;
+  optional bool disable_mosaic_pipeline = 33;
+  optional .xla.jellyfish.AutoProto enable_accurate_exp = 34;
+  optional .xla.jellyfish.AutoProto expm1_mode = 35;
+  optional bool enable_barrier_tracing = 36;
+  optional .xla.jellyfish.AutoProto enable_progress_tracker = 37;
+}
+message SparseCoreConfig {
+  reserved 6;
+  reserved 7;
+  reserved 25;
+  message CoreSpec {
+    optional .xla.jellyfish.CoreType core_type = 1;
+    optional .xla.jellyfish.SubcoreType subcore_type = 2;
+    repeated int64 core_ids = 3;
+    repeated int64 subcore_ids = 4;
+  }
+  optional .xla.jellyfish.Tiling tiling = 1;
+  optional .xla.jellyfish.Offload offload = 2;
+  optional .xla.jellyfish.ScCompilationEnvironment comp_env = 3;
+  optional bool enable_megacore = 4;
+  optional float hbm_bandwidth_adjustment_factor = 5;
+  optional bool enable_program_barrier = 8;
+  optional bool load_dat = 9 [default = true];
+  optional .xla.jellyfish.CoreType core_type = 10;
+  optional .xla.jellyfish.SubcoreType subcore_type = 11;
+  optional bool core_id_mutability = 12 [default = true];
+  repeated int64 core_ids = 13;
+  repeated int64 subcore_ids = 14;
+  repeated .xla.jellyfish.SparseCoreConfig.CoreSpec producers = 15;
+  repeated .xla.jellyfish.SparseCoreConfig.CoreSpec consumers = 16;
+  optional int32 offload_id = 17;
+  optional int64 binary_offset = 18;
+  optional int64 program_offset = 19;
+  optional int64 program_size = 20;
+  optional int64 stack_size_high_watermark = 21;
+  optional int32 trace_op_offset = 22;
+  optional int32 log_op_offset = 23;
+  optional bytes iss_program = 24;
+  optional bool enable_end_program_barrier = 26;
+  optional int32 num_user_words = 27;
+}
+message AliasingOperands {
+  message OperandsList {
+    repeated int64 indices = 1;
+  }
+  repeated .xla.jellyfish.AliasingOperands.OperandsList lists = 1;
+}
+message DeepPipelineConfig {
+  message Input {
+    optional int64 parameter_index = 1;
+    optional int64 syncflag_index = 2;
+    optional int64 smem_metadata_index = 3;
+    optional int64 hbm_buffer_index = 4;
+    optional int64 group_size = 5;
+  }
+  repeated .xla.jellyfish.DeepPipelineConfig.Input inputs = 1;
+}
+message LloFlagOverridesConfig {
+  optional .xla.jellyfish.TpuCompilationEnvironment comp_env = 1;
+}
+message BackendConfig {
+  reserved 49;
+  reserved 22;
+  reserved "host_aware_config";
+  oneof config {
+    .xla.jellyfish.WindowConfig window_config = 2;
+    .xla.jellyfish.IntegerConfig integer_config = 3;
+  }
+  repeated .xla.jellyfish.FlagConfig flag_configs = 1;
+  optional .xla.jellyfish.MegacoreConfig megacore_config = 4;
+  optional .xla.jellyfish.BarrierConfig barrier_config = 5;
+  optional .xla.jellyfish.LoopConfig loop_config = 6;
+  repeated .xla.jellyfish.ScopedMemoryConfig scoped_memory_configs = 7;
+  optional .xla.jellyfish.IndicesConfig indices_config = 8;
+  optional .xla.jellyfish.WindowedEinsumLoopConfig windowed_einsum_loop_config = 9;
+  optional .xla.jellyfish.ComputeType compute_type = 10;
+  optional .xla.jellyfish.AsyncCollectiveConfig async_collective_config = 11;
+  optional .xla.jellyfish.DeviceType device_type = 12;
+  optional .xla.jellyfish.SparseMapRowConfig sparse_map_row_config = 13;
+  optional .xla.jellyfish.CsrConfig csr_config = 14;
+  optional .xla.jellyfish.AllToAllDynamicConfig all_to_all_dynamic_config = 15;
+  optional .xla.jellyfish.ScatterConfig scatter_config = 16;
+  optional .xla.jellyfish.CollectiveAlgorithmConfig collective_algorithm_config = 17;
+  optional .xla.jellyfish.SparseDenseMatmulConfig sparse_dense_matmul_config = 18;
+  optional .xla.jellyfish.AggregatedSendRecvConfig aggregated_send_recv_config = 19;
+  optional .xla.jellyfish.GatherConfig gather_config = 20;
+  optional .xla.jellyfish.AsyncCollectiveFusionConfig async_collective_fusion_config = 21;
+  optional .xla.jellyfish.MegaChipParallelismConfig megachip_parallelism_config = 23;
+  optional .xla.jellyfish.SortConfig sort_config = 24;
+  optional .xla.jellyfish.ContinuationConfig continuation_config = 25;
+  optional .xla.jellyfish.CustomCallConfig custom_call_config = 26;
+  optional .xla.jellyfish.CustomCallMetadata custom_call_metadata = 27;
+  optional .xla.OpSharding implicit_sharding = 28;
+  optional .xla.jellyfish.CollectiveOffloadConfig collective_offload_config = 29;
+  repeated .xla.jellyfish.ScopedMemoryConfig used_scoped_memory_configs = 30;
+  optional .xla.jellyfish.RetryConfig retry_config = 31;
+  optional .xla.jellyfish.ConvolutionAlgorithmConfig convolution_algorithm_config = 32;
+  optional .xla.jellyfish.AllocateBufferConfig allocate_buffer_config = 33;
+  optional .xla.jellyfish.LogConfig log_config = 34;
+  optional .xla.jellyfish.CustomizedSendRecvConfig customized_send_recv_config = 35;
+  optional .xla.jellyfish.SyntheticComputeConfig synthetic_compute_config = 36;
+  optional .xla.jellyfish.MockCollectiveConfig mock_collective_config = 37;
+  optional .xla.jellyfish.SpanBufferConfig span_buffer_config = 38;
+  optional .xla.jellyfish.CollectiveComputeFusionConfig collective_compute_fusion_config = 39;
+  optional .xla.jellyfish.QuantizedAllReduceConfig quantized_all_reduce_config = 40;
+  optional .xla.jellyfish.FusionFormationSource fusion_formation_source = 41;
+  optional .xla.jellyfish.EllConfig ell_config = 42;
+  optional .xla.jellyfish.DynamicUpdateSliceConfig dus_config = 43;
+  optional .xla.jellyfish.ScHbmUsageEstimateConfig sc_hbm_usage_estimate_config = 44;
+  optional .xla.jellyfish.FusionFormationMetadata fusion_formation_metadata = 45;
+  optional .xla.jellyfish.MockWhileLoopConfig mock_while_loop_config = 46;
+  optional .xla.jellyfish.OutputChunkBoundConfig output_chunk_bound_config = 47;
+  optional .xla.jellyfish.SdcCheckerChecksumConfig sdc_checker_checksum_config = 48;
+  optional .xla.jellyfish.DecomposedAllReduceConfig decomposed_all_reduce_config = 50;
+  optional .xla.jellyfish.SparseCoreConfig sparse_core_config = 51;
+  optional .xla.jellyfish.MaskAggregatorConfig mask_aggregator_config = 52;
+  optional .xla.jellyfish.RematerializationConfig rematerialization_config = 53;
+  optional .xla.jellyfish.IntegerConfig bf16_mapped_op_count = 54;
+  optional .xla.jellyfish.AliasingOperands aliasing_operands = 55;
+  optional .xla.jellyfish.LegalizedAllReduceConfig legalized_all_reduce_config = 56;
+  optional .xla.jellyfish.ScTableNameConfig sc_table_name_config = 57;
+  optional .xla.jellyfish.ScNumSerializedTablesToOptimizeHbmConfig sc_num_serialized_tables_to_optimize_hbm_config = 58;
+  optional .xla.jellyfish.BundleAnalysisData bundle_analysis_data = 59;
+  optional .xla.jellyfish.FloatTypeCorrectionInfo float_type_correction_info = 60;
+  optional .xla.jellyfish.AsyncBarrierConfig async_barrier_config = 61;
+  optional int32 async_id = 62;
+  optional int32 dma_priority = 63;
+  optional .xla.jellyfish.DeepPipelineConfig deep_pipeline_config = 64;
+  optional .xla.DebugAttributesProto debug_attributes_config = 65;
+  optional .xla.jellyfish.ScanConfig scan_config = 66;
+  optional .xla.jellyfish.WhileLoopAsyncPipelinedConfig while_loop_async_pipelined_config = 67;
+  optional int64 scoped_vmem_alignment_bytes = 68;
+  optional .xla.jellyfish.LloFlagOverridesConfig llo_flag_overrides_config = 69;
+  optional .xla.jellyfish.RelocatableCallConfig relocatable_call_config = 70;
+  optional .xla.jellyfish.MegaChipCompilationResult megachip_compilation_result = 71;
+}
+message CustomCallMetadata {
+  optional string metadata = 1;
+}
+message ScHbmUsageEstimateConfig {
+  optional int64 estimate = 1;
+  optional int32 table_hbm_rank = 2;
+}
+message ScNumSerializedTablesToOptimizeHbmConfig {
+  optional int32 num_serialized_tables_to_optimize_hbm = 1;
+}
+message ScTableNameConfig {
+  optional string table_name = 1;
+}
+message WindowConfig {
+  enum CostModelType {
+    COST_MODEL_TYPE_INVALID = 0;
+    COST_MODEL_TYPE_CLASSIC = 1;
+    COST_MODEL_TYPE_ML_PGN_V1 = 2;
+  }
+  repeated int64 kernel_window_bounds = 1;
+  repeated int64 output_window_bounds = 2;
+  repeated int64 input_window_bounds = 3;
+  optional int64 estimated_cycles = 4;
+  repeated int64 iteration_bounds = 5;
+  optional int64 scratchpad_allocation_size = 6;
+  optional .xla.jellyfish.WindowConfig.CostModelType cost_model_type = 7;
+  optional float ml_estimated_microseconds = 8;
+  optional bool is_mask = 9;
+  optional int64 pad_output_on_minor_dim = 10;
+  optional int64 pad_input_on_minor_dim = 11;
+  optional int64 estimated_vmem_bytes = 12;
+  optional int64 estimated_bundle_count = 13;
+  optional int64 estimated_scoped_vmem_bytes = 14;
+  optional int64 buffering_level = 15;
+  repeated int64 output_reverse_dimensions = 16;
+}
+message IntegerConfig {
+  optional int64 integer = 1;
+}
+message KnownBitsConfig {
+  optional uint64 zeroes = 1;
+  optional uint64 ones = 2;
+  optional int64 bitwidth = 3;
+}
+message IndicesConfig {
+  repeated .xla.jellyfish.KnownBitsConfig index_known_bits = 1;
+  repeated bool is_index_aligned = 3;
+}
+message MegacoreConfig {
+  optional bool use_single_core = 1;
+  optional int64 core_id = 2;
+  optional int64 megacore_split_dim = 3;
+  optional int64 megacore_allreduce_bytes = 4;
+}
+message LoopConfig {
+  repeated int64 loop_order = 1;
+  optional int64 vectorized_dimension = 2;
+  repeated .xla.jellyfish.LoopUnrollConfig unrolled_loops = 3;
+  repeated int64 vectorizing_shape = 4;
+}
+message LogConfig {
+  optional .xla.jellyfish.LogSeverity severity = 1;
+  optional string tag = 2;
+  optional .xla.jellyfish.LogOpcodeProto opcode = 4;
+  repeated string extra_args = 3;
+}
+message WindowedEinsumLoopConfig {
+  optional int64 num_partitions = 1;
+  repeated .xla.ReplicaGroup loop_replica_groups = 2;
+}
+message IciStrategyRingConfig {
+  optional .xla.jellyfish.IciStrategyRingType ring_type = 1;
+  optional int64 core_count = 2;
+  optional .xla.jellyfish.IciStrategyRingNeighbor ring_neighbor = 3;
+  optional .xla.jellyfish.IciStrategyRingDim ring_dim = 4;
+  optional int64 ring_neighbor_table_offset = 5;
+  optional int64 barrier_id = 6;
+  optional bool across_cores_on_chip = 7;
+  optional bool has_reordering_map = 8;
+  optional .xla.jellyfish.IciStrategyRingDim explicit_strategy_ring_dim = 9;
+  optional int64 core_count_adjustment = 10;
+  optional bool partner_transfers_outside_the_ring = 11;
+  optional int64 id_info_offset = 12;
+  optional int32 group_info_table_offset = 13;
+  optional .xla.jellyfish.HierarchicalKind hierarchical_kind = 14;
+}
+message PerColorIciStrategyConfig {
+  repeated .xla.jellyfish.IciStrategyRingConfig phase_rings = 1;
+}
+message CollectiveIciStrategyConfig {
+  reserved 2;
+  repeated .xla.jellyfish.PerColorIciStrategyConfig color_strategies = 1;
+}
+message CollectiveOffloadConstantPropagationConfig {
+  optional int64 collective_config_parameter_index = 1;
+  repeated int32 constant_literals = 2;
+}
+message AllReduceOffloadConfig {
+  reserved 2;
+  optional bool use_single_sparse_core = 1;
+  optional .xla.jellyfish.CollectiveIciStrategyConfig ici_strategy_config = 3;
+  optional .xla.jellyfish.CollectiveOffloadConstantPropagationConfig constant_propagation_config = 4;
+  repeated int32 physical_core_indices = 5;
+  optional int32 tensor_split_factor = 6;
+  optional bool use_n_dimension_strategy = 7;
+}
+message FullyConnectedPhaseConfig {
+  repeated .xla.jellyfish.FullyConnectedLevel levels = 1;
+  optional int64 group_size = 2;
+  optional int64 ordinal_stride = 3;
+  optional bool fuse_die_to_die = 4;
+  optional int64 multicast_pattern_id = 5;
+}
+message FullyConnectedOffloadConfig {
+  optional bool enable_hierarchical = 1;
+  optional .xla.jellyfish.FullyConnectedHierarchicalMode hierarchical_mode = 2;
+  repeated .xla.jellyfish.FullyConnectedPhaseConfig phases = 3;
+}
+message AllGatherOffloadConfig {
+  reserved 2;
+  optional bool use_single_sparse_core = 1;
+  optional .xla.jellyfish.CollectiveIciStrategyConfig ici_strategy_config = 3;
+  optional .xla.jellyfish.CollectiveOffloadConstantPropagationConfig constant_propagation_config = 4;
+  repeated int32 physical_core_indices = 5;
+  optional int32 tensor_split_factor = 6;
+  optional bool use_n_dimension_strategy = 7;
+  optional .xla.jellyfish.FullyConnectedOffloadConfig fully_connected_config = 8;
+}
+message ReduceScatterOffloadConfig {
+  reserved 2;
+  optional bool use_single_sparse_core = 1;
+  optional .xla.jellyfish.CollectiveIciStrategyConfig ici_strategy_config = 3;
+  optional .xla.jellyfish.CollectiveOffloadConstantPropagationConfig constant_propagation_config = 4;
+  repeated int32 physical_core_indices = 5;
+  optional int32 tensor_split_factor = 6;
+  optional bool use_n_dimension_strategy = 7;
+}
+message AllToAllOffloadConfig {
+  optional bool use_single_sparse_core = 1;
+  optional .xla.jellyfish.CollectiveOffloadConstantPropagationConfig constant_propagation_config = 2;
+  optional int32 group_info_table_offset = 3;
+  optional int64 max_rdma_size_kib = 4;
+  repeated int32 physical_core_indices = 5;
+}
+message SteppableCollectiveConfig {
+  optional int64 consumer_sync_flag_parameter_index = 1;
+  optional int64 consumer_metadata_buffer_parameter_index = 2;
+  optional int64 steppable_concurrent_factor = 3;
+}
+message RaggedAllToAllOffloadConfig {
+  optional bool use_single_sparse_core = 1;
+  optional .xla.jellyfish.CollectiveOffloadConstantPropagationConfig constant_propagation_config = 2;
+  optional int32 group_info_table_offset = 3;
+  optional int64 max_rdma_size_kib = 4;
+  repeated int32 physical_core_indices = 5;
+  optional .xla.jellyfish.SteppableCollectiveConfig steppable_collective_config = 6;
+}
+message CollectiveOffloadConfig {
+  optional .xla.jellyfish.AllReduceOffloadConfig all_reduce_offload_config = 1;
+  optional .xla.jellyfish.AllGatherOffloadConfig all_gather_offload_config = 2;
+  optional .xla.jellyfish.ReduceScatterOffloadConfig reduce_scatter_offload_config = 3;
+  optional .xla.jellyfish.RaggedAllToAllOffloadConfig ragged_all_to_all_offload_config = 4;
+  optional .xla.jellyfish.AllToAllOffloadConfig all_to_all_offload_config = 5;
+  optional bool is_conditional_collective_offload = 6;
+  optional string custom_call_async_collective_config = 7;
+}
+message CollectiveComputeDebugInfo {
+  optional .xla.jellyfish.WindowConfig window_config = 1;
+  optional .xla.jellyfish.ConvolutionAlgorithmConfig convolution_algorithm_config = 2;
+}
+message CollectiveComputeFusionConfig {
+  enum ConcatenationStrategy {
+    CONCATENATION_STRATEGY_NONE = 0;
+    CONCATENATION_STRATEGY_NESTED_LOOP_FUSION = 1;
+    CONCATENATION_STRATEGY_FLAT_LOOP_FUSION = 2;
+  }
+  optional .xla.jellyfish.CollectiveComputeFusionConfig.ConcatenationStrategy shards_concatenation_strategy = 1;
+  optional .xla.jellyfish.CollectiveComputeDebugInfo prologue_compute_debug_info = 2;
+  optional .xla.jellyfish.CollectiveComputeDebugInfo loop_compute_debug_info = 3;
+  optional .xla.jellyfish.CollectiveComputeDebugInfo epilogue_compute_debug_info = 4;
+  optional int64 intermediate_buffer_memory_color = 5;
+}
+message BarrierConfig {
+  optional .xla.jellyfish.BarrierType barrier_type = 1;
+  optional int64 id = 2;
+}
+message ScopedMemoryConfig {
+  optional int64 memory_space = 1;
+  optional int64 offset = 2;
+  optional int64 size = 3;
+}
+message LoopUnrollConfig {
+  oneof config {
+    bool full_unroll = 2;
+    int64 unroll_factor = 3;
+  }
+  optional int64 unroll_dimension = 1;
+  optional bool pipeline_remainder = 4;
+  optional int64 fully_unroll_if_trip_count_is_at_most = 5;
+}
+message AsyncCollectiveConfig {
+  optional int64 barna_core_id = 1;
+}
+message SparseMapRowConfig {
+  optional int64 result_row_pointer_op_index = 1;
+  optional float wait_threshold = 2;
+  optional bool is_output_parallel = 3;
+  optional int64 shared_tile_work_queue_task_granularity = 4;
+}
+message CsrConfig {
+  optional int64 max_non_zeroes_per_row = 1;
+  optional int32 pad_value = 2;
+  optional int64 max_non_zeros = 3;
+  optional int64 max_pad_per_row = 4 [default = 8];
+}
+message EllConfig {
+  optional int64 max_non_zeroes_per_row = 1;
+  optional int32 pad_value = 2;
+  optional int64 max_non_zeros = 3;
+}
+message SyntheticComputeConfig {
+  optional float initial_delay_in_ns = 1;
+  optional int32 intensity = 2;
+  optional string sflag_filter = 3;
+}
+message SortConfig {
+  optional int64 key_bitwidth = 1;
+  optional bool merge_row_and_col_ids = 2;
+  optional int32 num_col_ids = 3;
+  optional bool is_input_padded = 4;
+}
+message ScanConfig {
+  repeated bool carry_output_consumed = 1;
+  repeated bool init_is_scalar_broadcast = 2;
+}
+message AllToAllDynamicConfig {
+  optional int64 split_dimension = 1;
+  optional int64 concat_dimension = 2;
+}
+message ScatterConfig {
+  reserved 2;
+  optional bool scatter_operand_is_undefined = 1;
+  optional bool scatter_within_compute_loop = 3;
+  optional int64 filter_index = 4;
+}
+message GatherConfig {
+  optional int64 filter_index = 1;
+  optional bool gather_within_compute_loop = 2;
+}
+message ConvolutionAlgorithmConfig {
+  optional string emitter = 1;
+  optional bool is_ragged_dot = 2;
+  optional int64 num_groups_in_ragged_dot = 3 [default = -1];
+  optional int64 spatial_minor_kernel_major_taps_per_step = 4;
+}
+message CollectiveAlgorithmConfig {
+  optional string emitter = 1;
+  optional string strategy = 2;
+  optional string debug = 3;
+}
+message QuantizationConfig {
+  message Fixed {
+    optional float min_value = 1;
+    optional float max_value = 2;
+    optional int64 num_buckets = 3;
+  }
+  message DynamicAbsmax {
+    optional int64 num_buckets = 1;
+  }
+  oneof calibration {
+    .xla.jellyfish.QuantizationConfig.Fixed fixed = 5;
+    .xla.jellyfish.QuantizationConfig.DynamicAbsmax absmax = 6;
+  }
+  optional float min_value = 1;
+  optional float max_value = 2;
+  optional int64 num_buckets = 3;
+}
+message SparseDenseMatmulConfig {
+  reserved 4;
+  optional int64 max_ids_per_partition = 1;
+  optional int64 max_unique_ids_per_partition = 2;
+  optional .xla.jellyfish.ShardingStrategy sharding_strategy = 3;
+  optional int32 pad_value = 5;
+  optional bool enable_full_hbm_sort = 6;
+  optional string table_id = 7;
+  optional .xla.jellyfish.QuantizationConfig quantization_config = 18;
+  optional uint32 per_core_vocab_size = 8;
+  optional int32 num_slot_variables = 9;
+  optional int32 num_hyperparameters = 10;
+  optional string table_name = 11;
+  optional int32 vocab_size = 12;
+  optional int32 feature_width = 13;
+  optional int32 sample_count = 14;
+}
+message AggregatedSendRecvConfig {
+  optional .xla.jellyfish.AggregateStatus status = 1;
+}
+message CustomizedSendRecvConfig {
+  message DcnCollectivePermuteSend {
+    repeated int32 non_source_slice_ids = 1;
+  }
+  message DcnCollectivePermuteRecv {
+    repeated int32 non_target_slice_ids = 1;
+  }
+  oneof config {
+    .xla.jellyfish.CustomizedSendRecvConfig.DcnCollectivePermuteSend dcn_collective_permute_send = 1;
+    .xla.jellyfish.CustomizedSendRecvConfig.DcnCollectivePermuteRecv dcn_collective_permute_recv = 2;
+  }
+}
+message AsyncCollectiveFusionConfig {
+  reserved 3;
+  optional int64 flag_start = 1;
+  optional int64 flag_end = 2;
+}
+message ContinuationConfig {
+  optional int64 output_tuple_original_start = 1;
+  optional int64 output_tuple_original_end = 2;
+  optional int64 operand_original_start = 3;
+  optional int64 operand_original_end = 4;
+}
+message MegaChipParallelismConfig {
+  repeated int64 cores = 1;
+}
+message CustomCallConfig {
+  message OutputMemorySpaceColor {
+    optional int64 color = 1;
+    repeated int64 shape_index = 2;
+  }
+  message InputMemorySpaceColor {
+    optional int64 operand_index = 1;
+    optional int64 color = 2;
+    repeated int64 shape_index = 3;
+  }
+  optional bytes body = 1;
+  optional bool has_communication = 2;
+  optional int64 collective_id = 3;
+  optional .xla.jellyfish.CustomCallCost cost_estimate = 4;
+  optional bool needs_layout_passes = 5;
+  optional bool needs_hlo_passes = 6;
+  repeated bool allow_input_fusion = 7;
+  optional int64 serialization_format = 8;
+  optional int64 internal_scratch_in_bytes = 9;
+  repeated int64 output_memory_colors = 10;
+  repeated .xla.jellyfish.CustomCallConfig.OutputMemorySpaceColor output_memory_space_colors = 11;
+  repeated .xla.jellyfish.CustomCallConfig.InputMemorySpaceColor input_memory_space_colors = 12;
+  optional bool disable_bounds_checks = 13;
+  optional bool skip_device_barrier = 14;
+  optional bool shape_invariant_numerics = 15;
+  optional bool disable_semaphore_checks = 16;
+  repeated int64 operand_to_metadata = 17;
+  optional bytes debug_locations = 18;
+}
+message RetryConfig {
+  optional int64 retry_count = 1;
+}
+message CustomCallCost {
+  optional int64 flops = 1;
+  optional int64 transcendentals = 2;
+  optional int64 bytes_accessed = 3;
+  optional int64 remote_bytes_transferred = 4;
+}
+message MockCollectiveConfig {
+  optional uint64 vdelay = 1;
+}
+message MockWhileLoopConfig {
+  optional int64 trip_count = 1;
+}
+message WhileLoopAsyncPipelinedConfig {
+  optional bool is_pipelined = 1;
+  optional bool enable_immediate_revisiting = 2;
+  optional int64 predicated_dus_dim_plus_one = 3;
+  optional int64 packed_size_shift = 4;
+}
+message SpanBufferConfig {
+  message InputConfig {
+    reserved 4;
+    optional int64 parameter_index = 1;
+    repeated int64 shape_index = 2;
+    optional int64 vmem_span = 3;
+    optional int64 buffer_index = 5;
+  }
+  message OutputConfig {
+    repeated int64 shape_index = 1;
+    optional int64 vmem_span = 2;
+  }
+  repeated .xla.jellyfish.SpanBufferConfig.InputConfig inputs = 1;
+  repeated .xla.jellyfish.SpanBufferConfig.OutputConfig outputs = 2;
+}
+message QuantizedAllReduceConfig {
+  optional .xla.jellyfish.QuantizedAllReduceType quantization_type = 1;
+  optional .xla.PrimitiveType quantized_data_type = 2;
+  optional .xla.jellyfish.QuantizedAllReduceStage quantized_stage = 3;
+}
+message LegalizedAllReduceConfig {
+  optional bytes original_instruction = 1;
+  optional bytes original_to_apply = 2;
+}
+message DecomposedAllReduceConfig {
+}
+message AsyncBarrierConfig {
+  optional bool use_async_barrier = 1;
+}
+message RelocatableCallConfig {
+  optional string build_id = 1;
+  repeated .xla.jellyfish.CustomCallConfig.OutputMemorySpaceColor output_memory_space_colors = 2;
+  repeated .xla.jellyfish.CustomCallConfig.InputMemorySpaceColor input_memory_space_colors = 3;
+}
+message MegaChipCompilationResult {
+  optional bytes merged_binary = 1;
+  optional bytes compiler_metadata = 2;
+}

@@ -1,0 +1,15 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/protobuf/cluster.proto";
+import "third_party/tensorflow/core/protobuf/config.proto";
+import "third_party/tensorflow/core/protobuf/device_filters.proto";
+message ServerDef {
+  .tensorflow.ClusterDef cluster = 1;
+  string job_name = 2;
+  int32 replica = 8;
+  int32 task_index = 3;
+  .tensorflow.ConfigProto default_session_config = 4;
+  string protocol = 5;
+  int32 port = 6;
+  .tensorflow.ClusterDeviceFilters cluster_device_filters = 7;
+}

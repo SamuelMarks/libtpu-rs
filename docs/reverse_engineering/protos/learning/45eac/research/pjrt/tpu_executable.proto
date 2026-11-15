@@ -1,0 +1,18 @@
+syntax = "proto3";
+package xla;
+import "platforms/xla/service/jellyfish/deepsea_executable.proto";
+import "platforms/xla/service/jellyfish/isa_program.proto";
+import "platforms/xla/service/jellyfish/target_arguments.proto";
+import "third_party/tensorflow/compiler/xla/pjrt/proto/compile_options.proto";
+import "third_party/tensorflow/compiler/xla/xla.proto";
+message TpuExecutableProto {
+  reserved 6;
+  reserved 7;
+  .xla.DeepseaExecutableProto ds_executable = 1;
+  .xla.HloModuleProtoWithConfig hlo_module_with_config = 2;
+  repeated .xla.HostTransferProto host_transfers = 3;
+  repeated .xla.HostExecutionProto host_executions = 8;
+  .xla.CompileOptionsProto compile_options = 4;
+  .xla.TargetArgumentsProto target_arguments = 5;
+  string source_uri = 9;
+}

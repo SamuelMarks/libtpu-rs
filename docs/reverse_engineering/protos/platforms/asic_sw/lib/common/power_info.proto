@@ -1,0 +1,9 @@
+syntax = "proto2";
+package asic_sw;
+message PowerInfo {
+  repeated .asic_sw.Pstate pstate = 1;
+}
+message Pstate {
+  optional uint32 die_index = 1;
+  optional uint32 pstate = 2;
+}

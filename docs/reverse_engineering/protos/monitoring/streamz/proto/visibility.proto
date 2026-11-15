@@ -1,0 +1,13 @@
+syntax = "proto2";
+package monitoring.streamz;
+import "n2a/p4r2d3/proto/descriptor.proto";
+enum VisibilityPolicy {
+  INTERNAL = 1;
+  PUBLIC = 2;
+}
+extend .proto2.EnumValueOptions {
+  optional .monitoring.streamz.VisibilityPolicy enum_visibility = 53705596 [default = INTERNAL];
+}
+extend .proto2.FieldOptions {
+  optional .monitoring.streamz.VisibilityPolicy visibility = 53740412 [default = INTERNAL];
+}

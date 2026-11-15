@@ -1,0 +1,75 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/summary.proto";
+enum WorkerHealth {
+  OK = 0;
+  RECEIVED_SHUTDOWN_SIGNAL = 1;
+  INTERNAL_ERROR = 2;
+  SHUTTING_DOWN = 3;
+}
+enum WorkerShutdownMode {
+  DEFAULT = 0;
+  NOT_CONFIGURED = 1;
+  WAIT_FOR_COORDINATOR = 2;
+  SHUTDOWN_AFTER_TIMEOUT = 3;
+}
+message Event {
+  oneof what {
+    string file_version = 3;
+    bytes graph_def = 4;
+    .tensorflow.Summary summary = 5;
+    .tensorflow.LogMessage log_message = 6;
+    .tensorflow.SessionLog session_log = 7;
+    .tensorflow.TaggedRunMetadata tagged_run_metadata = 8;
+    bytes meta_graph_def = 9;
+  }
+  double wall_time = 1;
+  int64 step = 2;
+  .tensorflow.SourceMetadata source_metadata = 10;
+}
+message SourceMetadata {
+  string writer = 1;
+}
+message LogMessage {
+  enum Level {
+    UNKNOWN = 0;
+    DEBUGGING = 10;
+    INFO = 20;
+    WARN = 30;
+    ERROR = 40;
+    FATAL = 50;
+  }
+  .tensorflow.LogMessage.Level level = 1;
+  string message = 2;
+}
+message SessionLog {
+  enum SessionStatus {
+    STATUS_UNSPECIFIED = 0;
+    START = 1;
+    STOP = 2;
+    CHECKPOINT = 3;
+  }
+  .tensorflow.SessionLog.SessionStatus status = 1;
+  string checkpoint_path = 2;
+  string msg = 3;
+}
+message TaggedRunMetadata {
+  string tag = 1;
+  bytes run_metadata = 2;
+}
+message WatchdogConfig {
+  int64 timeout_ms = 1;
+}
+message RequestedExitCode {
+  int32 exit_code = 1;
+}
+message WorkerHeartbeatRequest {
+  .tensorflow.WorkerShutdownMode shutdown_mode = 1;
+  .tensorflow.WatchdogConfig watchdog_config = 2;
+  .tensorflow.RequestedExitCode exit_code = 3;
+}
+message WorkerHeartbeatResponse {
+  .tensorflow.WorkerHealth health_status = 1;
+  repeated .tensorflow.Event worker_log = 2;
+  string hostname = 3;
+}

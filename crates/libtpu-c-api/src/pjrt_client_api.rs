@@ -42,6 +42,29 @@ mod tests {
         unsafe {
             let e_cc = PJRT_Client_Create(ptr::null_mut());
             drop(Box::from_raw(e_cc));
+            let mut bad_cfg_args = PJRT_Client_Create_Args {
+                struct_size: size_of::<PJRT_Client_Create_Args>(),
+                extension_start: ptr::null_mut(),
+                create_options: ptr::null(),
+                num_options: 0,
+                kv_get_callback: ptr::null(),
+                kv_get_user_arg: ptr::null_mut(),
+                kv_put_callback: ptr::null(),
+                kv_put_user_arg: ptr::null_mut(),
+                kv_try_get_callback: ptr::null(),
+                kv_try_get_user_arg: ptr::null_mut(),
+                client: ptr::null_mut(),
+            };
+            assert!(
+                client::handle_client_create_with_config(
+                    &mut bad_cfg_args,
+                    Err(LibTpuError::InvalidArgument {
+                        parameter: "LIBTPU_INIT_ARGS",
+                        reason: String::from("bad flag"),
+                    })
+                )
+                .is_err()
+            );
             let create_opts = [
                 crate::pjrt_types::PJRT_NamedValue {
                     struct_size: size_of::<crate::pjrt_types::PJRT_NamedValue>(),
@@ -455,7 +478,9 @@ mod tests {
                 executable: aot_args.executable,
             };
             assert!(PJRT_Executable_Destroy(ptr::addr_of_mut!(aot_del).cast()).is_null());
-            let valid_opts = libtpu_core::proto::CompileOptionsProto::default().encode();
+            let valid_opts = libtpu_core::proto::ProtoSchemaMessage::encode_proto(
+                &libtpu_core::proto::CompileOptionsProto::default(),
+            );
             aot_args.compile_options = valid_opts.as_ptr().cast();
             aot_args.compile_options_size = valid_opts.len();
             aot_args.executable = ptr::null_mut();
@@ -873,6 +898,68 @@ mod tests {
             drop(Box::from_raw(PJRT_Client_Destroy(
                 ptr::addr_of_mut!(destroy_client_args).cast(),
             )));
+            let cli_ref = &*client;
+            let first_mem = cli_ref
+                .memory_ptrs
+                .first()
+                .copied()
+                .unwrap_or(ptr::null_mut());
+            let mut h2d_mem_legacy = h2d_args;
+            h2d_mem_legacy.struct_size = 96;
+            h2d_mem_legacy.device = ptr::null_mut();
+            h2d_mem_legacy.memory = first_mem;
+            h2d_mem_legacy.dims = ptr::null();
+            h2d_mem_legacy.num_dims = 0;
+            h2d_mem_legacy.out_buffer = ptr::null_mut();
+            assert!(
+                buffer_creation::handle_client_buffer_from_host_buffer(&mut h2d_mem_legacy).is_ok()
+            );
+            libtpu_rs_buffer_destroy(h2d_mem_legacy.out_buffer);
+
+            let mut h2d_sz88 = h2d_mem_legacy;
+            h2d_sz88.struct_size = 88;
+            h2d_sz88.out_buffer = ptr::null_mut();
+            assert!(buffer_creation::handle_client_buffer_from_host_buffer(&mut h2d_sz88).is_ok());
+            libtpu_rs_buffer_destroy(h2d_sz88.out_buffer);
+
+            let mut orphan_mem = PJRT_Memory {
+                inner: (*first_mem).inner.clone(),
+                addressable_by_device_ptrs: Vec::new(),
+            };
+            let mut h2d_mem_v116 = h2d_args;
+            h2d_mem_v116.struct_size = 120;
+            h2d_mem_v116.device = ptr::null_mut();
+            h2d_mem_v116.memory = ptr::addr_of_mut!(orphan_mem);
+            h2d_mem_v116.dims = ptr::null();
+            h2d_mem_v116.num_dims = 0;
+            h2d_mem_v116.out_buffer = ptr::null_mut();
+            assert!(
+                buffer_creation::handle_client_buffer_from_host_buffer(&mut h2d_mem_v116).is_ok()
+            );
+            libtpu_rs_buffer_destroy(h2d_mem_v116.out_buffer);
+
+            let mut legacy_cli_args = PJRT_Client_Create_Args {
+                struct_size: 72,
+                extension_start: ptr::null_mut(),
+                create_options: ptr::null(),
+                num_options: 0,
+                kv_get_callback: ptr::null(),
+                kv_get_user_arg: ptr::null_mut(),
+                kv_put_callback: ptr::null(),
+                kv_put_user_arg: ptr::null_mut(),
+                client: ptr::null_mut(),
+                kv_try_get_callback: ptr::null(),
+                kv_try_get_user_arg: ptr::null_mut(),
+            };
+            assert!(client::handle_client_create(&mut legacy_cli_args).is_ok());
+            assert!(!legacy_cli_args.kv_try_get_callback.is_null());
+            let mut destroy_legacy_cli = PJRT_Client_Destroy_Args {
+                struct_size: 24,
+                extension_start: ptr::null_mut(),
+                client: legacy_cli_args.kv_try_get_callback.cast_mut().cast(),
+            };
+            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_legacy_cli).cast()).is_null());
+
             destroy_client_args.client = client;
             assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_client_args).cast()).is_null());
         }

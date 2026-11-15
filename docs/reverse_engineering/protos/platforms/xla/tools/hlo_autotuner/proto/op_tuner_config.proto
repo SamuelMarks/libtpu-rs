@@ -1,0 +1,40 @@
+syntax = "proto3";
+package xla.tuning;
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+import "platforms/xla/service/jellyfish/lowering/backend_configs.proto";
+message FlagConfigGroup {
+  repeated .xla.jellyfish.FlagConfig flag_configs = 1;
+  bool is_default = 2;
+}
+message WindowConfig {
+  oneof config {
+    .xla.jellyfish.WindowConfig window_config = 1;
+    .xla.jellyfish.IntegerConfig integer_config = 2;
+  }
+  bool is_default = 3;
+  int64 scoped_vmem_bytes = 4;
+}
+message MegacoreConfig {
+  .xla.jellyfish.MegacoreConfig megacore_config = 1;
+  bool is_default = 2;
+}
+message HloOpConfig {
+  .xla.tuning.WindowConfig window_config = 1;
+  .xla.tuning.FlagConfigGroup op_flag_config = 2;
+  .xla.tuning.MegacoreConfig megacore_config = 3;
+}
+message OpCompilationInfo {
+  int64 overlay = 1;
+  int64 vmem = 2;
+}
+message OpConfigSearchSpace {
+  oneof value {
+    .tpu.TpuVersionProto tpu_version = 5;
+  }
+  int64 op_config_id = 1;
+  int32 hlo_opcode = 2;
+  repeated .xla.tuning.WindowConfig candidate_window_configs = 3;
+  repeated .xla.tuning.FlagConfigGroup candidate_flag_configs = 4;
+  repeated .xla.tuning.MegacoreConfig candidate_megacore_configs = 7;
+  bool in_megacore_fusion = 6;
+}

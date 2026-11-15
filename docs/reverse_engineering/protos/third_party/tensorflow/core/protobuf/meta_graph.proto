@@ -1,0 +1,82 @@
+syntax = "proto3";
+package tensorflow;
+import "google/protobuf/any.proto";
+import "third_party/tensorflow/core/framework/graph.proto";
+import "third_party/tensorflow/core/framework/op_def.proto";
+import "third_party/tensorflow/core/framework/tensor.proto";
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+import "third_party/tensorflow/core/protobuf/saved_object_graph.proto";
+import "third_party/tensorflow/core/protobuf/saver.proto";
+import "third_party/tensorflow/core/protobuf/struct.proto";
+message MetaGraphDef {
+  message MetaInfoDef {
+    string meta_graph_version = 1;
+    .tensorflow.OpList stripped_op_list = 2;
+    .google.protobuf.Any any_info = 3;
+    repeated string tags = 4;
+    string tensorflow_version = 5;
+    string tensorflow_git_version = 6;
+    bool stripped_default_attrs = 7;
+    map<string, string> function_aliases = 8;
+  }
+  .tensorflow.MetaGraphDef.MetaInfoDef meta_info_def = 1;
+  .tensorflow.GraphDef graph_def = 2;
+  .tensorflow.SaverDef saver_def = 3;
+  map<string, .tensorflow.CollectionDef> collection_def = 4;
+  map<string, .tensorflow.SignatureDef> signature_def = 5;
+  repeated .tensorflow.AssetFileDef asset_file_def = 6;
+  .tensorflow.SavedObjectGraph object_graph_def = 7;
+}
+message CollectionDef {
+  message NodeList {
+    repeated string value = 1;
+  }
+  message BytesList {
+    repeated bytes value = 1;
+  }
+  message Int64List {
+    repeated int64 value = 1 [packed = true];
+  }
+  message FloatList {
+    repeated float value = 1 [packed = true];
+  }
+  message AnyList {
+    repeated .google.protobuf.Any value = 1;
+  }
+  oneof kind {
+    .tensorflow.CollectionDef.NodeList node_list = 1;
+    .tensorflow.CollectionDef.BytesList bytes_list = 2;
+    .tensorflow.CollectionDef.Int64List int64_list = 3;
+    .tensorflow.CollectionDef.FloatList float_list = 4;
+    .tensorflow.CollectionDef.AnyList any_list = 5;
+  }
+}
+message TensorInfo {
+  message CooSparse {
+    string values_tensor_name = 1;
+    string indices_tensor_name = 2;
+    string dense_shape_tensor_name = 3;
+  }
+  message CompositeTensor {
+    .tensorflow.TypeSpecProto type_spec = 1;
+    repeated .tensorflow.TensorInfo components = 2;
+  }
+  oneof encoding {
+    string name = 1;
+    .tensorflow.TensorInfo.CooSparse coo_sparse = 4;
+    .tensorflow.TensorInfo.CompositeTensor composite_tensor = 5;
+  }
+  .tensorflow.DataType dtype = 2;
+  .tensorflow.TensorShapeProto tensor_shape = 3;
+}
+message SignatureDef {
+  map<string, .tensorflow.TensorInfo> inputs = 1;
+  map<string, .tensorflow.TensorInfo> outputs = 2;
+  string method_name = 3;
+  map<string, .tensorflow.TensorProto> defaults = 4;
+}
+message AssetFileDef {
+  .tensorflow.TensorInfo tensor_info = 1;
+  string filename = 2;
+}

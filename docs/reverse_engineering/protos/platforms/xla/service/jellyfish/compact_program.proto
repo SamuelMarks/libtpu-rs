@@ -1,0 +1,17 @@
+syntax = "proto3";
+package xla;
+enum CompactProgramType {
+  COMPACT_PROGRAM_TYPE_UNKNOWN = 0;
+  COMPACT_PROGRAM_TYPE_VXC_TC = 1;
+  COMPACT_PROGRAM_TYPE_GLC_TC = 2;
+  COMPACT_PROGRAM_TYPE_GFC_TC = 3;
+}
+message CompactBundleProto {
+  bytes bundle_bytes = 1;
+  bytes auxiliary_bytes = 2;
+}
+message CompactProgramProto {
+  int32 version = 1;
+  .xla.CompactProgramType type = 2;
+  repeated .xla.CompactBundleProto bundles = 3;
+}

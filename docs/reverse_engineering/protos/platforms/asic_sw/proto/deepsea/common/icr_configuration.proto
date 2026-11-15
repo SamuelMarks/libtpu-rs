@@ -1,0 +1,20 @@
+syntax = "proto3";
+package asic_sw.proto.deepsea;
+message LocalIngressQueueConfiguration {
+  map<int32, int32> queue_depth_map = 1;
+  map<int32, int32> credit_return_limit_map = 2;
+}
+message LinkToLinkQueueConfiguration {
+  message VirtualChannelConfiguration {
+    map<int32, int32> vc_config = 1;
+  }
+  map<int32, .asic_sw.proto.deepsea.LinkToLinkQueueConfiguration.VirtualChannelConfiguration> queue_depth_map = 1;
+  map<int32, .asic_sw.proto.deepsea.LinkToLinkQueueConfiguration.VirtualChannelConfiguration> credit_return_limit_map = 2;
+}
+message QueueConfiguration {
+  .asic_sw.proto.deepsea.LocalIngressQueueConfiguration local_queue_config = 1;
+  .asic_sw.proto.deepsea.LinkToLinkQueueConfiguration link_to_link_queue_config = 2;
+}
+message IcrConfiguration {
+  repeated .asic_sw.proto.deepsea.QueueConfiguration queue_configs = 1;
+}

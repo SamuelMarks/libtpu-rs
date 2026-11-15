@@ -1,0 +1,43 @@
+syntax = "proto3";
+package tensorflow.profiler;
+message TopologyDimension {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+}
+message TopologyLocation {
+  int32 x = 1;
+  int32 y = 2;
+  int32 z = 3;
+  int32 host_x = 4;
+  int32 host_y = 5;
+  int32 host_z = 6;
+  int32 index_on_host = 7;
+  int32 global_id = 8;
+}
+message Topology {
+  .tensorflow.profiler.TopologyDimension chips_per_host_bounds = 1;
+  .tensorflow.profiler.TopologyDimension host_bounds = 2;
+  repeated .tensorflow.profiler.TopologyLocation mesh_location = 3;
+}
+message LogicalTopology {
+  message LogicalDevice {
+    int32 global_id = 1;
+    int32 slice_local_id = 2;
+    int32 host_local_id = 3;
+  }
+  message HostNetworkAddress {
+    string address = 1;
+    string interface_name = 2;
+  }
+  message LogicalHost {
+    int32 slice_local_id = 1;
+    repeated .tensorflow.profiler.LogicalTopology.HostNetworkAddress network_addresses = 2;
+    repeated .tensorflow.profiler.LogicalTopology.LogicalDevice devices = 3;
+  }
+  message LogicalSlice {
+    int32 global_id = 1;
+    repeated .tensorflow.profiler.LogicalTopology.LogicalHost hosts = 2;
+  }
+  repeated .tensorflow.profiler.LogicalTopology.LogicalSlice slices = 1;
+}

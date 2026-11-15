@@ -1,0 +1,81 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.xdb.tpu_telemetry;
+enum TpuCoreTypeProto {
+  TPU_CORE_TYPE_INVALID = 0;
+  TPU_CORE_TYPE_TENSOR_CORE = 1;
+  TPU_CORE_TYPE_SPARSE_CORE_V0 = 2;
+  TPU_CORE_TYPE_SPARSE_CORE = 3;
+}
+enum TpuSequencerTypeProto {
+  TPU_SEQUENCER_TYPE_INVALID = 0;
+  TPU_SEQUENCER_TYPE_TENSOR_CORE_SEQUENCER = 1;
+  TPU_SEQUENCER_TYPE_SPARSE_CORE_V0_SEQUENCER = 2;
+  TPU_SEQUENCER_TYPE_SPARSE_CORE_V0_ADDRESS_HANDLER = 3;
+  TPU_SEQUENCER_TYPE_SPARSE_CORE_SEQUENCER = 4;
+  TPU_SEQUENCER_TYPE_SPARSE_CORE_TILE_ACCESS_CORE_SEQUENCER = 5;
+  TPU_SEQUENCER_TYPE_SPARSE_CORE_TILE_EXECUTE_CORE_SEQUENCER = 6;
+}
+message TpuCoreOnChipProto {
+  optional .platforms_deepsea.jellyfish.xdb.tpu_telemetry.TpuCoreTypeProto type = 1;
+  optional int32 index = 2;
+}
+message TpuCoreIdentifier {
+  optional int32 global_core_id = 1;
+  optional int32 chip_id = 2;
+  optional .platforms_deepsea.jellyfish.xdb.tpu_telemetry.TpuCoreOnChipProto core_on_chip = 3;
+}
+message QueuedProgramInfo {
+  optional int64 run_id = 1;
+  optional int64 launch_id = 2;
+  optional bytes program_fingerprint = 3;
+}
+message CompletedProgramInfo {
+  optional int64 run_id = 1;
+  optional int64 launch_id = 2;
+  optional string name = 3;
+  optional bytes program_fingerprint = 4;
+}
+message StallTriggerInfo {
+  optional string source = 1;
+  optional string description = 2;
+  optional int64 timeout_ms = 3;
+  optional int32 posted_host_id = 4;
+  optional int64 trigger_time_unix_micros = 5;
+}
+message StallArtifactMetadata {
+  optional int64 harvest_start_time_unix_micros = 1;
+  optional int64 harvest_end_time_unix_micros = 2;
+  repeated .platforms_deepsea.jellyfish.xdb.tpu_telemetry.StallTriggerInfo triggers = 3;
+  optional string hostname = 4;
+  optional int64 pid = 5;
+  optional int32 local_host_id = 6;
+  optional int32 host_count = 7;
+  optional int32 chips_per_host = 8;
+  optional int64 launch_id = 9;
+  optional string libtpu_build = 10;
+}
+message SequencerInfo {
+  optional .platforms_deepsea.jellyfish.xdb.tpu_telemetry.TpuSequencerTypeProto sequencer_type = 1;
+  optional int32 sequencer_index = 2;
+  optional int64 pc = 3;
+  optional int64 tag = 4;
+  optional int64 tracemark = 5;
+  optional int64 program_id = 6;
+  optional int64 run_id = 7;
+  optional string hlo_location = 8;
+  optional string hlo_detailed_info = 9;
+}
+message CurrentCoreStateSummary {
+  optional .platforms_deepsea.jellyfish.xdb.tpu_telemetry.TpuCoreIdentifier core_id = 1;
+  repeated .platforms_deepsea.jellyfish.xdb.tpu_telemetry.SequencerInfo sequencer_info = 2;
+  optional bool xdb_server_running = 3;
+  optional bytes program_fingerprint = 4;
+  optional int32 launch_id = 5;
+  repeated .platforms_deepsea.jellyfish.xdb.tpu_telemetry.QueuedProgramInfo queued_program_info = 6;
+  optional string error_message = 7;
+  repeated .platforms_deepsea.jellyfish.xdb.tpu_telemetry.CompletedProgramInfo recent_completions = 8;
+}
+message AllCoreStateSummaries {
+  map<int32, .platforms_deepsea.jellyfish.xdb.tpu_telemetry.CurrentCoreStateSummary> core_states = 1;
+  optional .platforms_deepsea.jellyfish.xdb.tpu_telemetry.StallArtifactMetadata artifact_metadata = 2;
+}

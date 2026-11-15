@@ -1,0 +1,20 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+message TpuCoreOnChipProto {
+  .tpu.TpuCoreTypeProto type = 1;
+  int32 index = 2;
+}
+message TpuSharedMemoryOnChipProto {
+  .tpu.TpuSharedMemoryTypeProto type = 1;
+  int32 index = 2;
+}
+message TpuSyncFlagRangeOnChipProto {
+  .tpu.TpuCoreOnChipProto core = 1;
+  int32 word_offset_base = 2;
+  int32 count = 3;
+}
+message TpuSegmentMemoryOnChipProto {
+  .tpu.TpuSegmentMemoryTypeProto type = 1;
+  int32 index = 2;
+}

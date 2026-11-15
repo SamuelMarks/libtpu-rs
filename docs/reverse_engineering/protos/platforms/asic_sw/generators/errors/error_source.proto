@@ -1,0 +1,49 @@
+syntax = "proto3";
+package asic_sw.generators.errors;
+import "third_party/protobuf/cpp_features.proto";
+message GeneralErrorSource {
+  message GeneralErrorClass {
+    uint64 type = 1;
+    uint64 mask = 2;
+    int32 location_index = 3;
+    map<uint64, string> field_descriptions = 4;
+  }
+  message EccUncorrectableErrorClass {
+    uint64 mask = 1;
+    string memory_class = 2;
+    map<uint64, string> ram_mnemonics = 3;
+  }
+  map<string, .asic_sw.generators.errors.GeneralErrorSource.GeneralErrorClass> general_error_classes = 1;
+  repeated .asic_sw.generators.errors.GeneralErrorSource.EccUncorrectableErrorClass ecc_uncorrectable_error_classes = 2;
+  uint64 status_offset = 3;
+  uint64 first_status_offset = 4;
+  uint64 timestamp_offset = 5;
+  uint64 mask_offset = 6;
+  uint32 register_width = 7;
+  string location = 8;
+  string detailed_location = 9;
+  uint64 valid_mask = 10;
+  uint64 privileged_status_offset = 11;
+}
+message MemoryEccErrorSource {
+  message Offsets {
+    uint64 count_offset = 1;
+    uint64 first_address_offset = 2;
+    uint64 syndrome_offset = 3;
+    uint64 rams_offset = 4;
+    uint64 first_ram_offset = 5;
+    uint64 mask_offset = 6;
+    uint64 timestamp_offset = 7;
+    uint64 base_address = 8;
+  }
+  string location = 1;
+  string detailed_location = 2;
+  string memory_class = 3;
+  map<uint64, string> ram_mnemonics = 4;
+  .asic_sw.generators.errors.MemoryEccErrorSource.Offsets ecc_correctable_offsets = 5;
+  .asic_sw.generators.errors.MemoryEccErrorSource.Offsets ecc_uncorrectable_offsets = 6;
+}
+message ErrorSources {
+  repeated .asic_sw.generators.errors.GeneralErrorSource general_error_sources = 1;
+  repeated .asic_sw.generators.errors.MemoryEccErrorSource memory_ecc_error_sources = 2;
+}

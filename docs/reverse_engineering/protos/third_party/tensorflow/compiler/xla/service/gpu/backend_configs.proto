@@ -1,0 +1,221 @@
+syntax = "proto3";
+package xla.gpu;
+import "third_party/tensorflow/compiler/xla/autotuning.proto";
+import "third_party/tensorflow/compiler/xla/codegen/xtile/xtile_config.proto";
+import "third_party/tensorflow/compiler/xla/stream_executor/gpu/blas_lt_matmul_algorithm.proto";
+import "third_party/tensorflow/compiler/xla/tsl/protobuf/dnn.proto";
+import "third_party/tensorflow/compiler/xla/xla.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+enum NativeEmitterType {
+  NATIVE_EMITTER_TYPE_INVALID = 0;
+  NATIVE_EMITTER_TYPE_LOOP = 1;
+  NATIVE_EMITTER_TYPE_IN_PLACE_DYNAMIC_UPDATE_SLICE = 2;
+  NATIVE_EMITTER_TYPE_CONCATENATE = 3;
+  NATIVE_EMITTER_TYPE_REDUCTION_ROW = 4;
+  NATIVE_EMITTER_TYPE_REDUCTION_MULTIROW = 5;
+  NATIVE_EMITTER_TYPE_REDUCTION_COLUMN = 6;
+  NATIVE_EMITTER_TYPE_REDUCTION_MULTICOLUMN = 7;
+  NATIVE_EMITTER_TYPE_SCATTER_SORTED_INDICES = 8;
+  NATIVE_EMITTER_TYPE_SCATTER_DISTRIBUTED_UPDATES = 9;
+  NATIVE_EMITTER_TYPE_TRANSPOSE = 10;
+  NATIVE_EMITTER_TYPE_PACKED_TRANSPOSE = 11;
+}
+enum DeviceType {
+  DEVICE_TYPE_INVALID = 0;
+  DEVICE_TYPE_DEVICE = 1;
+  DEVICE_TYPE_HOST = 2;
+}
+message CudnnConvBackendConfig {
+  reserved 1;
+  reserved 2;
+  oneof filter_and_bias_reordering_oneof {
+    bool reordered_int8_nchw_vect = 7;
+  }
+  .stream_executor.dnn.AlgorithmProto algorithm = 6;
+  double conv_result_scale = 4;
+  .stream_executor.dnn.ActivationMode activation_mode = 3;
+  double side_input_scale = 5;
+  double leakyrelu_alpha = 8;
+  optional string serialized_graph = 9;
+}
+message GemmBackendConfig {
+  reserved 19;
+  enum Epilogue {
+    DEFAULT = 0;
+    BIAS = 1;
+    RELU = 2;
+    BIAS_RELU = 3;
+    GELU = 4;
+    GELU_AUX = 5;
+    BIAS_GELU = 6;
+    BIAS_GELU_AUX = 7;
+    SILU = 8;
+    BIAS_SILU = 9;
+  }
+  oneof algorithm {
+    int64 selected_algorithm = 1;
+  }
+  .stream_executor.gpu.BlasLtMatmulAlgorithmProto algorithm_proto = 23;
+  double alpha_real = 2;
+  double alpha_imag = 9;
+  double beta = 3;
+  .xla.DotDimensionNumbers dot_dimension_numbers = 7;
+  .xla.PrecisionConfig precision_config = 12;
+  .xla.gpu.GemmBackendConfig.Epilogue epilogue = 13;
+  optional int64 lhs_stride = 14;
+  optional int64 rhs_stride = 15;
+  optional bool grad_x = 16;
+  optional bool grad_y = 17;
+  bool damax_output = 18;
+  int64 autotune_workspace_size = 20;
+  int32 scale_mode = 21;
+  optional bool has_d_scale = 22;
+}
+message GroupedGemmBackendConfig {
+  .xla.gpu.GemmBackendConfig gemm_backend_config = 1;
+  .xla.RaggedDotDimensionNumbers ragged_dot_dimension_numbers = 2;
+}
+message BitcastBackendConfig {
+  .xla.LayoutProto source_layout = 1;
+  .xla.LayoutProto result_layout = 2;
+}
+message CollectiveBackendConfig {
+  reserved 2;
+  reserved 4;
+  enum CollectiveBackend {
+    DEFAULT = 0;
+  }
+  enum CollectiveKernelStrategy {
+    KERNEL_STRATEGY_DEFAULT = 0;
+    KERNEL_STRATEGY_TRITON_ONE_SHOT = 1;
+    KERNEL_STRATEGY_TRITON_TWO_SHOT = 2;
+  }
+  enum CollectiveCommunicationDomain {
+    COLLECTIVE_COMMUNICATION_DOMAIN_UNSPECIFIED = 0;
+    COLLECTIVE_COMMUNICATION_DOMAIN_SCALE_UP_FABRIC = 1;
+  }
+  bool is_sync = 1;
+  bool is_pipelined = 3;
+  bool is_spmd_generated = 8;
+  .xla.gpu.CollectiveBackendConfig.CollectiveBackend backend = 5;
+  .xla.DebugOptions.CollectivesMode collectives_mode = 6;
+  .xla.gpu.CollectiveBackendConfig.CollectiveKernelStrategy kernel_strategy = 7;
+  .xla.gpu.CollectiveBackendConfig.CollectiveCommunicationDomain communication_domain = 9;
+}
+message CollectiveMetadataBackendConfig {
+  .xla.CollectiveDeviceListProto collective_devices = 1;
+}
+message ReificationCost {
+  double end_to_end_cycles = 1;
+  double exec_time_us = 2;
+  double compute_time_us = 3;
+  double memory_access_time_us = 4;
+  string name = 5;
+}
+message CuDnnFusionConfig {
+  optional int64 plan_id = 1;
+  .xla.PrecisionConfig precision_config = 2;
+}
+message DynamicSliceConfig {
+  message Linear {
+    int64 byte_offset = 1;
+    int64 byte_stride = 2;
+  }
+  message Table {
+    repeated int64 offsets = 1;
+  }
+  oneof offsets {
+    .xla.gpu.DynamicSliceConfig.Linear linear = 5;
+    .xla.gpu.DynamicSliceConfig.Table table = 4;
+  }
+  optional int64 loop_index = 1;
+  int64 byte_offset = 2;
+  int64 byte_stride = 3;
+}
+message FusionBackendConfig {
+  reserved 3;
+  reserved 7;
+  reserved "dynamic_memcpy_config";
+  string kind = 1;
+  .xla.AutotuneResult.TritonGemmKey triton_gemm_config = 2;
+  .xla.xtile.BlockLevelFusionConfig block_level_fusion_config = 6;
+  .xla.xtile.CustomFusionConfig custom_fusion_config = 4;
+  .xla.gpu.CuDnnFusionConfig cudnn_fusion_config = 5;
+  .xla.gpu.TensorIrFusionConfig tensor_ir_fusion_config = 8;
+}
+message TensorIrFusionConfig {
+  repeated int32 tile_size = 1;
+  int64 reduction_tile_size = 2;
+}
+message CudnnNormBackendConfig {
+  enum Kind {
+    LAYER_FWD_INFER = 0;
+    LAYER_FWD_TRAIN = 1;
+    LAYER_BWD = 2;
+  }
+  double epsilon = 1;
+  .stream_executor.dnn.AlgorithmProto algorithm = 2;
+  .xla.gpu.CudnnNormBackendConfig.Kind kind = 3;
+}
+message CudnnfMHABackendConfig {
+  enum MaskType {
+    NO_MASK = 0;
+    PADDING = 1;
+    CAUSAL = 2;
+    PADDING_CAUSAL = 3;
+    ALIBI = 4;
+  }
+  .stream_executor.dnn.AlgorithmProto algorithm = 8;
+  double fmha_scale = 10;
+  double dropout_rate = 13;
+  .xla.DotDimensionNumbers bmm1_dot_dimension_numbers = 11;
+  .xla.DotDimensionNumbers bmm2_dot_dimension_numbers = 12;
+  .xla.ShapeProto intermediate_tensor_shape = 14;
+  .xla.DotDimensionNumbers bmm1_grad_gemm1_dot_dimension_numbers = 16;
+  .xla.DotDimensionNumbers bmm1_grad_gemm2_dot_dimension_numbers = 17;
+  .xla.DotDimensionNumbers bmm2_grad_gemm1_dot_dimension_numbers = 18;
+  .xla.DotDimensionNumbers bmm2_grad_gemm2_dot_dimension_numbers = 19;
+  int64 seed = 15;
+  bool is_flash_attention = 20;
+  bool is_causal_mask = 21;
+  .xla.gpu.CudnnfMHABackendConfig.MaskType mask_type = 22;
+  bool force_deterministic = 23;
+  int32 sliding_window_length = 24;
+  int32 max_seg_per_batch = 25;
+  bool is_paged_attention = 26;
+}
+message CustomCallBackendConfig {
+  oneof raw_backend_config_oneof {
+    string opaque = 1;
+    string attributes = 2;
+  }
+}
+message BlockScaledDotBackendConfig {
+  int32 block_size = 1;
+}
+message NativeEmitterBackendConfig {
+  .xla.gpu.NativeEmitterType type = 1;
+  int32 unroll_factor = 2;
+}
+message GpuBackendConfig {
+  reserved 2;
+  oneof backend_config {
+    .xla.gpu.CudnnConvBackendConfig cudnn_conv_backend_config = 3;
+    .xla.gpu.GemmBackendConfig gemm_backend_config = 4;
+    .xla.gpu.BitcastBackendConfig bitcast_backend_config = 5;
+    .xla.gpu.CollectiveBackendConfig collective_backend_config = 6;
+    .xla.gpu.FusionBackendConfig fusion_backend_config = 7;
+    .xla.gpu.CudnnNormBackendConfig cudnn_norm_backend_config = 8;
+    .xla.gpu.CudnnfMHABackendConfig cudnn_fmha_backend_config = 9;
+    .xla.gpu.CustomCallBackendConfig custom_call_backend_config = 11;
+    .xla.gpu.BlockScaledDotBackendConfig block_scaled_dot_backend_config = 13;
+    .xla.gpu.NativeEmitterBackendConfig native_emitter_backend_config = 15;
+    .xla.gpu.CollectiveMetadataBackendConfig collective_metadata_backend_config = 16;
+    .xla.gpu.GroupedGemmBackendConfig grouped_gemm_backend_config = 17;
+    .xla.gpu.DynamicSliceConfig dynamic_slice_config = 18;
+  }
+  int64 operation_queue_id = 1;
+  bool force_earliest_schedule = 10;
+  repeated .xla.gpu.ReificationCost reification_cost = 12;
+  .xla.gpu.DeviceType device_type = 14;
+}

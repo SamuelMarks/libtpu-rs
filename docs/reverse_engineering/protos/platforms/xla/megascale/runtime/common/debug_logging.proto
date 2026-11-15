@@ -1,0 +1,107 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "platforms/xla/megascale/runtime/executor/actions.proto";
+import "third_party/tensorflow/compiler/xla/megascale/addresses.proto";
+import "util/task/status.proto";
+message ProgramRunInfo {
+  uint64 run_id = 1;
+  int32 launch_id = 2;
+  string name = 3;
+  string fingerprint = 4;
+}
+message TpuCoreHLO {
+  .tpu.TpuCoreTypeProto tpu_core_type = 13;
+  int32 chip_id = 1;
+  int32 core_idx = 2;
+  string physical_location = 17;
+  string hlo_name = 9;
+  string computation_name = 15;
+  string hlo = 3;
+  string executable_fingerprint = 4;
+  string module_name = 10;
+  int32 launch_id = 12;
+  repeated uint32 sync_flag_words = 5;
+  optional int64 pc = 6;
+  optional int64 tag = 7;
+  string hostname = 8;
+  repeated .util.StatusProto errors = 11;
+  repeated .xla.megascale.runtime.ProgramRunInfo recent_completions = 16;
+  optional bool active = 18;
+}
+message LogMetadata {
+  string jobname = 1;
+  string hostname = 2;
+  int32 task_id = 3;
+  string superblock = 4;
+}
+message CallbackRegistryLog {
+  repeated string unmatched_callbacks = 2;
+  repeated string unmatched_values = 3;
+  repeated string stale_callbacks = 4;
+  repeated string stale_values = 5;
+  .xla.megascale.runtime.LogMetadata metadata = 6;
+}
+message CommunicatorEndpointMapping {
+  int32 communicator_id = 1;
+  uint64 timestamp_ns = 2;
+  .xla.megascale.runtime.EndpointAddresses addresses = 3;
+}
+message HostCommandLogEntryProto {
+  int32 core_logical_id = 1;
+  uint32 command = 2;
+  int64 timestamp_ns = 3;
+}
+message GraphEvent {
+  enum EventType {
+    UNKNOWN_EVENT = 0;
+    START = 1;
+    END = 2;
+  }
+  string graph_id = 1;
+  int32 launch_id = 5;
+  .xla.megascale.runtime.GraphEvent.EventType event_type = 2;
+  uint64 timestamp_ns = 3;
+  uint64 e2e_time_us = 4;
+}
+message GraphExecutionLog {
+  repeated .xla.megascale.runtime.GraphEvent events = 1;
+}
+message ExecutorTelemetry {
+  reserved 2;
+  message PendingGraphState {
+    .xla.megascale.runtime.MegaScaleActionGraph graph = 1;
+    int32 launch_id = 2;
+    uint32 loop_counter = 5;
+    repeated int32 completed_actions = 3;
+    repeated int32 pending_actions = 4;
+    repeated int32 active_actions = 6;
+  }
+  repeated .xla.megascale.runtime.ExecutorTelemetry.PendingGraphState pending_graphs = 1;
+}
+message TransportInfo {
+  message PendingRequest {
+    string dest = 1;
+    uint64 seq = 2;
+    string key = 3;
+    int64 payload_size = 4;
+    int64 age_us = 5;
+  }
+  string type = 1;
+  repeated .xla.megascale.runtime.TransportInfo.PendingRequest pending_requests = 2;
+}
+message RapidEyeInfo {
+  .xla.megascale.runtime.ExecutorTelemetry telemetry = 1;
+  repeated .xla.megascale.runtime.TpuCoreHLO tpu_core_hlos = 2;
+  repeated .xla.megascale.runtime.TransportInfo transport_infos = 11;
+  bool is_truncated = 3;
+  int64 num_slices = 4;
+  int64 num_tasks_per_slice = 5;
+  int32 slice_id = 6;
+  int32 task_id = 7;
+  int64 incarnation_id = 8;
+  int32 tpu_version = 9;
+  string chip_config_name = 10;
+}
+message SyncFlagWaitLog {
+}

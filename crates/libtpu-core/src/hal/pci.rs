@@ -66,10 +66,11 @@ impl PciDeviceEnumerator {
         match device_id.0 {
             0x0027 => Some(TpuGeneration::V3),
             0x0056 => Some(TpuGeneration::V4),
-            0x005e | 0x0062 => Some(TpuGeneration::V5p),
+            0x005e => Some(TpuGeneration::V4Lite),
+            0x0062 => Some(TpuGeneration::V5p),
             0x0063 => Some(TpuGeneration::V5e),
             0x006f => Some(TpuGeneration::V6e),
-            0x0073 | 0x0076 => Some(TpuGeneration::V7x),
+            0x0073 | 0x0076 | 0x007f => Some(TpuGeneration::V7x),
             _ => None,
         }
     }

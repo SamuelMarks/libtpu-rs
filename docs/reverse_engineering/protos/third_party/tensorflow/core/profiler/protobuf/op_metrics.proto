@@ -1,0 +1,3 @@
+syntax = "proto3";
+package tensorflow.profiler;
+import public "third_party/xprof/plugin/tensorboard_plugin_profile/protobuf/op_metrics.proto";

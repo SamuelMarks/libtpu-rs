@@ -1,0 +1,21 @@
+syntax = "proto3";
+package asic_sw.driver.deepsea.jxc;
+message PerformanceTraceOverflow {
+  message Block {
+    repeated uint32 queue = 1;
+    uint32 bus = 2;
+    uint32 shared_fifo = 3;
+  }
+  message TensorNode {
+    .asic_sw.driver.deepsea.jxc.PerformanceTraceOverflow.Block tensor_core = 1;
+    .asic_sw.driver.deepsea.jxc.PerformanceTraceOverflow.Block barna_core = 2;
+    .asic_sw.driver.deepsea.jxc.PerformanceTraceOverflow.Block barna_core_concat = 3;
+    .asic_sw.driver.deepsea.jxc.PerformanceTraceOverflow.Block barna_core_channel_0 = 4;
+    .asic_sw.driver.deepsea.jxc.PerformanceTraceOverflow.Block barna_core_channel_1 = 5;
+    .asic_sw.driver.deepsea.jxc.PerformanceTraceOverflow.Block node_fabric_0 = 6;
+    .asic_sw.driver.deepsea.jxc.PerformanceTraceOverflow.Block node_fabric_1 = 7;
+    .asic_sw.driver.deepsea.jxc.PerformanceTraceOverflow.Block hib = 8;
+  }
+  repeated .asic_sw.driver.deepsea.jxc.PerformanceTraceOverflow.TensorNode nodes = 1;
+  .asic_sw.driver.deepsea.jxc.PerformanceTraceOverflow.Block ici = 2;
+}

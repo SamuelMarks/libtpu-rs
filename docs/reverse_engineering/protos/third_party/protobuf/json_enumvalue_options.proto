@@ -1,0 +1,9 @@
+syntax = "proto2";
+package pb.enumvalue;
+import "n2a/p4r2d3/proto/descriptor.proto";
+message JsonEnumValueOptions {
+  optional string string = 1;
+}
+extend .proto2.EnumValueOptions {
+  optional .pb.enumvalue.JsonEnumValueOptions json = 998;
+}

@@ -1,0 +1,120 @@
+syntax = "proto2";
+package streamz;
+import "google/api/visibility.proto";
+import "monitoring/streamz/api/data_model.proto";
+message ReadRequest {
+  optional string entity_name = 1;
+  repeated string metric_name = 2;
+  optional bool include_empty_metrics = 3;
+}
+message ReadResponse {
+  optional .streamz.Entity entity = 1;
+  repeated .streamz.PointSet point_set = 2;
+}
+message GetMetricsRequest {
+  optional string entity_name = 1;
+  repeated string metric_name = 2;
+}
+message GetMetricsResponse {
+  repeated .streamz.MetricDescriptor metric_descriptor = 1;
+}
+message GetEntitiesRequest {
+  optional bool restrict_to_default_root = 1 [default = false];
+}
+message GetEntitiesResponse {
+  map<string, .streamz.Entity> entities = 1;
+}
+message TypedValue {
+  oneof value {
+    string string_value = 1;
+    int64 int64_value = 2;
+    bool bool_value = 3;
+    double double_value = 4;
+  }
+}
+message EntityAttribute {
+  optional string name = 1;
+  optional .streamz.TypedValue value = 2;
+}
+message OneStreamzEntity {
+  repeated .streamz.EntityAttribute entity_attributes = 1;
+}
+message GetOneStreamzEntitiesRequest {
+  optional string metric_name = 1;
+}
+message GetOneStreamzEntitiesResponse {
+  repeated .streamz.OneStreamzEntity entities = 1;
+}
+message MetricFieldDescriptor {
+  enum FieldType {
+    FIELD_TYPE_UNSPECIFIED = 0;
+    FIELD_TYPE_STRING = 1;
+    FIELD_TYPE_INT64 = 2;
+    FIELD_TYPE_BOOL = 3;
+  }
+  optional string name = 1;
+  optional .streamz.MetricFieldDescriptor.FieldType field_type = 2;
+}
+message OneStreamzMetricDescriptor {
+  enum MetricType {
+    METRIC_TYPE_UNSPECIFIED = 0;
+    METRIC_TYPE_COUNTER = 1;
+    METRIC_TYPE_GAUGE = 2;
+    METRIC_TYPE_EVENT = 3;
+  }
+  enum MetricValueType {
+    VALUE_TYPE_UNSPECIFIED = 0;
+    VALUE_TYPE_INT64 = 1;
+    VALUE_TYPE_DOUBLE = 2;
+    VALUE_TYPE_BOOL = 3;
+    VALUE_TYPE_STRING = 4;
+  }
+  optional string metric_name = 1;
+  optional string target_schema = 2;
+  optional .streamz.OneStreamzMetricDescriptor.MetricType metric_type = 3;
+  optional .streamz.OneStreamzMetricDescriptor.MetricValueType metric_value_type = 4;
+  repeated .streamz.MetricFieldDescriptor column_labels = 5;
+}
+message GetOneStreamzMetricsRequest {
+  optional .streamz.OneStreamzEntity entity = 1;
+}
+message GetOneStreamzMetricsResponse {
+  repeated .streamz.OneStreamzMetricDescriptor metric_descriptors = 1;
+}
+message OneStreamzPoint {
+  oneof point_value {
+    int64 int64_value = 3;
+    double double_value = 4;
+    string string_value = 5;
+    bool bool_value = 6;
+  }
+  optional int64 last_reset_timestamp_micros = 1;
+  optional int64 last_update_timestamp_micros = 2;
+}
+message OneStreamzStream {
+  map<string, .streamz.TypedValue> field_values = 1;
+  optional .streamz.OneStreamzPoint point = 2;
+}
+message OneStreamzMetric {
+  message OneStreamzEntityStream {
+    optional .streamz.OneStreamzEntity entity = 1;
+    repeated .streamz.OneStreamzStream stream_data = 2;
+  }
+  repeated .streamz.OneStreamzMetric.OneStreamzEntityStream entity_streams = 3;
+  optional .streamz.OneStreamzMetricDescriptor metric_descriptor = 4;
+}
+message ReadMetricsDataRequest {
+  repeated .streamz.OneStreamzEntity entities = 1;
+  repeated string metric_names = 2;
+}
+message ReadMetricsDataResponse {
+  repeated .streamz.OneStreamzMetric metrics = 1;
+}
+service StreamzQuery {
+  rpc Read(.streamz.ReadRequest) returns (.streamz.ReadResponse);
+  rpc GetMetrics(.streamz.GetMetricsRequest) returns (.streamz.GetMetricsResponse);
+  rpc GetEntities(.streamz.GetEntitiesRequest) returns (.streamz.GetEntitiesResponse);
+  rpc GetOneStreamzEntities(.streamz.GetOneStreamzEntitiesRequest) returns (.streamz.GetOneStreamzEntitiesResponse);
+  rpc GetOneStreamzMetrics(.streamz.GetOneStreamzMetricsRequest) returns (.streamz.GetOneStreamzMetricsResponse);
+  rpc ReadMetricsData(.streamz.ReadMetricsDataRequest) returns (.streamz.ReadMetricsDataResponse);
+}

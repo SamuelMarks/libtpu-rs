@@ -1,0 +1,1553 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.glc.isa;
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/common_encodings.proto";
+enum MatpushTarget {
+  MATPUSH_TARGET_MSRA = 0;
+  MATPUSH_TARGET_MSRB = 1;
+}
+enum MatrixMultiplyLmrWidthEncoding {
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_8 = 0;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_16 = 1;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_24 = 2;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_32 = 3;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_40 = 4;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_48 = 5;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_56 = 6;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_64 = 7;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_72 = 8;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_80 = 9;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_88 = 10;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_96 = 11;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_104 = 12;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_112 = 13;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_120 = 14;
+  MATRIX_MULTIPLY_LMR_WIDTH_ENCODING_WIDTH_128 = 15;
+}
+enum PushMatrixVariantEncoding {
+  PUSH_MATRIX_VARIANT_ENCODING_VARIANT1 = 0;
+  PUSH_MATRIX_VARIANT_ENCODING_VARIANT2 = 1;
+  PUSH_MATRIX_VARIANT_ENCODING_VARIANT3 = 2;
+}
+enum SourceSpecifierEncoding {
+  SOURCE_SPECIFIER_ENCODING_RAW_1 = 0;
+  SOURCE_SPECIFIER_ENCODING_VS0 = 1;
+  SOURCE_SPECIFIER_ENCODING_VS1 = 2;
+  SOURCE_SPECIFIER_ENCODING_VS2 = 3;
+  SOURCE_SPECIFIER_ENCODING_VS3 = 4;
+  SOURCE_SPECIFIER_ENCODING_IMM0 = 5;
+  SOURCE_SPECIFIER_ENCODING_IMM1 = 6;
+  SOURCE_SPECIFIER_ENCODING_IMM2 = 7;
+  SOURCE_SPECIFIER_ENCODING_IMM3 = 8;
+  SOURCE_SPECIFIER_ENCODING_IMM4 = 9;
+  SOURCE_SPECIFIER_ENCODING_IMM5 = 10;
+  SOURCE_SPECIFIER_ENCODING_RAW_64 = 11;
+  SOURCE_SPECIFIER_ENCODING_RAW_48 = 12;
+  SOURCE_SPECIFIER_ENCODING_RAW_32 = 13;
+  SOURCE_SPECIFIER_ENCODING_RAW_16 = 14;
+  SOURCE_SPECIFIER_ENCODING_RAW_8 = 15;
+}
+enum TransposeMatrixWidthEncoding {
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_128 = 0;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_VS0 = 1;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_VS1 = 2;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_VS2 = 3;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_VS3 = 4;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_IMM0 = 5;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_IMM1 = 6;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_IMM2 = 7;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_IMM3 = 8;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_IMM4 = 9;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_IMM5 = 10;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_64 = 11;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_32 = 12;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_16 = 13;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_WIDTH_8 = 14;
+  TRANSPOSE_MATRIX_WIDTH_ENCODING_RESERVED = 15;
+}
+enum VexSourcePortEncoding {
+  VEX_SOURCE_PORT_ENCODING_VST_SOURCE = 0;
+  VEX_SOURCE_PORT_ENCODING_V0_Y_VREG = 1;
+  VEX_SOURCE_PORT_ENCODING_V0_X = 2;
+  VEX_SOURCE_PORT_ENCODING_V1_Y_VREG = 3;
+  VEX_SOURCE_PORT_ENCODING_V1_X = 4;
+  VEX_SOURCE_PORT_ENCODING_V2_Y_VREG = 5;
+  VEX_SOURCE_PORT_ENCODING_V2_X = 6;
+  VEX_SOURCE_PORT_ENCODING_V3_Y_VREG = 7;
+}
+message TensorCoreVectorExtended {
+  message LoadMultiplicandUpperBlock {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message LoadMultiplicandUpperBlockB32Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message LoadMultiplicandUpperBlockB16Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message LoadMultiplicandUpperBlockB8Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message LoadStagingUpperBlock {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message LoadStagingUpperBlockB32Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message LoadStagingUpperBlockB16Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message LoadStagingUpperBlockB8Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyF32Rounded {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyF32RoundedLgmrMsra {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyF32RoundedLgmrMsrb {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyF32RoundedMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyF32RoundedLgmrMsraMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyF32RoundedLgmrMsrbMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyBf16 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyBf16LgmrMsra {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyBf16LgmrMsrb {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyBf16Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyBf16LgmrMsraMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyBf16LgmrMsrbMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyU8 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyU8LgmrMsra {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyU8LgmrMsrb {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyU8Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyU8LgmrMsraMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyU8LgmrMsrbMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyS8 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyS8LgmrMsra {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyS8LgmrMsrb {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyS8Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyS8LgmrMsraMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyS8LgmrMsrbMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyU4 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyU4LgmrMsra {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyU4LgmrMsrb {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyU4Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyU4LgmrMsraMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyU4LgmrMsrbMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyS4 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyS4LgmrMsra {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyS4LgmrMsrb {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyS4Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyS4LgmrMsraMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyS4LgmrMsrbMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyBf8 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyBf8LgmrMsra {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyBf8LgmrMsrb {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyBf8Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyBf8LgmrMsraMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyBf8LgmrMsrbMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyIf8Bf16 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyIf8Bf16LgmrMsra {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyIf8Bf16LgmrMsrb {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message MatrixMultiplyIf8Bf16Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyIf8Bf16LgmrMsraMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyIf8Bf16LgmrMsrbMasked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional uint32 vmsk = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyLmr {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatrixMultiplyLmrWidthEncoding lmr_width = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyLmrLgmrMsra {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatrixMultiplyLmrWidthEncoding lmr_width = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message MatrixMultiplyLmrLgmrMsrb {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatrixMultiplyLmrWidthEncoding lmr_width = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message LoadMatrixRegisterGmrMsra {
+    optional bool mxu = 1;
+  }
+  message LoadMatrixRegisterGmrMsrb {
+    optional bool mxu = 1;
+  }
+  message LoadMatrixRegisterLmrMsra {
+    optional bool mxu = 1;
+  }
+  message LoadMatrixRegisterLmrMsrb {
+    optional bool mxu = 1;
+  }
+  message PushMatrixF32 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+  }
+  message PushMatrixIf8 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+  }
+  message PushMatrixBf16 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+  }
+  message PushMatrixBf8 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+  }
+  message PushMatrixF32Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+    optional uint32 vmsk = 14;
+  }
+  message PushMatrixIf8Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+    optional uint32 vmsk = 14;
+  }
+  message PushMatrixBf16Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+    optional uint32 vmsk = 14;
+  }
+  message PushMatrixBf8Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+    optional uint32 vmsk = 14;
+  }
+  message PushMatrixU8 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+  }
+  message PushMatrixS8 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+  }
+  message PushMatrixU4 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+  }
+  message PushMatrixS4 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+  }
+  message PushMatrixU8Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+    optional uint32 vmsk = 14;
+  }
+  message PushMatrixS8Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+    optional uint32 vmsk = 14;
+  }
+  message PushMatrixU4Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+    optional uint32 vmsk = 14;
+  }
+  message PushMatrixS4Masked {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool mxu = 2;
+    optional bool transpose = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.MatpushTarget target = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.PushMatrixVariantEncoding variant = 5;
+    optional uint32 vst_source = 6;
+    optional uint32 v0_y_vreg = 7;
+    optional uint32 v0_x = 8;
+    optional uint32 v1_y_vreg = 9;
+    optional uint32 v1_x = 10;
+    optional uint32 v2_y_vreg = 11;
+    optional uint32 v2_x = 12;
+    optional uint32 v3_y_vreg = 13;
+    optional uint32 vmsk = 14;
+  }
+  message SetPatternRegisterPcr {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message SetPatternRegisterPcrSublanes {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message SetPatternRegisterPcrHalfSublanes {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message SetPatternRegisterPcrBytes {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message TransposeStart {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.TransposeMatrixWidthEncoding matrix_width = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message TransposeStartEnd {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.TransposeMatrixWidthEncoding matrix_width = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message PackedTransposeStart16Bit {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.TransposeMatrixWidthEncoding matrix_width = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message PackedTransposeStartEnd16Bit {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.TransposeMatrixWidthEncoding matrix_width = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message PackedTransposeStart8Bit {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.TransposeMatrixWidthEncoding matrix_width = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message PackedTransposeStartEnd8Bit {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.TransposeMatrixWidthEncoding matrix_width = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message TransposeContinueAnyType {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message TransposeEndAnyType {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message Permute {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message LaneRotate32Bit {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SourceSpecifierEncoding rotate_specifier = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message LaneRotatePacked16Bit {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SourceSpecifierEncoding rotate_specifier = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message LaneRotatePacked8Bit {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SourceSpecifierEncoding rotate_specifier = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message LaneBroadcast32Bit {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SourceSpecifierEncoding lane_number = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message LaneBroadcastPacked16Bit {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SourceSpecifierEncoding lane_number = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message LaneBroadcastPacked8Bit {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SourceSpecifierEncoding lane_number = 3;
+    optional uint32 vst_source = 4;
+    optional uint32 v0_y_vreg = 5;
+    optional uint32 v0_x = 6;
+    optional uint32 v1_y_vreg = 7;
+    optional uint32 v1_x = 8;
+    optional uint32 v2_y_vreg = 9;
+    optional uint32 v2_x = 10;
+    optional uint32 v3_y_vreg = 11;
+  }
+  message XlaneAddF32 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message XlaneMaxF32 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message XlaneMinF32 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message XlaneMaxIndexF32 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message XlaneMinIndexF32 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message XlaneAddBf16 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message XlaneMaxBf16 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message XlaneMinBf16 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message XlaneMaxIndexBf16 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  message XlaneMinIndexBf16 {
+    optional .asic_sw.deepsea.gxc.glc.isa.VexSourcePortEncoding vex_source = 1;
+    optional bool xlu_unit = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional uint32 v3_y_vreg = 10;
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadMultiplicandUpperBlock load_multiplicand_upper_block = 5;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadMultiplicandUpperBlockB32Masked load_multiplicand_upper_block_b32_masked = 6;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadMultiplicandUpperBlockB16Masked load_multiplicand_upper_block_b16_masked = 7;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadMultiplicandUpperBlockB8Masked load_multiplicand_upper_block_b8_masked = 8;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadStagingUpperBlock load_staging_upper_block = 9;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadStagingUpperBlockB32Masked load_staging_upper_block_b32_masked = 10;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadStagingUpperBlockB16Masked load_staging_upper_block_b16_masked = 11;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadStagingUpperBlockB8Masked load_staging_upper_block_b8_masked = 12;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyF32Rounded matrix_multiply_f32_rounded = 13;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyF32RoundedLgmrMsra matrix_multiply_f32_rounded_lgmr_msra = 14;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyF32RoundedLgmrMsrb matrix_multiply_f32_rounded_lgmr_msrb = 15;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyF32RoundedMasked matrix_multiply_f32_rounded_masked = 16;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyF32RoundedLgmrMsraMasked matrix_multiply_f32_rounded_lgmr_msra_masked = 17;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyF32RoundedLgmrMsrbMasked matrix_multiply_f32_rounded_lgmr_msrb_masked = 18;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf16 matrix_multiply_bf16 = 19;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf16LgmrMsra matrix_multiply_bf16_lgmr_msra = 20;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf16LgmrMsrb matrix_multiply_bf16_lgmr_msrb = 21;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf16Masked matrix_multiply_bf16_masked = 22;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf16LgmrMsraMasked matrix_multiply_bf16_lgmr_msra_masked = 23;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf16LgmrMsrbMasked matrix_multiply_bf16_lgmr_msrb_masked = 24;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU8 matrix_multiply_u8 = 25;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU8LgmrMsra matrix_multiply_u8_lgmr_msra = 26;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU8LgmrMsrb matrix_multiply_u8_lgmr_msrb = 27;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU8Masked matrix_multiply_u8_masked = 28;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU8LgmrMsraMasked matrix_multiply_u8_lgmr_msra_masked = 29;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU8LgmrMsrbMasked matrix_multiply_u8_lgmr_msrb_masked = 30;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS8 matrix_multiply_s8 = 31;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS8LgmrMsra matrix_multiply_s8_lgmr_msra = 32;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS8LgmrMsrb matrix_multiply_s8_lgmr_msrb = 33;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS8Masked matrix_multiply_s8_masked = 34;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS8LgmrMsraMasked matrix_multiply_s8_lgmr_msra_masked = 35;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS8LgmrMsrbMasked matrix_multiply_s8_lgmr_msrb_masked = 36;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU4 matrix_multiply_u4 = 37;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU4LgmrMsra matrix_multiply_u4_lgmr_msra = 38;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU4LgmrMsrb matrix_multiply_u4_lgmr_msrb = 39;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU4Masked matrix_multiply_u4_masked = 40;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU4LgmrMsraMasked matrix_multiply_u4_lgmr_msra_masked = 41;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyU4LgmrMsrbMasked matrix_multiply_u4_lgmr_msrb_masked = 42;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS4 matrix_multiply_s4 = 43;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS4LgmrMsra matrix_multiply_s4_lgmr_msra = 44;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS4LgmrMsrb matrix_multiply_s4_lgmr_msrb = 45;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS4Masked matrix_multiply_s4_masked = 46;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS4LgmrMsraMasked matrix_multiply_s4_lgmr_msra_masked = 47;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyS4LgmrMsrbMasked matrix_multiply_s4_lgmr_msrb_masked = 48;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf8 matrix_multiply_bf8 = 49;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf8LgmrMsra matrix_multiply_bf8_lgmr_msra = 50;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf8LgmrMsrb matrix_multiply_bf8_lgmr_msrb = 51;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf8Masked matrix_multiply_bf8_masked = 52;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf8LgmrMsraMasked matrix_multiply_bf8_lgmr_msra_masked = 53;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyBf8LgmrMsrbMasked matrix_multiply_bf8_lgmr_msrb_masked = 54;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyIf8Bf16 matrix_multiply_if8_bf16 = 55;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyIf8Bf16LgmrMsra matrix_multiply_if8_bf16_lgmr_msra = 56;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyIf8Bf16LgmrMsrb matrix_multiply_if8_bf16_lgmr_msrb = 57;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyIf8Bf16Masked matrix_multiply_if8_bf16_masked = 58;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyIf8Bf16LgmrMsraMasked matrix_multiply_if8_bf16_lgmr_msra_masked = 59;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyIf8Bf16LgmrMsrbMasked matrix_multiply_if8_bf16_lgmr_msrb_masked = 60;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyLmr matrix_multiply_lmr = 61;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyLmrLgmrMsra matrix_multiply_lmr_lgmr_msra = 62;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.MatrixMultiplyLmrLgmrMsrb matrix_multiply_lmr_lgmr_msrb = 63;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadMatrixRegisterGmrMsra load_matrix_register_gmr_msra = 64;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadMatrixRegisterGmrMsrb load_matrix_register_gmr_msrb = 65;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadMatrixRegisterLmrMsra load_matrix_register_lmr_msra = 66;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LoadMatrixRegisterLmrMsrb load_matrix_register_lmr_msrb = 67;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixF32 push_matrix_f32 = 68;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixIf8 push_matrix_if8 = 69;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixBf16 push_matrix_bf16 = 70;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixBf8 push_matrix_bf8 = 71;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixF32Masked push_matrix_f32_masked = 72;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixIf8Masked push_matrix_if8_masked = 73;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixBf16Masked push_matrix_bf16_masked = 74;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixBf8Masked push_matrix_bf8_masked = 75;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixU8 push_matrix_u8 = 76;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixS8 push_matrix_s8 = 77;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixU4 push_matrix_u4 = 78;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixS4 push_matrix_s4 = 79;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixU8Masked push_matrix_u8_masked = 80;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixS8Masked push_matrix_s8_masked = 81;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixU4Masked push_matrix_u4_masked = 82;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PushMatrixS4Masked push_matrix_s4_masked = 83;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.SetPatternRegisterPcr set_pattern_register_pcr = 84;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.SetPatternRegisterPcrSublanes set_pattern_register_pcr_sublanes = 85;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.SetPatternRegisterPcrHalfSublanes set_pattern_register_pcr_half_sublanes = 86;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.SetPatternRegisterPcrBytes set_pattern_register_pcr_bytes = 87;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.TransposeStart transpose_start = 88;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.TransposeStartEnd transpose_start_end = 89;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PackedTransposeStart16Bit packed_transpose_start_16_bit = 90;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PackedTransposeStartEnd16Bit packed_transpose_start_end_16_bit = 91;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PackedTransposeStart8Bit packed_transpose_start_8_bit = 92;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.PackedTransposeStartEnd8Bit packed_transpose_start_end_8_bit = 93;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.TransposeContinueAnyType transpose_continue_any_type = 94;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.TransposeEndAnyType transpose_end_any_type = 95;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.Permute permute = 96;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LaneRotate32Bit lane_rotate_32_bit = 97;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LaneRotatePacked16Bit lane_rotate_packed_16_bit = 98;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LaneRotatePacked8Bit lane_rotate_packed_8_bit = 99;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LaneBroadcast32Bit lane_broadcast_32_bit = 100;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LaneBroadcastPacked16Bit lane_broadcast_packed_16_bit = 101;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.LaneBroadcastPacked8Bit lane_broadcast_packed_8_bit = 102;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.XlaneAddF32 xlane_add_f32 = 103;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.XlaneMaxF32 xlane_max_f32 = 104;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.XlaneMinF32 xlane_min_f32 = 105;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.XlaneMaxIndexF32 xlane_max_index_f32 = 106;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.XlaneMinIndexF32 xlane_min_index_f32 = 107;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.XlaneAddBf16 xlane_add_bf16 = 108;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.XlaneMaxBf16 xlane_max_bf16 = 109;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.XlaneMinBf16 xlane_min_bf16 = 110;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.XlaneMaxIndexBf16 xlane_max_index_bf16 = 111;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended.XlaneMinIndexBf16 xlane_min_index_bf16 = 112;
+  }
+  optional .asic_sw.deepsea.gxc.glc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional uint32 latency = 2 [default = 1];
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

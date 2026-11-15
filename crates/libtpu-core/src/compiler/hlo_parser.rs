@@ -786,6 +786,11 @@ fn default_f32_vec4_shape() -> Shape {
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn hlo_ast_to_proto(ast: &AstModule) -> HloModuleProto {
+    if ast.hlo_computations.is_empty()
+        && let Ok(proto) = super::hlo_bridge::stablehlo_to_hlo_module_proto(ast)
+    {
+        return proto;
+    }
     let mut computations = Vec::new();
     let mut next_inst_id = 1_i64;
     let mut entry_comp_name = String::new();
@@ -1363,17 +1368,24 @@ fn mlir_type_to_shape_proto(ty: &MlirType) -> ShapeProto {
         },
         MlirType::RankedTensor(rt) => ShapeProto {
             element_type: i32::from(rt.element_type),
-            dimensions: rt.dims.iter().map(|d| d.concrete_or_bound()).collect(),
+            dimensions: rt
+                .dims
+                .iter()
+                .map(|d| match d {
+                    DimensionSize::Static(v) | DimensionSize::Bounded(v) => *v,
+                    DimensionSize::Dynamic => -1,
+                })
+                .collect(),
             is_dynamic_dimension: rt.dims.iter().map(|d| d.is_dynamic()).collect(),
             layout: rt.layout.as_ref().map(|l| match l {
                 MemoryLayout::Tiled { minor_to_major, .. }
                 | MemoryLayout::Strides {
                     byte_strides: minor_to_major,
                     ..
-                } => LayoutProto {
+                } => Box::new(LayoutProto {
                     minor_to_major: minor_to_major.clone(),
                     ..LayoutProto::default()
-                },
+                }),
             }),
             ..ShapeProto::default()
         },
@@ -1473,23 +1485,12 @@ fn lower_mlir_functions_and_ops(ast: &AstModule) -> ParsedHloModule {
         .iter()
         .find(|f| f.name == "main")
         .or_else(|| ast.functions.last());
-
-    for func in ast.functions.iter().filter(|f| Some(*f) != entry_func) {
-        for (idx, arg) in func.arguments.iter().enumerate() {
-            ssa_slots.insert(arg.ssa_name.clone(), vec![idx]);
-        }
-        lower_region_operations(
-            &func.body,
-            &mut ssa_slots,
-            &mut tuple_slots,
-            &mut slot_shapes,
-            &mut next_slot,
-            &mut bundles,
-            &mut output_slots,
-            &mut primary_op,
-        );
-        output_slots.clear();
-    }
+    let fn_map: BTreeMap<&str, &AstFunction> = ast
+        .functions
+        .iter()
+        .filter(|f| Some(*f) != entry_func)
+        .map(|f| (f.name.as_str(), f))
+        .collect();
 
     if let Some(func) = entry_func {
         for arg in &func.arguments {
@@ -1504,6 +1505,7 @@ fn lower_mlir_functions_and_ops(ast: &AstModule) -> ParsedHloModule {
         }
         lower_region_operations(
             &func.body,
+            &fn_map,
             &mut ssa_slots,
             &mut tuple_slots,
             &mut slot_shapes,
@@ -1526,6 +1528,7 @@ fn lower_mlir_functions_and_ops(ast: &AstModule) -> ParsedHloModule {
         };
         lower_region_operations(
             &synthetic_region,
+            &fn_map,
             &mut ssa_slots,
             &mut tuple_slots,
             &mut slot_shapes,
@@ -1564,11 +1567,12 @@ fn resolve_ssa_slot(
     slots.get(idx).copied()
 }
 
-/// Recursively lowers operations inside an [`AstRegion`] (flattening structured control flow `sdy.manual_computation`, `scf.for`, `while`, `if`).
+/// Recursively lowers operations inside an [`AstRegion`] (handling `func.call` inlining and structured `while`/`case`/`if` sub-computations).
 ///
 /// # Arguments
 ///
 /// * `region` - [`AstRegion`] to lower.
+/// * `fn_map` - Private helper functions indexed by symbol name for `func.call` inlining.
 /// * `ssa_slots` - Map from SSA variable name to allocated register slot indices.
 /// * `tuple_slots` - Map from tuple SSA variable name to member register slot indices.
 /// * `slot_shapes` - Shapes indexed by register slot.
@@ -1579,6 +1583,7 @@ fn resolve_ssa_slot(
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn lower_region_operations(
     region: &AstRegion,
+    fn_map: &BTreeMap<&str, &AstFunction>,
     ssa_slots: &mut BTreeMap<String, Vec<usize>>,
     tuple_slots: &mut BTreeMap<String, Vec<usize>>,
     slot_shapes: &mut Vec<Shape>,
@@ -1627,6 +1632,244 @@ fn lower_region_operations(
                         ssa_slots.insert(res.name.clone(), vec![resolved_slot]);
                     }
                 }
+                AstOpKind::Call(callee) if let Some(&callee_fn) = fn_map.get(callee.as_str()) => {
+                    let mut callee_ssa = BTreeMap::new();
+                    let mut callee_tuples = BTreeMap::new();
+                    for (arg_idx, fn_arg) in callee_fn.arguments.iter().enumerate() {
+                        if let Some(caller_slot) = op
+                            .operands
+                            .get(arg_idx)
+                            .and_then(|o| resolve_ssa_slot(ssa_slots, o))
+                        {
+                            callee_ssa.insert(fn_arg.ssa_name.clone(), vec![caller_slot]);
+                        }
+                    }
+                    let mut callee_outs = Vec::new();
+                    lower_region_operations(
+                        &callee_fn.body,
+                        fn_map,
+                        &mut callee_ssa,
+                        &mut callee_tuples,
+                        slot_shapes,
+                        next_slot,
+                        bundles,
+                        &mut callee_outs,
+                        primary_op,
+                    );
+                    let mut cursor_idx = 0_usize;
+                    for res in &op.results {
+                        let cnt = res.count.max(1);
+                        let slice = callee_outs
+                            .get(cursor_idx..cursor_idx + cnt)
+                            .unwrap_or(&callee_outs)
+                            .to_vec();
+                        ssa_slots.insert(res.name.clone(), slice);
+                        cursor_idx += cnt;
+                    }
+                }
+                AstOpKind::While
+                    if let (Some(cond_reg), Some(body_reg)) =
+                        (op.regions.first(), op.regions.get(1)) =>
+                {
+                    *primary_op = TpuOpCode::While;
+                    let init_slots: Vec<usize> = op
+                        .operands
+                        .iter()
+                        .filter_map(|o| resolve_ssa_slot(ssa_slots, o))
+                        .collect();
+                    let mut state_slots = Vec::with_capacity(init_slots.len().max(1));
+                    for (idx, &in_s) in init_slots.iter().enumerate() {
+                        let sig_sh = op.signature.results.get(idx).and_then(MlirType::to_shape);
+                        let sh = slot_shapes
+                            .get(in_s)
+                            .cloned()
+                            .or(sig_sh)
+                            .unwrap_or_else(default_f32_vec4_shape);
+                        state_slots.push(*next_slot);
+                        *next_slot += 1;
+                        slot_shapes.push(sh);
+                    }
+                    let mut cond_ssa = ssa_slots.clone();
+                    let mut cond_tuples = tuple_slots.clone();
+                    let cond_blk_args = cond_reg
+                        .blocks
+                        .first()
+                        .map_or(&[][..], |b| b.arguments.as_slice());
+                    for (arg_idx, blk_arg) in cond_blk_args.iter().enumerate() {
+                        if let Some(&st_s) = state_slots.get(arg_idx) {
+                            cond_ssa.insert(blk_arg.ssa_name.clone(), vec![st_s]);
+                        }
+                    }
+                    let mut cond_bundles = Vec::new();
+                    let mut cond_outs = Vec::new();
+                    let mut cond_prim = TpuOpCode::Identity;
+                    lower_region_operations(
+                        cond_reg,
+                        fn_map,
+                        &mut cond_ssa,
+                        &mut cond_tuples,
+                        slot_shapes,
+                        next_slot,
+                        &mut cond_bundles,
+                        &mut cond_outs,
+                        &mut cond_prim,
+                    );
+                    let mut body_ssa = ssa_slots.clone();
+                    let mut body_tuples = tuple_slots.clone();
+                    let body_blk_args = body_reg
+                        .blocks
+                        .first()
+                        .map_or(&[][..], |b| b.arguments.as_slice());
+                    for (arg_idx, blk_arg) in body_blk_args.iter().enumerate() {
+                        if let Some(&st_s) = state_slots.get(arg_idx) {
+                            body_ssa.insert(blk_arg.ssa_name.clone(), vec![st_s]);
+                        }
+                    }
+                    let mut body_bundles = Vec::new();
+                    let mut body_outs = Vec::new();
+                    let mut body_prim = TpuOpCode::Identity;
+                    lower_region_operations(
+                        body_reg,
+                        fn_map,
+                        &mut body_ssa,
+                        &mut body_tuples,
+                        slot_shapes,
+                        next_slot,
+                        &mut body_bundles,
+                        &mut body_outs,
+                        &mut body_prim,
+                    );
+                    let first_state = state_slots.first().copied().unwrap_or(0);
+                    let out_sh = slot_shapes
+                        .get(first_state)
+                        .cloned()
+                        .unwrap_or_else(default_f32_vec4_shape);
+                    let pc = u32::try_from(bundles.len()).unwrap_or(0);
+                    bundles.push(TpuInstructionBundle {
+                        pc_offset: pc,
+                        opcode: TpuOpCode::While,
+                        operand_slots: init_slots,
+                        output_slot: first_state,
+                        sync_flag_id: pc + 1,
+                        attrs: InstructionAttrs {
+                            output_shape: Some(out_sh),
+                            sub_computations: vec![cond_bundles, body_bundles],
+                            while_state_slots: state_slots.clone(),
+                            while_cond_slot: cond_outs.first().copied(),
+                            while_body_slots: body_outs,
+                            ..InstructionAttrs::default()
+                        },
+                    });
+                    let mut cursor_idx = 0_usize;
+                    for res in &op.results {
+                        let cnt = res.count.max(1);
+                        let slice = state_slots
+                            .get(cursor_idx..cursor_idx + cnt)
+                            .unwrap_or(&state_slots)
+                            .to_vec();
+                        ssa_slots.insert(res.name.clone(), slice);
+                        cursor_idx += cnt;
+                    }
+                }
+                AstOpKind::Conditional if op.regions.len() >= 2 => {
+                    *primary_op = TpuOpCode::Conditional;
+                    let sel_slot = op
+                        .operands
+                        .first()
+                        .and_then(|o| resolve_ssa_slot(ssa_slots, o))
+                        .unwrap_or(0);
+                    let sel_shape = slot_shapes
+                        .get(sel_slot)
+                        .cloned()
+                        .unwrap_or_else(default_f32_vec4_shape);
+                    let is_indexed =
+                        op.mnemonic == "case" || sel_shape.element_type != ElementType::Pred;
+                    let total_results = op
+                        .results
+                        .iter()
+                        .map(|r| r.count.max(1))
+                        .sum::<usize>()
+                        .max(1);
+                    let mut res_slots = Vec::with_capacity(total_results);
+                    for r_i in 0..total_results {
+                        let r_sh = op
+                            .signature
+                            .results
+                            .get(r_i)
+                            .and_then(MlirType::to_shape)
+                            .unwrap_or_else(default_f32_vec4_shape);
+                        res_slots.push(*next_slot);
+                        *next_slot += 1;
+                        slot_shapes.push(r_sh);
+                    }
+                    let mut all_branch_bundles = Vec::with_capacity(op.regions.len());
+                    let mut all_branch_outs = Vec::with_capacity(op.regions.len());
+                    for nested_reg in &op.regions {
+                        let mut br_ssa = ssa_slots.clone();
+                        let mut br_tuples = tuple_slots.clone();
+                        let br_blk_args = nested_reg
+                            .blocks
+                            .first()
+                            .map_or(&[][..], |b| b.arguments.as_slice());
+                        for (arg_idx, blk_arg) in br_blk_args.iter().enumerate() {
+                            if let Some(outer_s) = op
+                                .operands
+                                .get(arg_idx + 1)
+                                .and_then(|o| resolve_ssa_slot(ssa_slots, o))
+                            {
+                                br_ssa.insert(blk_arg.ssa_name.clone(), vec![outer_s]);
+                            }
+                        }
+                        let mut br_bundles = Vec::new();
+                        let mut br_outs = Vec::new();
+                        let mut br_prim = TpuOpCode::Identity;
+                        lower_region_operations(
+                            nested_reg,
+                            fn_map,
+                            &mut br_ssa,
+                            &mut br_tuples,
+                            slot_shapes,
+                            next_slot,
+                            &mut br_bundles,
+                            &mut br_outs,
+                            &mut br_prim,
+                        );
+                        all_branch_bundles.push(br_bundles);
+                        all_branch_outs.push(br_outs);
+                    }
+                    let first_res = res_slots.first().copied().unwrap_or(0);
+                    let out_sh = slot_shapes
+                        .get(first_res)
+                        .cloned()
+                        .unwrap_or_else(default_f32_vec4_shape);
+                    let pc = u32::try_from(bundles.len()).unwrap_or(0);
+                    bundles.push(TpuInstructionBundle {
+                        pc_offset: pc,
+                        opcode: TpuOpCode::Conditional,
+                        operand_slots: vec![sel_slot],
+                        output_slot: first_res,
+                        sync_flag_id: pc + 1,
+                        attrs: InstructionAttrs {
+                            input_shapes: vec![sel_shape],
+                            output_shape: Some(out_sh),
+                            sub_computations: all_branch_bundles,
+                            branch_output_slots: all_branch_outs,
+                            conditional_result_slots: res_slots.clone(),
+                            conditional_is_indexed: is_indexed,
+                            ..InstructionAttrs::default()
+                        },
+                    });
+                    let mut cursor_idx = 0_usize;
+                    for res in &op.results {
+                        let cnt = res.count.max(1);
+                        let slice = res_slots
+                            .get(cursor_idx..cursor_idx + cnt)
+                            .unwrap_or(&res_slots)
+                            .to_vec();
+                        ssa_slots.insert(res.name.clone(), slice);
+                        cursor_idx += cnt;
+                    }
+                }
                 AstOpKind::SdyManualComputation
                 | AstOpKind::While
                 | AstOpKind::Conditional
@@ -1655,6 +1898,7 @@ fn lower_region_operations(
                         let mut nested_outputs = Vec::new();
                         lower_region_operations(
                             nested_reg,
+                            fn_map,
                             ssa_slots,
                             tuple_slots,
                             slot_shapes,
@@ -1719,13 +1963,26 @@ fn lower_single_mlir_operation(
     bundles: &mut Vec<TpuInstructionBundle>,
     primary_op: &mut TpuOpCode,
 ) {
-    let opcode = match &op.op_kind {
-        AstOpKind::HardwareOp(hw) => *hw,
-        AstOpKind::MosaicDmaStart
-        | AstOpKind::MosaicDmaWait
-        | AstOpKind::MosaicSemaphore(_)
-        | AstOpKind::Call(_) => TpuOpCode::CustomCall,
-        _ => TpuOpCode::Identity,
+    let custom_target_preview = op
+        .attributes
+        .get("call_target_name")
+        .and_then(MlirAttribute::as_str)
+        .unwrap_or("");
+    let is_gspmd_annotation = matches!(
+        custom_target_preview,
+        "Sharding" | "SPMDFullToShardShape" | "SPMDShardToFullShape"
+    );
+    let opcode = if is_gspmd_annotation {
+        TpuOpCode::Identity
+    } else {
+        match &op.op_kind {
+            AstOpKind::HardwareOp(hw) => *hw,
+            AstOpKind::MosaicDmaStart
+            | AstOpKind::MosaicDmaWait
+            | AstOpKind::MosaicSemaphore(_)
+            | AstOpKind::Call(_) => TpuOpCode::CustomCall,
+            _ => TpuOpCode::Identity,
+        }
     };
     *primary_op = opcode;
 
@@ -1746,13 +2003,28 @@ fn lower_single_mlir_operation(
         .iter()
         .filter_map(|&s| slot_shapes.get(s).cloned())
         .collect();
-    let out_shape = op
-        .signature
-        .results
-        .first()
-        .and_then(MlirType::to_shape)
-        .or_else(|| in_shapes.first().cloned())
-        .unwrap_or_else(default_f32_vec4_shape);
+    let out_shape = if custom_target_preview == "SPMDShardToFullShape" {
+        let sig_res_sh = op.signature.results.first().and_then(MlirType::to_shape);
+        in_shapes
+            .first()
+            .cloned()
+            .or(sig_res_sh)
+            .unwrap_or_else(default_f32_vec4_shape)
+    } else {
+        op.signature
+            .results
+            .first()
+            .and_then(MlirType::to_shape)
+            .or_else(|| match op.attributes.get("value") {
+                Some(MlirAttribute::DenseElements(de)) => {
+                    de.tensor_type.as_ref().map(RankedTensorType::to_shape)
+                }
+                _ => None,
+            })
+            .or_else(|| op.signature.inputs.last().and_then(MlirType::to_shape))
+            .or_else(|| in_shapes.first().cloned())
+            .unwrap_or_else(default_f32_vec4_shape)
+    };
 
     let attrs = build_instruction_attrs_from_ast(op, &in_shapes, &out_shape);
     let total_results = op
@@ -1847,10 +2119,21 @@ fn build_instruction_attrs_from_ast(
             .get("permutation")
             .or_else(|| op.attributes.get("dims"))
             .map_or_else(Vec::new, MlirAttribute::as_usize_vec),
-        broadcast_dims: attr_usize_vec(&op.attributes, "broadcast_dimensions"),
+        broadcast_dims: op
+            .attributes
+            .get("broadcast_dimensions")
+            .or_else(|| op.attributes.get("dims"))
+            .map_or_else(Vec::new, MlirAttribute::as_usize_vec),
         reduce_dims: attr_usize_vec(&op.attributes, "dimensions"),
         iota_dim: attr_usize(&op.attributes, "iota_dimension"),
-        concat_dim: attr_usize(&op.attributes, "dimension"),
+        concat_dim: op
+            .attributes
+            .get("dimension")
+            .or_else(|| op.attributes.get("all_gather_dim"))
+            .or_else(|| op.attributes.get("scatter_dimension"))
+            .or_else(|| op.attributes.get("concat_dimension"))
+            .and_then(MlirAttribute::as_usize)
+            .unwrap_or(0),
         slice_starts: attr_usize_vec(&op.attributes, "start_indices"),
         slice_limits: attr_usize_vec(&op.attributes, "limit_indices"),
         slice_strides: attr_usize_vec(&op.attributes, "strides"),
@@ -1902,6 +2185,7 @@ fn build_instruction_attrs_from_ast(
         ..InstructionAttrs::default()
     };
 
+    let empty_fn_map: BTreeMap<&str, &AstFunction> = BTreeMap::new();
     for nested_reg in &op.regions {
         let mut sub_ssa = BTreeMap::new();
         let mut sub_tuples = BTreeMap::new();
@@ -1917,6 +2201,7 @@ fn build_instruction_attrs_from_ast(
         let mut sub_prim = TpuOpCode::Identity;
         lower_region_operations(
             nested_reg,
+            &empty_fn_map,
             &mut sub_ssa,
             &mut sub_tuples,
             &mut sub_shapes,
@@ -1926,6 +2211,27 @@ fn build_instruction_attrs_from_ast(
             &mut sub_prim,
         );
         attrs.sub_computations.push(sub_bundles);
+    }
+    let cdims = attr_usize_vec(&op.attributes, "conv_dims");
+    if let [ib, inf, kif, kof, ob, of_] = cdims.as_slice() {
+        attrs.conv_dim_numbers = Some([*ib, *inf, *kif, *kof, *ob, *of_]);
+        attrs.conv_input_spatial_dims = attr_usize_vec(&op.attributes, "input_spatial_dims");
+        attrs.conv_kernel_spatial_dims = attr_usize_vec(&op.attributes, "kernel_spatial_dims");
+        attrs.conv_output_spatial_dims = attr_usize_vec(&op.attributes, "output_spatial_dims");
+    }
+    let pflat = attr_usize_vec(&op.attributes, "padding_flat");
+    if pflat.len() >= 2 && attrs.pad_edge_low.is_empty() {
+        for pair in pflat.chunks_exact(2) {
+            attrs.pad_edge_low.push(pair.first().copied().unwrap_or(0));
+            attrs.pad_edge_high.push(pair.get(1).copied().unwrap_or(0));
+        }
+    }
+    if let Some(cid) = op
+        .attributes
+        .get("channel_id")
+        .and_then(MlirAttribute::as_usize)
+    {
+        attrs.send_recv_channel_id = i64::try_from(cid).unwrap_or(0);
     }
 
     if let Some(MlirAttribute::DenseElements(de)) = op.attributes.get("value") {
@@ -1962,6 +2268,34 @@ fn build_instruction_attrs_from_ast(
         attrs
             .dot_rhs_batch_dims
             .clone_from(&dot.rhs_batching_dimensions);
+    }
+    if attrs.dot_lhs_contracting_dims.is_empty() {
+        attrs.dot_lhs_contracting_dims = op
+            .attributes
+            .get("lhs_contracting_dims")
+            .or_else(|| op.attributes.get("lhs_contracting_dimensions"))
+            .map_or_else(Vec::new, MlirAttribute::as_usize_vec);
+    }
+    if attrs.dot_rhs_contracting_dims.is_empty() {
+        attrs.dot_rhs_contracting_dims = op
+            .attributes
+            .get("rhs_contracting_dims")
+            .or_else(|| op.attributes.get("rhs_contracting_dimensions"))
+            .map_or_else(Vec::new, MlirAttribute::as_usize_vec);
+    }
+    if attrs.dot_lhs_batch_dims.is_empty() {
+        attrs.dot_lhs_batch_dims = op
+            .attributes
+            .get("lhs_batching_dims")
+            .or_else(|| op.attributes.get("lhs_batching_dimensions"))
+            .map_or_else(Vec::new, MlirAttribute::as_usize_vec);
+    }
+    if attrs.dot_rhs_batch_dims.is_empty() {
+        attrs.dot_rhs_batch_dims = op
+            .attributes
+            .get("rhs_batching_dims")
+            .or_else(|| op.attributes.get("rhs_batching_dimensions"))
+            .map_or_else(Vec::new, MlirAttribute::as_usize_vec);
     }
     for attr_val in op.attributes.values() {
         match attr_val {
@@ -2415,43 +2749,7 @@ fn verify_region_semantics(
                     column: op.span.column,
                 });
             }
-            if let AstOpKind::HardwareOp(
-                TpuOpCode::AddF32
-                | TpuOpCode::AddS32
-                | TpuOpCode::SubF32
-                | TpuOpCode::MulF32
-                | TpuOpCode::DivF32,
-            ) = op.op_kind
-            {
-                if op.operands.len() != 2 {
-                    return Err(LibTpuError::ShapeInferenceError {
-                        op: format!("{}.{}", op.dialect.as_str(), op.mnemonic),
-                        reason: format!(
-                            "binary operation requires 2 operands, found {}",
-                            op.operands.len()
-                        ),
-                        line: op.span.line,
-                        column: op.span.column,
-                    });
-                }
-                if let [lhs_ty, rhs_ty] = op.signature.inputs.as_slice() {
-                    let l = lhs_ty.to_shape().unwrap_or_else(default_f32_vec4_shape);
-                    let r = rhs_ty.to_shape().unwrap_or_else(default_f32_vec4_shape);
-                    if (l.dims != r.dims || l.element_type != r.element_type)
-                        && op.dialect != DialectKind::Chlo
-                    {
-                        return Err(LibTpuError::ShapeInferenceError {
-                            op: format!("{}.{}", op.dialect.as_str(), op.mnemonic),
-                            reason: format!(
-                                "elementwise binary operand shape mismatch: {:?} vs {:?}",
-                                l.dims, r.dims
-                            ),
-                            line: op.span.line,
-                            column: op.span.column,
-                        });
-                    }
-                }
-            }
+            super::hlo_bridge::verify_operation_static_and_dynamic_types(op)?;
             for res in &op.results {
                 defined_ssa.insert(res.name.clone());
             }

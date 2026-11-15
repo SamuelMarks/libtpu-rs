@@ -1,0 +1,6 @@
+syntax = "proto2";
+package crash_analysis;
+import "n2a/p4r2d3/proto/descriptor.proto";
+extend .proto2.EnumValueOptions {
+  optional string display_value = 525000136;
+}

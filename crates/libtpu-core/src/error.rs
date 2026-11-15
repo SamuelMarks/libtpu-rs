@@ -1412,6 +1412,128 @@ pub enum LibTpuError {
         /// Expected completion sequence number.
         completion_seq: u32,
     },
+
+    /// Requested `.proto` descriptor was not found in `protodesc_cold` or the global pool (`ProtoDescriptorNotFound`).
+    #[display("Protobuf descriptor not found: '{proto_name}'")]
+    #[from(ignore)]
+    ProtoDescriptorNotFound {
+        /// Missing `.proto` path or message name.
+        proto_name: String,
+    },
+
+    /// `MemorySpaceAssignment` (MSA) exceeded the target scratchpad or HBM budget (`MemorySpaceAssignmentOom`).
+    #[display(
+        "MemorySpaceAssignment OOM in {memory_space}: requested {requested_bytes} bytes, limit is {limit_bytes} bytes"
+    )]
+    #[from(ignore)]
+    MemorySpaceAssignmentOom {
+        /// Memory space name (`"vmem"`, `"smem"`, `"cmem"`, `"hbm"`).
+        memory_space: &'static str,
+        /// Peak live byte requirement.
+        requested_bytes: u64,
+        /// Configured hardware or flag capacity limit in bytes.
+        limit_bytes: u64,
+    },
+
+    /// Low-Level Optimizer (`LLO`) modulo scheduling or hazard resolution failed (`LloSchedulingError`).
+    #[display("LLO bundle scheduling failed at PC {bundle_pc} (slot {slot_name}): {reason}")]
+    #[from(ignore)]
+    LloSchedulingError {
+        /// VLIW bundle program counter index.
+        bundle_pc: u32,
+        /// Conflicting VLIW functional unit slot name (`"S0"`, `"V0"`, `"MXU0"`, `"DMA"`).
+        slot_name: &'static str,
+        /// Detailed hazard or latency diagnostic.
+        reason: String,
+    },
+
+    /// Generation-specific `TensorCore` VLIW binary codec encode/decode failure (`VliwIsaCodecError`).
+    #[display(
+        "VLIW ISA codec error for {generation_code} at byte offset {bundle_offset}: {reason}"
+    )]
+    #[from(ignore)]
+    VliwIsaCodecError {
+        /// Generation ISA codename (`"jfc"`, `"dfc"`, `"pfc"`, `"vfc"`, `"gfc"`, `"iwc"`).
+        generation_code: &'static str,
+        /// Byte offset in the instruction stream.
+        bundle_offset: usize,
+        /// Codec failure description.
+        reason: String,
+    },
+
+    /// `SparseCore` / `BarnaCore` instruction codec failure (`SparseCoreCodecError`).
+    #[display("SparseCore {core_id} codec error at PC {pc_offset}: {reason}")]
+    #[from(ignore)]
+    SparseCoreCodecError {
+        /// `SparseCore` engine ordinal.
+        core_id: u32,
+        /// Instruction word or bundle offset.
+        pc_offset: u32,
+        /// Codec failure description.
+        reason: String,
+    },
+
+    /// Uncorrectable multi-bit SRAM or HBM ECC hardware fault (`EccUncorrectableFault`).
+    #[display(
+        "Uncorrectable {memory_class} ECC fault on device {device_id} at {failing_address:#x} (syndrome={syndrome:#x})"
+    )]
+    #[from(ignore)]
+    EccUncorrectableFault {
+        /// Logical device ordinal.
+        device_id: u32,
+        /// Hardware memory class (`"HBM"`, `"VMEM"`, `"SMEM"`, `"IMEM"`, `"CMEM"`).
+        memory_class: &'static str,
+        /// First failing physical byte address.
+        failing_address: u64,
+        /// Raw hardware ECC syndrome register value.
+        syndrome: u64,
+    },
+
+    /// Distributed `CoordinationService` RPC or state-machine failure (`CoordinationServiceError`).
+    #[display(
+        "CoordinationService {rpc_method} failed on task {task_id} (code={status_code}): {message}"
+    )]
+    #[from(ignore)]
+    CoordinationServiceError {
+        /// `CoordinationService` RPC method name.
+        rpc_method: &'static str,
+        /// Worker task index.
+        task_id: i32,
+        /// Canonical `tensorflow.error.Code` integer (`1..=16`).
+        status_code: i32,
+        /// Diagnostic error message.
+        message: String,
+    },
+
+    /// 2D/3D torus Inter-Chip Interconnect (`ICI`) routing failure (`IciRoutingError`).
+    #[display("ICI routing error from chip {src_chip} to chip {dst_chip}: {reason}")]
+    #[from(ignore)]
+    IciRoutingError {
+        /// Source global chip ID.
+        src_chip: u32,
+        /// Destination global chip ID.
+        dst_chip: u32,
+        /// Link health or subslice clamp failure reason.
+        reason: String,
+    },
+
+    /// Structured `MegaScale` DCN multi-slice runtime fault (`MegascaleRuntimeFault`).
+    #[display(
+        "MegaScale runtime fault on slice {slice_id} task {task_id} (type={error_type}, hang={hang_error_type}): {message}"
+    )]
+    #[from(ignore)]
+    MegascaleRuntimeFault {
+        /// Slice ordinal index.
+        slice_id: i32,
+        /// Worker task ordinal index.
+        task_id: i32,
+        /// `MegaScaleRuntimeError.error_type` (`1` = Hang, `2` = Unrecoverable, `3` = Cancelled).
+        error_type: i32,
+        /// `MegaScaleRuntimeError.hang_error_type` (`0` = Unspecified, `1` = Timeout, `2` = `NoProgress`).
+        hang_error_type: i32,
+        /// Human-readable fault message.
+        message: String,
+    },
 }
 
 impl From<serde_json::Error> for LibTpuError {
@@ -1546,7 +1668,9 @@ impl LibTpuError {
             | Self::JsonSerializationError { .. }
             | Self::JsonSerializationFailed(_)
             | Self::TocPayloadChecksumMismatch { .. }
-            | Self::InvalidMlirBytecodeGrouping { .. } => PjrtErrorCode::InvalidArgument,
+            | Self::InvalidMlirBytecodeGrouping { .. }
+            | Self::VliwIsaCodecError { .. }
+            | Self::SparseCoreCodecError { .. } => PjrtErrorCode::InvalidArgument,
             Self::UnsupportedApiVersion { .. } | Self::UnimplementedOperation { .. } => {
                 PjrtErrorCode::Unimplemented
             }
@@ -1560,7 +1684,8 @@ impl LibTpuError {
             | Self::CallbackNotFound { .. }
             | Self::InvalidCallbackId { .. }
             | Self::TransformNotFound { .. }
-            | Self::ExtensionNotFound { .. } => PjrtErrorCode::NotFound,
+            | Self::ExtensionNotFound { .. }
+            | Self::ProtoDescriptorNotFound { .. } => PjrtErrorCode::NotFound,
             Self::DeviceNotAddressable { .. }
             | Self::BufferDeleted { .. }
             | Self::ExecutableDeleted { .. }
@@ -1575,6 +1700,7 @@ impl LibTpuError {
             | Self::RegisterAllocationFailed { .. }
             | Self::RegisterIndexOverflow { .. }
             | Self::VmemHeapAllocationFailed { .. }
+            | Self::MemorySpaceAssignmentOom { .. }
             | Self::DmaMappingFailed { .. } => PjrtErrorCode::ResourceExhausted,
             Self::NumericOverflow { .. }
             | Self::IntegerOverflow { .. }
@@ -1583,6 +1709,15 @@ impl LibTpuError {
             Self::MegascaleBarrierTimeout { .. }
             | Self::SyncFlagTimeout { .. }
             | Self::HardwareRingTimeout { .. } => PjrtErrorCode::DeadlineExceeded,
+            Self::EccUncorrectableFault { .. } => PjrtErrorCode::DataLoss,
+            Self::CoordinationServiceError { status_code, .. } => {
+                PjrtErrorCode::from_raw(*status_code)
+            }
+            Self::MegascaleRuntimeFault { error_type, .. } => match *error_type {
+                1 => PjrtErrorCode::DeadlineExceeded,
+                3 => PjrtErrorCode::Cancelled,
+                _ => PjrtErrorCode::Internal,
+            },
             Self::DevicePoisoned { .. }
             | Self::HardwareFault { .. }
             | Self::ProtobufEncodeError { .. }
@@ -1601,12 +1736,14 @@ impl LibTpuError {
             | Self::InternalError { .. }
             | Self::EventError { .. }
             | Self::EventFailed { .. }
+            | Self::LloSchedulingError { .. }
             | Self::LockPoisoned { .. } => PjrtErrorCode::Internal,
             Self::HardwareIoError { .. }
             | Self::EventFdError { .. }
             | Self::SysfsDiscoveryFailed { .. }
             | Self::IoctlFailed { .. }
             | Self::VfioIommuError { .. }
+            | Self::IciRoutingError { .. }
             | Self::IoError { .. }
             | Self::IoFailed(_)
             | Self::RustixSyscallFailed(_) => PjrtErrorCode::Unavailable,
@@ -1669,13 +1806,147 @@ impl LibTpuError {
             Self::MegascaleBarrierTimeout { .. }
             | Self::SyncFlagTimeout { .. }
             | Self::HardwareRingTimeout { .. } => 1,
-            Self::CollectiveError { .. } | Self::DevicePoisoned { .. } => 2,
+            Self::MegascaleRuntimeFault { error_type, .. } => *error_type,
+            Self::CollectiveError { .. }
+            | Self::DevicePoisoned { .. }
+            | Self::IciRoutingError { .. } => 2,
             Self::HardwareFault { .. }
+            | Self::EccUncorrectableFault { .. }
             | Self::HardwareIoError { .. }
             | Self::IoctlFailed { .. }
             | Self::VfioIommuError { .. } => 3,
             _ => 0,
         }
+    }
+
+    /// Converts this [`LibTpuError`] into a wire-compatible [`crate::proto::MegaScaleRuntimeErrorProto`].
+    #[must_use]
+    pub fn to_megascale_runtime_error_proto(&self) -> crate::proto::MegaScaleRuntimeErrorProto {
+        let (slice_id, task_id, error_type, hang_type, msg) = match self {
+            Self::MegascaleRuntimeFault {
+                slice_id,
+                task_id,
+                error_type,
+                hang_error_type,
+                message,
+            } => (
+                *slice_id,
+                *task_id,
+                *error_type,
+                *hang_error_type,
+                message.clone(),
+            ),
+            Self::MegascaleBarrierTimeout { slice_id, .. } => {
+                (*slice_id, 0, 1, 1, self.to_string())
+            }
+            _ => {
+                let et = if self.megascale_error_type() == 1 {
+                    1
+                } else {
+                    2
+                };
+                (0, 0, et, i32::from(et == 1), self.to_string())
+            }
+        };
+        crate::proto::MegaScaleRuntimeErrorProto {
+            error_type,
+            error_message: msg,
+            estimated_start_time_ms: 0,
+            runtime_state: None,
+            triggering_launch_id: slice_id,
+            hostname: format!("tpu-slice{slice_id}-worker{task_id}"),
+            job_name: String::from("megascale_worker"),
+            task_id,
+            event_id: u64::try_from(task_id.max(0)).unwrap_or(0),
+            unrecoverable_error_type: i32::from(error_type == 2),
+            runtime_error_id: 1,
+            hang_error_type: hang_type,
+            ..crate::proto::MegaScaleRuntimeErrorProto::default()
+        }
+    }
+
+    /// Converts a [`crate::proto::MegaScaleRuntimeErrorProto`] back into `Ok(())` (`error_type == 0`)
+    /// or [`LibTpuError::MegascaleRuntimeFault`].
+    ///
+    /// # Arguments
+    ///
+    /// * `proto` - Wire-decoded `MegaScaleRuntimeErrorProto`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::MegascaleRuntimeFault`] if `proto.error_type != 0`.
+    pub fn from_megascale_runtime_error_proto(
+        proto: &crate::proto::MegaScaleRuntimeErrorProto,
+    ) -> Result<(), Self> {
+        if proto.error_type == 0 {
+            return Ok(());
+        }
+        Err(Self::MegascaleRuntimeFault {
+            slice_id: proto.triggering_launch_id,
+            task_id: proto.task_id,
+            error_type: proto.error_type,
+            hang_error_type: proto.hang_error_type,
+            message: proto.error_message.clone(),
+        })
+    }
+
+    /// Converts this [`LibTpuError`] into a lossless `tensorflow.StatusProto` carrying its
+    /// status code, diagnostic message, and wire-encoded `PJRT_Error_ForEachPayload` dictionary.
+    #[must_use]
+    pub fn to_status_proto(&self) -> crate::proto::StatusProto {
+        use crate::proto::ProtoSchemaMessage as _;
+        let mut payload_map = std::collections::BTreeMap::new();
+        for p in self.payloads() {
+            payload_map.insert(p.key, p.value);
+        }
+        if matches!(
+            self,
+            Self::MegascaleRuntimeFault { .. }
+                | Self::MegascaleBarrierTimeout { .. }
+                | Self::CollectiveError { .. }
+        ) {
+            payload_map.insert(
+                String::from(
+                    "type.googleapis.com/xla.megascale.runtime.external.MegaScaleRuntimeError",
+                ),
+                self.to_megascale_runtime_error_proto().encode_proto(),
+            );
+        }
+        crate::proto::StatusProto {
+            code: self.tensorflow_error_code(),
+            message: self.to_string(),
+            payload: payload_map,
+        }
+    }
+
+    /// Converts a `tensorflow.StatusProto` losslessly back into `Ok(())` (`code == 0`) or [`LibTpuError`].
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - Wire-decoded `tensorflow.StatusProto`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reconstructed [`LibTpuError`] when `status.code != 0`.
+    pub fn from_status_proto(status: &crate::proto::StatusProto) -> Result<(), Self> {
+        use crate::proto::ProtoSchemaMessage as _;
+        if status.code == 0 {
+            return Ok(());
+        }
+        if let Some(ms_bytes) = status
+            .payload
+            .get("type.googleapis.com/xla.megascale.runtime.external.MegaScaleRuntimeError")
+            && let Ok(ms_proto) = crate::proto::MegaScaleRuntimeErrorProto::decode_proto(ms_bytes)
+            && ms_proto.error_type != 0
+        {
+            return Self::from_megascale_runtime_error_proto(&ms_proto);
+        }
+        Err(Self::CoordinationServiceError {
+            rpc_method: "StatusProto",
+            task_id: 0,
+            status_code: status.code,
+            message: status.message.clone(),
+        })
     }
 
     /// Returns the high-level semantic subsystem category for this [`LibTpuError`].
@@ -1961,6 +2232,22 @@ impl LibTpuError {
             communicator_id: communicator_id.0,
             op_name,
             reason,
+        }
+    }
+
+    /// Extracts the canonical gRPC `(status_code, grpc_message)` pair from this [`LibTpuError`].
+    #[must_use]
+    pub fn grpc_status_and_message(self) -> (i32, String) {
+        match self {
+            Self::CoordinationServiceError {
+                status_code,
+                message,
+                ..
+            } => (status_code, message),
+            other => {
+                let code = other.error_code().as_raw();
+                (code, other.to_string())
+            }
         }
     }
 }
@@ -2931,10 +3218,153 @@ mod tests {
                 },
                 PjrtErrorCode::DeadlineExceeded,
             ),
+            (
+                LibTpuError::ProtoDescriptorNotFound {
+                    proto_name: String::from("missing.proto"),
+                },
+                PjrtErrorCode::NotFound,
+            ),
+            (
+                LibTpuError::MemorySpaceAssignmentOom {
+                    memory_space: "vmem",
+                    requested_bytes: 33_554_432,
+                    limit_bytes: 16_777_216,
+                },
+                PjrtErrorCode::ResourceExhausted,
+            ),
+            (
+                LibTpuError::LloSchedulingError {
+                    bundle_pc: 12,
+                    slot_name: "MXU0",
+                    reason: String::from("pipeline hazard"),
+                },
+                PjrtErrorCode::Internal,
+            ),
+            (
+                LibTpuError::VliwIsaCodecError {
+                    generation_code: "jfc",
+                    bundle_offset: 64,
+                    reason: String::from("invalid slot encoding"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::SparseCoreCodecError {
+                    core_id: 0,
+                    pc_offset: 8,
+                    reason: String::from("invalid gather subopcode"),
+                },
+                PjrtErrorCode::InvalidArgument,
+            ),
+            (
+                LibTpuError::EccUncorrectableFault {
+                    device_id: 0,
+                    memory_class: "HBM",
+                    failing_address: 0x1000_0000,
+                    syndrome: 0xDEAD,
+                },
+                PjrtErrorCode::DataLoss,
+            ),
+            (
+                LibTpuError::CoordinationServiceError {
+                    rpc_method: "Barrier",
+                    task_id: 1,
+                    status_code: 4,
+                    message: String::from("barrier timed out"),
+                },
+                PjrtErrorCode::DeadlineExceeded,
+            ),
+            (
+                LibTpuError::IciRoutingError {
+                    src_chip: 0,
+                    dst_chip: 7,
+                    reason: String::from("link down"),
+                },
+                PjrtErrorCode::Unavailable,
+            ),
+            (
+                LibTpuError::MegascaleRuntimeFault {
+                    slice_id: 1,
+                    task_id: 2,
+                    error_type: 1,
+                    hang_error_type: 1,
+                    message: String::from("slice hang"),
+                },
+                PjrtErrorCode::DeadlineExceeded,
+            ),
+            (
+                LibTpuError::MegascaleRuntimeFault {
+                    slice_id: 1,
+                    task_id: 2,
+                    error_type: 3,
+                    hang_error_type: 0,
+                    message: String::from("cancelled"),
+                },
+                PjrtErrorCode::Cancelled,
+            ),
+            (
+                LibTpuError::MegascaleRuntimeFault {
+                    slice_id: 1,
+                    task_id: 2,
+                    error_type: 2,
+                    hang_error_type: 0,
+                    message: String::from("unrecoverable DCN fault"),
+                },
+                PjrtErrorCode::Internal,
+            ),
         ];
 
+        assert!(LibTpuError::from_status_proto(&crate::proto::StatusProto::default()).is_ok());
+        assert!(
+            LibTpuError::from_megascale_runtime_error_proto(
+                &crate::proto::MegaScaleRuntimeErrorProto::default()
+            )
+            .is_ok()
+        );
+        let hang_err = LibTpuError::SyncFlagTimeout {
+            device_id: 0,
+            sync_flag_id: 1,
+            expected_value: 2,
+            actual_value: 1,
+        };
+        assert_eq!(hang_err.to_megascale_runtime_error_proto().error_type, 1);
+
+        let mut corrupt_ms_status = crate::proto::StatusProto {
+            code: 13,
+            message: String::from("corrupt payload fallback"),
+            payload: std::collections::BTreeMap::new(),
+        };
+        corrupt_ms_status.payload.insert(
+            String::from(
+                "type.googleapis.com/xla.megascale.runtime.external.MegaScaleRuntimeError",
+            ),
+            vec![0xFF],
+        );
+        assert!(LibTpuError::from_status_proto(&corrupt_ms_status).is_err());
+
+        let mut zero_ms_status = crate::proto::StatusProto {
+            code: 13,
+            message: String::from("zero ms type fallback"),
+            payload: std::collections::BTreeMap::new(),
+        };
+        zero_ms_status.payload.insert(
+            String::from(
+                "type.googleapis.com/xla.megascale.runtime.external.MegaScaleRuntimeError",
+            ),
+            Vec::new(),
+        );
+        assert!(LibTpuError::from_status_proto(&zero_ms_status).is_err());
+
         for (err, expected_code) in variants {
+            let status_pb = err.to_status_proto();
+            assert_eq!(status_pb.code, expected_code.as_raw());
+            let roundtrip_err = LibTpuError::from_status_proto(&status_pb);
+            assert!(roundtrip_err.is_err());
+            if let Err(reconstructed) = roundtrip_err {
+                assert_eq!(reconstructed.error_code(), expected_code);
+            }
             let cloned = err.clone();
+            assert_eq!(cloned.to_string(), err.to_string());
             assert_eq!(cloned.error_code(), expected_code);
             assert_eq!(cloned.pjrt_code(), expected_code);
             assert_eq!(cloned.pjrt_error_code(), expected_code);
@@ -2976,6 +3406,9 @@ mod tests {
             assert_ne!(format!("{payloads:?}"), "");
             assert_ne!(cloned.to_string(), "");
             assert_ne!(format!("{cloned:?}"), "");
+            let (grpc_code, grpc_msg) = cloned.clone().grpc_status_and_message();
+            assert_eq!(grpc_code, expected_code.as_raw());
+            assert_ne!(grpc_msg, "");
             assert!(cloned.source().is_none());
         }
     }

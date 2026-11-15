@@ -1,0 +1,5 @@
+syntax = "proto3";
+package xla;
+message PjRtDeviceDimensionsProto {
+  repeated int32 dimensions = 1;
+}

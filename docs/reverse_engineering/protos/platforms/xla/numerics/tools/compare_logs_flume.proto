@@ -1,0 +1,27 @@
+syntax = "proto2";
+package xla.numerics.tools;
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message LiteralStats {
+  optional .xla.LiteralProto mean = 1;
+  optional .xla.LiteralProto stddev = 2;
+  optional .xla.LiteralProto min = 3;
+  optional .xla.LiteralProto max = 4;
+}
+message CompareResult {
+  optional .xla.numerics.tools.LiteralStats lhs_stats = 1;
+  optional .xla.numerics.tools.LiteralStats rhs_stats = 2;
+  optional .xla.numerics.tools.LiteralStats abs_diff_stats = 3;
+  optional .xla.numerics.tools.LiteralStats rel_diff_stats = 4;
+  optional .xla.LiteralProto abs_diff = 5;
+  optional .xla.LiteralProto rel_diff = 6;
+}
+message DiffStats {
+  optional .xla.numerics.tools.LiteralStats abs_diff_stats = 1;
+  optional .xla.numerics.tools.LiteralStats rel_diff_stats = 2;
+  optional string error_message = 3;
+}
+message ColorMapOutputEntry {
+  optional string instruction_name = 1;
+  optional string color = 2;
+  optional string diff = 3;
+}

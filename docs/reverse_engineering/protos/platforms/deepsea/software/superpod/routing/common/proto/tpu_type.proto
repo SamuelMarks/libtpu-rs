@@ -1,0 +1,13 @@
+syntax = "proto3";
+package superpod.routing.proto;
+enum TpuType {
+  UNKNOWN_TPU_TYPE = 0;
+  JELLYFISH = 2;
+  DRAGONFISH = 3;
+  PUFFYLITE = 4;
+  PUFFERFISH = 5;
+  VIPERLITE = 6;
+  VIPERFISH = 7;
+  GHOSTLITE = 8;
+  c_6acc60406 = 10;
+}

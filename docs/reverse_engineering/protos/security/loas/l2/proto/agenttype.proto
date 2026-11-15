@@ -1,0 +1,9 @@
+syntax = "proto3";
+package security_loas_l2;
+import "google/api/inclusion.proto";
+enum AgentType {
+  AGENT_TYPE_UNSPECIFIED = 0;
+  NOT_AGENT = 1;
+  INDEPENDENT_AGENT = 2;
+  DELEGATE_AGENT = 3;
+}

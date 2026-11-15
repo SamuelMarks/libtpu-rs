@@ -1,0 +1,9 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/topology/tpu_dimensions.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_routing_strategy.proto";
+message TpuConfiguredPropertiesProto {
+  .tpu.TpuDegradedAxesProto degraded_axes = 1;
+  bool is_nhop_source_relative = 2;
+  .tpu.TpuRoutingStrategyProto routing_strategy = 3;
+}

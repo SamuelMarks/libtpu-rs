@@ -1,0 +1,34 @@
+syntax = "proto3";
+package asic_sw.deepsea.gxc.gfc.isa;
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_immediates.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_scalar_alu.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_scalar_misc.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_stream.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_tec_dma.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_tec_vector_alu.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_tec_vector_extended.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_tec_vector_load.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_tec_vector_result.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_tec_vector_store.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_vector_scalar.proto";
+message SparseCoreTecBundle {
+  oneof scalar_instruction {
+    .asic_sw.deepsea.gxc.gfc.isa.TecScalarSubBundle scalar_alu = 1;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecDma dma = 4;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreStream stream = 18;
+  }
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu vector_alu_0 = 6;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu vector_alu_1 = 7;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu vector_alu_2 = 8;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreVectorScalar vector_scalar = 14;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreImmediates immediates = 15;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorLoad vector_load = 16;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorStore vector_store = 17;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorResult vector_result = 19;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorExtended vector_extended = 20;
+}
+message TecScalarSubBundle {
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarAlu scalar_alu_0 = 1;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarAlu scalar_alu_1 = 2;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc scalar_misc = 3;
+}

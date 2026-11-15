@@ -1,0 +1,35 @@
+syntax = "proto3";
+package xla.jellyfish.autofdo;
+import "third_party/protobuf/cpp_features.proto";
+message HloStats {
+  string platform = 1;
+  uint64 total_hlo_count = 2;
+  uint64 assigned_hlo_count = 3;
+  uint64 distinct_hlo_count = 4;
+  uint64 assigned_from_cache = 5;
+  uint64 window_profile_used = 6;
+  uint64 integer_profile_used = 7;
+  uint64 flag_profile_used = 8;
+}
+message ConfigTypeStats {
+  uint64 window_config = 1;
+  uint64 integer_config = 2;
+  uint64 flag_config = 3;
+}
+message ReasonNotUsedStats {
+  uint64 skipped = 1;
+  uint64 fdo_profile_not_found = 2;
+  uint64 invalid = 3;
+  uint64 no_default_config = 4;
+  uint64 cannot_get_default_backend_config = 5;
+  uint64 default_window_not_match = 6;
+  uint64 default_integer_not_match = 7;
+  uint64 best_config_invalid = 8;
+  uint64 default_flag_config_invalid = 9;
+  uint64 scoped_vmem_limit_changed = 10;
+}
+message AutoFDOStats {
+  .xla.jellyfish.autofdo.HloStats hlo_stats = 1;
+  .xla.jellyfish.autofdo.ConfigTypeStats config_type_stats = 2;
+  .xla.jellyfish.autofdo.ReasonNotUsedStats reason_not_used_stats = 3;
+}

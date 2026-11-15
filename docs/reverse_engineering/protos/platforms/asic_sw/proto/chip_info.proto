@@ -1,0 +1,6 @@
+syntax = "proto2";
+package asic_sw.proto;
+message ChipInfo {
+  optional string hbm_vendor = 1;
+  optional string tray_serial_number = 2;
+}

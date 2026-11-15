@@ -1,6 +1,6 @@
 PROJECT_NAME           = "libtpu-cpp"
 PROJECT_NUMBER         = "0.0.52"
-INPUT                  = cpp/src/libtpu.h cpp/src/libtpu.hpp cpp/src/libtpu.cpp cpp/tests/test_libtpu.cpp
+INPUT                  = cpp/src/libtpu.h cpp/src/libtpu.hpp cpp/src/libtpu.cpp cpp/tests/test_libtpu.cpp cpp/tests/test_libtpu_c11.c
 RECURSIVE              = NO
 EXTRACT_ALL            = YES
 EXTRACT_PRIVATE        = YES
@@ -14,4 +14,5 @@ GENERATE_LATEX         = NO
 GENERATE_XML           = YES
 OUTPUT_DIRECTORY       = cpp/build/doxygen
 XML_OUTPUT             = xml
+NUM_PROC_THREADS       = 1
 QUIET                  = YES

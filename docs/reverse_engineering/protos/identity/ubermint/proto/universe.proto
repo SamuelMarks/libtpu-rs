@@ -1,0 +1,29 @@
+syntax = "proto3";
+package ubermint;
+import "google/api/inclusion.proto";
+import "identity/ubermint/proto/platform_options.proto";
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+enum UberMintPlatform {
+  PLATFORM_UNSPECIFIED = 0;
+  SANDBOX = 1;
+  CLOUD = 2;
+  DEVICE = 3;
+  SANDCASTLE = 4;
+  LEGACY_GAIA = 5;
+  PROD_ACCOUNT = 6;
+  FITBIT = 7;
+  BORG_NOTARY_ATTESTATION = 8;
+  BORG_NOTARY_APPROVAL = 9;
+  BORG_NOTARY_ENDORSEMENT = 10;
+  HOME_FEDERATED_USER = 11;
+}
+message UberMintUniverse {
+  enum UberMintDataRealm {
+    DATA_REALM_UNSPECIFIED = 0;
+    PROD = 1;
+    TEST = 2;
+    FAKE = 3;
+  }
+  .ubermint.UberMintPlatform platform = 1;
+  .ubermint.UberMintUniverse.UberMintDataRealm data_realm = 2;
+}

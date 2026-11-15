@@ -1,0 +1,992 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.isa;
+import "platforms/asic_sw/lib/deepsea/common/sync_flag.proto";
+enum BundleSlot {
+  SLOT_SCALAR_0 = 1;
+  SLOT_SCALAR_1 = 2;
+  SLOT_VECTOR_ALU_0 = 3;
+  SLOT_VECTOR_ALU_1 = 4;
+  SLOT_VECTOR_STORE = 5;
+  SLOT_VECTOR_LOAD = 6;
+  SLOT_VECTOR_EXTENDED = 7;
+  SLOT_VECTOR_RESULT = 8;
+  SLOT_MISC = 9;
+}
+enum ScalarOpcode {
+  option allow_alias = true;
+  HALT = 0;
+  POP_V2S = 2;
+  SCALAR_DELAY = 3;
+  SCALAR_LOAD = 4;
+  SCALAR_LOAD_OFFSET = 5;
+  SCALAR_STORE_ABSOLUTE = 6;
+  SCALAR_SET_REGISTER = 7;
+  SCALAR_BRANCH_ABSOLUTE = 8;
+  SCALAR_BRANCH_RELATIVE = 9;
+  SCALAR_BRANCH_REG = 10;
+  SCALAR_BRANCH_BTR = 11;
+  SCALAR_CALL_ABSOLUTE = 12;
+  SCALAR_CALL_RELATIVE = 13;
+  SCALAR_CALL_REG = 14;
+  SCALAR_CALL_BTR = 15;
+  SCALAR_FENCE = 16;
+  DMA = 17;
+  DMA_LOCAL = 18;
+  SCALAR_TTU_SET_INDEX = 19;
+  SCALAR_TTU_SET_BOUND = 20;
+  SCALAR_TTU_SET_MULT = 21;
+  SCALAR_TTU_SET_TARGET = 22;
+  SCALAR_TTU_GET_INDEX = 23;
+  SCALAR_TTU_GET_BOUND = 24;
+  SCALAR_TTU_GET_MULT = 25;
+  SCALAR_TTU_GET_TARGET = 26;
+  SCALAR_TTU_GET_TENSOR_LOCATION = 27;
+  SCALAR_TTU_GET_DIMENSIONS_DONE = 28;
+  SCALAR_READ_REGISTERS = 29;
+  SCALAR_CONVERT_INT_TO_FLOAT = 30;
+  SCALAR_CONVERT_FLOAT_TO_INT = 31;
+  SCALAR_INT_ADD = 32;
+  SCALAR_INT_SUB = 33;
+  SCALAR_AND = 34;
+  SCALAR_OR = 35;
+  SCALAR_XOR = 36;
+  SCALAR_FLOAT_ADD = 37;
+  SCALAR_FLOAT_SUB = 38;
+  SCALAR_FLOAT_MUL = 39;
+  SCALAR_UINT_MUL = 40;
+  SCALAR_FLOAT_MAX = 41;
+  SCALAR_FLOAT_MIN = 42;
+  SCALAR_LOGICAL_SHIFT_LEFT = 43;
+  SCALAR_LOGICAL_SHIFT_RIGHT = 44;
+  SCALAR_ARITHMETIC_SHIFT_RIGHT = 45;
+  SCALAR_MOVE = 46;
+  SCALAR_COUNT_LEADING_ZEROS = 47;
+  SCALAR_INT_EQUAL = 48;
+  SCALAR_INT_NOT_EQUAL = 49;
+  SCALAR_INT_GREATER = 50;
+  SCALAR_INT_GREATER_EQUAL = 51;
+  SCALAR_INT_LESS = 52;
+  SCALAR_INT_LESS_EQUAL = 53;
+  SCALAR_INT_ADD_CARRY_OUT = 54;
+  SCALAR_PREDICATE_OR = 55;
+  SCALAR_FLOAT_EQUAL = 56;
+  SCALAR_FLOAT_NOT_EQUAL = 57;
+  SCALAR_FLOAT_GREATER = 58;
+  SCALAR_FLOAT_GREATER_EQUAL = 59;
+  SCALAR_FLOAT_LESS = 60;
+  SCALAR_FLOAT_LESS_EQUAL = 61;
+  SCALAR_IS_INF_OR_NAN = 62;
+  BCS_HALT = 0;
+  BCS_MISC = 1;
+  BCS_POP_METADATA_FIFO = 2;
+  BCS_DELAY = 3;
+  BCS_LOAD = 4;
+  BCS_LOAD_OFFSET = 5;
+  BCS_STORE_ABSOLUTE = 6;
+  BCS_SET_REGISTER = 7;
+  BCS_BRANCH_ABSOLUTE = 8;
+  BCS_BRANCH_RELATIVE = 9;
+  BCS_BRANCH_REG = 10;
+  BCS_CALL_ABSOLUTE = 12;
+  BCS_CALL_RELATIVE = 13;
+  BCS_CALL_REG = 14;
+  BCS_FENCE = 16;
+  BCS_ISSUE_FSM = 17;
+  BCS_DMA_LOCAL = 18;
+  BCS_READ_REGISTERS = 29;
+  BCS_INT_ADD = 32;
+  BCS_INT_SUB = 33;
+  BCS_AND = 34;
+  BCS_OR = 35;
+  BCS_XOR = 36;
+  BCS_UINT_MUL = 40;
+  BCS_LOGICAL_SHIFT_LEFT = 43;
+  BCS_LOGICAL_SHIFT_RIGHT = 44;
+  BCS_ARITHMETIC_SHIFT_RIGHT = 45;
+  BCS_MOVE = 46;
+  BCS_COUNT_LEADING_ZEROS = 47;
+  BCS_INT_EQUAL = 48;
+  BCS_INT_NOT_EQUAL = 49;
+  BCS_INT_GREATER = 50;
+  BCS_INT_GREATER_EQUAL = 51;
+  BCS_INT_LESS = 52;
+  BCS_INT_LESS_EQUAL = 53;
+  BCS_INT_ADD_CARRY_OUT = 54;
+  BCS_PREDICATE_OR = 55;
+}
+enum ScalarRegister {
+  SREG_0 = 0;
+  SREG_1 = 1;
+  SREG_2 = 2;
+  SREG_3 = 3;
+  SREG_4 = 4;
+  SREG_5 = 5;
+  SREG_6 = 6;
+  SREG_7 = 7;
+  SREG_8 = 8;
+  SREG_9 = 9;
+  SREG_10 = 10;
+  SREG_11 = 11;
+  SREG_12 = 12;
+  SREG_13 = 13;
+  SREG_14 = 14;
+  SREG_15 = 15;
+  SREG_16 = 16;
+  SREG_17 = 17;
+  SREG_18 = 18;
+  SREG_19 = 19;
+  SREG_20 = 20;
+  SREG_21 = 21;
+  SREG_22 = 22;
+  SREG_23 = 23;
+  SREG_24 = 24;
+  SREG_25 = 25;
+  SREG_26 = 26;
+  SREG_27 = 27;
+  SREG_28 = 28;
+  SREG_29 = 29;
+  SREG_30 = 30;
+  SREG_31 = 31;
+  SREG_COUNT = 32;
+  SREG_INVALID = -1;
+}
+enum ScalarYEncoding {
+  SCALAR_Y_SREG_0 = 0;
+  SCALAR_Y_SREG_1 = 1;
+  SCALAR_Y_SREG_2 = 2;
+  SCALAR_Y_SREG_3 = 3;
+  SCALAR_Y_SREG_4 = 4;
+  SCALAR_Y_SREG_5 = 5;
+  SCALAR_Y_SREG_6 = 6;
+  SCALAR_Y_SREG_7 = 7;
+  SCALAR_Y_SREG_8 = 8;
+  SCALAR_Y_SREG_9 = 9;
+  SCALAR_Y_SREG_10 = 10;
+  SCALAR_Y_SREG_11 = 11;
+  SCALAR_Y_SREG_12 = 12;
+  SCALAR_Y_SREG_13 = 13;
+  SCALAR_Y_SREG_14 = 14;
+  SCALAR_Y_SREG_15 = 15;
+  SCALAR_Y_SREG_16 = 16;
+  SCALAR_Y_SREG_17 = 17;
+  SCALAR_Y_SREG_18 = 18;
+  SCALAR_Y_SREG_19 = 19;
+  SCALAR_Y_SREG_20 = 20;
+  SCALAR_Y_SREG_21 = 21;
+  SCALAR_Y_SREG_22 = 22;
+  SCALAR_Y_SREG_23 = 23;
+  SCALAR_Y_SREG_24 = 24;
+  SCALAR_Y_SREG_25 = 25;
+  SCALAR_Y_SREG_26 = 26;
+  SCALAR_Y_SREG_27 = 27;
+  SCALAR_Y_SREG_28 = 28;
+  SCALAR_Y_SREG_29 = 29;
+  SCALAR_Y_SREG_30 = 30;
+  SCALAR_Y_SREG_31 = 31;
+  SCALAR_Y_ZERO_IMM0 = 32;
+  SCALAR_Y_ZERO_IMM1 = 33;
+  SCALAR_Y_ZERO_IMM2 = 34;
+  SCALAR_Y_ZERO_IMM3 = 35;
+  SCALAR_Y_ONES_IMM0 = 36;
+  SCALAR_Y_ONES_IMM1 = 37;
+  SCALAR_Y_ONES_IMM2 = 38;
+  SCALAR_Y_ONES_IMM3 = 39;
+  SCALAR_Y_IMM0_ZERO = 40;
+  SCALAR_Y_IMM1_ZERO = 41;
+  SCALAR_Y_IMM2_ZERO = 42;
+  SCALAR_Y_IMM3_ZERO = 43;
+  SCALAR_Y_IMM1_IMM0 = 44;
+  SCALAR_Y_IMM3_IMM2 = 45;
+  SCALAR_Y_INTEGER_ONE = 46;
+  SCALAR_Y_INTEGER_NEGATIVE_ONE = 47;
+  SCALAR_Y_ZERO = 48;
+  SCALAR_Y_HEX_80000000 = 49;
+  SCALAR_Y_FLOAT_ONE = 50;
+  SCALAR_Y_FLOAT_NEGATIVE_ONE = 51;
+  SCALAR_Y_FLOAT_TWO = 52;
+  SCALAR_Y_FLOAT_NEGATIVE_TWO = 53;
+  SCALAR_Y_FLOAT_ZERO_POINT_FIVE = 54;
+  SCALAR_Y_FLOAT_NEGATIVE_ZERO_POINT_FIVE = 55;
+  SCALAR_Y_FLOAT_PI = 56;
+  SCALAR_Y_FLOAT_NEGATIVE_PI = 57;
+  SCALAR_Y_FLOAT_E = 58;
+  SCALAR_Y_FLOAT_NEGATIVE_E = 59;
+  SCALAR_Y_HEX_FFFF0000 = 60;
+}
+enum VectorAluYEncoding {
+  VECTOR_ALU_Y_VREG = 0;
+  VECTOR_ALU_Y_INTEGER_ONE = 1;
+  VECTOR_ALU_Y_INTEGER_NEGATIVE_ONE = 2;
+  VECTOR_ALU_Y_ZERO = 3;
+  VECTOR_ALU_Y_FLOAT_ONE = 4;
+  VECTOR_ALU_Y_FLOAT_NEGATIVE_ONE = 5;
+  VECTOR_ALU_Y_FLOAT_TWO = 6;
+  VECTOR_ALU_Y_FLOAT_ZERO_POINT_FIVE = 7;
+  VECTOR_ALU_Y_ZERO_IMM0 = 8;
+  VECTOR_ALU_Y_ZERO_IMM1 = 9;
+  VECTOR_ALU_Y_ZERO_IMM2 = 10;
+  VECTOR_ALU_Y_ZERO_IMM3 = 11;
+  VECTOR_ALU_Y_ZERO_IMM4 = 12;
+  VECTOR_ALU_Y_ZERO_IMM5 = 13;
+  VECTOR_ALU_Y_ONES_IMM0 = 14;
+  VECTOR_ALU_Y_ONES_IMM1 = 15;
+  VECTOR_ALU_Y_ONES_IMM2 = 16;
+  VECTOR_ALU_Y_ONES_IMM3 = 17;
+  VECTOR_ALU_Y_ONES_IMM4 = 18;
+  VECTOR_ALU_Y_ONES_IMM5 = 19;
+  VECTOR_ALU_Y_IMM0_ZERO = 20;
+  VECTOR_ALU_Y_IMM1_ZERO = 21;
+  VECTOR_ALU_Y_IMM2_ZERO = 22;
+  VECTOR_ALU_Y_IMM3_ZERO = 23;
+  VECTOR_ALU_Y_IMM4_ZERO = 24;
+  VECTOR_ALU_Y_IMM5_ZERO = 25;
+  VECTOR_ALU_Y_IMM1_IMM0 = 26;
+  VECTOR_ALU_Y_IMM3_IMM2 = 27;
+  VECTOR_ALU_Y_IMM5_IMM4 = 28;
+  VECTOR_ALU_Y_VS0 = 29;
+  VECTOR_ALU_Y_VS1 = 30;
+  VECTOR_ALU_Y_VS2 = 31;
+}
+enum PredicateRegister {
+  PREG_0 = 0;
+  PREG_1 = 1;
+  PREG_2 = 2;
+  PREG_3 = 3;
+  PREG_4 = 4;
+  PREG_5 = 5;
+  PREG_6 = 6;
+  PREG_7 = 7;
+  PREG_8 = 8;
+  PREG_9 = 9;
+  PREG_10 = 10;
+  PREG_11 = 11;
+  PREG_12 = 12;
+  PREG_13 = 13;
+  PREG_14 = 14;
+  PREG_COUNT = 15;
+  PREG_INVALID = -1;
+}
+enum VectorRegister {
+  VREG_0 = 0;
+  VREG_1 = 1;
+  VREG_2 = 2;
+  VREG_3 = 3;
+  VREG_4 = 4;
+  VREG_5 = 5;
+  VREG_6 = 6;
+  VREG_7 = 7;
+  VREG_8 = 8;
+  VREG_9 = 9;
+  VREG_10 = 10;
+  VREG_11 = 11;
+  VREG_12 = 12;
+  VREG_13 = 13;
+  VREG_14 = 14;
+  VREG_15 = 15;
+  VREG_16 = 16;
+  VREG_17 = 17;
+  VREG_18 = 18;
+  VREG_19 = 19;
+  VREG_20 = 20;
+  VREG_21 = 21;
+  VREG_22 = 22;
+  VREG_23 = 23;
+  VREG_24 = 24;
+  VREG_25 = 25;
+  VREG_26 = 26;
+  VREG_27 = 27;
+  VREG_28 = 28;
+  VREG_29 = 29;
+  VREG_30 = 30;
+  VREG_31 = 31;
+  VREG_COUNT = 32;
+  VREG_INVALID = -1;
+}
+enum VectorMaskRegister {
+  VMREG_0 = 0;
+  VMREG_1 = 1;
+  VMREG_2 = 2;
+  VMREG_3 = 3;
+  VMREG_4 = 4;
+  VMREG_5 = 5;
+  VMREG_6 = 6;
+  VMREG_7 = 7;
+  VMREG_COUNT = 8;
+  VMREG_INVALID = -1;
+}
+enum IndexAddressRegister {
+  IAR_0 = 0;
+  IAR_1 = 1;
+  IAR_COUNT = 2;
+  IAR_INVALID = -1;
+}
+enum BcsMiscSubopcode {
+  BCS_HOST_INTERRUPT = 0;
+  BCS_TRACE = 1;
+  BCS_SYNC_DONE = 2;
+  BCS_SYNC_EQUAL = 3;
+  BCS_SYNC_NOT_EQUAL = 4;
+  BCS_SYNC_GREATER = 5;
+  BCS_SYNC_GREATER_OR_EQUAL = 6;
+  BCS_SYNC_LESS = 7;
+  BCS_SYNC_INFEED = 8;
+}
+enum SetRegisterEncoding {
+  SET_BRANCH_TARGET_REGISTER = 0;
+  SET_TAG_REGISTER = 1;
+  BCS_SET_TRACEMARK_REGISTER = 2;
+}
+enum ReadRegisterEncoding {
+  READ_LCC_LOW_WORD = 0;
+  READ_LCC_HIGH_WORD = 1;
+  READ_GTC_LOW_WORD = 2;
+  READ_GTC_HIGH_WORD = 3;
+  READ_CRR_LOW_WORD = 4;
+  READ_CRR_HIGH_WORD = 5;
+  READ_BTR = 6;
+  READ_TAG = 7;
+  READ_TRACEMARK = 8;
+  BCS_READ_FSM_STATUS = 9;
+  BCS_READ_HMF_DEPTH = 10;
+}
+enum DmaLocalSubopcode {
+  DMA_HBM_TO_VMEM = 0;
+  DMA_HBM_TO_SMEM = 1;
+  DMA_HBM_TO_HIB = 2;
+  DMA_HBM_TO_IMEM = 3;
+  DMA_VMEM_TO_HBM = 4;
+  DMA_SMEM_TO_HBM = 5;
+  DMA_HBM_TO_VMEM_WITH_HIB_UPDATE = 6;
+  DMA_HBM_TO_VMEM_WITH_TRACE = 8;
+  DMA_HBM_TO_SMEM_WITH_TRACE = 9;
+  DMA_HBM_TO_HIB_WITH_TRACE = 10;
+  DMA_HBM_TO_IMEM_WITH_TRACE = 11;
+  DMA_VMEM_TO_HBM_WITH_TRACE = 12;
+  DMA_SMEM_TO_HBM_WITH_TRACE = 13;
+  DMA_HBM_TO_VMEM_WITH_HIB_UPDATE_AND_TRACE = 14;
+  WRITE_TO_CSR = 16;
+  READ_FROM_CSR = 17;
+  WRITE_TO_SEGMENT = 18;
+}
+enum VectorAluOpcode {
+  VECTOR_INT_ADD = 0;
+  VECTOR_INT_SUB = 1;
+  VECTOR_AND = 2;
+  VECTOR_OR = 3;
+  VECTOR_XOR = 4;
+  VECTOR_FLOAT_ADD = 5;
+  VECTOR_FLOAT_SUB = 6;
+  VECTOR_FLOAT_MUL = 7;
+  VECTOR_FLOAT_MAX = 8;
+  VECTOR_FLOAT_MIN = 9;
+  VECTOR_LOGICAL_SHIFT_LEFT = 10;
+  VECTOR_LOGICAL_SHIFT_RIGHT = 11;
+  VECTOR_ARITHMETIC_SHIFT_RIGHT = 12;
+  VECTOR_ROUNDING_ARITHMETIC_SHIFT_RIGHT = 13;
+  VECTOR_CONVERT_INT_TO_FLOAT = 14;
+  VECTOR_CONVERT_FLOAT_TO_INT = 15;
+  VECTOR_SELECT_VMSK0 = 16;
+  VECTOR_SELECT_VMSK1 = 17;
+  VECTOR_SELECT_VMSK2 = 18;
+  VECTOR_SELECT_VMSK3 = 19;
+  VECTOR_SELECT_VMSK4 = 20;
+  VECTOR_SELECT_VMSK5 = 21;
+  VECTOR_SELECT_VMSK6 = 22;
+  VECTOR_SELECT_VMSK7 = 23;
+  VECTOR_LANE_ID = 24;
+  VECTOR_EXTRACT_EXPONENT = 25;
+  VECTOR_EXTRACT_SIGNIFICAND = 26;
+  VECTOR_COMPOSE_FLOAT = 27;
+  VECTOR_PACK_AS_HALF_FLOATS = 28;
+  VECTOR_SUBLANE_CIRCULAR_ROTATE_DOWN = 29;
+  VECTOR_RELUX = 30;
+  VECTOR_MOVE = 31;
+  VECTOR_INT_EQUAL = 32;
+  VECTOR_INT_NOT_EQUAL = 33;
+  VECTOR_INT_GREATER = 34;
+  VECTOR_INT_GREATER_EQUAL = 35;
+  VECTOR_INT_LESS = 36;
+  VECTOR_INT_LESS_EQUAL = 37;
+  VECTOR_INT_ADD_CARRY_OUT = 38;
+  VECTOR_FLOAT_EQUAL = 40;
+  VECTOR_FLOAT_NOT_EQUAL = 41;
+  VECTOR_FLOAT_GREATER = 42;
+  VECTOR_FLOAT_GREATER_EQUAL = 43;
+  VECTOR_FLOAT_LESS = 44;
+  VECTOR_FLOAT_LESS_EQUAL = 45;
+  VECTOR_FLOAT_IS_INF_OR_NAN = 46;
+  VECTOR_RECIPROCAL_SQUARE_ROOT = 48;
+  VECTOR_POW_2 = 49;
+  VECTOR_LOG_2 = 50;
+  VECTOR_TANH = 51;
+  VECTOR_RECIPROCAL = 52;
+  VECTOR_POP_COUNT = 58;
+  VECTOR_COUNT_LEADING_ZEROS = 59;
+  VECTOR_SET_RNG_SEED = 60;
+  VECTOR_GET_RNG_SEED = 61;
+  VECTOR_RNG = 62;
+}
+enum MiscOpcode {
+  MOVE_VECTOR_MASK = 0;
+  SET_SYNC_FLAG = 1;
+  ADD_SYNC_FLAG = 2;
+  SYNC_EQUAL = 3;
+  SYNC_NOT_EQUAL = 4;
+  SYNC_GREATER = 5;
+  SYNC_GREATER_OR_EQUAL = 6;
+  SYNC_LESS = 7;
+  NEGATE_VECTOR_MASK = 8;
+  AND_VECTOR_MASK = 9;
+  OR_VECTOR_MASK = 10;
+  XOR_VECTOR_MASK = 11;
+  READ_SYNC_FLAG = 12;
+  HOST_INTERRUPT = 13;
+  CLEAR_RESULT_FIFO = 14;
+  VECTOR_DELAY_SHORT_IMMEDIATE = 15;
+  VECTOR_DELAY = 16;
+  WRITE_REMOTE_SMEM = 17;
+  SET_REMOTE_SYNC_FLAG = 18;
+  ADD_REMOTE_SYNC_FLAG = 19;
+  SET_TRACEMARK = 20;
+  TRACE = 21;
+}
+enum MiscOperandEncoding {
+  MISC_ZERO = 0;
+  MISC_VS0 = 1;
+  MISC_VS1 = 2;
+  MISC_VS2 = 3;
+  MISC_IMM_2 = 4;
+  MISC_IMM_3 = 5;
+  MISC_IMM_4 = 6;
+  MISC_IMM_5 = 7;
+}
+enum ClearOperation {
+  CLEAR_ERF = 0;
+  CLEAR_MRF = 1;
+  CLEAR_TRF = 2;
+}
+enum VectorDelayOperandEncoding {
+  VECTOR_DELAY_ONE = 0;
+  VECTOR_DELAY_VS0 = 1;
+  VECTOR_DELAY_VS1 = 2;
+  VECTOR_DELAY_VS2 = 3;
+  VECTOR_DELAY_IMM_2 = 4;
+  VECTOR_DELAY_IMM_3 = 5;
+  VECTOR_DELAY_IMM_4 = 6;
+  VECTOR_DELAY_IMM_5 = 7;
+}
+enum VectorResultOpcode {
+  EUP_RESULT = 0;
+  MATRIX_RESULT = 1;
+  TRANSPOSE_RPU_RESULT = 2;
+}
+enum VectorResultDestination {
+  V0_DEST = 0;
+  V1_DEST = 1;
+  VLD_DEST = 2;
+}
+enum VectorExtendedOpcode {
+  MATRIX_MULTIPLY = 0;
+  MATRIX_MULTIPLY_LOW = 1;
+  MATRIX_MULTIPLY_HIGH = 2;
+  DONE_WITH_GAINS = 3;
+  MATRIX_MULTIPLY_DONE_WITH_GAINS = 4;
+  MATRIX_MULTIPLY_LOW_DONE_WITH_GAINS = 5;
+  MATRIX_MULTIPLY_HIGH_DONE_WITH_GAINS = 6;
+  PUSH_GAINS = 7;
+  PUSH_GAINS_LOW = 8;
+  PUSH_GAINS_HIGH = 9;
+  PUSH_GAINS_TRANSPOSED = 10;
+  PUSH_GAINS_LOW_TRANSPOSED = 11;
+  PUSH_GAINS_HIGH_TRANSPOSED = 12;
+  SET_PERMUTE_CONTROL_REGISTER = 13;
+  SET_SEGMENT_PATTERN_REGISTER = 14;
+  TRANSPOSE = 15;
+  TRANSPOSE_START = 16;
+  PERMUTE = 17;
+  LANE_ROTATE = 18;
+  ROTATING_PERMUTE = 19;
+  CROSS_LANE_ADD = 20;
+  CROSS_LANE_MAX = 21;
+  CROSS_LANE_MIN = 22;
+  CROSS_LANE_MAX_INDEX = 23;
+  CROSS_LANE_MIN_INDEX = 24;
+  CROSS_LANE_ADD_PERMUTE = 25;
+  CROSS_LANE_MAX_PERMUTE = 26;
+  CROSS_LANE_MIN_PERMUTE = 27;
+  CROSS_LANE_MAX_INDEX_PERMUTE = 28;
+  CROSS_LANE_MIN_INDEX_PERMUTE = 29;
+  CROSS_LANE_SEGMENTED_ADD_PERMUTE = 30;
+  CROSS_LANE_SEGMENTED_MAX_PERMUTE = 31;
+  CROSS_LANE_SEGMENTED_MIN_PERMUTE = 32;
+  CROSS_LANE_SEGMENTED_MAX_INDEX_PERMUTE = 33;
+  CROSS_LANE_SEGMENTED_MIN_INDEX_PERMUTE = 34;
+}
+enum VectorExtendedSourceEncoding {
+  USE_V0_Y_VREG = 0;
+  USE_V1_Y_VREG = 1;
+  USE_VST_SOURCE = 2;
+}
+enum VectorExtendedRotateEncoding {
+  VECTOR_EXTENDED_ONE = 0;
+  VECTOR_EXTENDED_VS0 = 1;
+  VECTOR_EXTENDED_VS1 = 2;
+  VECTOR_EXTENDED_VS2 = 3;
+  VECTOR_EXTENDED_IMM_2 = 4;
+  VECTOR_EXTENDED_IMM_3 = 5;
+  VECTOR_EXTENDED_IMM_4 = 6;
+  VECTOR_EXTENDED_IMM_5 = 7;
+}
+enum VectorStoreOpcode {
+  VECTOR_STORE = 0;
+  VECTOR_STORE_INDEXED = 1;
+  SET_LANE_INDEXED_ADDRESS = 2;
+  SET_SUBLANE_INDEXED_ADDRESS = 3;
+  SET_RAW_INDEXED_ADDRESS = 4;
+  PUSH_V2S = 5;
+  VECTOR_STORE_NO_OFFSET = 6;
+  VECTOR_STORE_INDEXED_NO_OFFSET = 7;
+  VECTOR_STORE_MASK0 = 16;
+  VECTOR_STORE_MASK1 = 17;
+  VECTOR_STORE_MASK2 = 18;
+  VECTOR_STORE_MASK3 = 19;
+  VECTOR_STORE_MASK4 = 20;
+  VECTOR_STORE_MASK5 = 21;
+  VECTOR_STORE_MASK6 = 22;
+  VECTOR_STORE_MASK7 = 23;
+  VECTOR_STORE_INDEXED_MASK0 = 24;
+  VECTOR_STORE_INDEXED_MASK1 = 25;
+  VECTOR_STORE_INDEXED_MASK2 = 26;
+  VECTOR_STORE_INDEXED_MASK3 = 27;
+  VECTOR_STORE_INDEXED_MASK4 = 28;
+  VECTOR_STORE_INDEXED_MASK5 = 29;
+  VECTOR_STORE_INDEXED_MASK6 = 30;
+  VECTOR_STORE_INDEXED_MASK7 = 31;
+}
+enum BaseAddressEncoding {
+  BASE_ADDRESS_ZERO = 0;
+  BASE_ADDRESS_VS0 = 1;
+  BASE_ADDRESS_VS1 = 2;
+  BASE_ADDRESS_VS2 = 3;
+}
+enum OffsetEncoding {
+  OFFSET_IMM_2 = 0;
+  OFFSET_IMM_3 = 1;
+  OFFSET_IMM_4 = 2;
+  OFFSET_IMM_5 = 3;
+}
+enum ShuffleEncoding {
+  SHUFFLE_VS0 = 1;
+  SHUFFLE_VS1 = 2;
+  SHUFFLE_VS2 = 3;
+  SHUFFLE_IMM1_IMM0 = 4;
+  SHUFFLE_IMM3_IMM2 = 5;
+  SHUFFLE_IMM5_IMM4 = 6;
+}
+enum StrideEncoding {
+  STRIDE_ONE = 0;
+  STRIDE_VS0 = 1;
+  STRIDE_VS1 = 2;
+  STRIDE_VS2 = 3;
+  STRIDE_IMM_2 = 4;
+  STRIDE_IMM_3 = 5;
+  STRIDE_IMM_4 = 6;
+  STRIDE_IMM_5 = 7;
+}
+enum SublaneMaskEncoding {
+  MASK_NONE = 0;
+  MASK_VS0 = 1;
+  MASK_VS1 = 2;
+  MASK_VS2 = 3;
+  MASK_IMM_2 = 4;
+  MASK_IMM_3 = 5;
+  MASK_IMM_4 = 6;
+  MASK_IMM_5 = 7;
+}
+enum VectorLoadOpcode {
+  VECTOR_LOAD = 0;
+  VECTOR_LOAD_SHUFFLED = 1;
+  VECTOR_LOAD_INDEXED_IAR0 = 2;
+  VECTOR_LOAD_INDEXED_IAR1 = 3;
+}
+enum Constants {
+  option allow_alias = true;
+  NUM_SCALAR_REGISTERS = 32;
+  NUM_VECTOR_REGISTERS = 32;
+  NUM_VS_REGISTERS = 3;
+  NUM_TENSOR_CORE_SYNC_FLAGS = 256;
+  MAX_SCALAR_DELAY_COUNT = 2047;
+  VECTOR_DELAY_SHORT_IMMEDIATE_MAX = 8;
+  VECTOR_DELAY_SHORT_IMMEDIATE_MIN = 1;
+  NUM_VMSK_REGISTERS = 4;
+  NUM_PREDICATE_REGISTERS = 15;
+}
+message Program {
+  repeated .platforms_deepsea.jellyfish.isa.Bundle bundles = 1;
+  optional .platforms_deepsea.jellyfish.isa.Annotations annotations = 2;
+}
+message Bundle {
+  reserved 4;
+  reserved 5;
+  reserved 6;
+  reserved 7;
+  reserved 8;
+  reserved 9;
+  reserved 10;
+  reserved 11;
+  reserved 12;
+  optional .platforms_deepsea.jellyfish.isa.ScalarInstruction scalar_0 = 1;
+  optional .platforms_deepsea.jellyfish.isa.ScalarInstruction scalar_1 = 2;
+  optional .platforms_deepsea.jellyfish.isa.TtuOperands ttu = 3;
+  optional uint32 imm_5 = 20;
+  optional uint32 imm_4 = 21;
+  optional uint32 imm_3 = 22;
+  optional uint32 imm_2 = 23;
+  optional uint32 imm_1 = 24;
+  optional uint32 imm_0 = 25;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister vs2 = 26;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister vs1 = 27;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister vs0 = 28;
+  optional .platforms_deepsea.jellyfish.isa.VectorAluInstruction vector_alu_0 = 13;
+  optional .platforms_deepsea.jellyfish.isa.VectorAluInstruction vector_alu_1 = 14;
+  optional .platforms_deepsea.jellyfish.isa.VectorStoreInstruction vector_store = 15;
+  optional .platforms_deepsea.jellyfish.isa.VectorLoadInstruction vector_load = 16;
+  optional .platforms_deepsea.jellyfish.isa.VectorExtendedInstruction vector_extended = 17;
+  optional .platforms_deepsea.jellyfish.isa.VectorResultInstruction vector_result = 18;
+  optional .platforms_deepsea.jellyfish.isa.MiscInstruction misc = 19;
+}
+message Predication {
+  reserved 1;
+  optional .platforms_deepsea.jellyfish.isa.PredicateRegister reg = 3;
+  optional bool value = 2;
+}
+message ImmediateValue {
+  optional uint32 value = 1;
+}
+message ScalarInstruction {
+  reserved 2;
+  reserved 3;
+  reserved 4;
+  reserved 5;
+  oneof operands {
+    .platforms_deepsea.jellyfish.isa.HaltOperands halt = 100;
+    .platforms_deepsea.jellyfish.isa.SetRegisterOperands set_register = 101;
+    .platforms_deepsea.jellyfish.isa.PopV2SOperands pop_v2s = 102;
+    .platforms_deepsea.jellyfish.isa.ScalarDelayOperands delay = 103;
+    .platforms_deepsea.jellyfish.isa.ScalarLoadOperands load = 104;
+    .platforms_deepsea.jellyfish.isa.ScalarStoreOperands store = 105;
+    .platforms_deepsea.jellyfish.isa.BranchOperands branch = 106;
+    .platforms_deepsea.jellyfish.isa.CallOperands call = 107;
+    .platforms_deepsea.jellyfish.isa.ScalarBinaryOperands binary = 109;
+    .platforms_deepsea.jellyfish.isa.DmaOperands dma = 111;
+    .platforms_deepsea.jellyfish.isa.DmaLocalOperands dma_local = 112;
+    .platforms_deepsea.jellyfish.isa.ReadRegisterOperands read_register = 113;
+    .platforms_deepsea.jellyfish.isa.PredicateOrOperands predicate_or = 114;
+    .platforms_deepsea.jellyfish.isa.BcsMiscOperands misc = 115;
+    .platforms_deepsea.jellyfish.isa.PopMetadataOperands pop_metadata = 116;
+    .platforms_deepsea.jellyfish.isa.FenceOperands fence = 117;
+    .platforms_deepsea.jellyfish.isa.FsmOperands fsm = 118;
+  }
+  optional .platforms_deepsea.jellyfish.isa.ScalarOpcode opcode = 1;
+  repeated .platforms_deepsea.jellyfish.isa.ScalarRegister consumes_scalar_register = 7;
+  repeated .platforms_deepsea.jellyfish.isa.ScalarRegister produces_scalar_register = 8;
+  repeated .platforms_deepsea.jellyfish.isa.PredicateRegister consumes_predicate_register = 9;
+  repeated .platforms_deepsea.jellyfish.isa.PredicateRegister produces_predicate_register = 10;
+  optional .platforms_deepsea.jellyfish.isa.Predication predication = 6;
+}
+message HaltOperands {
+}
+message BcsMiscOperands {
+  oneof operands {
+    .platforms_deepsea.jellyfish.isa.BcsTraceOperands trace = 2;
+    .platforms_deepsea.jellyfish.isa.BcsSyncOperands sync = 3;
+  }
+  optional .platforms_deepsea.jellyfish.isa.BcsMiscSubopcode subopcode = 1;
+}
+message BcsTraceOperands {
+  optional .platforms_deepsea.jellyfish.isa.ScalarYEncoding value = 1;
+}
+message BcsSyncOperands {
+  reserved 1;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister x_reg = 3;
+  optional .platforms_deepsea.jellyfish.isa.ScalarYEncoding y = 2;
+}
+message PopMetadataOperands {
+  reserved 1;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister dest = 2;
+}
+message SetRegisterOperands {
+  optional .platforms_deepsea.jellyfish.isa.ScalarYEncoding value = 1;
+  optional .platforms_deepsea.jellyfish.isa.SetRegisterEncoding reg = 2;
+}
+message ReadRegisterOperands {
+  reserved 1;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister dest = 3;
+  optional .platforms_deepsea.jellyfish.isa.ReadRegisterEncoding reg = 2;
+}
+message PopV2SOperands {
+  reserved 1;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister dest = 2;
+}
+message ScalarDelayOperands {
+  optional uint32 cycle_count = 1;
+}
+message ScalarLoadOperands {
+  reserved 1;
+  reserved 4;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister dest = 5;
+  optional .platforms_deepsea.jellyfish.isa.ScalarYEncoding base = 2;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister offset_reg = 6;
+}
+message ScalarStoreOperands {
+  reserved 1;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister src = 3;
+  optional .platforms_deepsea.jellyfish.isa.ScalarYEncoding dest = 2;
+}
+message BranchOperands {
+  reserved 1;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister target = 2;
+}
+message CallOperands {
+  reserved 1;
+  reserved 2;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister target = 3;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister return_address = 4;
+}
+message FenceOperands {
+  optional .platforms_deepsea.jellyfish.isa.ScalarYEncoding mask = 1;
+}
+message FsmOperands {
+  optional .platforms_deepsea.jellyfish.isa.ScalarYEncoding offset = 1;
+  optional int32 type = 2;
+}
+message ScalarBinaryOperands {
+  reserved 1;
+  reserved 3;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister x_reg = 4;
+  optional .platforms_deepsea.jellyfish.isa.ScalarYEncoding y = 2;
+  optional .platforms_deepsea.jellyfish.isa.ScalarRegister dest = 5;
+}
+message TtuOperands {
+  reserved 1;
+  optional uint32 row = 4;
+  optional bool iterate = 2;
+  optional bool set_btr = 3;
+}
+message DmaOperands {
+  optional .platforms_deepsea.jellyfish.isa.ScalarYEncoding offset = 1;
+}
+message DmaLocalOperands {
+  reserved 2;
+  reserved 3;
+  reserved 9;
+  reserved 5;
+  reserved 6;
+  reserved 10;
+  enum AddressBitShifts {
+    SEGMENT_ADDRESS_BIT_SHIFT = 3;
+  }
+  oneof s0_x {
+    .platforms_deepsea.jellyfish.isa.ScalarRegister source_address = 12;
+    .platforms_deepsea.jellyfish.isa.ScalarRegister csr_address = 13;
+    .platforms_deepsea.jellyfish.isa.ScalarRegister segment_table_entry = 14;
+  }
+  oneof s1_x {
+    .platforms_deepsea.jellyfish.isa.ScalarRegister destination_address = 15;
+    .platforms_deepsea.jellyfish.isa.ScalarRegister csr_low_word = 16;
+    .platforms_deepsea.jellyfish.isa.ScalarRegister segment_low_word = 17;
+  }
+  oneof s1_y {
+    .platforms_deepsea.jellyfish.isa.ScalarYEncoding sync_flag = 7;
+    .platforms_deepsea.jellyfish.isa.ScalarYEncoding csr_high_word = 8;
+    .platforms_deepsea.jellyfish.isa.ScalarYEncoding segment_high_word = 11;
+  }
+  optional .platforms_deepsea.jellyfish.isa.DmaLocalSubopcode subopcode = 1;
+  optional .platforms_deepsea.jellyfish.isa.ScalarYEncoding number_chunks = 4;
+}
+message PredicateOrOperand {
+  message Register {
+    reserved 2;
+    optional bool negate = 1;
+    optional .platforms_deepsea.jellyfish.isa.PredicateRegister reg = 3;
+  }
+  oneof encoding {
+    .platforms_deepsea.jellyfish.isa.PredicateOrOperand.Register reg = 1;
+    bool constant = 2;
+  }
+}
+message PredicateOrOperands {
+  reserved 1;
+  optional .platforms_deepsea.jellyfish.isa.PredicateRegister dest = 4;
+  optional .platforms_deepsea.jellyfish.isa.PredicateOrOperand px = 2;
+  optional .platforms_deepsea.jellyfish.isa.PredicateOrOperand py = 3;
+}
+message VectorAluInstruction {
+  reserved 2;
+  reserved 3;
+  reserved 4;
+  reserved 6;
+  reserved 8;
+  reserved 9;
+  optional .platforms_deepsea.jellyfish.isa.VectorAluOpcode opcode = 1;
+  repeated .platforms_deepsea.jellyfish.isa.VectorRegister consumes_vector_register = 10;
+  repeated .platforms_deepsea.jellyfish.isa.ScalarRegister consumes_scalar_register = 11;
+  repeated .platforms_deepsea.jellyfish.isa.VectorRegister produces_register = 12;
+  optional .platforms_deepsea.jellyfish.isa.Predication predication = 5;
+  optional .platforms_deepsea.jellyfish.isa.VectorRegister x_reg = 13;
+  optional .platforms_deepsea.jellyfish.isa.VectorAluYEncoding y_encoding = 7;
+  optional .platforms_deepsea.jellyfish.isa.VectorRegister y_reg = 14;
+  optional .platforms_deepsea.jellyfish.isa.VectorRegister destination = 15;
+}
+message MiscInstruction {
+  reserved 2;
+  reserved 3;
+  oneof instruction {
+    .platforms_deepsea.jellyfish.isa.HostInterruptOperands interrupt = 100;
+    .platforms_deepsea.jellyfish.isa.SyncFlagOperands sync_flag = 102;
+    .platforms_deepsea.jellyfish.isa.VectorMaskOperands vector_mask = 103;
+    .platforms_deepsea.jellyfish.isa.ClearResultFifoOperands clear_result_fifo = 104;
+    .platforms_deepsea.jellyfish.isa.VectorDelayOperands vector_delay = 105;
+    .platforms_deepsea.jellyfish.isa.SetTracemarkOperands set_tracemark = 106;
+    .platforms_deepsea.jellyfish.isa.WriteRemoteOperands write_remote = 107;
+    .platforms_deepsea.jellyfish.isa.TraceOperands trace = 108;
+  }
+  optional .platforms_deepsea.jellyfish.isa.MiscOpcode opcode = 1;
+  repeated .platforms_deepsea.jellyfish.isa.ScalarRegister consumes_scalar_register = 5;
+  repeated .platforms_deepsea.jellyfish.isa.ScalarRegister produces_scalar_register = 6;
+  optional .platforms_deepsea.jellyfish.isa.Predication predication = 4;
+}
+message WriteRemoteOperands {
+  optional .platforms_deepsea.jellyfish.isa.MiscOperandEncoding operand = 1;
+  optional .platforms_deepsea.jellyfish.isa.MiscOperandEncoding address = 2;
+}
+message WriteRemoteDestinationAddress {
+  oneof offset_or_index {
+    int32 smem_offset = 1;
+    .asic_sw.deepsea.SyncFlag sync_flag = 2;
+  }
+  optional int32 segment_number = 3;
+  optional bool is_multicast = 4;
+  optional int32 node_id = 5;
+  optional int32 chip_or_multicast_id = 6;
+}
+message HostInterruptOperands {
+  optional .platforms_deepsea.jellyfish.isa.MiscOperandEncoding number = 1;
+}
+message SyncFlagOperands {
+  optional .platforms_deepsea.jellyfish.isa.MiscOperandEncoding operand = 1;
+  optional .platforms_deepsea.jellyfish.isa.MiscOperandEncoding number = 2;
+}
+message TraceOperands {
+  optional .platforms_deepsea.jellyfish.isa.MiscOperandEncoding lower_bits = 1;
+  optional .platforms_deepsea.jellyfish.isa.MiscOperandEncoding upper_bits = 2;
+}
+message VectorMaskOperands {
+  reserved 1;
+  reserved 2;
+  optional .platforms_deepsea.jellyfish.isa.VectorMaskRegister source = 3;
+  optional .platforms_deepsea.jellyfish.isa.VectorMaskRegister destination = 4;
+}
+message ClearResultFifoOperands {
+  optional .platforms_deepsea.jellyfish.isa.ClearOperation fifo = 1;
+  optional int32 mxu_num = 100;
+}
+message SetTracemarkOperands {
+  optional .platforms_deepsea.jellyfish.isa.MiscOperandEncoding value = 1;
+}
+message VectorDelayOperands {
+  reserved 1;
+  oneof delay {
+    uint32 delay_count = 3;
+    .platforms_deepsea.jellyfish.isa.VectorDelayOperandEncoding encoding = 2;
+  }
+}
+message VectorResultInstruction {
+  reserved 2;
+  reserved 3;
+  reserved 5;
+  optional .platforms_deepsea.jellyfish.isa.VectorResultOpcode opcode = 1;
+  repeated .platforms_deepsea.jellyfish.isa.VectorRegister consumes_vector_register = 7;
+  repeated .platforms_deepsea.jellyfish.isa.VectorRegister produces_vector_register = 8;
+  optional .platforms_deepsea.jellyfish.isa.Predication predication = 4;
+  optional .platforms_deepsea.jellyfish.isa.VectorRegister destination = 9;
+  optional .platforms_deepsea.jellyfish.isa.VectorResultDestination which_destination = 6;
+  optional int32 mxu_num = 100;
+}
+message VectorExtendedInstruction {
+  reserved 2;
+  reserved 3;
+  reserved 4;
+  reserved 5;
+  reserved 7;
+  optional .platforms_deepsea.jellyfish.isa.VectorExtendedOpcode opcode = 1;
+  repeated .platforms_deepsea.jellyfish.isa.VectorRegister consumes_vector_register = 10;
+  repeated .platforms_deepsea.jellyfish.isa.VectorRegister produces_vector_register = 11;
+  repeated .platforms_deepsea.jellyfish.isa.ScalarRegister consumes_scalar_register = 12;
+  repeated .platforms_deepsea.jellyfish.isa.ScalarRegister produces_scalar_register = 13;
+  optional .platforms_deepsea.jellyfish.isa.Predication predication = 6;
+  optional .platforms_deepsea.jellyfish.isa.VectorRegister data = 14;
+  optional .platforms_deepsea.jellyfish.isa.VectorExtendedSourceEncoding source = 8;
+  optional .platforms_deepsea.jellyfish.isa.VectorExtendedRotateEncoding rotate = 9;
+  optional int32 mxu_num = 100;
+}
+message VectorStoreInstruction {
+  reserved 2;
+  reserved 3;
+  reserved 6;
+  oneof operands {
+    .platforms_deepsea.jellyfish.isa.StoreOperands store = 7;
+    .platforms_deepsea.jellyfish.isa.SetIndexedAddressOperands set_indexed_address = 8;
+  }
+  optional .platforms_deepsea.jellyfish.isa.VectorStoreOpcode opcode = 1;
+  repeated .platforms_deepsea.jellyfish.isa.VectorRegister consumes_vector_register = 9;
+  repeated .platforms_deepsea.jellyfish.isa.ScalarRegister consumes_scalar_register = 10;
+  optional .platforms_deepsea.jellyfish.isa.Predication predication = 4;
+  optional bool ttu = 5;
+  optional .platforms_deepsea.jellyfish.isa.VectorRegister source = 11;
+}
+message StoreOperands {
+  reserved 5;
+  optional .platforms_deepsea.jellyfish.isa.SublaneMaskEncoding sublane_mask = 1;
+  optional .platforms_deepsea.jellyfish.isa.BaseAddressEncoding base_address = 2;
+  optional .platforms_deepsea.jellyfish.isa.OffsetEncoding offset = 3;
+  optional .platforms_deepsea.jellyfish.isa.StrideEncoding stride = 4;
+  optional .platforms_deepsea.jellyfish.isa.IndexAddressRegister index_address_register = 6;
+}
+message SetIndexedAddressOperands {
+  reserved 2;
+  optional .platforms_deepsea.jellyfish.isa.IndexAddressRegister destination = 3;
+}
+message VectorLoadInstruction {
+  reserved 2;
+  reserved 3;
+  reserved 4;
+  reserved 6;
+  oneof stride_or_shuffle {
+    .platforms_deepsea.jellyfish.isa.ShuffleEncoding shuffle = 11;
+    .platforms_deepsea.jellyfish.isa.StrideEncoding stride = 12;
+  }
+  optional .platforms_deepsea.jellyfish.isa.VectorLoadOpcode opcode = 1;
+  repeated .platforms_deepsea.jellyfish.isa.VectorRegister consumes_vector_register = 13;
+  repeated .platforms_deepsea.jellyfish.isa.VectorRegister produces_vector_register = 14;
+  repeated .platforms_deepsea.jellyfish.isa.ScalarRegister consumes_scalar_register = 15;
+  optional .platforms_deepsea.jellyfish.isa.Predication predication = 5;
+  optional .platforms_deepsea.jellyfish.isa.VectorRegister destination = 16;
+  optional .platforms_deepsea.jellyfish.isa.SublaneMaskEncoding sublane_mask = 7;
+  optional .platforms_deepsea.jellyfish.isa.BaseAddressEncoding base_address = 8;
+  optional .platforms_deepsea.jellyfish.isa.OffsetEncoding offset = 9;
+  optional bool ttu = 10;
+}
+message Annotations {
+  repeated .platforms_deepsea.jellyfish.isa.BranchTargetAnnotation branch_targets = 1;
+  repeated .platforms_deepsea.jellyfish.isa.BranchAnnotation branches = 2;
+  repeated int64 overlays = 3;
+}
+message BranchTargetAnnotation {
+  optional int64 bundle_index = 1;
+  repeated int32 power = 2;
+}
+message BranchAnnotation {
+  optional int64 bundle_index = 1;
+  repeated int64 branch_targets = 2;
+}

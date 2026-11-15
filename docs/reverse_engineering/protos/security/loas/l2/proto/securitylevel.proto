@@ -1,0 +1,10 @@
+syntax = "proto2";
+package security_loas_l2;
+enum SecurityLevel {
+  SECURITY_NONE = 0;
+  INTEGRITY_ONLY = 1;
+  INTEGRITY_AND_PRIVACY = 2;
+}
+message SecurityLevelValue {
+  optional .security_loas_l2.SecurityLevel value = 1;
+}

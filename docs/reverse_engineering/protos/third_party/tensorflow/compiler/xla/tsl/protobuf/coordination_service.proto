@@ -1,0 +1,204 @@
+syntax = "proto3";
+package tensorflow;
+import "google/protobuf/any.proto";
+enum CoordinatedTaskState {
+  TASKSTATE_UNSPECIFIED = 0;
+  TASKSTATE_UNINITIALIZED = 1;
+  TASKSTATE_DISCONNECTED = 2;
+  TASKSTATE_CONNECTED = 3;
+  TASKSTATE_ERROR = 4;
+}
+message CoordinatedTask {
+  string job_name = 1;
+  int32 task_id = 2;
+  bool recoverable = 3;
+}
+message CoordinationServiceError {
+  reserved 1;
+  reserved 2;
+  bool is_reported_error = 3;
+  .tensorflow.CoordinatedTask source_task = 4;
+}
+message BarrierError {
+  string barrier_id = 1;
+  int64 counter = 2;
+}
+message CoordinatedTaskStateInfo {
+  .tensorflow.CoordinatedTask task = 1;
+  fixed64 incarnation = 6;
+  .tensorflow.CoordinatedTaskState state = 2;
+  int32 error_code = 3;
+  string error_message = 4;
+  .tensorflow.CoordinationServiceError error_payload = 5;
+}
+message DeviceInfo {
+  repeated .google.protobuf.Any device = 1;
+}
+message RegisterTaskRequest {
+  reserved 1;
+  reserved 2;
+  reserved 4;
+  fixed64 incarnation = 3;
+  .tensorflow.CoordinatedTask source_task = 5;
+}
+message RegisterTaskResponse {
+  fixed64 leader_incarnation = 1;
+}
+message HeartbeatRequest {
+  reserved 1;
+  reserved 2;
+  fixed64 incarnation = 3;
+  .tensorflow.CoordinatedTask source_task = 4;
+}
+message HeartbeatResponse {
+  fixed64 leader_incarnation = 1;
+}
+message PollForErrorRequest {
+  .tensorflow.CoordinatedTask source_task = 1;
+}
+message PollForErrorResponse {
+}
+message WaitForAllTasksRequest {
+  reserved 1;
+  reserved 2;
+  reserved 3;
+  reserved 4;
+  .tensorflow.CoordinatedTask source_task = 5;
+  .tensorflow.DeviceInfo device_info = 6;
+}
+message WaitForAllTasksResponse {
+  reserved 2;
+  reserved 3;
+  fixed64 leader_incarnation = 1;
+  .tensorflow.DeviceInfo device_info = 4;
+}
+message ShutdownTaskRequest {
+  .tensorflow.CoordinatedTask source_task = 1;
+}
+message ShutdownTaskResponse {
+}
+message ResetTaskRequest {
+  .tensorflow.CoordinatedTask source_task = 1;
+}
+message ResetTaskResponse {
+}
+message ReportErrorToTaskRequest {
+  reserved 3;
+  reserved 4;
+  int32 error_code = 1;
+  string error_message = 2;
+  .tensorflow.CoordinationServiceError error_payload = 5;
+}
+message ReportErrorToTaskResponse {
+}
+message ReportErrorToServiceRequest {
+  reserved 3;
+  reserved 4;
+  int32 error_code = 1;
+  string error_message = 2;
+  .tensorflow.CoordinatedTask error_origin = 5;
+}
+message ReportErrorToServiceResponse {
+}
+message GetTaskStateRequest {
+  repeated .tensorflow.CoordinatedTask source_task = 1;
+}
+message GetTaskStateResponse {
+  repeated .tensorflow.CoordinatedTaskStateInfo task_state = 1;
+}
+message WatchJobStateRequest {
+  string job_name = 1;
+  int64 version_number = 2;
+}
+message WatchJobStateResponse {
+  repeated .tensorflow.CoordinatedTaskStateInfo task_state = 1;
+  int64 version_number = 2;
+}
+message KeyValueEntry {
+  string key = 1;
+  bytes value = 2;
+}
+message InsertKeyValueRequest {
+  .tensorflow.KeyValueEntry kv = 1;
+  bool allow_overwrite = 2;
+}
+message InsertKeyValueResponse {
+}
+message GetKeyValueRequest {
+  string key = 1;
+}
+message GetKeyValueResponse {
+  .tensorflow.KeyValueEntry kv = 1;
+}
+message TryGetKeyValueRequest {
+  string key = 1;
+}
+message TryGetKeyValueResponse {
+  .tensorflow.KeyValueEntry kv = 1;
+}
+message IncrementKeyValueRequest {
+  string key = 1;
+  int64 increment = 2;
+}
+message IncrementKeyValueResponse {
+  .tensorflow.KeyValueEntry kv = 1;
+}
+message GetKeyValueDirRequest {
+  string directory_key = 1;
+}
+message GetKeyValueDirResponse {
+  string directory_key = 1;
+  repeated .tensorflow.KeyValueEntry kv = 2;
+}
+message DeleteKeyValueRequest {
+  string key = 1;
+  bool is_directory = 2;
+}
+message DeleteKeyValueResponse {
+}
+message BarrierRequest {
+  string barrier_id = 1;
+  int64 barrier_timeout_in_ms = 2;
+  repeated .tensorflow.CoordinatedTask tasks = 3;
+  .tensorflow.CoordinatedTask source_task = 4;
+  int64 counter = 5;
+}
+message BarrierResponse {
+  int64 counter = 1;
+}
+message GetAliveTasksRequest {
+  .tensorflow.CoordinatedTask requesting_task = 1;
+  repeated .tensorflow.CoordinatedTask tasks = 2;
+}
+message GetAliveTasksResponse {
+  repeated .tensorflow.CoordinatedTask alive_tasks = 1;
+  repeated fixed64 incarnations = 2;
+}
+message CancelBarrierRequest {
+  string barrier_id = 1;
+  int64 counter = 3;
+  .tensorflow.CoordinatedTask source_task = 2;
+}
+message CancelBarrierResponse {
+}
+service CoordinationService {
+  rpc RegisterTask(.tensorflow.RegisterTaskRequest) returns (.tensorflow.RegisterTaskResponse);
+  rpc Heartbeat(.tensorflow.HeartbeatRequest) returns (.tensorflow.HeartbeatResponse);
+  rpc WaitForAllTasks(.tensorflow.WaitForAllTasksRequest) returns (.tensorflow.WaitForAllTasksResponse);
+  rpc ShutdownTask(.tensorflow.ShutdownTaskRequest) returns (.tensorflow.ShutdownTaskResponse);
+  rpc ResetTask(.tensorflow.ResetTaskRequest) returns (.tensorflow.ResetTaskResponse);
+  rpc ReportErrorToTask(.tensorflow.ReportErrorToTaskRequest) returns (.tensorflow.ReportErrorToTaskResponse);
+  rpc ReportErrorToService(.tensorflow.ReportErrorToServiceRequest) returns (.tensorflow.ReportErrorToServiceResponse);
+  rpc GetTaskState(.tensorflow.GetTaskStateRequest) returns (.tensorflow.GetTaskStateResponse);
+  rpc WatchJobState(.tensorflow.WatchJobStateRequest) returns (.tensorflow.WatchJobStateResponse);
+  rpc InsertKeyValue(.tensorflow.InsertKeyValueRequest) returns (.tensorflow.InsertKeyValueResponse);
+  rpc GetKeyValue(.tensorflow.GetKeyValueRequest) returns (.tensorflow.GetKeyValueResponse);
+  rpc TryGetKeyValue(.tensorflow.TryGetKeyValueRequest) returns (.tensorflow.TryGetKeyValueResponse);
+  rpc IncrementKeyValue(.tensorflow.IncrementKeyValueRequest) returns (.tensorflow.IncrementKeyValueResponse);
+  rpc GetKeyValueDir(.tensorflow.GetKeyValueDirRequest) returns (.tensorflow.GetKeyValueDirResponse);
+  rpc DeleteKeyValue(.tensorflow.DeleteKeyValueRequest) returns (.tensorflow.DeleteKeyValueResponse);
+  rpc Barrier(.tensorflow.BarrierRequest) returns (.tensorflow.BarrierResponse);
+  rpc CancelBarrier(.tensorflow.CancelBarrierRequest) returns (.tensorflow.CancelBarrierResponse);
+  rpc GetAliveTasks(.tensorflow.GetAliveTasksRequest) returns (.tensorflow.GetAliveTasksResponse);
+  rpc PollForError(.tensorflow.PollForErrorRequest) returns (.tensorflow.PollForErrorResponse);
+}

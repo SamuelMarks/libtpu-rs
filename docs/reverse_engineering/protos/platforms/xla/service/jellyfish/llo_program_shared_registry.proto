@@ -1,0 +1,3 @@
+syntax = "proto3";
+package xla;
+import public "platforms/xla/service/jellyfish/llo/llo_program_shared_registry.proto";

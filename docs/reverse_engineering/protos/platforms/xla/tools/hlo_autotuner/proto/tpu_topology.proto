@@ -1,0 +1,21 @@
+syntax = "proto3";
+package xla.tuning;
+import "learning/45eac/tpu/runtime/topology/tpu_dimensions.proto";
+import "learning/45eac/tpu/runtime/tpu_platform_type.proto";
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+message TpuChipPartsProto {
+  string variant_name = 7;
+}
+message TpuChipConfigProto {
+  bool megacore = 2;
+}
+message TpuTopologyProto {
+  .tpu.TpuVersionProto version = 1;
+  .tpu.TpuPlatformTypeProto platform_type = 2;
+  .xla.tuning.TpuChipPartsProto chip_parts = 3;
+  .xla.tuning.TpuChipConfigProto chip_config = 4;
+  .tpu.TpuDimensionsProto chips_per_host_bounds = 5;
+  .tpu.TpuDimensionsProto host_bounds = 6;
+  .tpu.TpuWrapProto wrap = 7;
+  bool twist = 8;
+}

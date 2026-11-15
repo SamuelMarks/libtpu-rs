@@ -1,0 +1,19 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.plc;
+message HbmFishAddress {
+  message HbmFishAddressField {
+    optional uint32 column = 1;
+    optional bool half_index = 2;
+    optional bool quadrant = 3;
+    optional uint32 pseudo_channel = 4;
+    optional uint32 bank = 5;
+    optional uint32 row = 6;
+    optional uint32 hashable_field = 7;
+  }
+  oneof inst {
+    .asic_sw.deepsea.pxc.plc.HbmFishAddress.HbmFishAddressField hbm_fish_address_field = 4;
+  }
+  optional uint32 latency = 1;
+  map<string, uint32> resource_usage = 2;
+  optional uint32 bit_width = 3;
+}

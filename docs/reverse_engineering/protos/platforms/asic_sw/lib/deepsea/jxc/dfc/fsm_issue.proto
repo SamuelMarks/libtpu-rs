@@ -1,0 +1,24 @@
+syntax = "proto3";
+package asic_sw.deepsea.jxc.dfc;
+import "platforms/asic_sw/lib/deepsea/jxc/common/dma_descriptor.proto";
+enum FsmInstructionType {
+  DMA_REQUEST_COMMAND = 0;
+  REMOTE_SCALAR_WRITE_COMMAND = 1;
+  GLOBAL_SCATTER_IDS_COMMAND = 2;
+  LOCAL_GATHER_COMMAND = 3;
+  SPARSE_REDUCE_COMMAND = 4;
+  GLOBAL_SCATTER_GRADIENTS_COMMAND = 5;
+  LOCAL_SCATTER_GRADIENTS_COMMAND = 6;
+  ALLOCATE_REMOTE_BUFFER_COMMAND = 7;
+  FSM_INSTRUCTION_TYPE_COUNT = 8;
+}
+message FsmFifoStatus {
+  repeated bool bitmap = 1;
+}
+message FsmIssueCommand {
+  uint32 tracemark_register = 1;
+  uint32 program_counter = 2;
+  .asic_sw.deepsea.jxc.dfc.FsmInstructionType fsm_type = 3;
+  .asic_sw.deepsea.jxc.DmaDescriptor dma_descriptor = 5;
+  repeated uint32 fsm_register = 6;
+}

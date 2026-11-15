@@ -1,0 +1,7 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+message TpuCoreLocationProto {
+  .tpu.TpuCoreTypeProto core_type = 1;
+  int32 logical_device_id = 2;
+}

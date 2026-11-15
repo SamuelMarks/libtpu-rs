@@ -8,6 +8,7 @@ use crate::compiler::{CompiledMemoryStats, CompiledProgram, CostAnalysis};
 use crate::config::TpuInitConfig;
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::hal::{DeviceMemoryStats, DeviceSpec, SimulatedTpuHal, TopologySpec, TpuHal};
+use crate::proto::ProtoSchemaMessage as _;
 use crate::types::{
     BufferId, ByteSize, DeviceAddress, DeviceId, ElementType, EventId, ExecutableId, MemoryKind,
     MemorySpaceId, ProcessIndex, Shape,
@@ -295,21 +296,27 @@ impl PjrtCoreTopology {
     #[must_use]
     pub fn serialize(&self) -> Vec<u8> {
         let proto = crate::proto::TpuTopologyArgsProto {
-            version: self.spec.generation as i32,
-            num_hosts: i32::try_from(
-                self.spec.host_bounds.x * self.spec.host_bounds.y * self.spec.host_bounds.z,
-            )
-            .unwrap_or(1),
-            chips_per_host: i32::try_from(self.spec.chips_per_host).unwrap_or(1),
-            mesh_bounds: vec![
-                i64::from(self.spec.chip_bounds.x),
-                i64::from(self.spec.chip_bounds.y),
-                i64::from(self.spec.chip_bounds.z),
-            ],
-            platform_version: self.spec.platform_version.clone(),
-            fingerprint: format!("{:016x}", self.fingerprint),
+            version: Some(self.spec.generation as i32),
+            variant: Some(self.spec.platform_version.clone()),
+            chip_config_name: Some(format!("{:016x}", self.fingerprint)),
+            chips_per_host_bounds: Some(crate::proto::TpuDimensionsProto {
+                x: i32::try_from((self.spec.chip_bounds.x / self.spec.host_bounds.x.max(1)).max(1))
+                    .unwrap_or(1),
+                y: i32::try_from((self.spec.chip_bounds.y / self.spec.host_bounds.y.max(1)).max(1))
+                    .unwrap_or(1),
+                z: i32::try_from((self.spec.chip_bounds.z / self.spec.host_bounds.z.max(1)).max(1))
+                    .unwrap_or(1),
+                w: 1,
+            }),
+            host_bounds: Some(crate::proto::TpuDimensionsProto {
+                x: i32::try_from(self.spec.host_bounds.x).unwrap_or(1),
+                y: i32::try_from(self.spec.host_bounds.y).unwrap_or(1),
+                z: i32::try_from(self.spec.host_bounds.z).unwrap_or(1),
+                w: 1,
+            }),
+            ..crate::proto::TpuTopologyArgsProto::default()
         };
-        proto.encode()
+        proto.encode_proto()
     }
 
     /// Deserializes a [`PjrtCoreTopology`] from serialized `TpuTopologyArgsProto` or `LTPUTOPO:` bytes
@@ -328,10 +335,11 @@ impl PjrtCoreTopology {
             let hal = SimulatedTpuHal::new(&cfg);
             return Ok(Self::new(hal.topology_spec()));
         }
-        if let Ok(proto) = crate::proto::TpuTopologyArgsProto::decode(bytes) {
-            if proto.version > 0 {
+        if let Ok(proto) = crate::proto::TpuTopologyArgsProto::decode_proto(bytes) {
+            let ver = proto.version.unwrap_or(0);
+            if ver > 0 {
                 let mut cfg = TpuInitConfig {
-                    generation: match proto.version {
+                    generation: match ver {
                         2 => crate::types::TpuGeneration::V2,
                         3 => crate::types::TpuGeneration::V3,
                         4 => crate::types::TpuGeneration::V4,
@@ -342,19 +350,22 @@ impl PjrtCoreTopology {
                     },
                     ..TpuInitConfig::default()
                 };
-                if let &[b0, b1, b2] = proto.mesh_bounds.as_slice() {
-                    let bx = u32::try_from(b0).unwrap_or(2).max(1);
-                    let by = u32::try_from(b1).unwrap_or(2).max(1);
-                    let bz = u32::try_from(b2).unwrap_or(1).max(1);
-                    let nh = u32::try_from(proto.num_hosts).unwrap_or(1).max(1);
-                    cfg.host_bounds = crate::types::ChipCoordinates::new(nh, 1, 1);
-                    cfg.chips_per_host_bounds =
-                        crate::types::ChipCoordinates::new((bx / nh).max(1), by, bz);
+                if let Some(hb) = &proto.host_bounds {
+                    let hx = u32::try_from(hb.x.max(1)).unwrap_or(1);
+                    let hy = u32::try_from(hb.y.max(1)).unwrap_or(1);
+                    let hz = u32::try_from(hb.z.max(1)).unwrap_or(1);
+                    cfg.host_bounds = crate::types::ChipCoordinates::new(hx, hy, hz);
+                }
+                if let Some(cb) = &proto.chips_per_host_bounds {
+                    let cx = u32::try_from(cb.x.max(1)).unwrap_or(2);
+                    let cy = u32::try_from(cb.y.max(1)).unwrap_or(2);
+                    let cz = u32::try_from(cb.z.max(1)).unwrap_or(1);
+                    cfg.chips_per_host_bounds = crate::types::ChipCoordinates::new(cx, cy, cz);
                 }
                 let hal = SimulatedTpuHal::new(&cfg);
                 let mut spec = hal.topology_spec();
-                if !proto.platform_version.is_empty() {
-                    spec.platform_version = proto.platform_version;
+                if let Some(pv) = proto.variant.filter(|s| !s.is_empty()) {
+                    spec.platform_version = pv;
                 }
                 return Ok(Self::new(spec));
             }
@@ -607,7 +618,7 @@ pub struct PjrtCoreCopyToDeviceStream {
     /// Current accumulated byte count.
     current_bytes: AtomicI64,
     /// Staged host bytes accumulated across chunks.
-    staged_bytes: Mutex<Vec<u8>>,
+    staged_bytes: Arc<Mutex<Vec<u8>>>,
 }
 
 impl PjrtCoreCopyToDeviceStream {
@@ -623,8 +634,14 @@ impl PjrtCoreCopyToDeviceStream {
             total_bytes,
             granule_size: granule_size.max(1),
             current_bytes: AtomicI64::new(0),
-            staged_bytes: Mutex::new(Vec::new()),
+            staged_bytes: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// Returns a shared reference to the accumulated `staged_bytes` buffer.
+    #[must_use]
+    pub fn shared_staged_bytes(&self) -> Arc<Mutex<Vec<u8>>> {
+        Arc::clone(&self.staged_bytes)
     }
 
     /// Adds a chunk of bytes to the stream (`PJRT_CopyToDeviceStream_AddChunk`).
@@ -836,6 +853,135 @@ impl PjrtCoreLoadedExecutable {
         Ok(out_buffers)
     }
 
+    /// Executes the loaded program on `device_id` while servicing `Send` and `Recv` host-transfer
+    /// channels (`jax.pure_callback`) via `send_fn` and `recv_fn`.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Target device ID.
+    /// * `memory_id` - Default output memory space ID.
+    /// * `inputs` - Input [`PjrtCoreBuffer`] references.
+    /// * `send_fn` - Host callback invoked with `(channel_id, device_bytes)` on `Send`.
+    /// * `recv_fn` - Host callback invoked with `channel_id` returning host bytes on `Recv`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if the executable or any input buffer is deleted or if execution fails.
+    pub fn execute_on_device_with_host_io<FS, FR>(
+        &self,
+        device_id: DeviceId,
+        memory_id: MemorySpaceId,
+        inputs: &[&PjrtCoreBuffer],
+        mut send_fn: FS,
+        mut recv_fn: FR,
+    ) -> LibTpuResult<Vec<PjrtCoreBuffer>>
+    where
+        FS: FnMut(i64, &[u8]) -> LibTpuResult<()>,
+        FR: FnMut(i64) -> LibTpuResult<Vec<u8>>,
+    {
+        self.execute_on_device_with_host_io_dyn(
+            device_id,
+            memory_id,
+            inputs,
+            &mut send_fn,
+            &mut recv_fn,
+        )
+    }
+
+    /// Non-generic host-I/O execution body invoked by [`Self::execute_on_device_with_host_io`].
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Target [`DeviceId`].
+    /// * `memory_id` - Output [`MemorySpaceId`].
+    /// * `inputs` - Ordered slice of input [`PjrtCoreBuffer`] references.
+    /// * `send_fn` - Dynamic device-to-host `Send` callback.
+    /// * `recv_fn` - Dynamic host-to-device `Recv` callback.
+    fn execute_on_device_with_host_io_dyn(
+        &self,
+        device_id: DeviceId,
+        memory_id: MemorySpaceId,
+        inputs: &[&PjrtCoreBuffer],
+        send_fn: &mut dyn FnMut(i64, &[u8]) -> LibTpuResult<()>,
+        recv_fn: &mut dyn FnMut(i64) -> LibTpuResult<Vec<u8>>,
+    ) -> LibTpuResult<Vec<PjrtCoreBuffer>> {
+        if self.is_deleted() {
+            return Err(LibTpuError::ExecutableDeleted {
+                executable_id: self.executable.id.0,
+            });
+        }
+        let mut host_inputs = Vec::with_capacity(inputs.len());
+        for &buf in inputs {
+            if buf.is_deleted() {
+                return Err(LibTpuError::BufferDeleted {
+                    buffer_id: buf.id.0,
+                });
+            }
+            host_inputs.push(buf.to_host_bytes()?);
+        }
+        let prog = &self.executable.program;
+        let default_elem_type = prog
+            .output_shapes
+            .first()
+            .map_or(ElementType::F32, |s| s.element_type);
+        let mut vm = crate::hal::TpuCoreVmState::new();
+        let max_slot = crate::hal::TpuCoreVmState::max_slot_in_bundles(&prog.instruction_bundles)
+            .max(prog.output_slots.iter().copied().max().unwrap_or(0));
+        let mut registers = host_inputs;
+        registers.resize_with((max_slot + 2).max(registers.len()), Vec::new);
+        let mut last_result = registers.first().cloned().unwrap_or_default();
+        for bundle in &prog.instruction_bundles {
+            if bundle.opcode == crate::compiler::TpuOpCode::Send {
+                let src = bundle
+                    .operand_slots
+                    .first()
+                    .and_then(|&s| registers.get(s))
+                    .map_or(&[][..], Vec::as_slice);
+                send_fn(bundle.attrs.send_recv_channel_id, src)?;
+                Self::write_register_slot(&mut registers, bundle.output_slot, Vec::new());
+                continue;
+            }
+            if bundle.opcode == crate::compiler::TpuOpCode::Recv {
+                let received = recv_fn(bundle.attrs.send_recv_channel_id)?;
+                last_result.clone_from(&received);
+                Self::write_register_slot(&mut registers, bundle.output_slot, received);
+                continue;
+            }
+            vm.step_bundles_on_registers(
+                std::slice::from_ref(bundle),
+                default_elem_type,
+                &mut registers,
+                &mut last_result,
+            );
+        }
+        let mut out_buffers = Vec::with_capacity(prog.output_shapes.len());
+        for (out_idx, out_shape) in prog.output_shapes.iter().enumerate() {
+            let sz = out_shape.on_device_byte_size();
+            let addr = self
+                .hal
+                .allocate_device_memory(device_id, MemoryKind::DeviceHbm, sz)?;
+            let raw_bytes = prog
+                .output_slots
+                .get(out_idx)
+                .and_then(|&s| registers.get(s))
+                .unwrap_or(&last_result);
+            let unpadded = out_shape.unpadded_byte_size().0;
+            let mut clipped = raw_bytes.clone();
+            clipped.resize(unpadded, 0);
+            if !clipped.is_empty() {
+                self.hal.write_device_memory(device_id, addr, &clipped)?;
+            }
+            out_buffers.push(PjrtCoreBuffer::new(
+                device_id,
+                memory_id,
+                out_shape.clone(),
+                addr,
+                Arc::clone(&self.hal),
+            ));
+        }
+        Ok(out_buffers)
+    }
+
     /// Executes the loaded program across all `addressable_devices` (`PJRT_LoadedExecutable_Execute`),
     /// returning one `Vec<PjrtCoreBuffer>` output list per addressable device, and synchronizing
     /// cross-replica collective operations (`AllReduce`, `AllGather`, `ReduceScatter`, `AllToAll`,
@@ -849,38 +995,172 @@ impl PjrtCoreLoadedExecutable {
     /// # Errors
     ///
     /// Returns [`LibTpuError`] if the executable or any input buffer is deleted or if execution fails.
+    #[allow(clippy::too_many_lines)]
     pub fn execute_all_devices(
         &self,
         memory_id: MemorySpaceId,
         per_device_inputs: &[&[&PjrtCoreBuffer]],
     ) -> LibTpuResult<Vec<Vec<PjrtCoreBuffer>>> {
-        let mut all_outputs = Vec::with_capacity(self.addressable_devices.len());
-        let mut replica_bytes = Vec::with_capacity(self.addressable_devices.len());
-        for (idx, &dev_id) in self.addressable_devices.iter().enumerate() {
-            let dev_inputs = per_device_inputs.get(idx).copied().unwrap_or(&[]);
-            all_outputs.push(self.execute_on_device(dev_id, memory_id, dev_inputs)?);
-            replica_bytes.push(vec![0_u8; 16]);
+        if self.is_deleted() {
+            return Err(LibTpuError::ExecutableDeleted {
+                executable_id: self.executable.id.0,
+            });
         }
-        let default_attrs = crate::compiler::InstructionAttrs::default();
-        let _ = crate::hal::SpmdCollectiveRendezvousEngine::execute_rendezvous(
-            crate::compiler::TpuOpCode::AllReduceSumF32,
-            ElementType::F32,
-            &replica_bytes,
-            &default_attrs,
-        );
+        let prog = &self.executable.program;
+        let has_collective = prog.instruction_bundles.iter().any(|b| {
+            matches!(
+                b.opcode,
+                crate::compiler::TpuOpCode::AllReduceSumF32
+                    | crate::compiler::TpuOpCode::AllGather
+                    | crate::compiler::TpuOpCode::ReduceScatter
+                    | crate::compiler::TpuOpCode::AllToAll
+                    | crate::compiler::TpuOpCode::CollectivePermute
+                    | crate::compiler::TpuOpCode::ReplicaId
+                    | crate::compiler::TpuOpCode::PartitionId
+            )
+        });
+        let num_devs = self.addressable_devices.len();
+        if !has_collective || num_devs <= 1 {
+            let mut all_outputs = Vec::with_capacity(num_devs);
+            for (idx, &dev_id) in self.addressable_devices.iter().enumerate() {
+                let dev_inputs = per_device_inputs.get(idx).copied().unwrap_or(&[]);
+                all_outputs.push(self.execute_on_device(dev_id, memory_id, dev_inputs)?);
+            }
+            return Ok(all_outputs);
+        }
+
+        let default_elem_type = prog
+            .output_shapes
+            .first()
+            .map_or(ElementType::F32, |s| s.element_type);
+        let max_slot = crate::hal::TpuCoreVmState::max_slot_in_bundles(&prog.instruction_bundles)
+            .max(prog.output_slots.iter().copied().max().unwrap_or(0));
+        let mut vms = Vec::with_capacity(num_devs);
+        let mut reg_files = Vec::with_capacity(num_devs);
+        let mut last_results = Vec::with_capacity(num_devs);
+        for (idx, &_dev_id) in self.addressable_devices.iter().enumerate() {
+            let dev_inputs = per_device_inputs.get(idx).copied().unwrap_or(&[]);
+            let mut in_vecs = Vec::with_capacity(dev_inputs.len());
+            for &buf in dev_inputs {
+                if buf.is_deleted() {
+                    return Err(LibTpuError::BufferDeleted {
+                        buffer_id: buf.id.0,
+                    });
+                }
+                in_vecs.push(buf.to_host_bytes()?);
+            }
+            let first = in_vecs.first().cloned().unwrap_or_default();
+            in_vecs.resize_with((max_slot + 2).max(in_vecs.len()), Vec::new);
+            vms.push(crate::hal::TpuCoreVmState::new());
+            reg_files.push(in_vecs);
+            last_results.push(first);
+        }
+
+        for bundle in &prog.instruction_bundles {
+            let is_coll = matches!(
+                bundle.opcode,
+                crate::compiler::TpuOpCode::AllReduceSumF32
+                    | crate::compiler::TpuOpCode::AllGather
+                    | crate::compiler::TpuOpCode::ReduceScatter
+                    | crate::compiler::TpuOpCode::AllToAll
+                    | crate::compiler::TpuOpCode::CollectivePermute
+                    | crate::compiler::TpuOpCode::ReplicaId
+                    | crate::compiler::TpuOpCode::PartitionId
+            );
+            if is_coll {
+                let elem_ty = bundle
+                    .attrs
+                    .output_shape
+                    .as_ref()
+                    .map_or(default_elem_type, |s| s.element_type);
+                let src_slot = bundle.operand_slots.first().copied().unwrap_or(0);
+                let replica_bytes: Vec<Vec<u8>> = reg_files
+                    .iter()
+                    .map(|rf| rf.get(src_slot).cloned().unwrap_or_default())
+                    .collect();
+                let synced = crate::hal::SpmdCollectiveRendezvousEngine::execute_rendezvous(
+                    bundle.opcode,
+                    elem_ty,
+                    &replica_bytes,
+                    &bundle.attrs,
+                );
+                for ((rf, lr), out_b) in reg_files
+                    .iter_mut()
+                    .zip(last_results.iter_mut())
+                    .zip(synced)
+                {
+                    lr.clone_from(&out_b);
+                    Self::write_register_slot(rf, bundle.output_slot, out_b);
+                }
+            } else {
+                for ((vm, rf), lr) in vms
+                    .iter_mut()
+                    .zip(reg_files.iter_mut())
+                    .zip(last_results.iter_mut())
+                {
+                    vm.step_bundles_on_registers(
+                        std::slice::from_ref(bundle),
+                        default_elem_type,
+                        rf,
+                        lr,
+                    );
+                }
+            }
+        }
+
         let router = crate::distributed::TorusIciRouter::new(
-            crate::types::ChipCoordinates::new(
-                u32::try_from(self.addressable_devices.len()).unwrap_or(1),
-                1,
-                1,
-            ),
+            crate::types::ChipCoordinates::new(u32::try_from(num_devs).unwrap_or(1), 1, 1),
             true,
         );
         let _ = router.compute_fault_tolerant_route(
             crate::types::ChipCoordinates::new(0, 0, 0),
             crate::types::ChipCoordinates::new(1, 0, 0),
         );
+
+        let mut all_outputs = Vec::with_capacity(num_devs);
+        for (idx, &dev_id) in self.addressable_devices.iter().enumerate() {
+            let mut dev_outs = Vec::with_capacity(prog.output_shapes.len());
+            for (out_idx, out_shape) in prog.output_shapes.iter().enumerate() {
+                let sz = out_shape.on_device_byte_size();
+                let addr = self
+                    .hal
+                    .allocate_device_memory(dev_id, MemoryKind::DeviceHbm, sz)?;
+                let raw_bytes = prog
+                    .output_slots
+                    .get(out_idx)
+                    .and_then(|&s| reg_files.get(idx).and_then(|rf| rf.get(s)))
+                    .or_else(|| last_results.get(idx))
+                    .map_or_else(Vec::new, Vec::clone);
+                let unpadded = out_shape.unpadded_byte_size().0;
+                let mut clipped = raw_bytes;
+                clipped.resize(unpadded, 0);
+                if !clipped.is_empty() {
+                    self.hal.write_device_memory(dev_id, addr, &clipped)?;
+                }
+                dev_outs.push(PjrtCoreBuffer::new(
+                    dev_id,
+                    memory_id,
+                    out_shape.clone(),
+                    addr,
+                    Arc::clone(&self.hal),
+                ));
+            }
+            all_outputs.push(dev_outs);
+        }
         Ok(all_outputs)
+    }
+
+    /// Writes `value` into `registers[slot]` when `slot` is in bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `registers` - Mutable register slot bank.
+    /// * `slot` - Destination slot index.
+    /// * `value` - Tensor byte payload to store.
+    fn write_register_slot(registers: &mut [Vec<u8>], slot: usize, value: Vec<u8>) {
+        if let Some(dst) = registers.get_mut(slot) {
+            *dst = value;
+        }
     }
 }
 
@@ -1323,6 +1603,71 @@ impl PjrtCoreClient {
         ))
     }
 
+    /// Resolves the ordered addressable [`DeviceId`] list for a compiled [`CompiledProgram`]
+    /// from its serialized `CompileOptionsProto` (`device_assignment`, `device_ordinal`,
+    /// `num_replicas`, `num_partitions`).
+    ///
+    /// # Arguments
+    ///
+    /// * `program` - Compiled program metadata.
+    /// * `compile_options` - Raw serialized `CompileOptionsProto` bytes.
+    fn resolve_executable_addressable_devices(
+        &self,
+        program: &CompiledProgram,
+        compile_options: &[u8],
+    ) -> Vec<DeviceId> {
+        let all_addr: Vec<DeviceId> = self
+            .addressable_device_indices
+            .iter()
+            .filter_map(|&idx| self.devices.get(idx).map(|d| d.description.spec.device_id))
+            .collect();
+        let Ok(parsed) = crate::proto::CompileOptionsProto::decode_or_empty(compile_options) else {
+            return all_addr;
+        };
+        let Some(eb) = parsed.executable_build_options.as_ref() else {
+            return all_addr;
+        };
+        if let Some(da) = eb.device_assignment.as_ref() {
+            let rep_cnt = usize::try_from(da.replica_count).unwrap_or(0);
+            if rep_cnt > 0 && !da.computation_devices.is_empty() {
+                let mut assigned =
+                    Vec::with_capacity(rep_cnt.saturating_mul(da.computation_devices.len()));
+                for r in 0..rep_cnt {
+                    for comp in &da.computation_devices {
+                        if let Some(&raw_id) = comp.replica_device_ids.get(r) {
+                            if let Ok(uid) = u32::try_from(raw_id) {
+                                let did = DeviceId(uid);
+                                if all_addr.contains(&did) {
+                                    assigned.push(did);
+                                }
+                            }
+                        }
+                    }
+                }
+                if !assigned.is_empty() {
+                    return assigned;
+                }
+            }
+        }
+        if eb.num_replicas > 0 || eb.num_partitions > 0 {
+            let total = program
+                .num_replicas
+                .max(1)
+                .saturating_mul(program.num_partitions.max(1));
+            let start_ord = usize::try_from(eb.device_ordinal.max(0)).unwrap_or(0);
+            let selected: Vec<DeviceId> = all_addr
+                .iter()
+                .copied()
+                .skip(start_ord)
+                .take(total)
+                .collect();
+            if !selected.is_empty() {
+                return selected;
+            }
+        }
+        all_addr
+    }
+
     /// Compiles and loads an HLO or `StableHLO` program (`PJRT_Client_Compile`).
     ///
     /// # Arguments
@@ -1341,12 +1686,8 @@ impl PjrtCoreClient {
         compile_options: &[u8],
     ) -> LibTpuResult<PjrtCoreLoadedExecutable> {
         let program = CompiledProgram::compile(format, code, compile_options)?;
+        let addr_devs = self.resolve_executable_addressable_devices(&program, compile_options);
         let executable = PjrtCoreExecutable::new(program);
-        let addr_devs: Vec<DeviceId> = self
-            .addressable_device_indices
-            .iter()
-            .filter_map(|&idx| self.devices.get(idx).map(|d| d.description.spec.device_id))
-            .collect();
         Ok(PjrtCoreLoadedExecutable::new(
             executable,
             addr_devs,
@@ -1723,24 +2064,51 @@ mod tests {
             assert!(PjrtCoreTopology::deserialize(b"LTPUTOPO:gen=5").is_ok());
             for ver in [2, 3, 4, 5, 6, 7, 8] {
                 let p_topo = crate::proto::TpuTopologyArgsProto {
-                    version: ver,
-                    num_hosts: 1,
-                    chips_per_host: 1,
-                    mesh_bounds: if ver % 2 == 0 { vec![1, 1, 1] } else { vec![] },
-                    platform_version: if ver == 2 {
-                        String::new()
+                    version: Some(ver),
+                    chips_per_host_bounds: if ver == 3 {
+                        None
                     } else {
-                        String::from("custom_ver")
+                        Some(crate::proto::TpuDimensionsProto {
+                            x: 1,
+                            y: 1,
+                            z: 1,
+                            w: 1,
+                        })
                     },
-                    fingerprint: String::new(),
+                    host_bounds: if ver % 2 == 0 {
+                        Some(crate::proto::TpuDimensionsProto {
+                            x: 1,
+                            y: 1,
+                            z: 1,
+                            w: 1,
+                        })
+                    } else {
+                        None
+                    },
+                    variant: if ver == 2 {
+                        None
+                    } else {
+                        Some(String::from("custom_ver"))
+                    },
+                    ..crate::proto::TpuTopologyArgsProto::default()
                 };
-                assert!(PjrtCoreTopology::deserialize(&p_topo.encode()).is_ok());
+                assert!(
+                    PjrtCoreTopology::deserialize(&crate::proto::ProtoSchemaMessage::encode_proto(
+                        &p_topo
+                    ))
+                    .is_ok()
+                );
             }
             let zero_ver_topo = crate::proto::TpuTopologyArgsProto {
-                version: 0,
+                version: Some(0),
                 ..crate::proto::TpuTopologyArgsProto::default()
             };
-            assert!(PjrtCoreTopology::deserialize(&zero_ver_topo.encode()).is_err());
+            assert!(
+                PjrtCoreTopology::deserialize(&crate::proto::ProtoSchemaMessage::encode_proto(
+                    &zero_ver_topo
+                ))
+                .is_err()
+            );
             assert!(PjrtCoreTopology::deserialize(&[0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F]).is_err());
 
             assert!(client.lookup_device(DeviceId(0)).is_ok());
@@ -1988,6 +2356,373 @@ mod tests {
             }
             client.kv_put("local_topology/1", vec![0x80]);
             assert!(client.exchange_global_topology_proto(2).is_err());
+
+            // Cover execute_on_device_with_host_io, execute_all_devices, and resolve_executable_addressable_devices
+            {
+                use crate::proto::ProtoSchemaMessage as _;
+                use crate::types::MemoryLayout;
+                let mut multi_cfg = TpuInitConfig::default();
+                let _ = multi_cfg.apply_init_args("--xla_tpu_chips_per_host_bounds=2,1,1");
+                let multi_client = PjrtCoreClient::from_config(&multi_cfg);
+                assert!(multi_client.addressable_device_indices.len() >= 2);
+
+                if let Ok(base_prog) = CompiledProgram::compile("mlir", b"add_f32", b"") {
+                    assert_eq!(
+                        multi_client
+                            .resolve_executable_addressable_devices(&base_prog, &[0xFF, 0xFF, 0xFF])
+                            .len(),
+                        multi_client.addressable_device_indices.len()
+                    );
+                    assert_eq!(
+                        multi_client
+                            .resolve_executable_addressable_devices(&base_prog, b"")
+                            .len(),
+                        multi_client.addressable_device_indices.len()
+                    );
+                    let empty_da_opts = crate::proto::CompileOptionsProto {
+                        executable_build_options: Some(crate::proto::ExecutableBuildOptionsProto {
+                            device_assignment: Some(crate::proto::DeviceAssignmentProto {
+                                replica_count: 2,
+                                computation_count: 1,
+                                computation_devices: Vec::new(),
+                            }),
+                            ..crate::proto::ExecutableBuildOptionsProto::default()
+                        }),
+                        ..crate::proto::CompileOptionsProto::default()
+                    }
+                    .encode_proto();
+                    assert_eq!(
+                        multi_client
+                            .resolve_executable_addressable_devices(&base_prog, &empty_da_opts)
+                            .len(),
+                        multi_client.addressable_device_indices.len()
+                    );
+                    let no_da_parts_opts = crate::proto::CompileOptionsProto {
+                        executable_build_options: Some(crate::proto::ExecutableBuildOptionsProto {
+                            num_replicas: 0,
+                            num_partitions: 2,
+                            device_assignment: None,
+                            ..crate::proto::ExecutableBuildOptionsProto::default()
+                        }),
+                        ..crate::proto::CompileOptionsProto::default()
+                    }
+                    .encode_proto();
+                    assert_eq!(
+                        multi_client
+                            .resolve_executable_addressable_devices(&base_prog, &no_da_parts_opts)
+                            .len(),
+                        1
+                    );
+                    let zero_rep_da_opts = crate::proto::CompileOptionsProto {
+                        executable_build_options: Some(crate::proto::ExecutableBuildOptionsProto {
+                            device_assignment: Some(crate::proto::DeviceAssignmentProto {
+                                replica_count: 0,
+                                computation_count: 0,
+                                computation_devices: Vec::new(),
+                            }),
+                            ..crate::proto::ExecutableBuildOptionsProto::default()
+                        }),
+                        ..crate::proto::CompileOptionsProto::default()
+                    }
+                    .encode_proto();
+                    assert_eq!(
+                        multi_client
+                            .resolve_executable_addressable_devices(&base_prog, &zero_rep_da_opts)
+                            .len(),
+                        multi_client.addressable_device_indices.len()
+                    );
+                    let unmatched_da_opts = crate::proto::CompileOptionsProto {
+                        executable_build_options: Some(crate::proto::ExecutableBuildOptionsProto {
+                            num_replicas: 1,
+                            num_partitions: 1,
+                            device_ordinal: 1,
+                            device_assignment: Some(crate::proto::DeviceAssignmentProto {
+                                replica_count: 2,
+                                computation_count: 1,
+                                computation_devices: vec![crate::proto::ComputationDeviceProto {
+                                    replica_device_ids: vec![-1, 9999],
+                                }],
+                            }),
+                            ..crate::proto::ExecutableBuildOptionsProto::default()
+                        }),
+                        ..crate::proto::CompileOptionsProto::default()
+                    }
+                    .encode_proto();
+                    assert_eq!(
+                        multi_client
+                            .resolve_executable_addressable_devices(&base_prog, &unmatched_da_opts),
+                        vec![DeviceId(1)]
+                    );
+                    let oob_ord_opts = crate::proto::CompileOptionsProto {
+                        executable_build_options: Some(crate::proto::ExecutableBuildOptionsProto {
+                            num_replicas: 1,
+                            num_partitions: 0,
+                            device_ordinal: 999,
+                            device_assignment: Some(crate::proto::DeviceAssignmentProto {
+                                replica_count: 2,
+                                computation_count: 1,
+                                computation_devices: vec![crate::proto::ComputationDeviceProto {
+                                    replica_device_ids: vec![9999],
+                                }],
+                            }),
+                            ..crate::proto::ExecutableBuildOptionsProto::default()
+                        }),
+                        ..crate::proto::CompileOptionsProto::default()
+                    }
+                    .encode_proto();
+                    assert_eq!(
+                        multi_client
+                            .resolve_executable_addressable_devices(&base_prog, &oob_ord_opts)
+                            .len(),
+                        multi_client.addressable_device_indices.len()
+                    );
+                    let matched_da_opts = crate::proto::CompileOptionsProto {
+                        executable_build_options: Some(crate::proto::ExecutableBuildOptionsProto {
+                            device_assignment: Some(crate::proto::DeviceAssignmentProto {
+                                replica_count: 2,
+                                computation_count: 1,
+                                computation_devices: vec![crate::proto::ComputationDeviceProto {
+                                    replica_device_ids: vec![0, 1],
+                                }],
+                            }),
+                            ..crate::proto::ExecutableBuildOptionsProto::default()
+                        }),
+                        ..crate::proto::CompileOptionsProto::default()
+                    }
+                    .encode_proto();
+                    assert_eq!(
+                        multi_client
+                            .resolve_executable_addressable_devices(&base_prog, &matched_da_opts),
+                        vec![DeviceId(0), DeviceId(1)]
+                    );
+
+                    // 2. execute_on_device_with_host_io (including zero-sized output, Send/Recv errors, out-of-range output_slot, deleted input, deleted executable)
+                    let host_io_mlir = br"module @hio {
+                func.func @main(%arg0: tensor<4xf32>) -> (tensor<4xf32>, tensor<0xf32>) {
+                    %t = stablehlo.send %arg0 {channel_id = 3} : (tensor<4xf32>) -> tensor<4xf32>
+                    %r = stablehlo.recv %t {channel_id = 4} : (tensor<4xf32>) -> tensor<4xf32>
+                    %s = stablehlo.add %arg0, %r : tensor<4xf32>
+                    %z = stablehlo.constant dense<[]> : tensor<0xf32>
+                    func.return %s, %z : tensor<4xf32>, tensor<0xf32>
+                }
+            }";
+                    if let Ok(mut hio_exec) =
+                        multi_client.compile_and_load("mlir", host_io_mlir, &matched_da_opts)
+                    {
+                        PjrtCoreLoadedExecutable::write_register_slot(&mut [], 0, Vec::new());
+                        let zero_sh = Shape {
+                            element_type: ElementType::F32,
+                            dims: vec![0],
+                            dynamic_dims: vec![false],
+                            layout: MemoryLayout::default_tpu_tiled(1),
+                        };
+                        let mut h_prog = hio_exec.executable.program.clone();
+                        h_prog.output_shapes.push(zero_sh);
+                        if let Some(b0) = h_prog.instruction_bundles.first_mut() {
+                            b0.output_slot = 999;
+                        }
+                        if let Some(b1) = h_prog.instruction_bundles.get_mut(1) {
+                            b1.output_slot = 999;
+                        }
+                        h_prog.output_slots = vec![999];
+                        hio_exec.executable = PjrtCoreExecutable::new(h_prog);
+
+                        let f32_4 = Shape {
+                            element_type: ElementType::F32,
+                            dims: vec![4],
+                            dynamic_dims: vec![false],
+                            layout: MemoryLayout::default_tpu_tiled(1),
+                        };
+                        if let Ok(in_b0) =
+                            multi_client.buffer_from_host(DeviceId(0), f32_4, &[0_u8; 16])
+                        {
+                            let ok_outs = hio_exec.execute_on_device_with_host_io(
+                                DeviceId(0),
+                                MemorySpaceId(0),
+                                &[&in_b0],
+                                |_ch, _bytes| Ok(()),
+                                |_ch| Ok(vec![0_u8; 16]),
+                            );
+                            assert!(ok_outs.is_ok());
+                            assert!(
+                                hio_exec
+                                    .execute_on_device_with_host_io(
+                                        DeviceId(0),
+                                        MemorySpaceId(0),
+                                        &[&in_b0],
+                                        |_ch, _bytes| Err(LibTpuError::ProfilerNotActive),
+                                        |_ch| Ok(vec![0_u8; 16]),
+                                    )
+                                    .is_err()
+                            );
+                            assert!(
+                                hio_exec
+                                    .execute_on_device_with_host_io(
+                                        DeviceId(0),
+                                        MemorySpaceId(0),
+                                        &[&in_b0],
+                                        |_ch, _bytes| Ok(()),
+                                        |_ch| Err(LibTpuError::ProfilerNotActive),
+                                    )
+                                    .is_err()
+                            );
+                            let _ = in_b0.delete();
+                            assert!(
+                                hio_exec
+                                    .execute_on_device_with_host_io(
+                                        DeviceId(0),
+                                        MemorySpaceId(0),
+                                        &[&in_b0],
+                                        |_ch, _bytes| Ok(()),
+                                        |_ch| Ok(vec![0_u8; 16]),
+                                    )
+                                    .is_err()
+                            );
+                        }
+                        hio_exec.delete();
+                        assert!(
+                            hio_exec
+                                .execute_on_device_with_host_io(
+                                    DeviceId(0),
+                                    MemorySpaceId(0),
+                                    &[],
+                                    |_ch, _bytes| Ok(()),
+                                    |_ch| Ok(Vec::new()),
+                                )
+                                .is_err()
+                        );
+                        assert!(hio_exec.execute_all_devices(MemorySpaceId(0), &[]).is_err());
+                    }
+
+                    // 3. execute_all_devices (non-collective & collective across 2 devices, zero-sized output, out-of-range output_slot, deleted buffer)
+                    let coll_mlir = br#"module @coll {
+                func.func @main(%arg0: tensor<4xf32>) -> (tensor<4xf32>, tensor<0xf32>) {
+                    %a = stablehlo.add %arg0, %arg0 : tensor<4xf32>
+                    %g = "stablehlo.all_gather"(%a) {all_gather_dim = 0 : i64} : (tensor<4xf32>) -> tensor<4xf32>
+                    %z = stablehlo.constant dense<[]> : tensor<0xf32>
+                    func.return %g, %z : tensor<4xf32>, tensor<0xf32>
+                }
+            }"#;
+                    if let Ok(non_coll_exec) =
+                        multi_client.compile_and_load("mlir", b"add_f32", &matched_da_opts)
+                        && let Ok(mut coll_exec) =
+                            multi_client.compile_and_load("mlir", coll_mlir, &matched_da_opts)
+                    {
+                        let f32_4 = Shape {
+                            element_type: ElementType::F32,
+                            dims: vec![4],
+                            dynamic_dims: vec![false],
+                            layout: MemoryLayout::default_tpu_tiled(1),
+                        };
+                        if let (Ok(d0_buf), Ok(d1_buf)) = (
+                            multi_client.buffer_from_host(DeviceId(0), f32_4.clone(), &[0_u8; 16]),
+                            multi_client.buffer_from_host(DeviceId(1), f32_4, &[0_u8; 16]),
+                        ) {
+                            let s0 = [&d0_buf];
+                            let s1 = [&d1_buf];
+                            assert!(
+                                non_coll_exec
+                                    .execute_all_devices(MemorySpaceId(0), &[&s0, &s1])
+                                    .is_ok()
+                            );
+                            assert!(
+                                coll_exec
+                                    .execute_all_devices(MemorySpaceId(0), &[&s0, &s1])
+                                    .is_ok()
+                            );
+
+                            let mut c_prog = coll_exec.executable.program.clone();
+                            c_prog.output_shapes.push(Shape {
+                                element_type: ElementType::F32,
+                                dims: vec![0],
+                                dynamic_dims: vec![false],
+                                layout: MemoryLayout::default_tpu_tiled(1),
+                            });
+                            for b in &mut c_prog.instruction_bundles {
+                                if b.opcode == crate::compiler::TpuOpCode::AllGather {
+                                    b.output_slot = 999;
+                                }
+                            }
+                            c_prog.output_slots = vec![999];
+                            coll_exec.executable = PjrtCoreExecutable::new(c_prog);
+                            assert!(
+                                coll_exec
+                                    .execute_all_devices(MemorySpaceId(0), &[&s0, &s1])
+                                    .is_ok()
+                            );
+                            // Also test 1-device collective `execute_all_devices` (`num_devs <= 1 == true`)
+                            coll_exec.addressable_devices = vec![DeviceId(0)];
+                            assert!(
+                                coll_exec
+                                    .execute_all_devices(MemorySpaceId(0), &[&s0])
+                                    .is_ok()
+                            );
+                            coll_exec.addressable_devices = vec![DeviceId(0), DeviceId(1)];
+
+                            let _ = d1_buf.delete();
+                            assert!(
+                                coll_exec
+                                    .execute_all_devices(MemorySpaceId(0), &[&s0, &s1])
+                                    .is_err()
+                            );
+                            assert!(
+                                non_coll_exec
+                                    .execute_all_devices(MemorySpaceId(0), &[&s0, &s1])
+                                    .is_err()
+                            );
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    #[test]
+    fn test_usage_md_section5_rust_core_snippet() -> LibTpuResult<()> {
+        let mut cfg = TpuInitConfig::default();
+        cfg.apply_init_args("--tpu_generation=v6e --tpu_chips_per_host_bounds=1,1,1")?;
+
+        let client = PjrtCoreClient::from_config(&cfg);
+        let shape = Shape::new(ElementType::F32, vec![4], None, None)?;
+
+        let lhs_bytes: Vec<u8> = [1.0_f32, 2.0, 3.0, 4.0]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect();
+        let rhs_bytes: Vec<u8> = [10.0_f32, 20.0, 30.0, 40.0]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect();
+
+        let b0 = client.buffer_from_host(DeviceId(0), shape.clone(), &lhs_bytes)?;
+        let b1 = client.buffer_from_host(DeviceId(0), shape, &rhs_bytes)?;
+
+        let mlir = br"
+          module @add {
+            func.func public @main(%a: tensor<4xf32>, %b: tensor<4xf32>) -> tensor<4xf32> {
+              %0 = stablehlo.add %a, %b : tensor<4xf32>
+              return %0 : tensor<4xf32>
+            }
+          }
+        ";
+
+        let loaded = client.compile_and_load("mlir", mlir, b"")?;
+        let outputs = loaded.execute_on_device(DeviceId(0), MemorySpaceId(0), &[&b0, &b1])?;
+        let raw = outputs
+            .first()
+            .map(PjrtCoreBuffer::to_host_bytes)
+            .transpose()?
+            .unwrap_or_default();
+
+        let vals: Vec<f32> = raw
+            .chunks_exact(4)
+            .map(|c| {
+                let mut arr = [0_u8; 4];
+                arr.copy_from_slice(c);
+                f32::from_le_bytes(arr)
+            })
+            .collect();
+        assert_eq!(vals, vec![11.0_f32, 22.0, 33.0, 44.0]);
+        Ok(())
     }
 }

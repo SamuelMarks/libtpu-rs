@@ -1,0 +1,9 @@
+syntax = "proto3";
+package stream_executor.gpu;
+import "third_party/tensorflow/compiler/xla/stream_executor/cuda/cublas_lt_matmul_algorithm.proto";
+message BlasLtMatmulAlgorithmProto {
+  oneof algorithm {
+    .stream_executor.cuda.CublasLtMatmulAlgorithmProto cublaslt = 2;
+  }
+  int64 library_version = 1;
+}

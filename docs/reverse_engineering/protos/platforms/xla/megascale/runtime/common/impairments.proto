@@ -1,0 +1,38 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+message Impairments {
+  message TransportImpairments {
+    reserved 2;
+    enum InjectionSite {
+      INJECTION_SITE_UNSPECIFIED = 0;
+      INJECTION_SITE_RECEIVER = 1;
+      INJECTION_SITE_SENDER = 2;
+    }
+    message Point {
+      oneof delay_or_drop {
+        int32 delay_ms = 2;
+        bool drop = 3;
+        bool timeout = 4;
+      }
+      float percentile = 1;
+    }
+    repeated .xla.megascale.runtime.Impairments.TransportImpairments.Point points = 1;
+    .xla.megascale.runtime.Impairments.TransportImpairments.InjectionSite injection_site = 3;
+  }
+  message DmaImpairment {
+    reserved 3;
+    oneof drop_or_delay {
+      bool drop_all = 1;
+      int32 delay_ms = 2;
+    }
+    optional int32 host_tpu_id = 4;
+  }
+  message ComputeImpairments {
+    int32 delay_ms = 1;
+    float delay_percentile = 2;
+  }
+  .xla.megascale.runtime.Impairments.TransportImpairments delay_profile = 1;
+  .xla.megascale.runtime.Impairments.DmaImpairment d2h_impairment = 2;
+  .xla.megascale.runtime.Impairments.DmaImpairment h2d_impairment = 3;
+  .xla.megascale.runtime.Impairments.ComputeImpairments compute_impairments = 4;
+}

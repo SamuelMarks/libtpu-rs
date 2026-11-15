@@ -1,0 +1,33 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/tensor.proto";
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+message AttrValue {
+  message ListValue {
+    repeated bytes s = 2;
+    repeated int64 i = 3 [packed = true];
+    repeated float f = 4 [packed = true];
+    repeated bool b = 5 [packed = true];
+    repeated .tensorflow.DataType type = 6 [packed = true];
+    repeated .tensorflow.TensorShapeProto shape = 7;
+    repeated .tensorflow.TensorProto tensor = 8;
+    repeated .tensorflow.NameAttrList func = 9;
+  }
+  oneof value {
+    bytes s = 2;
+    int64 i = 3;
+    float f = 4;
+    bool b = 5;
+    .tensorflow.DataType type = 6;
+    .tensorflow.TensorShapeProto shape = 7;
+    .tensorflow.TensorProto tensor = 8;
+    .tensorflow.AttrValue.ListValue list = 1;
+    .tensorflow.NameAttrList func = 10;
+    string placeholder = 9;
+  }
+}
+message NameAttrList {
+  string name = 1;
+  map<string, .tensorflow.AttrValue> attr = 2;
+}

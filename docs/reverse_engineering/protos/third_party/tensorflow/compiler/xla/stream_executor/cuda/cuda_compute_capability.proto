@@ -1,0 +1,13 @@
+syntax = "proto3";
+package stream_executor;
+message CudaComputeCapabilityProto {
+  enum FeatureExtension {
+    UNSPECIFIED = 0;
+    NONE = 1;
+    ACCELERATED_FEATURES = 2;
+    FAMILY_COMPATIBLE_FEATURES = 3;
+  }
+  int32 major = 1;
+  int32 minor = 2;
+  .stream_executor.CudaComputeCapabilityProto.FeatureExtension feature_extension = 3;
+}

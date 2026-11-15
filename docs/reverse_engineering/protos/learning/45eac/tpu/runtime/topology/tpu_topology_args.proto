@@ -1,0 +1,24 @@
+syntax = "proto2";
+package tpu;
+import "learning/45eac/tpu/runtime/topology/tpu_dimensions.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_routing_strategy.proto";
+import "learning/45eac/tpu/runtime/tpu_platform_type.proto";
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+message TpuTopologyArgsProto {
+  message SubSlice {
+    optional .tpu.TpuDimensionsProto chips_per_host_bounds = 1;
+    optional .tpu.TpuDimensionsProto host_bounds = 2;
+  }
+  optional .tpu.TpuVersionProto version = 1;
+  optional string variant = 2;
+  optional .tpu.TpuPlatformTypeProto platform_type = 3;
+  optional string chip_config_name = 4;
+  optional .tpu.TpuDimensionsProto chips_per_host_bounds = 5;
+  optional .tpu.TpuDimensionsProto host_bounds = 6;
+  optional .tpu.TpuWrapProto wrap = 7;
+  optional bool twist = 8;
+  optional bool enhanced_barrier_enabled = 9;
+  optional bool use_continuations = 11 [default = true];
+  optional .tpu.TpuRoutingStrategyProto routing_strategy = 12;
+  optional .tpu.TpuTopologyArgsProto.SubSlice sub_slice = 10;
+}

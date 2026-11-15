@@ -1,0 +1,119 @@
+syntax = "proto2";
+package asic_sw;
+import "google/protobuf/timestamp.proto";
+import "platforms/asic_sw/driver/common/configuration.proto";
+import "platforms/asic_sw/lib/common/architectural_state.proto";
+import "platforms/asic_sw/lib/common/architectural_state_collection_config.proto";
+import "platforms/asic_sw/lib/common/arm/results.proto";
+import "platforms/asic_sw/lib/common/csr_snapshot.proto";
+import "platforms/asic_sw/lib/common/flight_recorder.proto";
+import "platforms/asic_sw/lib/common/kernel_device_info.proto";
+import "platforms/asic_sw/lib/common/power_info.proto";
+import "platforms/asic_sw/lib/common/riscv/results.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+import "platforms/asic_sw/proto/device_identifiers.proto";
+import "platforms/asic_sw/tools/common/register_dump.proto";
+enum InfoCategory {
+  SOFTWARE = 1;
+  PCIE = 2;
+  ERROR_STATUS = 3;
+  BIT_ERRORS = 4;
+  RUN_STATUS = 5;
+  STATISTICS = 6;
+  FIRMWARE_ERROR = 7;
+  PROGRAM_INFO = 8;
+  XLA_DEBUG_CONTEXT = 9;
+}
+message Results {
+  reserved 4 to 6;
+  reserved "pcie_devices";
+  reserved "sensors";
+  reserved "errors";
+  optional .asic_sw.GeneralInfo general = 1;
+  repeated .asic_sw.Info anomalies = 2;
+  map<int32, .asic_sw.Csrs> csrs = 3;
+  repeated .asic_sw.ArchitecturalState arch_state = 11;
+  optional .asic_sw.FlightRecorder flight_recorder = 15;
+  map<int32, uint32> pcie_config_registers = 7;
+  optional .asic_sw.proto.DeviceIdentifiers device_identifiers = 8;
+  optional .asic_sw.driver.Configuration config = 9;
+  repeated .asic_sw.CsrCollectionConfig csr_collection_configs = 10;
+  repeated .asic_sw.ArchitecturalStateCollectionConfig arch_state_configs = 12;
+  optional .asic_sw.CpuState cpu_state = 13;
+  map<string, .asic_sw.AnalyzerInfo> analyzer_info = 14;
+  optional string blob_id = 16;
+  optional .asic_sw.PowerInfo power_info = 17;
+}
+message GeneralInfo {
+  optional .google.protobuf.Timestamp timestamp = 1;
+  optional .google.protobuf.Timestamp completion_timestamp = 9;
+  optional string machine_name = 2;
+  optional .asic_sw.KernelDeviceInfo kernel_device_info = 3;
+  optional string kernel_version = 4;
+  optional .google.protobuf.Timestamp boot_time = 5;
+  optional string ae33_devpath = 6;
+  optional .asic_sw.proto.ChipLocation chip_location = 7;
+  optional string reason_for_collection = 8;
+  optional int64 core_dumper_changelist = 10;
+  optional .google.protobuf.Timestamp device_start_time = 11;
+}
+message Info {
+  reserved 3;
+  reserved "timestamp";
+  optional .asic_sw.InfoCategory category = 1;
+  optional string description = 2;
+  repeated string tag = 4;
+  optional bool print = 5;
+}
+message AnalyzerInfo {
+  repeated .asic_sw.Info infos = 1;
+}
+message RegisterDump {
+  repeated .asic_sw.tools.DeviceRegister reg = 1;
+}
+message CpuState {
+  enum StateValue {
+    UNKNOWN = 0;
+    STOPPED = 1;
+    RUNNING = 2;
+    SINGLE_STEP = 3;
+    TRAPPED = 4;
+    BLOCKED = 5;
+    UNHANDLED_EXCEPTION = 6;
+  }
+  optional .asic_sw.CpuState.StateValue state = 1;
+  optional .asic_sw.RegisterDump registers = 2;
+  optional uint64 pc = 3;
+  optional uint64 stack_ptr = 4;
+}
+message StackDumpEntry {
+  oneof exception_info {
+    .asic_sw.arm.ExceptionInfo arm_exception_info = 3;
+    .asic_sw.riscv.ExceptionInfo riscv_exception_info = 4;
+  }
+  optional uint64 stack = 1;
+  optional uint64 code = 2;
+}
+message StackDump {
+  repeated .asic_sw.StackDumpEntry entry = 1;
+}
+message CrashInfo {
+  optional string file_name = 1;
+  optional uint64 file_name_address = 2;
+  optional uint64 line_number = 3;
+}
+message TrapReason {
+  optional uint64 trap_reason = 1;
+  optional uint64 trap_reason_offset = 2;
+  optional uint64 faulting_address = 3;
+}
+message DebugWords {
+  repeated uint64 debug_word = 1;
+}
+message FirmwareDebugState {
+  optional .asic_sw.TrapReason trap_reason = 1;
+  optional .asic_sw.CrashInfo crash_info = 2;
+  optional .asic_sw.DebugWords debug_words = 3;
+  optional .asic_sw.StackDump crash_dump = 4;
+  optional .asic_sw.StackDump stack_dump = 5;
+}

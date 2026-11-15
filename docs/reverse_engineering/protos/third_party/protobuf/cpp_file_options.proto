@@ -1,0 +1,9 @@
+syntax = "proto2";
+package pb.file;
+import "n2a/p4r2d3/proto/descriptor.proto";
+message CppFileOptions {
+  optional string namespace = 1;
+}
+extend .proto2.FileOptions {
+  optional .pb.file.CppFileOptions cpp = 990;
+}

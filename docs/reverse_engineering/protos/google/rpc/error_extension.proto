@@ -1,0 +1,7 @@
+syntax = "proto2";
+package google.rpc;
+import "google/rpc/status.proto";
+import "n2a/p4r2d3/bridge/proto/message_set.proto";
+extend .proto2.bridge.MessageSet {
+  optional .google.rpc.Status error_details_ext = 82012934;
+}

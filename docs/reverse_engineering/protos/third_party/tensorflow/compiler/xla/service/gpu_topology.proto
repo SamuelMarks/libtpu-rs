@@ -1,0 +1,16 @@
+syntax = "proto3";
+package xla;
+import "third_party/tensorflow/compiler/xla/service/cpu/executable.proto";
+import "third_party/tensorflow/compiler/xla/stream_executor/device_description.proto";
+message GpuTopologyProto {
+  reserved 1;
+  reserved 2;
+  reserved 7;
+  string platform_version = 3;
+  int32 num_partitions = 4;
+  int32 num_hosts_per_partition = 5;
+  int32 num_devices_per_host = 6;
+  .stream_executor.GpuTargetConfigProto gpu_target_config = 8;
+  .xla.cpu.TargetMachineOptionsProto host_target_machine_options = 9;
+  optional int32 num_devices_per_process = 10;
+}

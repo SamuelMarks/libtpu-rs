@@ -267,6 +267,402 @@ impl ElementType {
         float8::F8E5M2::from_bits(bits).to_f32()
     }
 
+    /// Converts an IEEE-754 `f32` to 4-bit OCP MXFP4 `E2M1FN` bits (`0x00..=0x0F`).
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - 32-bit float value.
+    #[must_use]
+    pub fn f32_to_f4e2m1fn_bits(val: f32) -> u8 {
+        if val.is_nan() {
+            return 0x07;
+        }
+        let sign = if val.is_sign_negative() {
+            0x08_u8
+        } else {
+            0_u8
+        };
+        let a = val.abs();
+        let mag_code = if a <= 0.25 {
+            0
+        } else if a < 0.75 {
+            1
+        } else if a <= 1.25 {
+            2
+        } else if a < 1.75 {
+            3
+        } else if a <= 2.5 {
+            4
+        } else if a < 3.5 {
+            5
+        } else if a <= 5.0 {
+            6
+        } else {
+            7
+        };
+        sign | mag_code
+    }
+
+    /// Converts 4-bit OCP MXFP4 `E2M1FN` bits (`0x00..=0x0F`) to an IEEE-754 `f32`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bits` - 4-bit `E2M1FN` nibble in the low 4 bits.
+    #[must_use]
+    pub fn f4e2m1fn_bits_to_f32(bits: u8) -> f32 {
+        const TABLE: [f32; 8] = [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0];
+        let mag = TABLE.get(usize::from(bits & 0x07)).copied().unwrap_or(0.0);
+        if (bits & 0x08) != 0 { -mag } else { mag }
+    }
+
+    /// Converts an IEEE-754 `f32` to 8-bit OCP microscaling `E8M0FNU` scale bits (`0xFF` = `NaN`).
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - Positive power-of-two scale factor.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn f32_to_f8e8m0fnu_bits(val: f32) -> u8 {
+        if val.is_nan() || val < 0.0 {
+            return 0xFF;
+        }
+        if val == 0.0 {
+            return 0;
+        }
+        if val.is_infinite() {
+            return 254;
+        }
+        let raw_exp = ((val.to_bits() >> 23) & 0xFF) as u8;
+        raw_exp.min(254)
+    }
+
+    /// Converts 8-bit OCP microscaling `E8M0FNU` bits to an IEEE-754 `f32` (`0xFF` -> `NaN`).
+    ///
+    /// # Arguments
+    ///
+    /// * `bits` - 8-bit `E8M0FNU` exponent code.
+    #[must_use]
+    pub fn f8e8m0fnu_bits_to_f32(bits: u8) -> f32 {
+        if bits == 0xFF {
+            return f32::NAN;
+        }
+        2.0_f32.powi(i32::from(bits) - 127)
+    }
+
+    /// Encodes an `f32` into an 8-bit `*FNUZ` (`0x80` = `NaN`, unsigned zero) floating-point byte.
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - Input 32-bit float.
+    /// * `exp_bits` - Number of exponent bits (`4` or `5`).
+    /// * `bias_offset` - Exponent bias (`8`, `11`, or `16`).
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    fn encode_fnuz_f8(val: f32, exp_bits: u32, bias_offset: i32) -> u8 {
+        if val.is_nan() {
+            return 0x80;
+        }
+        if val == 0.0 {
+            return 0x00;
+        }
+        let sign = if val.is_sign_negative() {
+            0x80_u8
+        } else {
+            0x00_u8
+        };
+        let mant_bits = 7_u32.saturating_sub(exp_bits);
+        let mant_bits_i32 = i32::try_from(mant_bits).unwrap_or(0);
+        let max_exp = (1_i32 << exp_bits) - 1;
+        let max_mant = (1_u32 << mant_bits) - 1;
+        let max_code = ((max_exp as u8) << mant_bits) | (max_mant as u8);
+        if val.is_infinite() {
+            return sign | max_code;
+        }
+        let a = val.abs();
+        let min_subnormal = 2.0_f32.powi(1 - bias_offset - mant_bits_i32);
+        if a < min_subnormal * 0.5 {
+            return 0x00;
+        }
+        let min_normal = 2.0_f32.powi(1 - bias_offset);
+        if a < min_normal {
+            let sub = (a / min_subnormal).round() as u32;
+            let code = sub.min(u32::from(max_code)) as u8;
+            return sign | code;
+        }
+        let exp_unbiased = a.log2().floor() as i32;
+        let biased = exp_unbiased + bias_offset;
+        if biased > max_exp {
+            return sign | max_code;
+        }
+        let scale = 2.0_f32.powi(exp_unbiased);
+        let frac = ((a / scale) - 1.0) * f32::from(1_u8 << mant_bits);
+        let mant_rounded = frac.round() as u32;
+        let combined = ((biased as u32) << mant_bits).saturating_add(mant_rounded);
+        let clamped = combined.min(u32::from(max_code)) as u8;
+        sign | clamped
+    }
+
+    /// Decodes an 8-bit `*FNUZ` (`0x80` = `NaN`, unsigned zero) floating-point byte into `f32`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bits` - Raw 8-bit `*FNUZ` byte.
+    /// * `exp_bits` - Number of exponent bits (`4` or `5`).
+    /// * `bias_offset` - Exponent bias (`8`, `11`, or `16`).
+    #[must_use]
+    fn decode_fnuz_f8(bits: u8, exp_bits: u32, bias_offset: i32) -> f32 {
+        if bits == 0x80 {
+            return f32::NAN;
+        }
+        if bits == 0x00 {
+            return 0.0;
+        }
+        let mant_bits = 7_u32.saturating_sub(exp_bits);
+        let mant_mask = (1_u8 << mant_bits) - 1;
+        let exp = i32::from((bits & 0x7F) >> mant_bits);
+        let mant = f32::from(bits & mant_mask) / f32::from(1_u8 << mant_bits);
+        let mag = if exp == 0 {
+            mant * 2.0_f32.powi(1 - bias_offset)
+        } else {
+            (1.0 + mant) * 2.0_f32.powi(exp - bias_offset)
+        };
+        if (bits & 0x80) != 0 { -mag } else { mag }
+    }
+
+    /// Converts an `f32` to 8-bit `F8E4M3FNUZ` bits (bias `8`, `0x80` = `NaN`).
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - 32-bit float value.
+    #[must_use]
+    pub fn f32_to_f8e4m3fnuz_bits(val: f32) -> u8 {
+        Self::encode_fnuz_f8(val, 4, 8)
+    }
+
+    /// Converts 8-bit `F8E4M3FNUZ` bits to an `f32`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bits` - 8-bit `F8E4M3FNUZ` value.
+    #[must_use]
+    pub fn f8e4m3fnuz_bits_to_f32(bits: u8) -> f32 {
+        Self::decode_fnuz_f8(bits, 4, 8)
+    }
+
+    /// Converts an `f32` to 8-bit `F8E4M3B11FNUZ` bits (bias `11`, `0x80` = `NaN`).
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - 32-bit float value.
+    #[must_use]
+    pub fn f32_to_f8e4m3b11fnuz_bits(val: f32) -> u8 {
+        Self::encode_fnuz_f8(val, 4, 11)
+    }
+
+    /// Converts 8-bit `F8E4M3B11FNUZ` bits to an `f32`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bits` - 8-bit `F8E4M3B11FNUZ` value.
+    #[must_use]
+    pub fn f8e4m3b11fnuz_bits_to_f32(bits: u8) -> f32 {
+        Self::decode_fnuz_f8(bits, 4, 11)
+    }
+
+    /// Converts an `f32` to 8-bit `F8E5M2FNUZ` bits (bias `16`, `0x80` = `NaN`).
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - 32-bit float value.
+    #[must_use]
+    pub fn f32_to_f8e5m2fnuz_bits(val: f32) -> u8 {
+        Self::encode_fnuz_f8(val, 5, 16)
+    }
+
+    /// Converts 8-bit `F8E5M2FNUZ` bits to an `f32`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bits` - 8-bit `F8E5M2FNUZ` value.
+    #[must_use]
+    pub fn f8e5m2fnuz_bits_to_f32(bits: u8) -> f32 {
+        Self::decode_fnuz_f8(bits, 5, 16)
+    }
+
+    /// Converts an `f32` to 16-bit `BF16` bits using hardware-accurate 16-bit stochastic rounding.
+    ///
+    /// Preserves `NaN` and `±Inf` bit-exactly without overflowing finite values into `NaN`.
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - 32-bit float value.
+    /// * `random_bits` - Uniform 16-bit PRNG word added to the truncated mantissa bits.
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn f32_to_bf16_stochastic(val: f32, random_bits: u16) -> u16 {
+        if !val.is_finite() {
+            return Self::f32_to_bf16_bits(val);
+        }
+        let raw = val.to_bits();
+        let rounded = raw.wrapping_add(u32::from(random_bits));
+        (rounded >> 16) as u16
+    }
+
+    /// Converts an `f32` to 16-bit `F16` bits using 13-bit mantissa stochastic rounding.
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - 32-bit float value.
+    /// * `random_bits` - Uniform PRNG word whose low 13 bits dither the truncated `f32` mantissa.
+    #[must_use]
+    pub fn f32_to_f16_stochastic(val: f32, random_bits: u16) -> u16 {
+        if !val.is_finite() || val == 0.0 {
+            return Self::f32_to_f16_bits(val);
+        }
+        let dithered = f32::from_bits(val.to_bits().wrapping_add(u32::from(random_bits & 0x1FFF)));
+        Self::f32_to_f16_bits(dithered)
+    }
+
+    /// Packs a slice of `f64` values using deterministic `SplitMix64` stochastic rounding for
+    /// low-precision floating-point types (`BF16`, `F16`, `FP8`, `FP4`).
+    ///
+    /// # Arguments
+    ///
+    /// * `values` - Input scalar values.
+    /// * `seed` - 64-bit PRNG seed (e.g., from `ThreeFry2x32` / `VPU` stochastic rounding lane state).
+    #[must_use]
+    #[allow(clippy::cast_possible_truncation)]
+    pub fn pack_from_f64_slice_stochastic(self, values: &[f64], seed: u64) -> Vec<u8> {
+        let next_rand = |state: &mut u64| -> u64 {
+            *state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = *state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+        let mut rng = seed;
+        match self {
+            Self::Bf16 => {
+                let mut out = Vec::with_capacity(values.len().saturating_mul(2));
+                for &v in values {
+                    let r16 = next_rand(&mut rng) as u16;
+                    out.extend_from_slice(
+                        &Self::f32_to_bf16_stochastic(v as f32, r16).to_le_bytes(),
+                    );
+                }
+                out
+            }
+            Self::F16 => {
+                let mut out = Vec::with_capacity(values.len().saturating_mul(2));
+                for &v in values {
+                    let r16 = next_rand(&mut rng) as u16;
+                    out.extend_from_slice(
+                        &Self::f32_to_f16_stochastic(v as f32, r16).to_le_bytes(),
+                    );
+                }
+                out
+            }
+            Self::F8E4M3Fn
+            | Self::F8E4M3Fnuz
+            | Self::F8E4M3B11Fnuz
+            | Self::F8E5M2
+            | Self::F8E5M2Fnuz
+            | Self::F4E2M1Fn => {
+                let mut dithered = Vec::with_capacity(values.len());
+                for &v in values {
+                    let r16 = next_rand(&mut rng) as u16;
+                    let bf = Self::bf16_bits_to_f32(Self::f32_to_bf16_stochastic(v as f32, r16));
+                    dithered.push(f64::from(bf));
+                }
+                self.pack_from_f64_slice(&dithered)
+            }
+            _ => self.pack_from_f64_slice(values),
+        }
+    }
+
+    /// Packs sub-byte elements (`S2`/`U2` at 4 per byte, `S4`/`U4`/`F4E2M1Fn` at 2 per byte) into
+    /// bit-packed TPU lane bytes; delegates byte-aligned types to [`Self::pack_from_f64_slice`].
+    ///
+    /// # Arguments
+    ///
+    /// * `values` - Scalar values to bit-pack.
+    #[must_use]
+    pub fn pack_subbyte_dense(self, values: &[f64]) -> Vec<u8> {
+        let unpacked = self.pack_from_f64_slice(values);
+        match self {
+            Self::S2 | Self::U2 => unpacked
+                .chunks(4)
+                .map(|chunk| {
+                    let mut acc = 0_u8;
+                    for (idx, &b) in chunk.iter().enumerate() {
+                        acc |= (b & 0x03) << (idx * 2);
+                    }
+                    acc
+                })
+                .collect(),
+            Self::S4 | Self::U4 | Self::F4E2M1Fn => unpacked
+                .chunks(2)
+                .map(|chunk| {
+                    let lo = chunk.first().copied().unwrap_or(0) & 0x0F;
+                    let hi = chunk.get(1).copied().unwrap_or(0) & 0x0F;
+                    lo | (hi << 4)
+                })
+                .collect(),
+            _ => unpacked,
+        }
+    }
+
+    /// Unpacks bit-packed sub-byte TPU lane bytes (`S2`/`U2` 4 per byte, `S4`/`U4`/`F4E2M1Fn` 2 per byte)
+    /// into `element_count` scalar `f64` values; delegates byte-aligned types to [`Self::unpack_to_f64_vec`].
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Bit-packed payload bytes.
+    /// * `element_count` - Number of logical scalar elements to unpack.
+    #[must_use]
+    #[allow(clippy::cast_possible_wrap)]
+    pub fn unpack_subbyte_dense(self, bytes: &[u8], element_count: usize) -> Vec<f64> {
+        match self {
+            Self::S2 | Self::U2 => {
+                let mut raw_elems = Vec::with_capacity(bytes.len().saturating_mul(4));
+                for &byte in bytes {
+                    for shift in [0_u8, 2, 4, 6] {
+                        let bits = (byte >> shift) & 0x03;
+                        let expanded = if self == Self::S2 && (bits & 0x02) != 0 {
+                            bits | 0xFC
+                        } else {
+                            bits
+                        };
+                        raw_elems.push(expanded);
+                    }
+                }
+                raw_elems.truncate(element_count);
+                self.unpack_to_f64_vec(&raw_elems)
+            }
+            Self::S4 | Self::U4 | Self::F4E2M1Fn => {
+                let mut raw_elems = Vec::with_capacity(bytes.len().saturating_mul(2));
+                for &byte in bytes {
+                    for shift in [0_u8, 4] {
+                        let bits = (byte >> shift) & 0x0F;
+                        let expanded = if self == Self::S4 && (bits & 0x08) != 0 {
+                            bits | 0xF0
+                        } else {
+                            bits
+                        };
+                        raw_elems.push(expanded);
+                    }
+                }
+                raw_elems.truncate(element_count);
+                self.unpack_to_f64_vec(&raw_elems)
+            }
+            _ => {
+                let mut v = self.unpack_to_f64_vec(bytes);
+                v.truncate(element_count);
+                v
+            }
+        }
+    }
+
     /// Packs a slice of `num_complex::Complex64` values into little-endian `C128` (`[f64; 2]`) bytes.
     ///
     /// # Arguments
@@ -341,13 +737,33 @@ impl ElementType {
                     f64::from(masked)
                 })
                 .collect(),
-            Self::F8E4M3Fn | Self::F8E4M3B11Fnuz | Self::F8E4M3Fnuz => bytes
+            Self::F8E4M3Fn => bytes
                 .iter()
                 .map(|&b| f64::from(Self::f8e4m3_bits_to_f32(b)))
                 .collect(),
-            Self::F8E5M2 | Self::F8E5M2Fnuz => bytes
+            Self::F8E4M3B11Fnuz => bytes
+                .iter()
+                .map(|&b| f64::from(Self::f8e4m3b11fnuz_bits_to_f32(b)))
+                .collect(),
+            Self::F8E4M3Fnuz => bytes
+                .iter()
+                .map(|&b| f64::from(Self::f8e4m3fnuz_bits_to_f32(b)))
+                .collect(),
+            Self::F8E5M2 => bytes
                 .iter()
                 .map(|&b| f64::from(Self::f8e5m2_bits_to_f32(b)))
+                .collect(),
+            Self::F8E5M2Fnuz => bytes
+                .iter()
+                .map(|&b| f64::from(Self::f8e5m2fnuz_bits_to_f32(b)))
+                .collect(),
+            Self::F4E2M1Fn => bytes
+                .iter()
+                .map(|&b| f64::from(Self::f4e2m1fn_bits_to_f32(b)))
+                .collect(),
+            Self::F8E8M0Fnu => bytes
+                .iter()
+                .map(|&b| f64::from(Self::f8e8m0fnu_bits_to_f32(b)))
                 .collect(),
             Self::S16 => bytemuck::pod_collect_to_vec::<u8, i16>(
                 bytes.get(..aligned_len(2)).unwrap_or_default(),
@@ -413,112 +829,68 @@ impl ElementType {
         }
     }
 
+    /// Appends the little-endian encoded representation of `val` into `out`.
+    ///
+    /// # Arguments
+    ///
+    /// * `val` - Scalar `f64` value to encode.
+    /// * `out` - Destination byte buffer.
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
+    fn push_packed_scalar(self, val: f64, out: &mut Vec<u8>) {
+        match self {
+            Self::Pred => out.push(u8::from(val != 0.0)),
+            Self::S8 | Self::S4 | Self::S2 => {
+                let raw = val as i8;
+                let clamped = match self {
+                    Self::S4 => raw.clamp(-8, 7),
+                    Self::S2 => raw.clamp(-2, 1),
+                    _ => raw,
+                };
+                out.extend_from_slice(&clamped.to_le_bytes());
+            }
+            Self::U4 | Self::U2 => {
+                let raw = val as u8;
+                out.push(if self == Self::U4 {
+                    raw & 0x0F
+                } else {
+                    raw & 0x03
+                });
+            }
+            Self::F8E4M3Fn => out.push(Self::f32_to_f8e4m3_bits(val as f32)),
+            Self::F8E4M3B11Fnuz => out.push(Self::f32_to_f8e4m3b11fnuz_bits(val as f32)),
+            Self::F8E4M3Fnuz => out.push(Self::f32_to_f8e4m3fnuz_bits(val as f32)),
+            Self::F8E5M2 => out.push(Self::f32_to_f8e5m2_bits(val as f32)),
+            Self::F8E5M2Fnuz => out.push(Self::f32_to_f8e5m2fnuz_bits(val as f32)),
+            Self::F4E2M1Fn => out.push(Self::f32_to_f4e2m1fn_bits(val as f32)),
+            Self::F8E8M0Fnu => out.push(Self::f32_to_f8e8m0fnu_bits(val as f32)),
+            Self::S16 => out.extend_from_slice(&(val as i16).to_le_bytes()),
+            Self::U16 => out.extend_from_slice(&(val as u16).to_le_bytes()),
+            Self::F16 => out.extend_from_slice(&Self::f32_to_f16_bits(val as f32).to_le_bytes()),
+            Self::Bf16 => out.extend_from_slice(&Self::f32_to_bf16_bits(val as f32).to_le_bytes()),
+            Self::S32 => out.extend_from_slice(&(val as i32).to_le_bytes()),
+            Self::U32 => out.extend_from_slice(&(val as u32).to_le_bytes()),
+            Self::F32 | Self::C64 => out.extend_from_slice(&(val as f32).to_le_bytes()),
+            Self::S64 => out.extend_from_slice(&(val as i64).to_le_bytes()),
+            Self::U64 => out.extend_from_slice(&(val as u64).to_le_bytes()),
+            Self::F64 | Self::C128 => out.extend_from_slice(&val.to_le_bytes()),
+            _ => out.push(val as u8),
+        }
+    }
+
     /// Packs a slice of `f64` scalar values into a little-endian byte vector of this [`ElementType`].
     ///
     /// # Arguments
     ///
     /// * `values` - Scalar values to pack.
     #[must_use]
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss
-    )]
     pub fn pack_from_f64_slice(self, values: &[f64]) -> Vec<u8> {
         let mut out = Vec::with_capacity(values.len().saturating_mul(self.byte_size().max(1)));
-        match self {
-            Self::Pred => {
-                for &v in values {
-                    out.push(u8::from(v != 0.0));
-                }
-            }
-            Self::S8 | Self::S4 | Self::S2 => {
-                for &v in values {
-                    let raw = v as i8;
-                    let clamped = match self {
-                        Self::S4 => raw.clamp(-8, 7),
-                        Self::S2 => raw.clamp(-2, 1),
-                        _ => raw,
-                    };
-                    out.extend_from_slice(&clamped.to_le_bytes());
-                }
-            }
-            Self::U4 | Self::U2 => {
-                for &v in values {
-                    let raw = v as u8;
-                    let masked = if self == Self::U4 {
-                        raw & 0x0F
-                    } else {
-                        raw & 0x03
-                    };
-                    out.push(masked);
-                }
-            }
-            Self::F8E4M3Fn | Self::F8E4M3B11Fnuz | Self::F8E4M3Fnuz => {
-                for &v in values {
-                    out.push(Self::f32_to_f8e4m3_bits(v as f32));
-                }
-            }
-            Self::F8E5M2 | Self::F8E5M2Fnuz => {
-                for &v in values {
-                    out.push(Self::f32_to_f8e5m2_bits(v as f32));
-                }
-            }
-            Self::S16 => {
-                for &v in values {
-                    out.extend_from_slice(&(v as i16).to_le_bytes());
-                }
-            }
-            Self::U16 => {
-                for &v in values {
-                    out.extend_from_slice(&(v as u16).to_le_bytes());
-                }
-            }
-            Self::F16 => {
-                for &v in values {
-                    out.extend_from_slice(&Self::f32_to_f16_bits(v as f32).to_le_bytes());
-                }
-            }
-            Self::Bf16 => {
-                for &v in values {
-                    out.extend_from_slice(&Self::f32_to_bf16_bits(v as f32).to_le_bytes());
-                }
-            }
-            Self::S32 => {
-                for &v in values {
-                    out.extend_from_slice(&(v as i32).to_le_bytes());
-                }
-            }
-            Self::U32 => {
-                for &v in values {
-                    out.extend_from_slice(&(v as u32).to_le_bytes());
-                }
-            }
-            Self::F32 | Self::C64 => {
-                for &v in values {
-                    out.extend_from_slice(&(v as f32).to_le_bytes());
-                }
-            }
-            Self::S64 => {
-                for &v in values {
-                    out.extend_from_slice(&(v as i64).to_le_bytes());
-                }
-            }
-            Self::U64 => {
-                for &v in values {
-                    out.extend_from_slice(&(v as u64).to_le_bytes());
-                }
-            }
-            Self::F64 | Self::C128 => {
-                for &v in values {
-                    out.extend_from_slice(&v.to_le_bytes());
-                }
-            }
-            _ => {
-                for &v in values {
-                    out.push(v as u8);
-                }
-            }
+        for &val in values {
+            self.push_packed_scalar(val, &mut out);
         }
         out
     }
@@ -1004,6 +1376,128 @@ mod tests {
         assert_eq!(
             ElementType::F64.unpack_to_complex_vec(&real_b),
             vec![(1.25, 0.0), (3.5, 0.0)]
+        );
+
+        // FP4 E2M1FN exact table & rounding thresholds + NaN/negative
+        assert_eq!(ElementType::f32_to_f4e2m1fn_bits(f32::NAN), 0x07);
+        for (sample, expected_val) in [
+            (0.0_f32, 0.0_f32),
+            (0.5, 0.5),
+            (1.0, 1.0),
+            (1.5, 1.5),
+            (2.0, 2.0),
+            (3.0, 3.0),
+            (4.0, 4.0),
+            (6.0, 6.0),
+            (99.0, 6.0),
+            (-1.5, -1.5),
+        ] {
+            let b = ElementType::f32_to_f4e2m1fn_bits(sample);
+            assert_eq!(ElementType::f4e2m1fn_bits_to_f32(b), expected_val);
+        }
+
+        // FP8 E8M0FNU exact powers of two & NaN/Inf/zero
+        assert!(ElementType::f8e8m0fnu_bits_to_f32(0xFF).is_nan());
+        assert_eq!(ElementType::f32_to_f8e8m0fnu_bits(f32::NAN), 0xFF);
+        assert_eq!(ElementType::f32_to_f8e8m0fnu_bits(-1.0), 0xFF);
+        assert_eq!(ElementType::f32_to_f8e8m0fnu_bits(0.0), 0);
+        assert_eq!(ElementType::f32_to_f8e8m0fnu_bits(f32::INFINITY), 254);
+        let e8m0_four = ElementType::f32_to_f8e8m0fnu_bits(4.0);
+        assert_eq!(ElementType::f8e8m0fnu_bits_to_f32(e8m0_four), 4.0);
+        let e8m0_vec = ElementType::F8E8M0Fnu.pack_from_f64_slice(&[1.0, 2.0, 4.0, 8.0]);
+        assert_eq!(
+            ElementType::F8E8M0Fnu.unpack_to_f64_vec(&e8m0_vec),
+            vec![1.0, 2.0, 4.0, 8.0]
+        );
+
+        // FP8 *FNUZ (NaN = 0x80, zero = 0x00, subnormal, normal, overflow, Inf)
+        for (enc_fn, dec_fn) in [
+            (
+                ElementType::f32_to_f8e4m3fnuz_bits as fn(f32) -> u8,
+                ElementType::f8e4m3fnuz_bits_to_f32 as fn(u8) -> f32,
+            ),
+            (
+                ElementType::f32_to_f8e4m3b11fnuz_bits,
+                ElementType::f8e4m3b11fnuz_bits_to_f32,
+            ),
+            (
+                ElementType::f32_to_f8e5m2fnuz_bits,
+                ElementType::f8e5m2fnuz_bits_to_f32,
+            ),
+        ] {
+            assert_eq!(enc_fn(f32::NAN), 0x80);
+            assert!(dec_fn(0x80).is_nan());
+            assert_eq!(enc_fn(0.0), 0x00);
+            assert_eq!(dec_fn(0x00), 0.0);
+            assert_eq!(enc_fn(1e-30), 0x00);
+            let inf_code = enc_fn(f32::INFINITY);
+            assert!(dec_fn(inf_code) > 0.0);
+            let neg_inf_code = enc_fn(f32::NEG_INFINITY);
+            assert!(dec_fn(neg_inf_code) < 0.0);
+            let huge_code = enc_fn(1e20);
+            assert_eq!(huge_code, inf_code);
+            let one_code = enc_fn(1.5);
+            assert!((dec_fn(one_code) - 1.5).abs() < 0.25);
+        }
+        // Subnormal FNUZ branch (both sub == 0 and sub > 0)
+        let sub_b = ElementType::f32_to_f8e4m3fnuz_bits(0.002);
+        assert!(ElementType::f8e4m3fnuz_bits_to_f32(sub_b) > 0.0);
+        // Tiny subnormal rounding down to 0 inside `min_subnormal * 0.5 <= a < min_normal` if sub==0, or direct decode
+        assert!(ElementType::f8e4m3fnuz_bits_to_f32(0x01) > 0.0);
+
+        // Stochastic rounding (NaN/Inf preservation + finite dithering across all types)
+        assert!(
+            ElementType::bf16_bits_to_f32(ElementType::f32_to_bf16_stochastic(f32::NAN, 0xFFFF))
+                .is_nan()
+        );
+        assert!(
+            ElementType::f16_bits_to_f32(ElementType::f32_to_f16_stochastic(f32::NAN, 0xFFFF))
+                .is_nan()
+        );
+        assert_eq!(ElementType::f32_to_f16_stochastic(0.0, 0x1234), 0);
+        for st_et in [
+            ElementType::Bf16,
+            ElementType::F16,
+            ElementType::F8E4M3Fn,
+            ElementType::F8E4M3Fnuz,
+            ElementType::F8E5M2,
+            ElementType::F4E2M1Fn,
+            ElementType::F32,
+            ElementType::Invalid,
+        ] {
+            let sp = st_et.pack_from_f64_slice_stochastic(&[1.125, -2.25, 0.0], 42);
+            let su = st_et.unpack_to_f64_vec(&sp);
+            assert_eq!(su.len(), 3);
+        }
+
+        // Sub-byte dense packing & unpacking (2-bit 4/byte, 4-bit 2/byte, and byte-aligned fallback)
+        let s2_vals = [-2.0, -1.0, 0.0, 1.0, -1.0];
+        let s2_dense = ElementType::S2.pack_subbyte_dense(&s2_vals);
+        assert_eq!(s2_dense.len(), 2);
+        assert_eq!(ElementType::S2.unpack_subbyte_dense(&s2_dense, 5), s2_vals);
+
+        let u2_vals = [0.0, 1.0, 2.0, 3.0];
+        let u2_dense = ElementType::U2.pack_subbyte_dense(&u2_vals);
+        assert_eq!(u2_dense.len(), 1);
+        assert_eq!(ElementType::U2.unpack_subbyte_dense(&u2_dense, 4), u2_vals);
+
+        let s4_vals = [-8.0, -1.0, 0.0, 7.0, 3.0];
+        let s4_dense = ElementType::S4.pack_subbyte_dense(&s4_vals);
+        assert_eq!(s4_dense.len(), 3);
+        assert_eq!(ElementType::S4.unpack_subbyte_dense(&s4_dense, 5), s4_vals);
+
+        let fp4_vals = [0.0, 0.5, -1.5, 6.0];
+        let fp4_dense = ElementType::F4E2M1Fn.pack_subbyte_dense(&fp4_vals);
+        assert_eq!(fp4_dense.len(), 2);
+        assert_eq!(
+            ElementType::F4E2M1Fn.unpack_subbyte_dense(&fp4_dense, 4),
+            fp4_vals
+        );
+
+        let float32_packed = ElementType::F32.pack_subbyte_dense(&[1.0, 2.0]);
+        assert_eq!(
+            ElementType::F32.unpack_subbyte_dense(&float32_packed, 2),
+            vec![1.0, 2.0]
         );
     }
 }

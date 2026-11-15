@@ -796,7 +796,7 @@ impl IsaBitfieldSpecTable {
     pub fn verify_compiler_bitstream_lock(&self) -> LibTpuResult<()> {
         let sum_bits: u16 = self.slots.iter().map(|s| s.bit_width).sum();
         let expected_bytes =
-            crate::compiler::TensorCoreVliwBundle::generation_bundle_byte_width(self.generation);
+            crate::compiler::LloBundle::generation_bundle_byte_width(self.generation);
         let expected_bits = u16::try_from(expected_bytes * 8).unwrap_or(0);
         if (sum_bits, self.bundle_width_bits) != (expected_bits, expected_bits) {
             return Err(LibTpuError::BinaryFormatError {

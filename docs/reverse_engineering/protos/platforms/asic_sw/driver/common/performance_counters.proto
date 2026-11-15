@@ -1,0 +1,18 @@
+syntax = "proto3";
+package asic_sw.driver;
+import "third_party/protobuf/cpp_features.proto";
+message PerformanceCounter {
+  reserved 3;
+  reserved 4;
+  reserved 7;
+  uint64 value = 1;
+  string description = 2;
+  uint64 name = 5;
+  repeated int32 sets = 6;
+}
+message PerformanceCounters {
+  reserved 3;
+  reserved 4;
+  int32 chip_id = 1;
+  map<uint64, .asic_sw.driver.PerformanceCounter> counters = 2;
+}

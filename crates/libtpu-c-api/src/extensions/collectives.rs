@@ -1,10 +1,16 @@
 //! PJRT Collectives and Cross-Host Transfers extension entrypoints.
 
 use super::args::*;
-use super::{dispatch_typed_extension_args, extension_state};
-use crate::pjrt_types::{PJRT_Collectives_Communicator, PJRT_Error};
+use super::dispatch_typed_extension_args;
+use crate::pjrt_types::{PJRT_Client, PJRT_Collectives_Communicator, PJRT_Error};
 use libtpu_core::types::{CollectiveReductionOp, CommunicatorId};
 use std::ptr;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Monotonic sequence counter assigning unique IDs to [`PJRT_Collectives_Communicator`] instances.
+static COMMUNICATOR_ID_SEQ: AtomicU64 = AtomicU64::new(0);
+/// Monotonic counter of executed collective operations across communicators.
+pub(super) static COLLECTIVE_OPS_EXECUTED: AtomicU64 = AtomicU64::new(0);
 
 /// Strongly-typed handler for [`PJRT_Collectives_Destroy`].
 ///
@@ -53,9 +59,7 @@ pub unsafe extern "C" fn PJRT_Collectives_Destroy(
 unsafe fn handle_collectives_create_communicator(
     args: &mut PJRT_Collectives_CreateCommunicator_Args,
 ) {
-    let mut st = extension_state().lock();
-    st.active_communicators = st.active_communicators.saturating_add(1);
-    let comm_id = CommunicatorId(u64::try_from(st.active_communicators).unwrap_or(1));
+    let comm_id = CommunicatorId(COMMUNICATOR_ID_SEQ.fetch_add(1, Ordering::Relaxed) + 1);
     let device_ids = if !args.device_ids.is_null() {
         // SAFETY: `device_ids` is non-null with `num_devices` elements.
         unsafe { std::slice::from_raw_parts(args.device_ids, args.num_devices).to_vec() }
@@ -115,8 +119,6 @@ unsafe fn handle_communicator_destroy(args: &mut PJRT_Communicator_Destroy_Args)
             ));
         }
     }
-    let mut st = extension_state().lock();
-    st.active_communicators = st.active_communicators.saturating_sub(1);
     args.communicator = ptr::null_mut();
 }
 
@@ -178,8 +180,7 @@ unsafe fn execute_collective_buffers(
                 .hal
                 .write_device_memory(dst.inner.device_id, dst.inner.address, &src_bytes);
     }
-    let mut st = extension_state().lock();
-    st.collective_ops_executed = st.collective_ops_executed.saturating_add(1);
+    COLLECTIVE_OPS_EXECUTED.fetch_add(1, Ordering::Relaxed);
     Box::into_raw(Box::new(crate::pjrt_types::PJRT_Event {
         inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
     }))
@@ -459,11 +460,15 @@ pub unsafe extern "C" fn PJRT_Communicator_ToString(
 ///
 /// `args` must be a valid [`PJRT_CrossHostTransfers_Args`].
 unsafe fn handle_cross_host_transfer(args: &mut PJRT_CrossHostTransfers_Args) {
-    let mut st = extension_state().lock();
-    st.cross_host_transfers = st.cross_host_transfers.saturating_add(1);
-    st.cross_host_mailboxes
-        .insert(args.remote_device, args.buffers.to_le_bytes().to_vec());
-    drop(st);
+    if (args.client as usize) > 0x10000 {
+        // SAFETY: `args.client` is a non-null heap pointer to `PJRT_Client`.
+        let client = unsafe { &*args.client.cast::<PJRT_Client>() };
+        let mut arena = client.ext_arena.lock();
+        arena.cross_host_transfers = arena.cross_host_transfers.saturating_add(1);
+        arena
+            .cross_host_mailboxes
+            .insert(args.remote_device, args.buffers.to_le_bytes().to_vec());
+    }
     let ev = Box::into_raw(Box::new(crate::pjrt_types::PJRT_Event {
         inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
     }));

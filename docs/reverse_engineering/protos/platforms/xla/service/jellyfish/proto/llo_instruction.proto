@@ -1,0 +1,255 @@
+syntax = "proto3";
+package xla.jellyfish;
+import "platforms/xla/service/jellyfish/proto/llo_opcode.proto";
+import "platforms/xla/service/jellyfish/proto/memory_space.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+enum PseudoKindProto {
+  PSEUDO_KIND_NONE = 0;
+  PSEUDO_KIND_TO_REMOVE = 1;
+  PSEUDO_KIND_COPY_REGISTER = 2;
+  PSEUDO_KIND_SPILL_TO_MEMORY = 3;
+  PSEUDO_KIND_FILL_FROM_MEMORY = 4;
+  PSEUDO_KIND_SPILL_TO_REGISTER = 5;
+  PSEUDO_KIND_SPILL_TO_HBM = 6;
+  PSEUDO_KIND_FILL_FROM_HBM = 7;
+  PSEUDO_KIND_SPILL_TO_VIRTUAL = 8;
+  PSEUDO_KIND_FILL_FROM_VIRTUAL = 9;
+  PSEUDO_KIND_RESERVE_REGISTER = 10;
+  PSEUDO_KIND_REMATERIALIZE = 11;
+  PSEUDO_KIND_SPLIT_COPY = 12;
+}
+enum ImmRelocationKindProto {
+  IMM_RELOCATION_KIND_NO_RELOCATION = 0;
+  IMM_RELOCATION_KIND_BRANCH = 1;
+  IMM_RELOCATION_KIND_SINGLE_SLOT = 2;
+  IMM_RELOCATION_KIND_DOUBLE_SLOT = 3;
+  IMM_RELOCATION_KIND_SDC_CHECKER = 4;
+  IMM_RELOCATION_KIND_LLO_LOGGER = 5;
+  IMM_RELOCATION_KIND_PROGRAM_SHARED_REGISTRY = 6;
+  IMM_RELOCATION_KIND_TRACE_ID = 7;
+  IMM_RELOCATION_KIND_FUSION_DEBUG_ID = 8;
+}
+enum DoneWithGainsModeProto {
+  DONE_WITH_GAINS_MODE_NONE = 0;
+  DONE_WITH_GAINS_MODE_NORMAL = 1;
+  DONE_WITH_GAINS_MODE_TRANSPOSED = 2;
+}
+enum MatmulDataFormatProto {
+  MATMUL_DATA_FORMAT_INVALID = 0;
+  MATMUL_DATA_FORMAT_F32 = 1;
+  MATMUL_DATA_FORMAT_BF16 = 2;
+  MATMUL_DATA_FORMAT_F8E5M2_TO_BF16 = 3;
+  MATMUL_DATA_FORMAT_F8E4M3B11_TO_BF16 = 4;
+  MATMUL_DATA_FORMAT_U8 = 5;
+  MATMUL_DATA_FORMAT_S8 = 6;
+  MATMUL_DATA_FORMAT_U4 = 7;
+  MATMUL_DATA_FORMAT_S4 = 8;
+  MATMUL_DATA_FORMAT_F8E5M2 = 9;
+  MATMUL_DATA_FORMAT_F8E4M3FN = 10;
+}
+enum MsrProto {
+  MSR_PROTO_NONE = 0;
+  MSR_PROTO_MSRA = 1;
+  MSR_PROTO_MSRB = 2;
+}
+enum XmrProto {
+  XMR_PROTO_NONE = 0;
+  XMR_PROTO_GMR = 1;
+  XMR_PROTO_LMR = 2;
+}
+enum GainLatchModeProto {
+  GAIN_LATCH_MODE_NONE = 0;
+  GAIN_LATCH_MODE_NO_XPOSE_F32 = 1;
+  GAIN_LATCH_MODE_XPOSE_F32 = 2;
+  GAIN_LATCH_MODE_NO_XPOSE_HI_F32 = 3;
+  GAIN_LATCH_MODE_XPOSE_HI_F32 = 4;
+  GAIN_LATCH_MODE_NO_XPOSE_LOW_F32 = 5;
+  GAIN_LATCH_MODE_XPOSE_LOW_F32 = 6;
+  GAIN_LATCH_MODE_NO_XPOSE_SOFT_MIDDLE_EIGHT_F32 = 7;
+  GAIN_LATCH_MODE_XPOSE_SOFT_MIDDLE_EIGHT_F32 = 8;
+  GAIN_LATCH_MODE_NO_XPOSE_SOFT_LOW_EIGHT_F32 = 9;
+  GAIN_LATCH_MODE_XPOSE_SOFT_LOW_EIGHT_F32 = 10;
+  GAIN_LATCH_MODE_XPOSE_PACKED_BF16 = 11;
+  GAIN_LATCH_MODE_NO_XPOSE_PACKED_BF16 = 12;
+  GAIN_LATCH_MODE_NO_XPOSE_S8_TO_BF16 = 13;
+  GAIN_LATCH_MODE_XPOSE_S8_TO_BF16 = 14;
+  GAIN_LATCH_MODE_NO_XPOSE_F8E5M2_TO_BF16 = 15;
+  GAIN_LATCH_MODE_XPOSE_F8E5M2_TO_BF16 = 16;
+  GAIN_LATCH_MODE_NO_XPOSE_F8E4M3B11_TO_BF16 = 17;
+  GAIN_LATCH_MODE_XPOSE_F8E4M3B11_TO_BF16 = 18;
+  GAIN_LATCH_MODE_NO_XPOSE_U8 = 19;
+  GAIN_LATCH_MODE_XPOSE_U8 = 20;
+  GAIN_LATCH_MODE_NO_XPOSE_S8 = 21;
+  GAIN_LATCH_MODE_XPOSE_S8 = 22;
+  GAIN_LATCH_MODE_NO_XPOSE_U4 = 23;
+  GAIN_LATCH_MODE_XPOSE_U4 = 24;
+  GAIN_LATCH_MODE_NO_XPOSE_S4 = 25;
+  GAIN_LATCH_MODE_XPOSE_S4 = 26;
+  GAIN_LATCH_MODE_NO_XPOSE_SOFT_BYTE0 = 27;
+  GAIN_LATCH_MODE_XPOSE_SOFT_BYTE0 = 28;
+  GAIN_LATCH_MODE_NO_XPOSE_SOFT_BYTE1 = 29;
+  GAIN_LATCH_MODE_XPOSE_SOFT_BYTE1 = 30;
+  GAIN_LATCH_MODE_NO_XPOSE_SOFT_BYTE2 = 31;
+  GAIN_LATCH_MODE_XPOSE_SOFT_BYTE2 = 32;
+  GAIN_LATCH_MODE_NO_XPOSE_SOFT_BYTE3 = 33;
+  GAIN_LATCH_MODE_XPOSE_SOFT_BYTE3 = 34;
+  GAIN_LATCH_MODE_NO_XPOSE_SOFT_SIGNED_BYTE0 = 35;
+  GAIN_LATCH_MODE_XPOSE_SOFT_SIGNED_BYTE0 = 36;
+  GAIN_LATCH_MODE_NO_XPOSE_SOFT_SIGNED_BYTE1 = 37;
+  GAIN_LATCH_MODE_XPOSE_SOFT_SIGNED_BYTE1 = 38;
+  GAIN_LATCH_MODE_NO_XPOSE_SOFT_SIGNED_BYTE3 = 39;
+  GAIN_LATCH_MODE_XPOSE_SOFT_SIGNED_BYTE3 = 40;
+  GAIN_LATCH_MODE_NO_XPOSE_NIBBLE0 = 41;
+  GAIN_LATCH_MODE_XPOSE_NIBBLE0 = 42;
+  GAIN_LATCH_MODE_NO_XPOSE_NIBBLE1 = 43;
+  GAIN_LATCH_MODE_XPOSE_NIBBLE1 = 44;
+  GAIN_LATCH_MODE_NO_XPOSE_SIGNED_NIBBLE0 = 45;
+  GAIN_LATCH_MODE_XPOSE_SIGNED_NIBBLE0 = 46;
+  GAIN_LATCH_MODE_NO_XPOSE_SIGNED_NIBBLE1 = 47;
+  GAIN_LATCH_MODE_XPOSE_SIGNED_NIBBLE1 = 48;
+  GAIN_LATCH_MODE_NO_XPOSE_PACKED_E5M2 = 49;
+  GAIN_LATCH_MODE_XPOSE_PACKED_E5M2 = 50;
+  GAIN_LATCH_MODE_NO_XPOSE_PACKED_E4M3FN = 51;
+  GAIN_LATCH_MODE_XPOSE_PACKED_E4M3FN = 52;
+}
+enum RegisterTypeProto {
+  REGISTER_TYPE_NONE = 0;
+  REGISTER_TYPE_PREG = 1;
+  REGISTER_TYPE_SREG = 2;
+  REGISTER_TYPE_VMREG = 3;
+  REGISTER_TYPE_VREG = 4;
+  REGISTER_TYPE_RPREG = 5;
+  REGISTER_TYPE_DREG = 6;
+  REGISTER_TYPE_CBREG = 7;
+}
+message ComparisonProto {
+  enum DirectionProto {
+    DIRECTION_NONE = 0;
+    DIRECTION_EQ = 1;
+    DIRECTION_NE = 2;
+    DIRECTION_GE = 3;
+    DIRECTION_GT = 4;
+    DIRECTION_LE = 5;
+    DIRECTION_LT = 6;
+  }
+  enum OrderProto {
+    ORDER_NONE = 0;
+    ORDER_TOTAL = 1;
+    ORDER_PARTIAL = 2;
+    ORDER_WEAK = 3;
+  }
+  .xla.jellyfish.ComparisonProto.DirectionProto direction = 1;
+  .xla.jellyfish.ComparisonProto.OrderProto order = 2;
+}
+message TransposeMetadataProto {
+  enum VxposeModeProto {
+    VXPOSE_MODE_NONE = 0;
+    VXPOSE_MODE_B32 = 1;
+    VXPOSE_MODE_COMPRESSED_B16 = 2;
+    VXPOSE_MODE_COMPRESSED_B8 = 3;
+    VXPOSE_MODE_SEGMENTED_B32 = 4;
+    VXPOSE_MODE_SEGMENTED_B16 = 5;
+  }
+  int32 chunk_id = 1;
+  int32 number_of_chunks = 2;
+  .xla.jellyfish.TransposeMetadataProto.VxposeModeProto mode = 3;
+}
+message BranchMetadataProto {
+  enum IntrinsicKindProto {
+    INTRINSIC_NONE = 0;
+    INTRINSIC_SYNTHETIC_COMPUTE_TASK = 1;
+  }
+  .xla.jellyfish.BranchMetadataProto.IntrinsicKindProto intrinsic_kind = 1;
+  int32 branch_target_region_ordinal = 2;
+}
+message MatmulInstructionDataProto {
+  .xla.jellyfish.DoneWithGainsModeProto dwg_mode = 1;
+  .xla.jellyfish.MatmulDataFormatProto format = 2;
+  uint32 mrb_addr = 3;
+  uint32 lmr_width = 4;
+  .xla.jellyfish.XmrProto xmr = 5;
+  .xla.jellyfish.MsrProto msr = 6;
+}
+message MatprepMubrInstructionDataProto {
+  .xla.jellyfish.MatmulDataFormatProto format = 1;
+}
+message MatprepSubrInstructionDataProto {
+  .xla.jellyfish.GainLatchModeProto mode = 1;
+}
+message MatresInstructionDataProto {
+  .xla.jellyfish.MatmulDataFormatProto format = 1;
+  uint32 mrb_addr = 2;
+}
+message LatchInstructionDataProto {
+  .xla.jellyfish.GainLatchModeProto mode = 1;
+  uint32 index_in_sequence = 2;
+  .xla.jellyfish.MsrProto msr = 3;
+}
+message DoneWithGainsInstructionDataProto {
+  .xla.jellyfish.DoneWithGainsModeProto dwg_mode = 1;
+  .xla.jellyfish.MsrProto msr = 2;
+}
+message LoadLmrInstructionDataProto {
+  .xla.jellyfish.MatmulDataFormatProto format = 1;
+  uint32 lmr_width = 2;
+  .xla.jellyfish.MsrProto msr = 3;
+}
+message BundlePackerInfoProto {
+  uint32 point_of_no_return_index = 1;
+  uint32 operand_latency_dep_index = 2;
+  uint32 fifo_dep_index = 3;
+  uint32 register_dep_index = 4;
+  uint32 arch_register_dep_index = 5;
+  uint32 source_bus_dep_index = 6;
+  uint32 min_safe_hoist_index = 7;
+  uint32 final_bundle_index = 8;
+  uint32 hoist_distance_cur = 9;
+  uint32 hoist_distance_prev = 10;
+}
+message LloInstructionProto {
+  enum PredicationPolarityProto {
+    POLARITY_NONE = 0;
+    POLARITY_POSITIVE = 1;
+    POLARITY_NEGATIVE = 2;
+  }
+  message LloOperand {
+    oneof value {
+      int32 constant_handle = 1;
+      int32 instruction_ordinal = 2;
+    }
+  }
+  oneof metadata {
+    .xla.jellyfish.MatmulInstructionDataProto matmul = 15;
+    .xla.jellyfish.MatprepMubrInstructionDataProto matprep_mubr = 16;
+    .xla.jellyfish.MatprepSubrInstructionDataProto matprep_subr = 17;
+    .xla.jellyfish.MatresInstructionDataProto matres = 18;
+    .xla.jellyfish.LatchInstructionDataProto latch = 19;
+    .xla.jellyfish.DoneWithGainsInstructionDataProto dwg = 21;
+    .xla.jellyfish.LoadLmrInstructionDataProto llmr = 22;
+    .xla.jellyfish.ComparisonProto comparison = 23;
+    .xla.jellyfish.TransposeMetadataProto transpose_metadata = 24;
+    sint32 transpose_result_idx = 25;
+    .xla.jellyfish.BranchMetadataProto branch_metadata = 26;
+    bool resolve_int_to_ptr_allocation = 27;
+    bool treat_copy_as_opaque = 28;
+    .xla.jellyfish.PseudoKindProto pseudo_kind = 29;
+    .xla.jellyfish.ImmRelocationKindProto relocation_kind = 31;
+  }
+  int32 ordinal = 1;
+  .xla.jellyfish.LloOpcodeProto opcode = 2;
+  repeated .xla.jellyfish.LloInstructionProto.LloOperand operands = 3;
+  sint32 scheduled_bundleno = 4;
+  .xla.jellyfish.MemorySpaceProto memory_space = 5;
+  .xla.ShapeProto associated_shape = 6;
+  sint32 register_id = 7;
+  .xla.jellyfish.RegisterTypeProto register_type = 8;
+  uint32 annotation_handle = 9;
+  uint64 scalar_constant_value = 10;
+  int32 unit_id = 11;
+  int32 source_bus = 12;
+  int32 predication_operand_count = 13;
+  .xla.jellyfish.LloInstructionProto.PredicationPolarityProto predication_polarity = 14;
+  int64 iar = 32;
+  .xla.jellyfish.BundlePackerInfoProto bundle_packer_info = 33;
+  uint32 stack_trace_handle = 34;
+}

@@ -1,0 +1,32 @@
+syntax = "proto2";
+package logs_proto;
+import "n2a/p4r2d3/proto/descriptor.proto";
+enum TombstoneType {
+  TOMBSTONE_UNSPECIFIED = 0;
+  TOMBSTONE_RETAIN = 1;
+  TOMBSTONE_DROP = 2;
+}
+message MessageDetails {
+  message Type {
+    required string source_type = 1;
+    required string log_type = 2;
+  }
+  repeated .logs_proto.MessageDetails.Type may_appear_in = 1;
+}
+extend .proto2.FieldOptions {
+  optional bool temp_logs_only = 21623477 [default = false];
+  optional bool not_logged_in_sawmill = 21596320 [default = false];
+  optional bool is_encrypted = 26652850 [default = false];
+  optional int32 max_recursion_depth = 53697879;
+  optional string sawmill_filter_override_approved_by_logs_access = 56871503;
+  optional .logs_proto.TombstoneType tombstone_type = 535801325 [default = TOMBSTONE_UNSPECIFIED];
+}
+extend .proto2.FileOptions {
+  optional bool file_not_used_for_logging_except_enums = 21596320 [default = false];
+}
+extend .proto2.MessageOptions {
+  optional bool msg_temp_logs_only = 21623477 [default = false];
+  optional bool msg_not_logged_in_sawmill = 21596320 [default = false];
+  optional .logs_proto.MessageDetails msg_details = 21467048;
+  optional string field_encryption_key_name = 26652850;
+}

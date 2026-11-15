@@ -1,0 +1,79 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.xdb.tpu_debugger;
+import "google/protobuf/duration.proto";
+import "platforms/deepsea/jellyfish/xdb/debugger.proto";
+import "platforms/deepsea/jellyfish/xdb/tpu_telemetry/tpu_telemetry.proto";
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message WaitForServiceActiveRequest {
+  optional .google.protobuf.Duration timeout = 1;
+}
+message WaitForServiceActiveResponse {
+  optional bool service_active = 1;
+}
+message BreakpointInfo {
+  optional .platforms_deepsea.jellyfish.xdb.tpu_telemetry.TpuCoreIdentifier core_id = 1;
+  optional bool hit = 2;
+  optional .platforms_deepsea.jellyfish.xdb.LogRecord log_record = 3;
+}
+message WaitForBreakpointHitOnCoreRequest {
+  optional .platforms_deepsea.jellyfish.xdb.tpu_telemetry.TpuCoreIdentifier core_id = 1;
+  optional .google.protobuf.Duration timeout = 2;
+}
+message WaitForBreakpointHitOnCoreResponse {
+  optional .platforms_deepsea.jellyfish.xdb.tpu_debugger.BreakpointInfo breakpoint_info = 1;
+}
+message WaitForBreakpointHitOnAllCoresRequest {
+  optional .google.protobuf.Duration timeout = 1;
+}
+message WaitForBreakpointHitOnAllCoresResponse {
+  repeated .platforms_deepsea.jellyfish.xdb.tpu_debugger.BreakpointInfo breakpoint_info = 1;
+}
+message GetMachineInfoRequest {
+}
+message GetMachineInfoResponse {
+  optional string host_name = 1;
+  repeated .platforms_deepsea.jellyfish.xdb.tpu_telemetry.TpuCoreIdentifier tpu_core_identifiers = 2;
+}
+message StartSessionRequest {
+}
+message StartSessionResponse {
+}
+message BreakpointContinueRequest {
+  repeated .platforms_deepsea.jellyfish.xdb.tpu_telemetry.TpuCoreIdentifier core_ids = 1;
+}
+message BreakpointContinueResponse {
+  repeated .platforms_deepsea.jellyfish.xdb.tpu_telemetry.TpuCoreIdentifier core_ids = 1;
+}
+message HloLiveValue {
+  optional .xla.HloInstructionProto hlo_instruction = 1;
+  optional .xla.LiteralProto hlo_literal = 2;
+}
+message CoreLiveValues {
+  optional .platforms_deepsea.jellyfish.xdb.tpu_telemetry.TpuCoreIdentifier core_id = 1;
+  optional .platforms_deepsea.jellyfish.xdb.Status status = 2;
+  repeated .platforms_deepsea.jellyfish.xdb.tpu_debugger.HloLiveValue hlo_live_values = 3;
+}
+message GetLiveValuesRequest {
+  repeated .platforms_deepsea.jellyfish.xdb.tpu_telemetry.TpuCoreIdentifier core_ids = 1;
+}
+message GetLiveValuesResponse {
+  repeated .platforms_deepsea.jellyfish.xdb.tpu_debugger.CoreLiveValues core_live_values = 1;
+}
+message GetCurrentTpuStateSummaryRequest {
+  optional bool include_hlo_info = 1;
+}
+message GetCurrentTpuStateSummaryResponse {
+  optional string host_name = 1;
+  map<int32, .platforms_deepsea.jellyfish.xdb.tpu_telemetry.CurrentCoreStateSummary> core_states = 2;
+}
+service TpuDebugService {
+  rpc WaitForServiceActive(.platforms_deepsea.jellyfish.xdb.tpu_debugger.WaitForServiceActiveRequest) returns (.platforms_deepsea.jellyfish.xdb.tpu_debugger.WaitForServiceActiveResponse);
+  rpc StartSession(.platforms_deepsea.jellyfish.xdb.tpu_debugger.StartSessionRequest) returns (.platforms_deepsea.jellyfish.xdb.tpu_debugger.StartSessionResponse);
+  rpc BreakpointContinue(.platforms_deepsea.jellyfish.xdb.tpu_debugger.BreakpointContinueRequest) returns (.platforms_deepsea.jellyfish.xdb.tpu_debugger.BreakpointContinueResponse);
+  rpc WaitForBreakpointHitOnCore(.platforms_deepsea.jellyfish.xdb.tpu_debugger.WaitForBreakpointHitOnCoreRequest) returns (.platforms_deepsea.jellyfish.xdb.tpu_debugger.WaitForBreakpointHitOnCoreResponse);
+  rpc WaitForBreakpointHitOnAllCores(.platforms_deepsea.jellyfish.xdb.tpu_debugger.WaitForBreakpointHitOnAllCoresRequest) returns (.platforms_deepsea.jellyfish.xdb.tpu_debugger.WaitForBreakpointHitOnAllCoresResponse);
+  rpc GetLiveValues(.platforms_deepsea.jellyfish.xdb.tpu_debugger.GetLiveValuesRequest) returns (.platforms_deepsea.jellyfish.xdb.tpu_debugger.GetLiveValuesResponse);
+  rpc GetCurrentTpuStateSummary(.platforms_deepsea.jellyfish.xdb.tpu_debugger.GetCurrentTpuStateSummaryRequest) returns (.platforms_deepsea.jellyfish.xdb.tpu_debugger.GetCurrentTpuStateSummaryResponse);
+  rpc GetMachineInfo(.platforms_deepsea.jellyfish.xdb.tpu_debugger.GetMachineInfoRequest) returns (.platforms_deepsea.jellyfish.xdb.tpu_debugger.GetMachineInfoResponse);
+}

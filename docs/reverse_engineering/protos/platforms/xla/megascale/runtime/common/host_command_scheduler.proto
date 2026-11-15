@@ -1,0 +1,15 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+import "platforms/xla/megascale/runtime/common/core_location.proto";
+import "platforms/xla/megascale/runtime/executor/actions.proto";
+import "platforms/xla/megascale/runtime/host_command/host_command.proto";
+message HostCommandSchedulerProto {
+  message Entry {
+    int64 channel = 1;
+    .xla.megascale.runtime.HostCommandActions actions = 2;
+    .xla.megascale.runtime.TpuCoreLocationProto core_location = 3;
+    string graph_id = 4;
+  }
+  repeated .xla.megascale.runtime.HostCommandSchedulerProto.Entry entries = 1;
+  repeated .xla.megascale.runtime.MegaScaleActionGraph graphs = 2;
+}

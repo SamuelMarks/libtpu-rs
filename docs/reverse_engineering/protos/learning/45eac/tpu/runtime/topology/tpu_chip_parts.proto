@@ -1,0 +1,47 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/topology/tpu_chip_parts_locators.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_core_parts.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_memory_parts.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_shared_memory_parts.proto";
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+message TpuChipPartsProto {
+  message Core {
+    .tpu.TpuCoreTypeProto type = 1;
+    .tpu.TpuCorePartsProto parts = 2;
+    int32 count = 3;
+  }
+  message SharedMemory {
+    .tpu.TpuSharedMemoryTypeProto type = 1;
+    .tpu.TpuSharedMemoryPartsProto parts = 2;
+    int32 count = 3;
+  }
+  message LocalSharedMemoryMapping {
+    .tpu.TpuCoreOnChipProto core = 1;
+    .tpu.TpuSharedMemoryOnChipProto shared_memory = 2;
+  }
+  message DmaRequirementsProto {
+    int64 host_alignment_bytes = 1;
+    int64 device_alignment_bytes = 2;
+    int64 granule_bytes = 3;
+    int64 sync_flag_granule_bytes = 4;
+    int64 max_single_host_dma_bytes = 5;
+  }
+  message MiscPropertiesProto {
+    int32 max_slice_size_for_all_to_all_routing = 1;
+    bool has_extra_done_bit_in_sync_flags = 2;
+    bool is_host_sync_flag_access_async = 3;
+    bool supports_sync_flag_mode_count_dones = 4;
+    bool dma_order_is_relaxed = 5;
+  }
+  .tpu.TpuVersionProto version = 1;
+  int64 driver_abi_version = 9;
+  repeated .tpu.TpuChipPartsProto.Core cores = 2;
+  repeated .tpu.TpuChipPartsProto.SharedMemory shared_memories = 3;
+  .tpu.TpuMemoryPartsProto uhi_sync_flag_memory_parts = 4;
+  repeated .tpu.TpuChipPartsProto.LocalSharedMemoryMapping local_shared_memory_mappings = 5;
+  .tpu.TpuChipPartsProto.DmaRequirementsProto dma_requirements = 6;
+  .tpu.TpuChipPartsProto.MiscPropertiesProto misc = 8;
+  string variant_name = 7;
+}

@@ -1,0 +1,27 @@
+syntax = "proto2";
+package pb;
+import "n2a/p4r2d3/proto/descriptor.proto";
+message InternalOptionsForce {
+  enum Enum {
+    UNSPECIFIED = 0;
+    FORCE_ON = 1;
+    FORCE_OFF = 2;
+  }
+}
+message InternalFieldOptionsCpp {
+  message MicroString {
+    optional .pb.InternalOptionsForce.Enum force = 1;
+    optional int32 sso_size = 2;
+  }
+  message InlinedString {
+    optional .pb.InternalOptionsForce.Enum force = 1;
+  }
+  optional .pb.InternalFieldOptionsCpp.MicroString micro_string = 1;
+  optional .pb.InternalFieldOptionsCpp.InlinedString inlined_string = 2;
+}
+message InternalFieldOptions {
+  optional .pb.InternalFieldOptionsCpp cpp = 1;
+}
+extend .proto2.FieldOptions {
+  optional .pb.InternalFieldOptions internal_field_options = 535801550;
+}

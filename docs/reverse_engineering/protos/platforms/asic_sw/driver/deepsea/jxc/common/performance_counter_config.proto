@@ -1,0 +1,87 @@
+syntax = "proto2";
+package asic_sw.driver.deepsea.jxc;
+import "platforms/asic_sw/driver/deepsea/jxc/common/performance_trace_config.proto";
+message PerformanceCounterConfig {
+  message TensorNode {
+    enum CoreControl {
+      CORE_DISABLED = 0;
+      CORE_ENABLED = 1;
+      CORE_ENABLED_IF_TRACEMARK_IN_BOUNDS = 2;
+      CORE_ENABLED_IF_GTC_IN_BOUNDS = 3;
+      CORE_ENABLED_IF_TRACEMARK_AND_GTC_IN_BOUNDS = 4;
+      CORE_ENABLED_IF_TRACEMARK_OR_GTC_IN_BOUNDS = 5;
+      CORE_ENABLED_IF_EVERYONE_TRACE_ON = 6;
+    }
+    message TensorCore {
+      optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.CoreControl control = 1 [default = CORE_DISABLED];
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceMarkLimits trace_mark_limits = 2;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 3;
+    }
+    message BarnaCore {
+      message Concat {
+        optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.CoreControl control = 1 [default = CORE_DISABLED];
+        optional .asic_sw.driver.deepsea.jxc.PerformanceTraceMarkLimits trace_mark_limits = 2;
+        optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 3;
+      }
+      message Channel {
+        optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.CoreControl control = 1 [default = CORE_DISABLED];
+        optional .asic_sw.driver.deepsea.jxc.PerformanceTraceMarkLimits trace_mark_limits = 2;
+        optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 3;
+      }
+      optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.CoreControl control = 1 [default = CORE_DISABLED];
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceMarkLimits trace_mark_limits = 2;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 3;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.BarnaCore.Concat concat = 4;
+      repeated .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.BarnaCore.Channel channel = 5;
+    }
+    message NodeFabric {
+      enum Control {
+        DISABLED = 0;
+        ENABLED = 1;
+        ENABLED_IF_GTC_IN_BOUNDS = 3;
+        ENABLED_IF_EVERYONE_TRACE_ON = 6;
+      }
+      message HbmMux {
+        enum TraceControl {
+          DISABLED = 0;
+          ENABLED = 1;
+          ENABLED_IF_EVERYONE_TRACE = 2;
+        }
+        optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.NodeFabric.HbmMux.TraceControl control = 1 [default = ENABLED_IF_EVERYONE_TRACE];
+      }
+      optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.NodeFabric.Control control = 1 [default = ENABLED_IF_EVERYONE_TRACE_ON];
+      optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 2;
+      repeated .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.NodeFabric.HbmMux hbm_mux = 3;
+      optional bool everyone_trace_if_tensor_core_is_tracing = 4 [default = true];
+      optional bool everyone_trace_if_barna_core_is_tracing = 5 [default = true];
+    }
+    message Hib {
+      enum Control {
+        DISABLED = 0;
+        ENABLED = 1;
+        ENABLED_IF_GTC_IN_BOUNDS = 3;
+        ENABLED_IF_EVERYONE_TRACE_ON = 6;
+      }
+      optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.Hib.Control control = 1 [default = ENABLED_IF_EVERYONE_TRACE_ON];
+      optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 2;
+    }
+    optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.TensorCore tensor_core = 1;
+    optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.BarnaCore barna_core = 2;
+    optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.NodeFabric node_fabric = 3;
+    optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode.Hib hib = 4;
+  }
+  message Ici {
+    enum Control {
+      DISABLED = 0;
+      ENABLED = 1;
+      ENABLED_IF_GTC_IN_BOUNDS = 3;
+      ENABLED_IF_EVERYONE_TRACE_ON = 6;
+    }
+    optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.Ici.Control control = 1 [default = ENABLED_IF_EVERYONE_TRACE_ON];
+    optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 2;
+  }
+  optional bool reset = 1;
+  optional bool pause = 2;
+  repeated .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.TensorNode node = 3;
+  optional .asic_sw.driver.deepsea.jxc.PerformanceCounterConfig.Ici ici = 4;
+}

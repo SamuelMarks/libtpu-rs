@@ -1,0 +1,114 @@
+syntax = "proto3";
+package xla.tuning;
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+import "platforms/xla/service/jellyfish/tpu_compilation_environment.proto";
+import "platforms/xla/tools/hlo_autotuner/proto/module_tuner_config.proto";
+import "platforms/xla/tools/hlo_autotuner/proto/op_tuner_config.proto";
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+import "third_party/tensorflow/compiler/xla/tsl/protobuf/error_codes.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+enum WorkloadPerformanceBottleneck {
+  UNKNOWN_BOUND = 0;
+  FUSION_BOUND = 1;
+  MSA_BOUND = 2;
+  COLLECTIVES_BOUND = 3;
+}
+message TuningData {
+  repeated .xla.tuning.ModuleTuningData modules = 1;
+}
+message ModuleTuningData {
+  oneof value {
+    .tpu.TpuVersionProto tpu_version = 4;
+  }
+  .xla.HloModuleProto module = 1;
+  string name = 2;
+  uint64 fingerprint = 3;
+  int64 config_count = 5;
+  repeated .xla.tuning.ConfigProfile runs = 6;
+  int64 time_spent_compiling_ns = 7;
+  string hlo_path = 8;
+  int64 changelist = 9;
+  string evaluator = 10;
+  string deepsea_variant = 11;
+  string metadata_fingerprint = 12;
+  string unoptimized_fingerprint = 13;
+  string hlo_text = 14;
+  uint64 inst_frequency = 15;
+  int64 total_tuned_samples_in_history = 16;
+  .xla.tuning.WorkloadPerformanceBottleneck workload_performance_bottleneck = 17;
+  string tuner_xid = 18;
+}
+message ConfigProfile {
+  oneof config {
+    .xla.tuning.HloOpConfig op_config = 1;
+    .xla.tuning.HloModuleConfig module_config = 2;
+  }
+  .xla.tuning.StatusProto status = 3;
+  .xla.ExecutionProfile profile = 4;
+  bool is_default = 5;
+  repeated .xla.tuning.DecomposedOpReference decomposed_op_refs = 6;
+  double relative_speedup = 8;
+  .xla.tuning.CompilationInfo compilation_info = 9;
+  bool is_incorrect = 10;
+  .xla.tuning.CorrectnessInfo correctness_info = 12;
+  .xla.tuning.WorkloadPerformanceBottleneck workload_performance_bottleneck = 11;
+  .xla.ProfileGenerationStrategy profile_generation_strategy = 13;
+}
+message CorrectnessInfo {
+  bool is_incorrect = 1;
+  string hlo_text = 2;
+  string hlo_op_name = 4;
+  string reason = 3;
+}
+message CompilationInfo {
+  int64 compile_time_ns = 1;
+  .xla.tuning.OpCompilationInfo op_info = 2;
+}
+message StatusProto {
+  .tensorflow.error.Code error_code = 1;
+  string error_message = 2;
+}
+message OpTunerHloCheckpoint {
+  uint64 hlo_fingerprint = 1;
+  .xla.tuning.StatusProto status = 2;
+  uint64 index = 3;
+  uint64 attempt_count = 4;
+}
+message AllDecomposedOpsData {
+  repeated .xla.tuning.DecomposedOpData all_decomposed_ops = 1;
+}
+message DecomposedOpData {
+  .xla.HloModuleProto op_module = 1;
+  .xla.ExecutionProfile profile = 2;
+  .xla.tuning.HloOpConfig op_config = 3;
+  int64 estimated_compute_time_ns = 4;
+}
+message DecomposedOpReference {
+  uint32 decomposed_op_index = 1;
+  uint32 instances_in_graph = 2;
+  bool profile_from_cache = 3;
+}
+message AllHloMsaConfigsAndProfiles {
+  string input_module_path = 1;
+  .xla.jellyfish.TpuCompilationEnvironment tpu_comp_env = 2;
+  repeated .xla.tuning.HloMsaConfigsAndProfiles hlo_msa_configs_and_profiles = 3;
+}
+message HloMsaConfigsAndProfiles {
+  message MsaConfigAndProfile {
+    string config = 4;
+    int64 compute_time_ns = 5;
+  }
+  .xla.HloModuleProto op_module = 1;
+  uint64 fingerprint = 2;
+  uint64 tensor_size = 3;
+  repeated .xla.tuning.HloMsaConfigsAndProfiles.MsaConfigAndProfile msa_configs_and_profiles = 6;
+}
+message HloOpTuningInfo {
+  string hlo_name = 1;
+  string hlo_instruction_path = 2;
+  string raw_backend_config = 3;
+  double time_seconds = 4;
+  string op_name = 5;
+  string op_code = 6;
+  int64 xla_tpu_scoped_vmem_limit_kib = 7;
+}

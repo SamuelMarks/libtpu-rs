@@ -1,0 +1,18 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/attr_value.proto";
+message KernelDef {
+  message AttrConstraint {
+    string name = 1;
+    .tensorflow.AttrValue allowed_values = 2;
+  }
+  string op = 1;
+  string device_type = 2;
+  repeated .tensorflow.KernelDef.AttrConstraint constraint = 3;
+  repeated string host_memory_arg = 4;
+  string label = 5;
+  int32 priority = 6;
+}
+message KernelList {
+  repeated .tensorflow.KernelDef kernel = 1;
+}

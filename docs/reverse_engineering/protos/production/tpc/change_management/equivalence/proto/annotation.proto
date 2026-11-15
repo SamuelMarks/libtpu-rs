@@ -1,0 +1,9 @@
+syntax = "proto2";
+package proto_equiv;
+import "n2a/p4r2d3/proto/descriptor.proto";
+extend .proto2.FieldOptions {
+  optional string transform = 218657202;
+  optional bool dynamic_exclude = 535801280;
+  repeated string any_allowed_types = 535801301;
+  repeated uint32 allowed_extensions = 535801440;
+}

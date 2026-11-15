@@ -1,0 +1,1007 @@
+syntax = "proto2";
+package asic_sw.driver.deepsea.gxc.gfc.profiler;
+message TraceHeader {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceEntries.TracePointId trace_point_id = 1;
+  optional uint32 trace_point_block_id = 2;
+  optional uint64 timestamp = 3;
+}
+message TraceIdHeader {
+  enum TraceIdHeaderCoreIdValues {
+    CORE_ID_RESERVEDCORESELF = 0;
+    CORE_ID_NONCORE = 1;
+    CORE_ID_TC0 = 2;
+    CORE_ID_TC1 = 3;
+    CORE_ID_SC0 = 4;
+    CORE_ID_SC1 = 5;
+    CORE_ID_SC2 = 6;
+    CORE_ID_SC3 = 7;
+  }
+  optional uint32 transaction_id = 1;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader.TraceIdHeaderCoreIdValues core_id = 2;
+  optional uint32 chip_id = 3;
+}
+message OciDescriptorCommon {
+  enum DmaTypeValues {
+    DMA_TYPE_LOCALORHOST = 0;
+    DMA_TYPE_REMOTEUNICAST = 1;
+  }
+  enum SrcMemMemIdValues {
+    SRC_MEM_MEM_ID_HBM_TCVMEM_SCSPMEM = 0;
+    SRC_MEM_MEM_ID_HOST_TCSMEM_SCSMEM = 1;
+    SRC_MEM_MEM_ID_VMEMALL_TCIMEM_SCSIMEM = 2;
+    SRC_MEM_MEM_ID_NONCORERESERVEDMEM0_TCRESERVEDMEM_SCTIMEM = 3;
+  }
+  enum SrcMemCoreIdValues {
+    SRC_MEM_CORE_ID_RESERVEDCORESELF = 0;
+    SRC_MEM_CORE_ID_NONCORE = 1;
+    SRC_MEM_CORE_ID_TC0 = 2;
+    SRC_MEM_CORE_ID_TC1 = 3;
+    SRC_MEM_CORE_ID_SC0 = 4;
+    SRC_MEM_CORE_ID_SC1 = 5;
+    SRC_MEM_CORE_ID_SC2 = 6;
+    SRC_MEM_CORE_ID_SC3 = 7;
+  }
+  enum SrcOpcodeValues {
+    SRC_OPCODE_READ = 0;
+    SRC_OPCODE_RESERVED = 1;
+    SRC_OPCODE_INSTRUCTIONMEMSET = 2;
+    SRC_OPCODE_DATAMEMSET = 3;
+  }
+  enum DstMemMemIdValues {
+    DST_MEM_MEM_ID_HBM_TCVMEM_SCSPMEM = 0;
+    DST_MEM_MEM_ID_HOST_TCSMEM_SCSMEM = 1;
+    DST_MEM_MEM_ID_VMEMALL_TCIMEM_SCSIMEM = 2;
+    DST_MEM_MEM_ID_NONCORERESERVEDMEM0_TCRESERVEDMEM_SCTIMEM = 3;
+  }
+  enum DstMemCoreIdValues {
+    DST_MEM_CORE_ID_RESERVEDCORESELF = 0;
+    DST_MEM_CORE_ID_NONCORE = 1;
+    DST_MEM_CORE_ID_TC0 = 2;
+    DST_MEM_CORE_ID_TC1 = 3;
+    DST_MEM_CORE_ID_SC0 = 4;
+    DST_MEM_CORE_ID_SC1 = 5;
+    DST_MEM_CORE_ID_SC2 = 6;
+    DST_MEM_CORE_ID_SC3 = 7;
+  }
+  enum DstOpcodeValues {
+    DST_OPCODE_WRITE = 0;
+    DST_OPCODE_RESERVED = 1;
+    DST_OPCODE_WRITESPECIAL0 = 2;
+    DST_OPCODE_WRITESPECIAL1 = 3;
+  }
+  enum SrcSyncFlagCoreIdValues {
+    SRC_SYNC_FLAG_CORE_ID_RESERVEDCORESELF = 0;
+    SRC_SYNC_FLAG_CORE_ID_NONCORE = 1;
+    SRC_SYNC_FLAG_CORE_ID_TC0 = 2;
+    SRC_SYNC_FLAG_CORE_ID_TC1 = 3;
+    SRC_SYNC_FLAG_CORE_ID_SC0 = 4;
+    SRC_SYNC_FLAG_CORE_ID_SC1 = 5;
+    SRC_SYNC_FLAG_CORE_ID_SC2 = 6;
+    SRC_SYNC_FLAG_CORE_ID_SC3 = 7;
+  }
+  enum DstSyncFlag0CoreIdValues {
+    DST_SYNC_FLAG_0_CORE_ID_RESERVEDCORESELF = 0;
+    DST_SYNC_FLAG_0_CORE_ID_NONCORE = 1;
+    DST_SYNC_FLAG_0_CORE_ID_TC0 = 2;
+    DST_SYNC_FLAG_0_CORE_ID_TC1 = 3;
+    DST_SYNC_FLAG_0_CORE_ID_SC0 = 4;
+    DST_SYNC_FLAG_0_CORE_ID_SC1 = 5;
+    DST_SYNC_FLAG_0_CORE_ID_SC2 = 6;
+    DST_SYNC_FLAG_0_CORE_ID_SC3 = 7;
+  }
+  enum DstSyncFlag1CoreIdValues {
+    DST_SYNC_FLAG_1_CORE_ID_RESERVEDCORESELF = 0;
+    DST_SYNC_FLAG_1_CORE_ID_NONCORE = 1;
+    DST_SYNC_FLAG_1_CORE_ID_TC0 = 2;
+    DST_SYNC_FLAG_1_CORE_ID_TC1 = 3;
+    DST_SYNC_FLAG_1_CORE_ID_SC0 = 4;
+    DST_SYNC_FLAG_1_CORE_ID_SC1 = 5;
+    DST_SYNC_FLAG_1_CORE_ID_SC2 = 6;
+    DST_SYNC_FLAG_1_CORE_ID_SC3 = 7;
+  }
+  enum ThreadSelectValues {
+    THREAD_SELECT_THREAD0 = 0;
+    THREAD_SELECT_THREAD1 = 1;
+    THREAD_SELECT_THREAD2 = 2;
+    THREAD_SELECT_THREAD3 = 3;
+    THREAD_SELECT_THREAD4 = 4;
+    THREAD_SELECT_THREAD5 = 5;
+  }
+  enum SyncModeValues {
+    SYNC_MODE_SYNCMODECOUNTWORDS = 0;
+    SYNC_MODE_SYNCMODECOUNTDONE = 1;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.DmaTypeValues dma_type = 2;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.SrcMemMemIdValues src_mem_mem_id = 3;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.SrcMemCoreIdValues src_mem_core_id = 4;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.SrcOpcodeValues src_opcode = 5;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.DstMemMemIdValues dst_mem_mem_id = 6;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.DstMemCoreIdValues dst_mem_core_id = 7;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.DstOpcodeValues dst_opcode = 8;
+  optional uint32 src_sync_flag_id = 9;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.SrcSyncFlagCoreIdValues src_sync_flag_core_id = 10;
+  optional uint32 dst_sync_flag_0_id = 11;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.DstSyncFlag0CoreIdValues dst_sync_flag_0_core_id = 12;
+  optional uint32 dst_sync_flag_1_id = 13;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.DstSyncFlag1CoreIdValues dst_sync_flag_1_core_id = 14;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.ThreadSelectValues thread_select = 15;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon.SyncModeValues sync_mode = 16;
+  optional bool execution_order_required = 17;
+  optional uint32 program_counter = 18;
+  optional uint32 length = 19;
+}
+message HdeHostRequest {
+  enum ThreadIdValues {
+    THREAD_ID_HOST2CHIP_0 = 0;
+    THREAD_ID_HOST2CHIP_1 = 1;
+    THREAD_ID_HOST2CHIP_2 = 2;
+    THREAD_ID_HOST2CHIP_3 = 3;
+    THREAD_ID_CHIP2HOST_0 = 4;
+    THREAD_ID_CHIP2HOST_1 = 5;
+    THREAD_ID_RESERVED0 = 6;
+    THREAD_ID_RESERVED1 = 7;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.HdeHostRequest.ThreadIdValues thread_id = 2;
+  optional uint64 address = 3;
+  optional uint32 size_units_of_32B = 4;
+  optional uint32 thread_tracking_id = 5;
+}
+message HdeHostResponse {
+  enum ThreadIdValues {
+    THREAD_ID_HOST2CHIP_0 = 0;
+    THREAD_ID_HOST2CHIP_1 = 1;
+    THREAD_ID_HOST2CHIP_2 = 2;
+    THREAD_ID_HOST2CHIP_3 = 3;
+    THREAD_ID_CHIP2HOST_0 = 4;
+    THREAD_ID_CHIP2HOST_1 = 5;
+    THREAD_ID_RESERVED0 = 6;
+    THREAD_ID_RESERVED1 = 7;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.HdeHostResponse.ThreadIdValues thread_id = 2;
+  optional uint32 thread_tracking_id = 3;
+}
+message OciCommon {
+  enum ExtraIdValues {
+    EXTRA_ID_TCS = 0;
+    EXTRA_ID_SCS = 1;
+    EXTRA_ID_HDE = 2;
+    EXTRA_ID_MGR = 3;
+    EXTRA_ID_ICR = 4;
+    EXTRA_ID_CMNUR = 5;
+    EXTRA_ID_CMNDE = 6;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header_cmd0 = 1;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header_cmd1 = 2;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header_cmd2 = 3;
+  optional uint32 index_valid = 4;
+  optional uint32 id_index0 = 5;
+  optional uint32 id_index1 = 6;
+  optional uint32 id_index2 = 7;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon.ExtraIdValues extra_id = 8;
+}
+message OciMessage {
+  enum MsgTypeValues {
+    MSG_TYPE_PRIVATE = 0;
+    MSG_TYPE_PUBLIC = 1;
+  }
+  enum OpcodeValues {
+    OPCODE_WRITE_NO_DONE = 0;
+    OPCODE_WRITE_WITH_DONE = 1;
+    OPCODE_INC_NO_DONE = 2;
+    OPCODE_INC_WITH_DONE = 3;
+  }
+  enum ExtraIdValues {
+    EXTRA_ID_TCS = 0;
+    EXTRA_ID_SCS = 1;
+    EXTRA_ID_HDE = 2;
+    EXTRA_ID_MGR = 3;
+    EXTRA_ID_ICR = 4;
+    EXTRA_ID_CMNUR = 5;
+    EXTRA_ID_CMNDE = 6;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 msg_data = 2;
+  optional bool done = 3;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage.MsgTypeValues msg_type = 4;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage.OpcodeValues opcode = 5;
+  optional uint64 addr = 6;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage.ExtraIdValues extra_id = 7;
+}
+message OciGeneric {
+  enum ExtraIdValues {
+    EXTRA_ID_TCS = 0;
+    EXTRA_ID_SCS = 1;
+    EXTRA_ID_HDE = 2;
+    EXTRA_ID_MGR = 3;
+    EXTRA_ID_ICR = 4;
+    EXTRA_ID_CMNUR = 5;
+    EXTRA_ID_CMNDE = 6;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.OciGeneric.ExtraIdValues extra_id = 2;
+}
+message IciPacket {
+  enum RouterLinkPortIdValues {
+    ROUTER_LINK_PORT_ID_LINK0 = 0;
+    ROUTER_LINK_PORT_ID_LINK1 = 1;
+    ROUTER_LINK_PORT_ID_LINK2 = 2;
+    ROUTER_LINK_PORT_ID_LINK3 = 3;
+    ROUTER_LINK_PORT_ID_LINK4 = 4;
+    ROUTER_LINK_PORT_ID_LINK5 = 5;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.IciPacket.RouterLinkPortIdValues router_link_port_id = 2;
+  optional uint32 virtual_channel = 3;
+  optional uint32 link_targets = 4;
+  optional bool local_ingress_target = 5;
+  optional bool multicast = 6;
+  optional uint32 dst_chip_id = 7;
+  optional bool first_packet_in_dma = 8;
+  optional bool last_packet_in_dma = 9;
+}
+message StatsCounterSample {
+  enum SizeValues {
+    SIZE_8BITS = 0;
+    SIZE_16BITS = 1;
+    SIZE_32BITS = 2;
+    SIZE_64BITS = 3;
+  }
+  optional bool extra_id = 1;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.StatsCounterSample.SizeValues size = 2;
+  optional uint32 scaling = 3;
+  optional uint32 num_counters = 4;
+  optional uint32 sample_id = 5;
+  optional uint64 payload_low = 6;
+  optional uint64 payload_high = 7;
+}
+message CmnDmaRequest {
+  enum CmnRouterTypeValues {
+    CMN_ROUTER_TYPE_CMNUR = 0;
+    CMN_ROUTER_TYPE_O2CUR = 1;
+  }
+  enum SrcMemIdValues {
+    SRC_MEM_ID_KVMEM = 0;
+    SRC_MEM_ID_KSPMEM = 1;
+    SRC_MEM_ID_KHBM = 2;
+    SRC_MEM_ID_KSMEM = 3;
+    SRC_MEM_ID_KIMEM = 4;
+    SRC_MEM_ID_KBADADDR = 15;
+  }
+  enum DstMemIdValues {
+    DST_MEM_ID_KVMEM = 0;
+    DST_MEM_ID_KSPMEM = 1;
+    DST_MEM_ID_KHBM = 2;
+    DST_MEM_ID_KSMEM = 3;
+    DST_MEM_ID_KIMEM = 4;
+    DST_MEM_ID_KBADADDR = 15;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 req_id = 2;
+  optional uint32 cmn_router_id = 3;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnDmaRequest.CmnRouterTypeValues cmn_router_type = 4;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnDmaRequest.SrcMemIdValues src_mem_id = 5;
+  optional uint64 src_addr = 6;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnDmaRequest.DstMemIdValues dst_mem_id = 7;
+  optional uint64 dst_addr = 8;
+  optional uint32 beats = 9;
+  optional bool poison = 10;
+}
+message TcsExternalSyncFlagUpdate {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 updated_sync_flag_value = 2;
+  optional bool updated_sync_flag_done = 3;
+  optional uint32 sync_flag_number = 4;
+  optional uint32 program_counter = 5;
+  optional bool successful_sync_unblock = 6;
+  optional bool successful_sync = 7;
+  optional bool last_sync_for_dma = 8;
+  optional bool last_sync_was_add = 9;
+  optional bool was_csr_update = 10;
+  optional bool trace_bit_set = 11;
+}
+message TcsInternal {
+  optional uint32 data_field = 1;
+  optional bool done_bit = 2;
+  optional uint32 sync_flag_number = 3;
+  optional uint32 program_counter = 4;
+  optional bool sfence_end = 5;
+  optional bool sfence_start = 6;
+  optional uint64 lcc = 7;
+}
+message OciDescriptorStrideSrc {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 src_stride_0 = 2;
+  optional uint32 src_stride_1 = 3;
+  optional uint32 src_stride_2 = 4;
+  optional uint32 src_stride_3 = 5;
+}
+message OciDescriptorStrideDst {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 dst_stride_0 = 2;
+  optional uint32 dst_stride_1 = 3;
+  optional uint32 dst_stride_2 = 4;
+  optional uint32 dst_stride_3 = 5;
+}
+message OciDescriptorStrideSteps {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 steps_per_stride_1 = 2;
+  optional uint32 steps_per_stride_2 = 3;
+  optional uint32 steps_per_stride_3 = 4;
+  optional uint32 steps_per_stride_4 = 5;
+}
+message OciDescriptorAddressMisc {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 src_mem_start_offset = 2;
+  optional uint32 dst_mem_start_offset = 3;
+  optional uint32 host_upper_iova = 4;
+}
+message TcsPpmEntry {
+  optional uint32 channel0_derivative_accumulator = 1;
+  optional uint32 channel0_didt_level = 2;
+  optional uint32 channel0_overshoot_level = 3;
+  optional uint32 channel0_sustained_accumulator = 4;
+  optional uint32 channel0_sustained_level = 5;
+  optional uint32 channel1_derivative_accumulator = 6;
+  optional uint32 channel1_didt_level = 7;
+  optional uint32 channel1_overshoot_level = 8;
+  optional uint32 channel1_sustained_accumulator = 9;
+  optional uint32 channel1_sustained_level = 10;
+  optional uint32 channel2_derivative_accumulator = 11;
+  optional uint32 channel2_didt_level = 12;
+  optional uint32 channel2_overshoot_level = 13;
+  optional uint32 channel2_sustained_accumulator = 14;
+  optional uint32 channel2_sustained_level = 15;
+  optional uint32 self_throttle_level = 16;
+}
+message ScInstruction {
+  optional uint32 data = 1;
+  optional bool done = 2;
+  optional uint32 extra_id = 3;
+  optional uint32 index = 4;
+  optional uint32 pc = 5;
+}
+message ScTaskIssue {
+  optional uint32 scs_pc = 1;
+  optional uint32 tag = 2;
+  optional uint32 end_pc = 3;
+  optional uint32 start_pc = 4;
+  optional uint32 tile_bitmap = 5;
+}
+message ScTaskCommit {
+  optional uint32 tag = 1;
+  optional uint32 extra_id = 2;
+  optional uint32 total_cycles = 3;
+  optional uint32 tec_ibuf_stalls = 4;
+  optional uint32 tec_sync_stalls = 5;
+  optional uint32 tec_hold_stalls = 6;
+  optional uint32 num_spmem_words = 7;
+  optional uint32 num_hbm_words = 8;
+  optional uint32 lsu_hold_stalls = 9;
+}
+message ScStreamIssue {
+  enum SyncFlagCoreTypeValues {
+    SYNC_FLAG_CORE_TYPE_TEC_OR_SCS = 0;
+    SYNC_FLAG_CORE_TYPE_TAC = 1;
+  }
+  enum StreamOpcodeValues {
+    STREAM_OPCODE_GATHER = 0;
+    STREAM_OPCODE_GATHERADDS32 = 1;
+    STREAM_OPCODE_GATHERADDF32 = 2;
+    STREAM_OPCODE_SCATTER = 4;
+    STREAM_OPCODE_SCATTERADDS32 = 5;
+    STREAM_OPCODE_SCATTERADDF32 = 6;
+    STREAM_OPCODE_GATHERADDS16 = 9;
+    STREAM_OPCODE_GATHERADDBF16 = 10;
+    STREAM_OPCODE_SCATTERADDS16 = 13;
+    STREAM_OPCODE_SCATTERADDBF16 = 14;
+    STREAM_OPCODE_RESERVED = 15;
+  }
+  enum TileLocalMemoryTypeValues {
+    TILE_LOCAL_MEMORY_TYPE_SMEM = 0;
+    TILE_LOCAL_MEMORY_TYPE_TILESPMEM = 1;
+  }
+  enum OffTileMemoryTypeValues {
+    OFF_TILE_MEMORY_TYPE_SPMEM = 0;
+    OFF_TILE_MEMORY_TYPE_TILESPMEMN = 1;
+    OFF_TILE_MEMORY_TYPE_HBM = 2;
+    OFF_TILE_MEMORY_TYPE_HBM4B = 3;
+  }
+  enum TileLocalStreamTypeValues {
+    TILE_LOCAL_STREAM_TYPE_LINEAR = 0;
+    TILE_LOCAL_STREAM_TYPE_CIRCULARBUFFER = 1;
+  }
+  enum OffTileStreamTypeValues {
+    OFF_TILE_STREAM_TYPE_LINEAR = 0;
+    OFF_TILE_STREAM_TYPE_STRIDED = 1;
+    OFF_TILE_STREAM_TYPE_INDIRECT = 2;
+    OFF_TILE_STREAM_TYPE_INDIRECTVREG = 3;
+  }
+  enum IndirectListTypeValues {
+    INDIRECT_LIST_TYPE_WORD = 0;
+    INDIRECT_LIST_TYPE_ROW = 1;
+  }
+  optional uint32 pc = 1;
+  optional uint32 extra_id = 2;
+  optional uint32 sync_flag_id = 3;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ScStreamIssue.SyncFlagCoreTypeValues sync_flag_core_type = 4;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ScStreamIssue.StreamOpcodeValues stream_opcode = 5;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ScStreamIssue.TileLocalMemoryTypeValues tile_local_memory_type = 6;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ScStreamIssue.OffTileMemoryTypeValues off_tile_memory_type = 7;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ScStreamIssue.TileLocalStreamTypeValues tile_local_stream_type = 8;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ScStreamIssue.OffTileStreamTypeValues off_tile_stream_type = 9;
+  optional bool set_done_bit = 10;
+  optional bool sync_flag_count_type = 11;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ScStreamIssue.IndirectListTypeValues indirect_list_type = 12;
+  optional uint32 length_in_4B = 13;
+}
+message ScStreamProgress {
+  enum SyncFlagCoreTypeValues {
+    SYNC_FLAG_CORE_TYPE_TEC_OR_SCS = 0;
+    SYNC_FLAG_CORE_TYPE_TAC = 1;
+  }
+  optional uint32 extra_id = 1;
+  optional uint32 sync_flag_id = 2;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ScStreamProgress.SyncFlagCoreTypeValues sync_flag_core_type = 3;
+  optional uint32 data = 4;
+  optional bool done = 5;
+}
+message ScMessage {
+  enum DestCoreTypeValues {
+    DEST_CORE_TYPE_TEC_OR_SCS = 0;
+    DEST_CORE_TYPE_TAC = 1;
+  }
+  enum MsgTypeValues {
+    MSG_TYPE_SYNCUPDATE = 0;
+    MSG_TYPE_SMEMUPDATE = 1;
+  }
+  enum OpcodeValues {
+    OPCODE_WRITE_NO_DONE = 0;
+    OPCODE_WRITE_WITH_DONE = 1;
+    OPCODE_INC_NO_DONE = 2;
+    OPCODE_INC_WITH_DONE = 3;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 extra_id = 2;
+  optional uint32 dest_tile_id = 3;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ScMessage.DestCoreTypeValues dest_core_type = 4;
+  optional uint32 sync_flag_id = 5;
+  optional uint32 smem_address = 6;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ScMessage.MsgTypeValues msg_type = 7;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ScMessage.OpcodeValues opcode = 8;
+  optional uint32 data = 9;
+  optional bool done = 10;
+}
+message SpiSampler {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 slot_index = 2;
+  optional uint32 slot_execution_count = 3;
+  optional uint64 channel_data_0 = 4;
+  optional uint64 channel_data_1 = 5;
+}
+message CmnurHbmc {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional bool extra_id = 2;
+  optional uint32 vc_id = 3;
+}
+message CmndeCmnur {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional bool extra_id = 2;
+  optional uint32 req_id = 3;
+  optional uint32 size = 4;
+  optional uint32 vc_id = 5;
+}
+message CmnurCmnucb {
+  enum MemIdValues {
+    MEM_ID_VMEM = 0;
+    MEM_ID_SPMEM = 1;
+    MEM_ID_HBM = 2;
+    MEM_ID_SMEM = 3;
+    MEM_ID_IMEM = 4;
+    MEM_ID_BADADDRESS = 15;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional bool extra_id = 2;
+  optional uint32 vc_id = 3;
+  optional bool dst_type = 4;
+  optional uint32 dst_id = 5;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnurCmnucb.MemIdValues mem_id = 6;
+  optional uint32 mem_type = 7;
+}
+message O2curL2p {
+  enum VcIdValues {
+    VC_ID_OCI2ANYRD = 0;
+    VC_ID_OCI2ANYWR = 1;
+  }
+  enum MemIdValues {
+    MEM_ID_VMEM = 0;
+    MEM_ID_SPMEM = 1;
+    MEM_ID_HBM = 2;
+    MEM_ID_SMEM = 3;
+    MEM_ID_IMEM = 4;
+    MEM_ID_BADADDRESS = 15;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.O2curL2p.VcIdValues vc_id = 2;
+  optional bool dst_type = 3;
+  optional uint32 dst_id = 4;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.O2curL2p.MemIdValues mem_id = 5;
+  optional uint32 mem_type = 6;
+}
+message CmndeUr {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 req_id = 2;
+  optional uint32 size = 3;
+  optional uint32 vc_id = 4;
+}
+message ThrottleCycleSkipThermalEvent {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 throttle = 2;
+}
+message ThrottleCycleSkipExternalBrakeEvent {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional bool external_brake_event = 2;
+}
+message ThrottleCycleSkipExternalThrottleEvent {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 throttle = 2;
+}
+message ThrottleCycleSkipElectricalBrakeEvent {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional bool electrical_brake_event = 2;
+}
+message ThrottleCycleSkipElectricalDroopEvent {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 throttle = 2;
+}
+message ThrottleMaxValue {
+  enum ThrottleSourceValues {
+    THROTTLE_SOURCE_THERMAL = 0;
+    THROTTLE_SOURCE_EXTERNAL_BRAKE = 1;
+    THROTTLE_SOURCE_EXTERNAL_THROTTLE = 2;
+    THROTTLE_SOURCE_ELECTRICAL_LDIDT_BRAKE = 3;
+    THROTTLE_SOURCE_ELECTRICAL_LDIDT_DROOP = 4;
+    THROTTLE_SOURCE_SOFTWARE = 5;
+    THROTTLE_SOURCE_PPM_SUSTAINED_AGGRESSIVE_BRAKE = 6;
+    THROTTLE_SOURCE_PPM_SUSTAINED_NOMINAL_BRAKE = 7;
+    THROTTLE_SOURCE_PPM_DIDT_AGGRESSIVE_BRAKE = 8;
+    THROTTLE_SOURCE_PPM_DIDT_NOMINAL_BRAKE = 9;
+    THROTTLE_SOURCE_DVFS_SOFTWARE = 10;
+    THROTTLE_SOURCE_POWER_METER_SOFTWARE = 11;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 throttle_value = 2;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleMaxValue.ThrottleSourceValues throttle_source = 3;
+}
+message ThrottleCycleSkipPpmBrakeEvent {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 throttle = 2;
+}
+message ThrottleLdidtVoltage {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 ldidt_voltage = 2;
+}
+message ThrottleMaximumTemperature {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 thermal_sensor_data = 2;
+  optional uint32 thermal_sensor_index = 3;
+}
+message FllLock {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 required_count_value = 2;
+}
+message FllSelect {
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional bool fll_id = 2;
+}
+message ThrottleEvent {
+  enum PowerRailValues {
+    POWER_RAIL_UNSPECIFIED = 0;
+    POWER_RAIL_VDD_CORE = 1;
+    POWER_RAIL_HBM = 2;
+  }
+  enum CoreTypeValues {
+    CORE_TYPE_UNSPECIFIED = 0;
+    CORE_TYPE_TENSOR_CORE = 1;
+    CORE_TYPE_SPARSE_CORE = 2;
+    CORE_TYPE_UNCORE = 3;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleEvent.PowerRailValues power_rail = 1;
+  optional uint32 die_index = 2;
+  optional uint32 throttle_level = 3;
+  optional uint32 max_throttle_level = 4;
+  optional uint32 min_throttle_level = 5;
+  optional uint32 reserved_0 = 6;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleEvent.CoreTypeValues core_type = 7;
+  optional uint32 core_index = 8;
+  optional uint64 reserved_1 = 9;
+}
+message PowerLevelEvent {
+  enum PowerRailValues {
+    POWER_RAIL_UNSPECIFIED = 0;
+    POWER_RAIL_VDD_CORE = 1;
+    POWER_RAIL_HBM = 2;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.PowerLevelEvent.PowerRailValues power_rail = 1;
+  optional uint32 die_index = 2;
+  optional uint32 power_level_index = 3;
+  optional uint64 accumulated_energy_nj = 4;
+  optional uint32 timescale_us = 5;
+  optional uint32 num_samples = 6;
+  optional uint32 reserved_0 = 7;
+}
+message ThermalEvent {
+  enum DomainValues {
+    DOMAIN_UNSPECIFIED = 0;
+    DOMAIN_HBM = 1;
+    DOMAIN_COMPUTE = 2;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.ThermalEvent.DomainValues domain = 1;
+  optional uint32 max_temp_celsius = 2;
+  optional uint32 die_index = 3;
+  optional uint32 reserved_0 = 4;
+  optional uint64 reserved_1 = 5;
+}
+message PcieUtilizationEvent {
+  enum RequestTypeValues {
+    REQUEST_TYPE_UNSPECIFIED = 0;
+    REQUEST_TYPE_READ_IN_32B = 1;
+    REQUEST_TYPE_WRITE_IN_32B = 2;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.PcieUtilizationEvent.RequestTypeValues request_type = 1;
+  optional uint32 index = 2;
+  optional uint64 host_req = 3;
+  optional uint64 reserved_0 = 4;
+}
+message DvfsEvent {
+  enum DomainValues {
+    DOMAIN_UNSPECIFIED = 0;
+    DOMAIN_VCORE = 1;
+    DOMAIN_TC = 2;
+    DOMAIN_SC = 3;
+    DOMAIN_CMN = 4;
+    DOMAIN_HBM = 5;
+  }
+  enum EventValues {
+    EVENT_UNSPECIFIED = 0;
+    EVENT_PSTATE_REQUEST_RECEIVED = 1;
+    EVENT_PSTATE_REQUEST_COMPLETED = 2;
+    EVENT_PSTATE_REQUEST_DROPPED = 3;
+    EVENT_TSTATE_REQUEST_RECEIVED = 4;
+    EVENT_TSTATE_REQUEST_COMPLETED = 5;
+    EVENT_TSTATE_REQUEST_DROPPED = 6;
+  }
+  enum RequestorValues {
+    REQUESTOR_UNSPECIFIED = 0;
+    REQUESTOR_XLA = 1;
+    REQUESTOR_HOST = 2;
+    REQUESTOR_THERMAL = 3;
+    REQUESTOR_FIRMWARE = 4;
+    REQUESTOR_PTDP = 5;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.DvfsEvent.DomainValues domain = 1;
+  optional uint32 die_index = 2;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.DvfsEvent.EventValues event = 3;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.DvfsEvent.RequestorValues requestor = 4;
+  optional uint32 value = 5;
+  optional uint32 reserved_0 = 6;
+  optional uint64 reserved_1 = 7;
+}
+message MgrFwEvent {
+  oneof fw_entry {
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleEvent throttle_event = 3;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.PowerLevelEvent power_level_event = 4;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThermalEvent thermal_event = 5;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.PcieUtilizationEvent pcie_utilization_event = 6;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.DvfsEvent dvfs_event = 7;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceEntries.FwTracePointId fw_trace_point_id = 2;
+}
+message TraceEntry {
+  oneof entry {
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon oci_descriptor_common_received = 2;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.HdeHostRequest hde_host_request_write = 3;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.HdeHostResponse hde_host_response_write = 4;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.HdeHostRequest hde_host_request_read = 5;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.HdeHostResponse hde_host_response_read = 6;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_hde_write_request = 7;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_hde_read_request = 8;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_sent_by_hde = 9;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciGeneric oci_generic_desc_enqueued_at_engine = 10;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_read_cmd_issued_from_engine = 11;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_write_cmd_issued_from_engine = 12;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_mem_read_req_from_engine = 13;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_msg_issued_from_engine = 14;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_write_cmd_accepted_at_mn = 15;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_mem_write_req_issued_from_engine = 16;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_src_mem_read_req_from_engine = 17;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon oci_descriptor_common_desc_enqueued_at_dst_engine = 18;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_sync_flag_update_from_dst_engine = 19;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon oci_descriptor_common_desc_enqueued_at_src_engine = 20;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_sync_flag_update_from_src_engine = 21;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.IciPacket ici_packet_packet_received_on_link_input = 22;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.IciPacket ici_packet_packet_transmitted_on_link_output = 23;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.IciPacket ici_packet_packet_queued_for_link_transmission = 24;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.IciPacket ici_packet_control_packet_injected_by_icr_dma_bridge = 25;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.IciPacket ici_packet_data_packet_injected_by_icr_dma_bridge = 26;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.IciPacket ici_packet_control_packet_received_by_icr_dma_bridge = 27;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.IciPacket ici_packet_data_packet_received_by_icr_dma_bridge = 28;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.IciPacket ici_packet_control_packet_queued_for_local_ingress = 29;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.IciPacket ici_packet_data_packet_queued_for_local_ingress = 30;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon oci_descriptor_common_enqueued_in_icr_egress_dma = 31;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_generated_in_icr_egress_dma = 32;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_generated_in_icr_ingress_dma = 33;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_packet_sent_to_oci = 34;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_packet_received_in_icr = 35;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_oci_write_command = 36;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_oci_read_command = 37;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.StatsCounterSample stats_counter_sample_issued_from_icr_data = 38;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon oci_descriptor_common_received_by_cmnde = 39;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_sent_by_cmnde = 40;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnDmaRequest cmn_dma_request_set0_lane0 = 41;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnDmaRequest cmn_dma_request_set0_lane1 = 42;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnDmaRequest cmn_dma_request_set1_lane0 = 43;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnDmaRequest cmn_dma_request_set1_lane1 = 44;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsExternalSyncFlagUpdate tcs_external_sync_flag_update_dma_done = 45;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsInternal tcs_internal_set_sync_flag = 46;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsInternal tcs_internal_add_sync_flag = 47;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsInternal tcs_internal_core_interrupt = 48;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsInternal tcs_internal_set_tracemark = 49;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsInternal tcs_internal_trace_instruction = 50;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsInternal tcs_internal_unsuccessful_sync_attempt = 51;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsInternal tcs_internal_successful_sync_attempt = 52;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsInternal tcs_internal_read_sync_flag = 53;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsInternal tcs_internal_scalar_fence_start = 54;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsInternal tcs_internal_scalar_fence_end = 55;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon oci_descriptor_common_issued_from_tcs = 56;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorStrideSrc oci_descriptor_stride_src_issued_from_tcs = 57;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorStrideDst oci_descriptor_stride_dst_issued_from_tcs = 58;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorStrideSteps oci_descriptor_stride_steps_issued_from_tcs = 59;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorAddressMisc oci_descriptor_address_misc_issued_from_tcs = 60;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_issued_from_tcs = 61;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_wr_completed_in_tcs = 62;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciCommon oci_common_rd_completed_in_tcs = 63;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.TcsPpmEntry tcs_ppm_entry_ppm_update_event = 64;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.StatsCounterSample stats_counter_sample_issued_from_tcs = 65;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScInstruction sc_instruction_core_interrupt = 66;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScInstruction sc_instruction_set_tracemark = 67;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScInstruction sc_instruction_trace_instruction = 68;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScInstruction sc_instruction_sfence_start = 69;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScInstruction sc_instruction_sfence_stop = 70;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScInstruction sc_instruction_sync_start = 71;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScInstruction sc_instruction_sync_stop = 72;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScInstruction sc_instruction_barrier_start = 73;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScInstruction sc_instruction_barrier_stop = 74;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScInstruction sc_instruction_sync_watch_start = 75;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScInstruction sc_instruction_sync_watch_stop = 76;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScTaskIssue sc_task_issue_from_scs = 77;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScTaskCommit sc_task_commit_on_sct = 78;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScStreamIssue sc_stream_issue_from_core = 79;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScStreamProgress sc_stream_progress_xbar = 80;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScStreamProgress sc_stream_progress_cmn = 81;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon oci_descriptor_common_issued_by_sc = 82;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorStrideSrc oci_descriptor_stride_src_issued_by_sc = 83;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorStrideDst oci_descriptor_stride_dst_issued_by_sc = 84;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorStrideSteps oci_descriptor_stride_steps_issued_by_sc = 85;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorAddressMisc oci_descriptor_address_misc_issued_from_sc = 86;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.StatsCounterSample stats_counter_sample_issued_from_scs = 87;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_received_by_sc = 88;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_sent_by_sc = 89;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScMessage sc_message_outbound_internal_message = 90;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ScMessage sc_message_inbound_internal_message = 91;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.StatsCounterSample stats_counter_sample_issued_from_sctd = 92;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.StatsCounterSample stats_counter_sample_issued_from_sctc = 93;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.MgrFwEvent mgr_fw_event = 94;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorCommon oci_descriptor_common_issued_from_mgr = 95;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorStrideSrc oci_descriptor_stride_src_issued_from_mgr = 96;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorStrideDst oci_descriptor_stride_dst_issued_from_mgr = 97;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorStrideSteps oci_descriptor_stride_steps_issued_from_mgr = 98;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciDescriptorAddressMisc oci_descriptor_address_misc_issued_from_mgr = 99;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_issued_from_mgr = 100;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.OciMessage oci_message_received_by_mgr = 101;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.SpiSampler spi_sampler_vdd_core_frame_exec = 102;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.SpiSampler spi_sampler_hbm_frame_exec = 103;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnurHbmc cmnur_hbmc_rd_req = 104;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnurHbmc cmnur_hbmc_rd_rsp = 105;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnurHbmc cmnur_hbmc_wr_req = 106;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnurHbmc cmnur_hbmc_wr_rsp = 107;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmndeCmnur cmnde_cmnur_src_req = 108;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmndeCmnur cmnde_cmnur_src_rsp = 109;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmndeCmnur cmnde_cmnur_dst_req = 110;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmndeCmnur cmnde_cmnur_dst_rsp = 111;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnurCmnucb cmnur_cmnucb_control_only_req = 112;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnurCmnucb cmnur_cmnucb_control_only_rsp = 113;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnurCmnucb cmnur_cmnucb_control_data_req = 114;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmnurCmnucb cmnur_cmnucb_control_data_rsp = 115;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.StatsCounterSample stats_counter_sample_issued_from_cmnur = 116;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.O2curL2p o2cur_l2p_wr_req_first = 117;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.O2curL2p o2cur_l2p_wr_rsp_last = 118;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.O2curL2p o2cur_l2p_rd_req = 119;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.O2curL2p o2cur_l2p_rd_rsp = 120;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmndeUr cmnde_ur_l2p_dma_req = 121;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.CmndeUr cmnde_ur_l2p_dma_rsp = 122;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleCycleSkipThermalEvent throttle_cycle_skip_thermal_event_cycle_skip_thermal = 123;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleCycleSkipExternalBrakeEvent throttle_cycle_skip_external_brake_event_cycle_skip_ext_brake = 124;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleCycleSkipExternalThrottleEvent throttle_cycle_skip_external_throttle_event_cycle_skip_ext_throttle = 125;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleCycleSkipElectricalBrakeEvent throttle_cycle_skip_electrical_brake_event_cycle_skip_ldidt_brake = 126;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleCycleSkipElectricalDroopEvent throttle_cycle_skip_electrical_droop_event_cycle_skip_ldidt_droop = 127;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleMaxValue throttle_max_value_cycle_skip_arbitration = 128;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleCycleSkipPpmBrakeEvent throttle_cycle_skip_ppm_brake_event_sustained_aggressive = 129;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleCycleSkipPpmBrakeEvent throttle_cycle_skip_ppm_brake_event_sustained_nominal = 130;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleCycleSkipPpmBrakeEvent throttle_cycle_skip_ppm_brake_event_didt_aggressive = 131;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleCycleSkipPpmBrakeEvent throttle_cycle_skip_ppm_brake_event_didt_nominal = 132;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleCycleSkipPpmBrakeEvent throttle_cycle_skip_ppm_brake_event_overshoot_aggressive = 133;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleCycleSkipPpmBrakeEvent throttle_cycle_skip_ppm_brake_event_overshoot_nominal = 134;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleLdidtVoltage throttle_ldidt_voltage_throttle_ldidt_running_mean_voltage = 135;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleMaxValue throttle_max_value_throttle_max_fast = 136;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleMaxValue throttle_max_value_throttle_max_slow = 137;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleMaximumTemperature throttle_maximum_temperature_throttle_maximum_temperature = 138;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleLdidtVoltage throttle_ldidt_voltage_throttle_max_voltage_overshoot = 139;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleLdidtVoltage throttle_ldidt_voltage_throttle_max_voltage_droop = 140;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleLdidtVoltage throttle_ldidt_voltage_throttle_max_voltage_overall = 141;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.ThrottleLdidtVoltage throttle_ldidt_voltage_throttle_min_voltage_overall = 142;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.FllLock fll_lock_fll_0_lock = 143;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.FllLock fll_lock_fll_1_lock = 144;
+    .asic_sw.driver.deepsea.gxc.gfc.profiler.FllSelect fll_select_fll_select = 145;
+  }
+  optional .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceHeader trace_header = 1;
+}
+message TraceEntries {
+  enum TracePointId {
+    OCI_DESCRIPTOR_COMMON_RECEIVED = 0;
+    HDE_HOST_REQUEST_WRITE = 1;
+    HDE_HOST_RESPONSE_WRITE = 2;
+    HDE_HOST_REQUEST_READ = 3;
+    HDE_HOST_RESPONSE_READ = 4;
+    OCI_COMMON_HDE_WRITE_REQUEST = 5;
+    OCI_COMMON_HDE_READ_REQUEST = 6;
+    OCI_MESSAGE_SENT_BY_HDE = 7;
+    OCI_GENERIC_DESC_ENQUEUED_AT_ENGINE = 20;
+    OCI_COMMON_READ_CMD_ISSUED_FROM_ENGINE = 21;
+    OCI_COMMON_WRITE_CMD_ISSUED_FROM_ENGINE = 22;
+    OCI_COMMON_MEM_READ_REQ_FROM_ENGINE = 23;
+    OCI_MESSAGE_MSG_ISSUED_FROM_ENGINE = 24;
+    OCI_COMMON_WRITE_CMD_ACCEPTED_AT_MN = 25;
+    OCI_COMMON_MEM_WRITE_REQ_ISSUED_FROM_ENGINE = 26;
+    OCI_COMMON_SRC_MEM_READ_REQ_FROM_ENGINE = 27;
+    OCI_DESCRIPTOR_COMMON_DESC_ENQUEUED_AT_DST_ENGINE = 28;
+    OCI_MESSAGE_SYNC_FLAG_UPDATE_FROM_DST_ENGINE = 29;
+    OCI_DESCRIPTOR_COMMON_DESC_ENQUEUED_AT_SRC_ENGINE = 30;
+    OCI_MESSAGE_SYNC_FLAG_UPDATE_FROM_SRC_ENGINE = 31;
+    ICI_PACKET_PACKET_RECEIVED_ON_LINK_INPUT = 40;
+    ICI_PACKET_PACKET_TRANSMITTED_ON_LINK_OUTPUT = 41;
+    ICI_PACKET_PACKET_QUEUED_FOR_LINK_TRANSMISSION = 42;
+    ICI_PACKET_CONTROL_PACKET_INJECTED_BY_ICR_DMA_BRIDGE = 43;
+    ICI_PACKET_DATA_PACKET_INJECTED_BY_ICR_DMA_BRIDGE = 44;
+    ICI_PACKET_CONTROL_PACKET_RECEIVED_BY_ICR_DMA_BRIDGE = 45;
+    ICI_PACKET_DATA_PACKET_RECEIVED_BY_ICR_DMA_BRIDGE = 46;
+    ICI_PACKET_CONTROL_PACKET_QUEUED_FOR_LOCAL_INGRESS = 47;
+    ICI_PACKET_DATA_PACKET_QUEUED_FOR_LOCAL_INGRESS = 48;
+    OCI_DESCRIPTOR_COMMON_ENQUEUED_IN_ICR_EGRESS_DMA = 49;
+    OCI_MESSAGE_GENERATED_IN_ICR_EGRESS_DMA = 50;
+    OCI_MESSAGE_GENERATED_IN_ICR_INGRESS_DMA = 51;
+    OCI_MESSAGE_PACKET_SENT_TO_OCI = 52;
+    OCI_MESSAGE_PACKET_RECEIVED_IN_ICR = 53;
+    OCI_COMMON_OCI_WRITE_COMMAND = 54;
+    OCI_COMMON_OCI_READ_COMMAND = 55;
+    STATS_COUNTER_SAMPLE_ISSUED_FROM_ICR_DATA = 56;
+    OCI_DESCRIPTOR_COMMON_RECEIVED_BY_CMNDE = 70;
+    OCI_MESSAGE_SENT_BY_CMNDE = 71;
+    CMN_DMA_REQUEST_SET0_LANE0 = 76;
+    CMN_DMA_REQUEST_SET0_LANE1 = 77;
+    CMN_DMA_REQUEST_SET1_LANE0 = 78;
+    CMN_DMA_REQUEST_SET1_LANE1 = 79;
+    TCS_EXTERNAL_SYNC_FLAG_UPDATE_DMA_DONE = 80;
+    TCS_INTERNAL_SET_SYNC_FLAG = 81;
+    TCS_INTERNAL_ADD_SYNC_FLAG = 82;
+    TCS_INTERNAL_CORE_INTERRUPT = 83;
+    TCS_INTERNAL_SET_TRACEMARK = 84;
+    TCS_INTERNAL_TRACE_INSTRUCTION = 85;
+    TCS_INTERNAL_UNSUCCESSFUL_SYNC_ATTEMPT = 86;
+    TCS_INTERNAL_SUCCESSFUL_SYNC_ATTEMPT = 87;
+    TCS_INTERNAL_READ_SYNC_FLAG = 88;
+    TCS_INTERNAL_SCALAR_FENCE_START = 89;
+    TCS_INTERNAL_SCALAR_FENCE_END = 90;
+    OCI_DESCRIPTOR_COMMON_ISSUED_FROM_TCS = 91;
+    OCI_DESCRIPTOR_STRIDE_SRC_ISSUED_FROM_TCS = 92;
+    OCI_DESCRIPTOR_STRIDE_DST_ISSUED_FROM_TCS = 93;
+    OCI_DESCRIPTOR_STRIDE_STEPS_ISSUED_FROM_TCS = 94;
+    OCI_DESCRIPTOR_ADDRESS_MISC_ISSUED_FROM_TCS = 95;
+    OCI_MESSAGE_ISSUED_FROM_TCS = 96;
+    OCI_COMMON_WR_COMPLETED_IN_TCS = 97;
+    OCI_COMMON_RD_COMPLETED_IN_TCS = 98;
+    TCS_PPM_ENTRY_PPM_UPDATE_EVENT = 99;
+    STATS_COUNTER_SAMPLE_ISSUED_FROM_TCS = 100;
+    SC_INSTRUCTION_CORE_INTERRUPT = 108;
+    SC_INSTRUCTION_SET_TRACEMARK = 109;
+    SC_INSTRUCTION_TRACE_INSTRUCTION = 110;
+    SC_INSTRUCTION_SFENCE_START = 111;
+    SC_INSTRUCTION_SFENCE_STOP = 112;
+    SC_INSTRUCTION_SYNC_START = 113;
+    SC_INSTRUCTION_SYNC_STOP = 114;
+    SC_INSTRUCTION_BARRIER_START = 115;
+    SC_INSTRUCTION_BARRIER_STOP = 116;
+    SC_INSTRUCTION_SYNC_WATCH_START = 117;
+    SC_INSTRUCTION_SYNC_WATCH_STOP = 118;
+    SC_TASK_ISSUE_FROM_SCS = 119;
+    SC_TASK_COMMIT_ON_SCT = 120;
+    SC_STREAM_ISSUE_FROM_CORE = 121;
+    SC_STREAM_PROGRESS_XBAR = 122;
+    SC_STREAM_PROGRESS_CMN = 123;
+    OCI_DESCRIPTOR_COMMON_ISSUED_BY_SC = 124;
+    OCI_DESCRIPTOR_STRIDE_SRC_ISSUED_BY_SC = 125;
+    OCI_DESCRIPTOR_STRIDE_DST_ISSUED_BY_SC = 126;
+    OCI_DESCRIPTOR_STRIDE_STEPS_ISSUED_BY_SC = 127;
+    OCI_DESCRIPTOR_ADDRESS_MISC_ISSUED_FROM_SC = 128;
+    STATS_COUNTER_SAMPLE_ISSUED_FROM_SCS = 129;
+    OCI_MESSAGE_RECEIVED_BY_SC = 130;
+    OCI_MESSAGE_SENT_BY_SC = 131;
+    SC_MESSAGE_OUTBOUND_INTERNAL_MESSAGE = 132;
+    SC_MESSAGE_INBOUND_INTERNAL_MESSAGE = 133;
+    STATS_COUNTER_SAMPLE_ISSUED_FROM_SCTD = 134;
+    STATS_COUNTER_SAMPLE_ISSUED_FROM_SCTC = 135;
+    MGR_FW_EVENT = 160;
+    OCI_DESCRIPTOR_COMMON_ISSUED_FROM_MGR = 161;
+    OCI_DESCRIPTOR_STRIDE_SRC_ISSUED_FROM_MGR = 162;
+    OCI_DESCRIPTOR_STRIDE_DST_ISSUED_FROM_MGR = 163;
+    OCI_DESCRIPTOR_STRIDE_STEPS_ISSUED_FROM_MGR = 164;
+    OCI_DESCRIPTOR_ADDRESS_MISC_ISSUED_FROM_MGR = 165;
+    OCI_MESSAGE_ISSUED_FROM_MGR = 166;
+    OCI_MESSAGE_RECEIVED_BY_MGR = 167;
+    SPI_SAMPLER_VDD_CORE_FRAME_EXEC = 168;
+    SPI_SAMPLER_HBM_FRAME_EXEC = 169;
+    CMNUR_HBMC_RD_REQ = 170;
+    CMNUR_HBMC_RD_RSP = 171;
+    CMNUR_HBMC_WR_REQ = 172;
+    CMNUR_HBMC_WR_RSP = 173;
+    CMNDE_CMNUR_SRC_REQ = 174;
+    CMNDE_CMNUR_SRC_RSP = 175;
+    CMNDE_CMNUR_DST_REQ = 176;
+    CMNDE_CMNUR_DST_RSP = 177;
+    CMNUR_CMNUCB_CONTROL_ONLY_REQ = 178;
+    CMNUR_CMNUCB_CONTROL_ONLY_RSP = 179;
+    CMNUR_CMNUCB_CONTROL_DATA_REQ = 180;
+    CMNUR_CMNUCB_CONTROL_DATA_RSP = 181;
+    STATS_COUNTER_SAMPLE_ISSUED_FROM_CMNUR = 182;
+    O2CUR_L2P_WR_REQ_FIRST = 183;
+    O2CUR_L2P_WR_RSP_LAST = 184;
+    O2CUR_L2P_RD_REQ = 185;
+    O2CUR_L2P_RD_RSP = 186;
+    CMNDE_UR_L2P_DMA_REQ = 187;
+    CMNDE_UR_L2P_DMA_RSP = 188;
+    THROTTLE_CYCLE_SKIP_THERMAL_EVENT_CYCLE_SKIP_THERMAL = 200;
+    THROTTLE_CYCLE_SKIP_EXTERNAL_BRAKE_EVENT_CYCLE_SKIP_EXT_BRAKE = 201;
+    THROTTLE_CYCLE_SKIP_EXTERNAL_THROTTLE_EVENT_CYCLE_SKIP_EXT_THROTTLE = 202;
+    THROTTLE_CYCLE_SKIP_ELECTRICAL_BRAKE_EVENT_CYCLE_SKIP_LDIDT_BRAKE = 203;
+    THROTTLE_CYCLE_SKIP_ELECTRICAL_DROOP_EVENT_CYCLE_SKIP_LDIDT_DROOP = 204;
+    THROTTLE_MAX_VALUE_CYCLE_SKIP_ARBITRATION = 205;
+    THROTTLE_CYCLE_SKIP_PPM_BRAKE_EVENT_SUSTAINED_AGGRESSIVE = 206;
+    THROTTLE_CYCLE_SKIP_PPM_BRAKE_EVENT_SUSTAINED_NOMINAL = 207;
+    THROTTLE_CYCLE_SKIP_PPM_BRAKE_EVENT_DIDT_AGGRESSIVE = 208;
+    THROTTLE_CYCLE_SKIP_PPM_BRAKE_EVENT_DIDT_NOMINAL = 209;
+    THROTTLE_CYCLE_SKIP_PPM_BRAKE_EVENT_OVERSHOOT_AGGRESSIVE = 210;
+    THROTTLE_CYCLE_SKIP_PPM_BRAKE_EVENT_OVERSHOOT_NOMINAL = 211;
+    THROTTLE_LDIDT_VOLTAGE_THROTTLE_LDIDT_RUNNING_MEAN_VOLTAGE = 212;
+    THROTTLE_MAX_VALUE_THROTTLE_MAX_FAST = 213;
+    THROTTLE_MAX_VALUE_THROTTLE_MAX_SLOW = 214;
+    THROTTLE_MAXIMUM_TEMPERATURE_THROTTLE_MAXIMUM_TEMPERATURE = 215;
+    THROTTLE_LDIDT_VOLTAGE_THROTTLE_MAX_VOLTAGE_OVERSHOOT = 216;
+    THROTTLE_LDIDT_VOLTAGE_THROTTLE_MAX_VOLTAGE_DROOP = 217;
+    THROTTLE_LDIDT_VOLTAGE_THROTTLE_MAX_VOLTAGE_OVERALL = 218;
+    THROTTLE_LDIDT_VOLTAGE_THROTTLE_MIN_VOLTAGE_OVERALL = 219;
+    FLL_LOCK_FLL_0_LOCK = 220;
+    FLL_LOCK_FLL_1_LOCK = 221;
+    FLL_SELECT_FLL_SELECT = 222;
+  }
+  enum FwTracePointId {
+    THROTTLE_EVENT = 0;
+    POWER_LEVEL_EVENT = 1;
+    THERMAL_EVENT = 2;
+    PCIE_UTILIZATION_EVENT = 3;
+    DVFS_EVENT = 4;
+  }
+  repeated .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceEntry entry = 1;
+}

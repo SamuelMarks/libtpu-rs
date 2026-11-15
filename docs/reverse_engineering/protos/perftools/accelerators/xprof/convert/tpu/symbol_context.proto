@@ -1,0 +1,18 @@
+syntax = "proto2";
+package xprof.tpu;
+message SymbolContextProto {
+  enum CoreType {
+    UNKNOWN = 0;
+    TENSOR_CORE = 1;
+    BARNA_CORE = 2;
+    SPARSE_CORE = 3;
+  }
+  optional bool is_barna_core = 1;
+  optional uint32 overlay_id = 2;
+  optional uint32 overlay_address = 3;
+  optional uint32 program_counter = 4;
+  optional uint32 data_field = 5;
+  optional uint32 sync_flag_number = 6;
+  optional uint64 program_id = 7;
+  optional .xprof.tpu.SymbolContextProto.CoreType core_type = 8 [default = TENSOR_CORE];
+}

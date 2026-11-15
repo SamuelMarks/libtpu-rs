@@ -1,0 +1,3 @@
+syntax = "proto3";
+package tensorflow.dummy;
+import public "third_party/tensorflow/compiler/xla/tsl/protobuf/status.proto";

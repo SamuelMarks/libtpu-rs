@@ -1,0 +1,10 @@
+syntax = "proto2";
+package google.api;
+import "google/api/visibility.proto";
+import "n2a/p4r2d3/proto/descriptor.proto";
+message ApiInclusion {
+  repeated string scopes = 1;
+}
+extend .proto2.FileOptions {
+  optional .google.api.ApiInclusion inclusion = 525000017;
+}

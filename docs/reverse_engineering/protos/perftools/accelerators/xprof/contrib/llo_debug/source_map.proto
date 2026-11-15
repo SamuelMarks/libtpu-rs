@@ -1,0 +1,20 @@
+syntax = "proto3";
+package xprof.tpu.llo_debug;
+message FrameProto {
+  uint32 path = 1;
+  uint32 line_start = 2;
+  uint32 line_end = 3;
+  uint32 col_start = 4;
+  uint32 col_end = 5;
+  uint32 function_name = 6;
+}
+message SourceInfoProto {
+  repeated .xprof.tpu.llo_debug.FrameProto frames = 1;
+  uint32 primitive = 2;
+  repeated uint32 scope_stack = 3;
+  repeated int32 ordinals = 4;
+}
+message SourceMapProto {
+  repeated .xprof.tpu.llo_debug.SourceInfoProto locations = 1;
+  repeated string strings = 2;
+}

@@ -1,12 +1,36 @@
 //! PJRT ABI Version, Shardings, and TPU Executable extension entrypoints.
 
 use super::args::*;
-use super::{alloc_extension_bytes, dispatch_typed_extension_args, extension_state};
+use super::dispatch_typed_extension_args;
 use crate::pjrt_helpers::box_serialized_artifact;
 use crate::pjrt_types::{PJRT_AbiVersion_Holder, PJRT_Error};
 use libtpu_core::config::global_init_config;
 use libtpu_core::error::LibTpuError;
 use std::ptr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Static wire-encoded replicated `xla.OpSharding` (`type = REPLICATED`) for null-executable ABI probes.
+static DEFAULT_OP_SHARDING_WIRE: [u8; 2] = [0x08, 0x00];
+
+/// Static pointer wrapper for [`DEFAULT_OP_SHARDING_WIRE`].
+#[repr(transparent)]
+struct StaticDefaultShardingPtrs([*const std::os::raw::c_char; 1]);
+
+// SAFETY: Points to immutable `'static` bytes in `DEFAULT_OP_SHARDING_WIRE`.
+unsafe impl Sync for StaticDefaultShardingPtrs {}
+
+/// Static default sharding pointer array for null-handle probes.
+static DEFAULT_SHARDING_PTRS: StaticDefaultShardingPtrs =
+    StaticDefaultShardingPtrs([DEFAULT_OP_SHARDING_WIRE.as_ptr().cast()]);
+
+/// Static default sharding byte-length array for null-handle probes.
+static DEFAULT_SHARDING_SIZES: [usize; 1] = [DEFAULT_OP_SHARDING_WIRE.len()];
+
+/// Static wire-encoded default `TpuCompilationEnvironmentProto` bytes for null-handle probes.
+static DEFAULT_TPU_COMP_ENV_WIRE: [u8; 2] = [0x08, 0x01];
+
+/// Atomic counter tracking standalone compilation environment override calls when no executable handle is supplied.
+static STANDALONE_ENV_OVERRIDES: AtomicUsize = AtomicUsize::new(0);
 
 /// Platform ID constant for TPU (`u32::from_be_bytes(*b"TPU\0")`).
 const TPU_PLATFORM_ID: u64 = u32::from_be_bytes(*b"TPU\0") as u64;
@@ -177,12 +201,12 @@ pub unsafe extern "C" fn PJRT_AbiVersion_RuntimeCompatibleWithExecutable(
 ///
 /// `args` must be a valid [`PJRT_AbiVersion_ToProto_Args`].
 unsafe fn handle_abi_version_runtime_to_proto(args: &mut PJRT_AbiVersion_ToProto_Args) {
+    use libtpu_core::proto::ProtoSchemaMessage as _;
     let encoded = libtpu_core::proto::RuntimeAbiVersionProto {
-        platform_id: TPU_PLATFORM_ID,
-        version_string: String::from("0.116"),
-        pjrt_api_minor: crate::pjrt_types::PJRT_API_MINOR,
+        platform: TPU_PLATFORM_ID,
+        version: Vec::from(&b"0.116"[..]),
     }
-    .encode();
+    .encode_proto();
     let (ptr, len, holder) = box_serialized_artifact(encoded);
     args.serialized_proto = ptr;
     args.serialized_proto_size = len;
@@ -278,12 +302,12 @@ pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableDestroy(
 ///
 /// `args` must be a valid [`PJRT_AbiVersion_ToProto_Args`].
 unsafe fn handle_abi_version_executable_to_proto(args: &mut PJRT_AbiVersion_ToProto_Args) {
+    use libtpu_core::proto::ProtoSchemaMessage as _;
     let encoded = libtpu_core::proto::ExecutableAbiVersionProto {
-        platform_id: TPU_PLATFORM_ID,
-        compiler_version: String::from("0.0.52"),
-        target_generation: global_init_config().generation as i32,
+        platform: TPU_PLATFORM_ID,
+        version: format!("0.0.52-{}", global_init_config().generation).into_bytes(),
     }
-    .encode();
+    .encode_proto();
     let (ptr, len, holder) = box_serialized_artifact(encoded);
     args.serialized_proto = ptr;
     args.serialized_proto_size = len;
@@ -408,39 +432,6 @@ pub unsafe extern "C" fn PJRT_AbiVersion_ExecutableFromProto(
     }
 }
 
-/// Populates a [`PJRT_Shardings_PJRT_Executable_Shardings_Args`] structure from a slice of
-/// [`libtpu_core::proto::OpShardingProto`] descriptors.
-///
-/// # Arguments
-///
-/// * `args` - Validated [`PJRT_Shardings_PJRT_Executable_Shardings_Args`] structure.
-/// * `shardings` - Slice of [`libtpu_core::proto::OpShardingProto`] instances.
-fn populate_executable_sharding_args(
-    args: &mut PJRT_Shardings_PJRT_Executable_Shardings_Args,
-    shardings: &[libtpu_core::proto::OpShardingProto],
-) {
-    let mut ptrs = Vec::with_capacity(shardings.len());
-    let mut sizes = Vec::with_capacity(shardings.len());
-    for sh in shardings {
-        let encoded = sh.encode();
-        let (byte_ptr, byte_len) = alloc_extension_bytes(encoded);
-        ptrs.push(byte_ptr as usize);
-        sizes.push(byte_len);
-    }
-    let count = ptrs.len();
-    let ptr_vec: Box<[usize]> = ptrs.into_boxed_slice();
-    let size_vec: Box<[usize]> = sizes.into_boxed_slice();
-    args.shardings = ptr_vec.as_ptr().cast::<*const std::os::raw::c_char>();
-    args.sharding_sizes = size_vec.as_ptr();
-    let mut st = extension_state().lock();
-    st.sharding_ptr_arrays.clear();
-    st.sharding_size_arrays.clear();
-    st.sharding_ptr_arrays.push(ptr_vec);
-    st.sharding_size_arrays.push(size_vec);
-    drop(st);
-    args.num_items = count;
-}
-
 /// Strongly-typed handler for [`PJRT_Shardings_ParameterShardings`].
 ///
 /// # Arguments
@@ -453,21 +444,17 @@ fn populate_executable_sharding_args(
 unsafe fn handle_executable_parameter_shardings(
     args: &mut PJRT_Shardings_PJRT_Executable_Shardings_Args,
 ) {
-    let default_shardings = [libtpu_core::proto::OpShardingProto::default()];
-    let exec_opt = if (args.executable as usize) > 0x10000 {
+    if (args.executable as usize) > 0x10000 {
         // SAFETY: `args.executable` is a valid `PJRT_Executable*`.
-        unsafe {
-            args.executable
-                .cast::<crate::pjrt_types::PJRT_Executable>()
-                .as_ref()
-        }
+        let exec = unsafe { &*args.executable.cast::<crate::pjrt_types::PJRT_Executable>() };
+        args.shardings = exec.param_sharding_ptrs.as_ptr();
+        args.sharding_sizes = exec.param_sharding_sizes.as_ptr();
+        args.num_items = exec.param_sharding_ptrs.len();
     } else {
-        None
-    };
-    let slice = exec_opt.map_or(&default_shardings[..], |e| {
-        e.inner.program.parameter_shardings.as_slice()
-    });
-    populate_executable_sharding_args(args, slice);
+        args.shardings = DEFAULT_SHARDING_PTRS.0.as_ptr();
+        args.sharding_sizes = DEFAULT_SHARDING_SIZES.as_ptr();
+        args.num_items = 1;
+    }
 }
 
 /// Strongly-typed handler for [`PJRT_Shardings_OutputShardings`].
@@ -482,21 +469,17 @@ unsafe fn handle_executable_parameter_shardings(
 unsafe fn handle_executable_output_shardings(
     args: &mut PJRT_Shardings_PJRT_Executable_Shardings_Args,
 ) {
-    let default_shardings = [libtpu_core::proto::OpShardingProto::default()];
-    let exec_opt = if (args.executable as usize) > 0x10000 {
+    if (args.executable as usize) > 0x10000 {
         // SAFETY: `args.executable` is a valid `PJRT_Executable*`.
-        unsafe {
-            args.executable
-                .cast::<crate::pjrt_types::PJRT_Executable>()
-                .as_ref()
-        }
+        let exec = unsafe { &*args.executable.cast::<crate::pjrt_types::PJRT_Executable>() };
+        args.shardings = exec.output_sharding_ptrs.as_ptr();
+        args.sharding_sizes = exec.output_sharding_sizes.as_ptr();
+        args.num_items = exec.output_sharding_ptrs.len();
     } else {
-        None
-    };
-    let slice = exec_opt.map_or(&default_shardings[..], |e| {
-        e.inner.program.output_shardings.as_slice()
-    });
-    populate_executable_sharding_args(args, slice);
+        args.shardings = DEFAULT_SHARDING_PTRS.0.as_ptr();
+        args.sharding_sizes = DEFAULT_SHARDING_SIZES.as_ptr();
+        args.num_items = 1;
+    }
 }
 
 /// Queries parameter shardings (`xla.OpSharding` proto) of an executable (`PJRT_Shardings_ParameterShardings`).
@@ -555,21 +538,10 @@ pub unsafe extern "C" fn PJRT_Shardings_OutputShardings(
 unsafe fn handle_tpu_executable_target_arguments(
     args: &mut PJRT_TpuExecutable_TargetArguments_Args,
 ) {
+    use libtpu_core::proto::ProtoSchemaMessage as _;
     let tpu_gen = global_init_config().generation;
-    let target_bytes = libtpu_core::proto::TargetArgumentsProto {
-        tpu_version: tpu_gen as i32,
-        chip_variant: tpu_gen.to_string(),
-        clock_rate_mhz: 1750,
-        hbm_capacity_bytes: i64::try_from(tpu_gen.hbm_capacity_bytes().0).unwrap_or(0),
-        vmem_capacity_bytes: i64::try_from(tpu_gen.vmem_capacity_bytes().0).unwrap_or(0),
-        smem_capacity_bytes: 2 * 1024 * 1024,
-        cmem_capacity_bytes: 128 * 1024 * 1024,
-        tensor_cores_per_chip: i32::try_from(tpu_gen.tensor_cores_per_chip()).unwrap_or(1),
-        sparse_cores_per_chip: i32::try_from(tpu_gen.sparse_cores_per_chip()).unwrap_or(0),
-        mxu_dimension: i32::try_from(tpu_gen.mxu_dimension()).unwrap_or(128),
-        ici_bandwidth_bps: 4_800_000_000_000,
-    }
-    .encode();
+    let target_bytes =
+        libtpu_core::proto::TargetArgumentsProto::from_generation(tpu_gen).encode_proto();
     let (ptr, len, holder) = box_serialized_artifact(target_bytes);
     args.serialized_bytes = ptr as usize;
     args.serialized_bytes_size = len;
@@ -610,6 +582,7 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_GetTargetArguments(
 unsafe fn handle_tpu_executable_hlo_module_with_config(
     args: &mut PJRT_TpuExecutable_HloModule_Args,
 ) {
+    use libtpu_core::proto::ProtoSchemaMessage as _;
     let exec_opt = if (args.executable as usize) > 0x10000 {
         // SAFETY: `args.executable` is a valid `PJRT_Executable*`.
         unsafe {
@@ -642,7 +615,7 @@ unsafe fn handle_tpu_executable_hlo_module_with_config(
         hlo_module: Some(hlo_mod),
         config: Some(cfg_proto),
     }
-    .encode();
+    .encode_proto();
     let (ptr, len, holder) = box_serialized_artifact(encoded);
     args.serialized_bytes = ptr as usize;
     args.serialized_bytes_size = len;
@@ -681,8 +654,7 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_GetHloModuleWithConfig(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Handle_Args`].
 unsafe fn handle_tpu_executable_reserved(args: &mut PJRT_Megascale_Handle_Args) {
-    let mut st = extension_state().lock();
-    st.tpu_compilation_env_overrides = st.tpu_compilation_env_overrides.saturating_add(1);
+    STANDALONE_ENV_OVERRIDES.fetch_add(1, Ordering::Relaxed);
     args.handle = ptr::null_mut();
 }
 
@@ -820,12 +792,16 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_RunHloCostAnalysis(
 ///
 /// `args` must be a valid [`PJRT_Megascale_Query_Args`].
 unsafe fn handle_tpu_executable_set_env(args: &mut PJRT_Megascale_Query_Args) {
-    let mut st = extension_state().lock();
-    st.tpu_compilation_env_overrides = st.tpu_compilation_env_overrides.saturating_add(1);
-    let overrides = st.tpu_compilation_env_overrides;
-    st.tpu_compilation_env
-        .set_field_from_str("xla_tpu_enable_flash_attention", "true");
-    args.out_value = overrides;
+    if args.handle > 0x10000 {
+        // SAFETY: `args.handle` is a valid `PJRT_Executable*`.
+        let exec = unsafe { &*(args.handle as *const crate::pjrt_types::PJRT_Executable) };
+        let mut arena = exec.ext_arena.lock();
+        arena.overrides_count = arena.overrides_count.saturating_add(1);
+        arena.tpu_compilation_env.xla_tpu_enable_flash_attention = Some(true);
+        args.out_value = arena.overrides_count;
+    } else {
+        args.out_value = STANDALONE_ENV_OVERRIDES.fetch_add(1, Ordering::Relaxed) + 1;
+    }
 }
 
 /// Sets `TpuCompilationEnvironmentProto` field overrides (`PJRT_TpuExecutable_SetTpuCompilationEnv`).
@@ -860,10 +836,21 @@ pub unsafe extern "C" fn PJRT_TpuExecutable_SetTpuCompilationEnv(
 ///
 /// `args` must be a valid [`PJRT_TpuExecutable_Serialize_Args`].
 unsafe fn handle_tpu_executable_get_env_field(args: &mut PJRT_TpuExecutable_Serialize_Args) {
-    let encoded = extension_state().lock().tpu_compilation_env.encode();
-    let (ptr, len) = alloc_extension_bytes(encoded);
-    args.serialized_bytes = ptr as usize;
-    args.serialized_bytes_size = len;
+    use libtpu_core::proto::ProtoSchemaMessage as _;
+    if (args.executable as usize) > 0x10000 {
+        // SAFETY: `args.executable` is a valid `PJRT_Executable*`.
+        let exec = unsafe { &*args.executable.cast::<crate::pjrt_types::PJRT_Executable>() };
+        let mut arena = exec.ext_arena.lock();
+        let boxed = arena.tpu_compilation_env.encode_proto().into_boxed_slice();
+        let ptr = boxed.as_ptr() as usize;
+        let len = boxed.len();
+        arena.owned_buffers.push(boxed);
+        args.serialized_bytes = ptr;
+        args.serialized_bytes_size = len;
+    } else {
+        args.serialized_bytes = DEFAULT_TPU_COMP_ENV_WIRE.as_ptr() as usize;
+        args.serialized_bytes_size = DEFAULT_TPU_COMP_ENV_WIRE.len();
+    }
 }
 
 /// Queries a `TpuCompilationEnvironmentProto` field as string (`PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString`).

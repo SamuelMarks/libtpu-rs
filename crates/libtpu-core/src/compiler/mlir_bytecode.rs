@@ -1,4 +1,29 @@
-//! MLIR Bytecode (`ML\xefR`) container decoder, encoder, and `PrefixVarInt` codecs.
+//! MLIR Bytecode (`ML\xefR`) container decoder, encoder, `PrefixVarInt` codecs, and dialect bitstreams.
+
+/// Upstream MLIR `builtin` dialect custom bytecode type (`0..=20`) and attribute (`0..=23`) codecs.
+pub mod builtin;
+/// `OpenXLA` Shardy (`sdy`) and JAX Mosaic (`tpu`) custom dialect bytecode codecs.
+pub mod dialects;
+/// Upstream LLVM MLIR v5/v6 (`MLIR19`+) bitstream disassembler into canonical `StableHLO` MLIR.
+pub mod llvm_v6;
+/// Spec-compliant `DialectBytecodeReader`, `DialectBytecodeWriter`, section IDs, and `0xCB` alignment padding.
+pub mod stream;
+/// Complete `OpenXLA` `vhlo` (`v0.9.0`–`v1.11.0+`) 41-type, 20-attribute, and 140-op bytecode codecs & upgrade/downgrade passes.
+pub mod vhlo;
+
+pub use builtin::{BuiltinAttrCode, BuiltinCustomAttr, BuiltinCustomType, BuiltinTypeCode};
+pub use dialects::{SdyAttrCode, SdyCustomAttr, TpuMosaicBytecodeCode, TpuMosaicCustomEntry};
+pub use llvm_v6::decode_llvm_mlir_v6_to_text;
+pub use stream::{
+    DialectBytecodeReader, DialectBytecodeWriter, MLIR_ALIGNMENT_BYTE, MLIR_MAX_BYTECODE_VERSION,
+    MLIR_MIN_BYTECODE_VERSION, MlirSectionId, OpEncodingMask,
+};
+pub use vhlo::{
+    VHLO_OP_SPECS, VhloAttrCode, VhloCustomAttr, VhloCustomType, VhloOpSpec, VhloTypeCode,
+    VhloVersion, deserialize_portable_vhlo_artifact, downgrade_stablehlo_to_vhlo,
+    lookup_vhlo_op_by_name, select_vhlo_op_for_stablehlo, serialize_portable_vhlo_artifact,
+    upgrade_vhlo_to_stablehlo,
+};
 
 use crate::error::{LibTpuError, LibTpuResult};
 
@@ -121,11 +146,8 @@ pub struct MlirDialectDescriptor {
     pub registered_ops: Vec<String>,
 }
 
-/// Magic prefix byte identifying a custom binary-encoded `kAttrType` entry (`0xFE`).
-pub const BINARY_CUSTOM_ATTR_TYPE_MAGIC: u8 = 0xFE;
-
 /// Strongly-typed custom binary encoding for Section `2` (`kAttrType`) across `builtin`,
-/// `vhlo` (`v1.0.0`–`v1.11.0`), `stablehlo`, `sdy` (Shardy), and `tpu` (Mosaic) dialects.
+/// `vhlo` (`v0.9.0`–`v1.11.0+`), `stablehlo`, `sdy` (Shardy), and `tpu` (Mosaic) dialects.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinaryAttrTypeEntry {
     /// `builtin::IntegerType` or `vhlo::IntegerV1Type` (`tag = 1`).
@@ -317,27 +339,23 @@ impl BinaryAttrTypeEntry {
     }
 
     /// Serializes this [`BinaryAttrTypeEntry`] into a standard upstream MLIR/VHLO `PrefixVarInt`
-    /// `kAttrType` payload **without** the custom [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`] (`0xFE`) prefix.
+    /// `kAttrType` payload.
     #[must_use]
     pub fn encode_standard_upstream(&self) -> Vec<u8> {
-        let with_prefix = self.encode_binary();
-        with_prefix
-            .strip_prefix(&[BINARY_CUSTOM_ATTR_TYPE_MAGIC])
-            .unwrap_or(&with_prefix)
-            .to_vec()
+        self.encode_binary()
     }
 
-    /// Alias for [`Self::encode_standard_upstream`] encoding this [`BinaryAttrTypeEntry`] without `0xFE`.
+    /// Alias for [`Self::encode_standard_upstream`] encoding this [`BinaryAttrTypeEntry`] as an upstream `kAttrType` entry.
     #[must_use]
     pub fn encode_upstream_unprefixed(&self) -> Vec<u8> {
-        self.encode_standard_upstream()
+        self.encode_binary()
     }
 
-    /// Decodes an unprefixed standard upstream [`BinaryAttrTypeEntry`] from `bytes`.
+    /// Decodes a standard upstream [`BinaryAttrTypeEntry`] from `bytes`.
     ///
     /// # Arguments
     ///
-    /// * `bytes` - Raw byte slice of a single `kAttrType` entry without `0xFE` prefix.
+    /// * `bytes` - Raw byte slice of a single `kAttrType` entry.
     ///
     /// # Errors
     ///
@@ -346,12 +364,11 @@ impl BinaryAttrTypeEntry {
         Self::decode_binary(bytes)
     }
 
-    /// Serializes this [`BinaryAttrTypeEntry`] into a binary custom-encoding byte payload
-    /// prefixed with [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`] (`0xFE`).
+    /// Serializes this [`BinaryAttrTypeEntry`] into an unprefixed dialect `PrefixVarInt` `kAttrType` payload.
     #[must_use]
     #[allow(clippy::too_many_lines, clippy::cast_sign_loss)]
     pub fn encode_binary(&self) -> Vec<u8> {
-        let mut out = vec![BINARY_CUSTOM_ATTR_TYPE_MAGIC];
+        let mut out = Vec::new();
         match self {
             Self::IntegerType { width, signedness } => {
                 out.extend_from_slice(&encode_mlir_prefix_varint(1));
@@ -680,8 +697,8 @@ impl BinaryAttrTypeEntry {
         out
     }
 
-    /// Decodes a binary custom-encoded `kAttrType` entry starting with [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`] (`0xFE`)
-    /// or an unprefixed standard upstream dialect `PrefixVarInt` tag (`1..=19`).
+    /// Decodes a binary custom-encoded `kAttrType` entry starting with a standard upstream dialect
+    /// `PrefixVarInt` tag (`1..=30`).
     ///
     /// # Arguments
     ///
@@ -700,13 +717,11 @@ impl BinaryAttrTypeEntry {
                 reason: "Empty binary kAttrType entry",
             });
         }
-        let mut cursor = bytes
-            .strip_prefix(&[BINARY_CUSTOM_ATTR_TYPE_MAGIC])
-            .unwrap_or(bytes);
+        let mut cursor = bytes;
         let tag = decode_mlir_prefix_varint(&mut cursor).map_err(|_| {
             LibTpuError::MlirBytecodeDecodeError {
                 section_id: 2,
-                offset: 1,
+                offset: 0,
                 reason: "Truncated tag varint in binary kAttrType entry",
             }
         })?;
@@ -1672,14 +1687,14 @@ impl MlirBytecodeEncoder {
         ir_bytes
     }
 
-    /// Serializes this module into a valid `ML\xefR` binary bytecode container, optionally prefixing
-    /// Section `2` (`kAttrType`) binary entries with [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`] (`0xFE`).
+    /// Serializes this module into a valid `ML\xefR` binary bytecode container using standard
+    /// unprefixed Section `2` (`kAttrType`) dialect tags and Section `3` (`kAttrTypeOffset`) lengths.
     ///
     /// # Arguments
     ///
-    /// * `use_magic_prefix` - When `true`, prefixes binary entries with `0xFE`; when `false`, emits unprefixed upstream entries.
+    /// * `_legacy_flag` - Retained flag parameter; always emits standard unprefixed dialect entries.
     #[must_use]
-    pub fn encode_with_attr_prefix(&self, use_magic_prefix: bool) -> Vec<u8> {
+    pub fn encode_with_attr_prefix(&self, _legacy_flag: bool) -> Vec<u8> {
         let mut str_bytes = Vec::new();
         for s in &self.strings {
             str_bytes.extend_from_slice(s.as_bytes());
@@ -1700,11 +1715,7 @@ impl MlirBytecodeEncoder {
             }
         } else {
             for bin_entry in &self.binary_attr_types {
-                let encoded = if use_magic_prefix {
-                    bin_entry.encode_binary()
-                } else {
-                    bin_entry.encode_upstream_unprefixed()
-                };
+                let encoded = bin_entry.encode_binary();
                 attr_offsets.push(encoded.len() as u64);
                 attr_bytes.extend_from_slice(&encoded);
             }
@@ -1767,7 +1778,7 @@ impl MlirBytecodeEncoder {
 
     /// Serializes this module into a standard upstream `ML\xefR` binary bytecode container
     /// where Section `2` (`kAttrType`) uses unprefixed `PrefixVarInt` dialect type/attribute codes
-    /// (without [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`]) and exact Section `3` (`kAttrTypeOffset`) lengths.
+    /// and exact Section `3` (`kAttrTypeOffset`) lengths.
     #[must_use]
     pub fn encode_standard_upstream_to_bytes(&self) -> Vec<u8> {
         self.encode_with_attr_prefix(false)
@@ -1973,17 +1984,30 @@ pub struct MlirBytecodeHeader {
 }
 
 impl MlirBytecodeHeader {
-    /// Reconciles Section `2` (`kAttrType`) with Section `3` (`kAttrTypeOffset`) when custom binary
-    /// entries prefixed with [`BINARY_CUSTOM_ATTR_TYPE_MAGIC`] (`0xFE`) or standard upstream unprefixed
-    /// `PrefixVarInt` dialect type/attribute records are present.
+    /// Reconciles Section `2` (`kAttrType`) with Section `3` (`kAttrTypeOffset`) when standard
+    /// unprefixed `PrefixVarInt` dialect type/attribute records are present.
     fn reconcile_binary_attr_type_entries(&mut self) {
-        let Some(sec2) = self
-            .sections
-            .iter()
-            .find(|s| s.section_id == 2 && s.data.contains(&BINARY_CUSTOM_ATTR_TYPE_MAGIC))
-        else {
+        if self.attr_type_offsets.is_empty() {
+            return;
+        }
+        let Some(sec2) = self.sections.iter().find(|s| s.section_id == 2) else {
             return;
         };
+        let is_textual = {
+            let mut pos = 0_usize;
+            self.attr_type_offsets.iter().all(|&len_u64| {
+                let len = usize::try_from(len_u64).unwrap_or(0);
+                let end = pos.saturating_add(len);
+                let slice = sec2.data.get(pos..end).unwrap_or_default();
+                pos = end;
+                !slice.is_empty()
+                    && slice.last() == Some(&0)
+                    && slice.first().is_some_and(u8::is_ascii_graphic)
+            }) && pos == sec2.data.len()
+        };
+        if is_textual {
+            return;
+        }
         let mut rebuilt = Vec::with_capacity(self.attr_type_offsets.len());
         let mut start = 0_usize;
         for &len_u64 in &self.attr_type_offsets {
@@ -1996,7 +2020,9 @@ impl MlirBytecodeHeader {
             );
             start = end;
         }
-        self.attr_type_entries = rebuilt;
+        if !rebuilt.is_empty() {
+            self.attr_type_entries = rebuilt;
+        }
     }
 
     /// Decodes a single MLIR bytecode section payload into the header tables.
@@ -2034,12 +2060,10 @@ impl MlirBytecodeHeader {
                 }
             }
             2 => {
-                if !sec_data.contains(&BINARY_CUSTOM_ATTR_TYPE_MAGIC) {
-                    for entry in sec_data.split(|&b| b == 0) {
-                        if !entry.is_empty() {
-                            self.attr_type_entries
-                                .push(String::from_utf8_lossy(entry).into_owned());
-                        }
+                for entry in sec_data.split(|&b| b == 0) {
+                    if !entry.is_empty() {
+                        self.attr_type_entries
+                            .push(String::from_utf8_lossy(entry).into_owned());
                     }
                 }
             }
@@ -2172,6 +2196,17 @@ impl MlirBytecodeHeader {
             } else {
                 None
             };
+            if let Some(align_u64) = alignment
+                && align_u64 > 1
+                && align_u64.is_power_of_two()
+            {
+                let align_usize = usize::try_from(align_u64).unwrap_or(1);
+                while (bytes.len().saturating_sub(sec_cursor.len())) % align_usize != 0
+                    && sec_cursor.first() == Some(&MLIR_ALIGNMENT_BYTE)
+                {
+                    sec_cursor = sec_cursor.get(1..).unwrap_or(&[]);
+                }
+            }
             let sec_len = usize::try_from(sec_len_u64).unwrap_or(usize::MAX);
             let Some((sec_data, rest)) = sec_cursor.split_at_checked(sec_len) else {
                 break;
@@ -2571,6 +2606,29 @@ impl MlirBytecodeHeader {
             bytes[4] = ((version & 0x7F) as u8) << 1 | 1;
         }
         bytes
+    }
+
+    /// Encodes a downgraded `vhlo` [`super::ast::AstModule`] into an `ML\xefR` v6 portable artifact
+    /// embedding `target_version` in Section `7` (`kDialectVersions`).
+    ///
+    /// # Arguments
+    ///
+    /// * `module` - Downgraded `vhlo` [`super::ast::AstModule`].
+    /// * `target_version` - Target [`VhloVersion`] to record in Section `7` (`kDialectVersions`).
+    #[must_use]
+    pub fn encode_portable_vhlo_ast(
+        module: &super::ast::AstModule,
+        target_version: VhloVersion,
+    ) -> Vec<u8> {
+        let mut out = Self::encode_from_ast(module, MLIR_MAX_BYTECODE_VERSION);
+        let mut writer = DialectBytecodeWriter::new();
+        writer.write_section(
+            SECTION_DIALECT_VERSIONS,
+            None,
+            &target_version.encode_dialect_version(),
+        );
+        out.extend_from_slice(writer.as_slice());
+        out
     }
 
     /// Decodes the binary Section-2 (`kAttrType`) and Section-4 (`kIR`) streams of this
@@ -3857,7 +3915,7 @@ pub struct UpstreamMlirIrSectionWriter;
 
 impl UpstreamMlirIrSectionWriter {
     /// Serializes an [`super::ast::AstModule`] into a canonical `ML\xefR` binary bytecode container
-    /// using binary `kAttrType` entries (`0xFE` custom dialect tags) and hierarchical `kIR` op bitmasks.
+    /// using standard upstream `kAttrType` dialect tags and hierarchical `kIR` op bitmasks.
     ///
     /// # Arguments
     ///

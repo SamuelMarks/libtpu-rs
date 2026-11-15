@@ -1,0 +1,29 @@
+syntax = "proto2";
+package asic_sw.deepsea.jxc;
+import "platforms/asic_sw/lib/deepsea/common/sync_flag.proto";
+import "platforms/asic_sw/lib/deepsea/jxc/common/memory_system.proto";
+message DmaDescriptor {
+  enum Requestor {
+    TENSORCORE = 0;
+    BARNACORE = 1;
+    HIB = 2;
+    HIB_NF = 3;
+  }
+  optional .asic_sw.deepsea.jxc.Address src_address = 1;
+  optional .asic_sw.deepsea.jxc.Address dest_address = 2;
+  optional int64 transfer_length = 3;
+  optional .asic_sw.deepsea.jxc.NodeDmaChannel channel_id = 4;
+  optional .asic_sw.deepsea.SyncFlag src_sync_flag = 5;
+  optional .asic_sw.deepsea.SyncFlag dest_sync_flag = 6;
+  optional .asic_sw.deepsea.SyncFlag ack_sync_flag = 7;
+  optional bool multicast = 8 [default = false];
+  optional .asic_sw.deepsea.SyncFlag hib_update = 9;
+  optional .asic_sw.deepsea.jxc.DmaDescriptor.Requestor requestor = 10;
+  optional int64 tag = 11;
+  optional bool trace = 12;
+  optional int32 trace_id = 13;
+  optional int32 pc = 14;
+  optional bool src_sync_flag_update = 15;
+  optional bool dest_sync_flag_update = 16;
+  optional bool ack_sync_flag_update = 17;
+}

@@ -1,0 +1,8 @@
+syntax = "proto3";
+package tpu;
+message TpuExecuteErrorPayloadProto {
+  bool is_unrecoverable = 1;
+  bool is_predetermined = 2;
+  bool is_cancellation_placeholder = 4;
+  int32 root_launch_id = 3;
+}

@@ -1,0 +1,16 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/compiler/tf2xla/xla_argument.proto";
+import "third_party/tensorflow/core/framework/attr_value.proto";
+import "third_party/tensorflow/core/framework/function.proto";
+message TfGraphToHloCompilerOptions {
+  string device_type = 1;
+  .tensorflow.FunctionDefLibrary flib_def = 2;
+  int32 graph_def_version = 3;
+}
+message TfGraphToHloCompilerCompileCallArgs {
+  string compile_options = 1;
+  .tensorflow.NameAttrList function = 2;
+  repeated string xla_arguments = 3;
+  repeated .tensorflow.tf2xla.XlaArgumentProto xla_args = 4;
+}

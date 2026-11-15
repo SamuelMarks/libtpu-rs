@@ -1,0 +1,58 @@
+syntax = "proto3";
+package xla.tools;
+import "third_party/tensorflow/compiler/xla/pjrt/proto/executable_metadata.proto";
+import "third_party/tensorflow/compiler/xla/pjrt/proto/pjrt_abi_version.proto";
+import "third_party/tensorflow/compiler/xla/tsl/protobuf/status.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message CompiledExecutableMetadata {
+  reserved 4;
+  reserved 5;
+  reserved 7;
+  reserved 8;
+  message MemoryKinds {
+    message MemoryKind {
+      repeated string memory_kind = 1;
+    }
+    repeated .xla.tools.CompiledExecutableMetadata.MemoryKinds.MemoryKind memory_kinds = 1;
+  }
+  message OutputShapes {
+    repeated .xla.ShapeProto shape = 1;
+  }
+  message Shardings {
+    repeated .xla.OpSharding sharding = 1;
+  }
+  message Layouts {
+    repeated .xla.LayoutProto layout = 1;
+  }
+  oneof parameter_memory_kinds_result {
+    .xla.tools.CompiledExecutableMetadata.MemoryKinds parameter_memory_kinds = 20;
+    .tensorflow.StatusProto parameter_memory_kinds_error = 21;
+  }
+  oneof output_memory_kinds_result {
+    .xla.tools.CompiledExecutableMetadata.MemoryKinds output_memory_kinds = 2;
+    .tensorflow.StatusProto output_memory_kinds_error = 10;
+  }
+  oneof output_shapes_result {
+    .xla.tools.CompiledExecutableMetadata.OutputShapes output_shapes = 3;
+    .tensorflow.StatusProto output_shapes_error = 11;
+  }
+  oneof compiled_memory_stats_result {
+    .xla.CompiledMemoryStatsProto compiled_memory_stats = 6;
+    .tensorflow.StatusProto compiled_memory_stats_error = 12;
+  }
+  oneof output_layouts_result {
+    .xla.tools.CompiledExecutableMetadata.Layouts output_layouts = 1;
+    .tensorflow.StatusProto output_layouts_error = 13;
+  }
+  oneof parameter_layouts_result {
+    .xla.tools.CompiledExecutableMetadata.Layouts parameter_layouts = 9;
+    .tensorflow.StatusProto parameter_layouts_error = 14;
+  }
+  oneof abi_version_result {
+    .xla.PjRtExecutableAbiVersionProto abi_version = 16;
+    .tensorflow.StatusProto abi_version_error = 17;
+  }
+  uint64 platform_id = 15;
+  .xla.tools.CompiledExecutableMetadata.Shardings parameter_shardings = 18;
+  .xla.tools.CompiledExecutableMetadata.Shardings output_shardings = 19;
+}

@@ -1,0 +1,94 @@
+syntax = "proto3";
+package xla.cpu;
+message OneDnnDataLayoutProto {
+  uint64 batch_dim = 1;
+  uint64 feature_dim = 2;
+  repeated uint64 spatial_dims = 3;
+}
+message OneDnnFilterLayoutProto {
+  uint64 input_feature_dim = 1;
+  uint64 output_feature_dim = 2;
+  repeated uint64 spatial_dims = 3;
+  repeated uint64 shape = 4;
+}
+message OneDnnFactorLayoutProto {
+  repeated uint64 dimensions = 1;
+  repeated uint64 shape = 2;
+}
+message OneDnnOptimizationConfig {
+  bool weights_prepacked = 1;
+  bool user_scratchpad = 2;
+  bool bias_broadcast = 3;
+}
+message OneDnnFusionConfig {
+  reserved 2;
+  enum FusionKind {
+    UNDEFINED = 0;
+    BIAS = 1;
+    RELU = 2;
+    TANH = 3;
+    GELU_ERF = 4;
+    GELU_TANH = 5;
+    BINARY_ADD = 6;
+    LINEAR = 7;
+    ELU = 8;
+    RELU6 = 9;
+    SIGMOID = 10;
+    SUM = 11;
+    SWISH = 12;
+  }
+  repeated .xla.cpu.OneDnnFusionConfig.FusionKind ops = 1;
+  repeated float alpha = 3;
+}
+message OneDnnTensorLayoutProto {
+  oneof layout {
+    .xla.cpu.OneDnnDataLayoutProto data = 2;
+    .xla.cpu.OneDnnFilterLayoutProto filter = 3;
+    .xla.cpu.OneDnnFactorLayoutProto tensor = 4;
+  }
+  uint64 dims = 1;
+}
+message OneDnnSoftmaxConfig {
+  int32 softmax_axis = 1;
+}
+message OneDnnMatMulConfig {
+  reserved 4;
+  reserved 5;
+  reserved 6;
+  reserved 7;
+  bool transpose_a = 1;
+  bool transpose_b = 2;
+  .xla.cpu.OneDnnFusionConfig fusions = 3;
+  .xla.cpu.OneDnnOptimizationConfig optimization_config = 8;
+  .xla.cpu.OneDnnTensorLayoutProto lhs = 9;
+  .xla.cpu.OneDnnTensorLayoutProto rhs = 10;
+  .xla.cpu.OneDnnTensorLayoutProto result = 11;
+}
+message OneDnnWindowProto {
+  repeated uint64 size = 1;
+  repeated uint64 pad_left = 2;
+  repeated uint64 pad_right = 3;
+  repeated uint64 strides = 4;
+  repeated uint64 window_dilations = 5;
+}
+message OneDnnNormConfig {
+  enum ScaleAndShift {
+    UNDEFINED = 0;
+    SCALE = 1;
+    SHIFT = 2;
+    SCALE_AND_SHIFT = 3;
+  }
+  .xla.cpu.OneDnnNormConfig.ScaleAndShift rescale = 1;
+  int32 epsilon_typecast = 2;
+  .xla.cpu.OneDnnFusionConfig fusions = 3;
+}
+message OneDnnConvolutionConfig {
+  uint64 dims = 1;
+  .xla.cpu.OneDnnTensorLayoutProto input = 2;
+  .xla.cpu.OneDnnTensorLayoutProto kernel = 3;
+  .xla.cpu.OneDnnTensorLayoutProto output = 4;
+  .xla.cpu.OneDnnWindowProto window = 5;
+  .xla.cpu.OneDnnFusionConfig fusions = 6;
+  uint64 feature_groups = 7;
+  .xla.cpu.OneDnnOptimizationConfig optimization_config = 8;
+}

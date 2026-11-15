@@ -1,0 +1,26 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/tensor.proto";
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/tensor_slice.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+import "third_party/tensorflow/core/framework/versions.proto";
+message SavedSliceMeta {
+  string name = 1;
+  .tensorflow.TensorShapeProto shape = 2;
+  .tensorflow.DataType type = 3;
+  repeated .tensorflow.TensorSliceProto slice = 4;
+}
+message SavedTensorSliceMeta {
+  repeated .tensorflow.SavedSliceMeta tensor = 1;
+  .tensorflow.VersionDef versions = 2;
+}
+message SavedSlice {
+  string name = 1;
+  .tensorflow.TensorSliceProto slice = 2;
+  .tensorflow.TensorProto data = 3;
+}
+message SavedTensorSlices {
+  .tensorflow.SavedTensorSliceMeta meta = 1;
+  .tensorflow.SavedSlice data = 2;
+}

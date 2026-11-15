@@ -51,10 +51,10 @@ pub struct PJRT_DeviceDescription_Attributes_Args {
     pub extension_start: *mut PJRT_Extension_Base,
     /// Device description handle.
     pub device_description: *const PJRT_DeviceDescription,
-    /// Output attributes array pointer.
-    pub attributes: *const PJRT_NamedValue,
     /// Output number of attributes.
     pub num_attributes: usize,
+    /// Output attributes array pointer.
+    pub attributes: *const PJRT_NamedValue,
 }
 
 /// Argument structure for `PJRT_DeviceDescription_Kind` (`40` bytes).

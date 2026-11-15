@@ -1,0 +1,38 @@
+syntax = "proto3";
+package xla.cpu;
+import "third_party/tensorflow/compiler/xla/backends/cpu/xnn_fusion_options.proto";
+import "third_party/tensorflow/compiler/xla/backends/cpu/ynn_fusion_options.proto";
+import "third_party/tensorflow/compiler/xla/codegen/xtile/xtile_config.proto";
+import "third_party/tensorflow/compiler/xla/service/cpu/onednn_config.proto";
+message CustomCallBackendConfig {
+  oneof raw_backend_config_oneof {
+    string opaque = 1;
+    string attributes = 2;
+  }
+}
+message FusionBackendConfig {
+  oneof custom_fusion_config_oneof {
+    .xla.cpu.XnnFusionOptions xnn_fusion_options = 2;
+    .xla.cpu.YnnFusionOptions ynn_fusion_options = 3;
+    .xla.xtile.BlockLevelFusionConfig block_level_fusion_config = 4;
+  }
+  string kind = 1;
+}
+message LlvmKernelOptions {
+  bool slp_vectorizer_disabled = 1;
+  bool disable_loop_unrolling = 2;
+  bool optimize_for_size = 3;
+  bool disable_platform_dependent_math = 4;
+}
+message BackendConfig {
+  oneof backend_config_oneof {
+    .xla.cpu.OneDnnMatMulConfig onednn_matmul_config = 2;
+    .xla.cpu.OneDnnNormConfig onednn_layer_norm_config = 3;
+    .xla.cpu.OneDnnSoftmaxConfig onednn_softmax_config = 4;
+    .xla.cpu.OneDnnConvolutionConfig onednn_conv_config = 5;
+    .xla.cpu.CustomCallBackendConfig custom_call_config = 6;
+    .xla.cpu.FusionBackendConfig fusion_config = 7;
+    .xla.cpu.LlvmKernelOptions llvm_kernel_options = 8;
+  }
+  repeated int64 outer_dimension_partitions = 1;
+}

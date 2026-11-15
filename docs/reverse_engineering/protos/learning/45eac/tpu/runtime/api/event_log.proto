@@ -1,0 +1,19 @@
+syntax = "proto3";
+package tpu;
+message TpuEventLogProto {
+  int32 host_id = 1;
+  int32 index_on_host = 2;
+  repeated .tpu.EventDependencyProto event = 3;
+  repeated .tpu.WaitingThreadProto thread = 4;
+}
+message EventDependencyProto {
+  int64 id = 1;
+  int32 generation = 2;
+  string description = 3;
+  repeated int64 dependencies = 4;
+}
+message WaitingThreadProto {
+  int32 id = 1;
+  string description = 2;
+  repeated int64 dependencies = 3;
+}

@@ -1,0 +1,35 @@
+syntax = "proto3";
+package asic_sw.deepsea.jxc;
+import "platforms/asic_sw/driver/deepsea/jxc/common/dma_resource.proto";
+enum NodeDmaChannel {
+  TENSORCORE_VMEM_TO_HBM = 0;
+  TENSORCORE_VMEM_TO_ICI = 1;
+  HBM_TO_TENSORCORE_VMEM = 2;
+  HBM_TO_ICI = 3;
+  ICI_TO_HBM = 4;
+  ICI_TO_TENSORCORE_VMEM = 5;
+  HBM_TO_BARNACORE_BMEM = 6;
+  BARNACORE_BMEM_TO_HBM = 7;
+  BARNACORE_BMEM_TO_ICI = 8;
+  BARNACORE_BMEM_TO_TENSORCORE_VMEM = 9;
+  HIB_TO_HBM = 10;
+  HBM_TO_HIB = 11;
+  TENSORCORE_SMEM_TO_HBM = 12;
+  HBM_TO_TENSORCORE_SMEM = 13;
+  HBM_TO_TENSORCORE_IMEM = 14;
+  BARNACORE_SMEM_TO_ICI = 15;
+  ICI_TO_BARNACORE_SMEM = 16;
+  NUM_DMA_CHANNELS = 17;
+}
+message Address {
+  oneof resource_or_segment_id {
+    .asic_sw.driver.deepsea.jxc.DmaResource resource = 3;
+    int32 segment_table_index = 4;
+  }
+  int32 chip_id = 1;
+  int32 node_id = 2;
+  int64 address = 5;
+  int64 offset = 6;
+  int64 stride_size_bytes = 7;
+  int64 stride_bytes = 8;
+}

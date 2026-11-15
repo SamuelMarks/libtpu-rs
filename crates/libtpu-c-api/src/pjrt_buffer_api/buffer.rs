@@ -353,13 +353,14 @@ unsafe fn handle_buffer_get_memory_layout(
     args.layout = crate::pjrt_types::PJRT_Buffer_MemoryLayout_Output {
         struct_size: 80,
         extension_start: ptr::null_mut(),
+        sub_struct_size: if layout_type == 0 { 56 } else { 32 },
+        sub_extension_start: ptr::null_mut(),
         minor_to_major: m2m_ptr,
         minor_to_major_size: m2m_len,
         tile_dims: tile_dims_ptr,
         tile_dim_sizes: tile_sizes_ptr,
         num_tiles,
         layout_type,
-        reserved: [0, 0],
     };
     Ok(())
 }
@@ -552,16 +553,26 @@ unsafe fn handle_buffer_copy_to_device(
     // SAFETY: `buffer` and `dst_device` are null or valid pointers.
     let (buf_opt, dev_opt) = unsafe { (args.buffer.as_ref(), args.dst_device.as_ref()) };
     args.dst_buffer = match (buf_opt, dev_opt) {
-        (Some(b), Some(d)) => b
-            .inner
-            .copy_to_device(d.inner.description.spec.device_id, b.inner.memory_id)
-            .map_or(ptr::null_mut(), |copied| {
-                Box::into_raw(Box::new(PJRT_Buffer::new(
-                    copied,
-                    args.dst_device,
-                    b.memory_ptr,
-                )))
-            }),
+        (Some(b), Some(d)) => {
+            let (dst_mem_id, dst_mem_ptr) = if d.default_memory_ptr.is_null() {
+                (b.inner.memory_id, b.memory_ptr)
+            } else {
+                // SAFETY: `d.default_memory_ptr` is owned by the `PJRT_Client` that owns `d`.
+                (
+                    unsafe { (*d.default_memory_ptr).inner.id },
+                    d.default_memory_ptr,
+                )
+            };
+            b.inner
+                .copy_to_device(d.inner.description.spec.device_id, dst_mem_id)
+                .map_or(ptr::null_mut(), |copied| {
+                    Box::into_raw(Box::new(PJRT_Buffer::new(
+                        copied,
+                        args.dst_device,
+                        dst_mem_ptr,
+                    )))
+                })
+        }
         _ => ptr::null_mut(),
     };
     Ok(())
@@ -967,14 +978,16 @@ pub unsafe extern "C" fn pjrt_copy_raw_to_host_future_ready_cb(
     _error_message_size: usize,
     dst: *mut std::ffi::c_void,
 ) {
-    if !any_null(&[callback_data as usize, dst as usize]) {
-        // SAFETY: `callback_data` was allocated via `Box::into_raw(Box::new(Vec<u8>))`.
-        let payload = unsafe { Box::from_raw(callback_data.cast::<Vec<u8>>()) };
-        // SAFETY: Caller's `dst` has capacity for `payload.len()` bytes.
-        unsafe {
-            ptr::copy_nonoverlapping(payload.as_ptr(), dst.cast::<u8>(), payload.len());
+    crate::pjrt_helpers::ffi_catch_unwind((), || {
+        if !any_null(&[callback_data as usize, dst as usize]) {
+            // SAFETY: `callback_data` was allocated via `Box::into_raw(Box::new(Vec<u8>))`.
+            let payload = unsafe { Box::from_raw(callback_data.cast::<Vec<u8>>()) };
+            // SAFETY: Caller's `dst` has capacity for `payload.len()` bytes.
+            unsafe {
+                ptr::copy_nonoverlapping(payload.as_ptr(), dst.cast::<u8>(), payload.len());
+            }
         }
-    }
+    });
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_CopyRawToHostFuture_Args`].
@@ -1048,11 +1061,13 @@ pub unsafe extern "C" fn pjrt_donate_control_dependency_cb(
     _error_message: *const std::ffi::c_char,
     _error_message_size: usize,
 ) {
-    if !callback_data.is_null() {
-        // SAFETY: `callback_data` is a valid `PJRT_Buffer*`.
-        let buf = unsafe { &*callback_data.cast::<PJRT_Buffer>() };
-        let _ = buf.inner.ready_event();
-    }
+    crate::pjrt_helpers::ffi_catch_unwind((), || {
+        if !callback_data.is_null() {
+            // SAFETY: `callback_data` is a valid `PJRT_Buffer*`.
+            let buf = unsafe { &*callback_data.cast::<PJRT_Buffer>() };
+            let _ = buf.inner.ready_event();
+        }
+    });
 }
 
 /// Populates [`crate::pjrt_types::PJRT_Buffer_DonateWithControlDependency_Args`].

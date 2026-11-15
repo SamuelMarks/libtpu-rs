@@ -1,0 +1,19 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+message RuntimeConfig {
+  message CompressionParams {
+    reserved 3;
+    reserved 4;
+    reserved 5;
+    enum EncodingFormat {
+      NO_ENCODING = 0;
+      COMPONENT_WISE_ENCODING = 1;
+      EXMY_ENCODING = 2;
+      AUTO = 3;
+    }
+    .xla.megascale.runtime.RuntimeConfig.CompressionParams.EncodingFormat encoding_format = 1;
+    optional bool compress = 6;
+    optional int32 zstd_compression_level = 2;
+  }
+  .xla.megascale.runtime.RuntimeConfig.CompressionParams compression_params = 1;
+}

@@ -1,0 +1,18 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.gfc.isa;
+message TensorCoreImmediates {
+  message NoInstructions {
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.gfc.isa.TensorCoreImmediates.NoInstructions no_instructions = 10;
+  }
+  optional uint32 imm_0 = 1;
+  optional uint32 imm_1 = 2;
+  optional uint32 imm_2 = 3;
+  optional uint32 imm_3 = 4;
+  optional uint32 imm_4 = 5;
+  optional uint32 imm_5 = 6;
+  optional uint32 latency = 7;
+  map<string, uint32> resource_usage = 8;
+  optional uint32 bit_width = 9;
+}

@@ -1945,29 +1945,63 @@ impl SimulatedTpuHal {
         {
             let rank = lhs_sh.rank();
             let spatial_rank = rank.saturating_sub(2);
-            let batch = usize::try_from(lhs_sh.dims.first().copied().unwrap_or(1))
+            let (
+                lhs_batch_axis,
+                lhs_channel_axis,
+                rhs_input_axis,
+                rhs_output_axis,
+                dst_batch_axis,
+                dst_channel_axis,
+            ) = attrs.conv_dim_numbers.map_or(
+                (0, rank - 1, rank - 2, rank - 1, 0, rank - 1),
+                <(usize, usize, usize, usize, usize, usize)>::from,
+            );
+            let in_sp_dims: Vec<usize> = if attrs.conv_input_spatial_dims.len() == spatial_rank {
+                attrs.conv_input_spatial_dims.clone()
+            } else {
+                (1..=spatial_rank).collect()
+            };
+            let ker_sp_dims: Vec<usize> = if attrs.conv_kernel_spatial_dims.len() == spatial_rank {
+                attrs.conv_kernel_spatial_dims.clone()
+            } else {
+                (0..spatial_rank).collect()
+            };
+            let out_sp_dims: Vec<usize> = if attrs.conv_output_spatial_dims.len() == spatial_rank {
+                attrs.conv_output_spatial_dims.clone()
+            } else {
+                (1..=spatial_rank).collect()
+            };
+            let batch = usize::try_from(lhs_sh.dims.get(lhs_batch_axis).copied().unwrap_or(1))
                 .unwrap_or(1)
                 .max(1);
-            let c_in = usize::try_from(lhs_sh.dims.get(rank - 1).copied().unwrap_or(1))
+            let c_in = usize::try_from(lhs_sh.dims.get(lhs_channel_axis).copied().unwrap_or(1))
                 .unwrap_or(1)
                 .max(1);
-            let k_c_in = usize::try_from(rhs_sh.dims.get(rank - 2).copied().unwrap_or(1))
+            let k_c_in = usize::try_from(rhs_sh.dims.get(rhs_input_axis).copied().unwrap_or(1))
                 .unwrap_or(1)
                 .max(1);
-            let c_out = usize::try_from(rhs_sh.dims.get(rank - 1).copied().unwrap_or(1))
+            let c_out = usize::try_from(rhs_sh.dims.get(rhs_output_axis).copied().unwrap_or(1))
                 .unwrap_or(1)
                 .max(1);
             let f_groups = attrs.feature_group_count.max(1);
             let b_groups = attrs.batch_group_count.max(1);
 
             let out_sh = attrs.output_shape.clone().unwrap_or_else(|| {
-                let mut o_dims = Vec::with_capacity(rank);
-                o_dims.push(i64::try_from((batch / b_groups).max(1)).unwrap_or(1));
+                let mut o_dims = vec![1_i64; rank];
+                if let Some(sl) = o_dims.get_mut(dst_batch_axis) {
+                    *sl = i64::try_from((batch / b_groups).max(1)).unwrap_or(1);
+                }
+                if let Some(sl) = o_dims.get_mut(dst_channel_axis) {
+                    *sl = i64::try_from(c_out).unwrap_or(1);
+                }
                 for s in 0..spatial_rank {
-                    let in_d = usize::try_from(lhs_sh.dims.get(s + 1).copied().unwrap_or(1))
+                    let in_ax = in_sp_dims.get(s).copied().unwrap_or(s + 1);
+                    let ker_ax = ker_sp_dims.get(s).copied().unwrap_or(s);
+                    let out_ax = out_sp_dims.get(s).copied().unwrap_or(s + 1);
+                    let in_d = usize::try_from(lhs_sh.dims.get(in_ax).copied().unwrap_or(1))
                         .unwrap_or(1)
                         .max(1);
-                    let k_d = usize::try_from(rhs_sh.dims.get(s).copied().unwrap_or(1))
+                    let k_d = usize::try_from(rhs_sh.dims.get(ker_ax).copied().unwrap_or(1))
                         .unwrap_or(1)
                         .max(1);
                     let stride = attrs.window_strides.get(s).copied().unwrap_or(1).max(1);
@@ -1978,9 +2012,10 @@ impl SimulatedTpuHal {
                     let eff_in = (in_d - 1) * l_dil + 1 + p_low + p_high;
                     let eff_k = (k_d - 1) * r_dil + 1;
                     let out_d = eff_in.saturating_sub(eff_k) / stride + 1;
-                    o_dims.push(i64::try_from(out_d.max(1)).unwrap_or(1));
+                    if let Some(sl) = o_dims.get_mut(out_ax) {
+                        *sl = i64::try_from(out_d.max(1)).unwrap_or(1);
+                    }
                 }
-                o_dims.push(i64::try_from(c_out).unwrap_or(1));
                 Shape {
                     element_type: out_elem_type,
                     dynamic_dims: vec![false; rank],
@@ -1991,7 +2026,8 @@ impl SimulatedTpuHal {
 
             let mut k_spatial_dims = Vec::with_capacity(spatial_rank);
             for s in 0..spatial_rank {
-                k_spatial_dims.push(rhs_sh.dims.get(s).copied().unwrap_or(1));
+                let ker_ax = ker_sp_dims.get(s).copied().unwrap_or(s);
+                k_spatial_dims.push(rhs_sh.dims.get(ker_ax).copied().unwrap_or(1));
             }
             let k_spatial_sh = Shape {
                 element_type: out_elem_type,
@@ -2008,41 +2044,70 @@ impl SimulatedTpuHal {
 
             for dst_idx in 0..out_count {
                 let dst_coords = out_sh.linear_to_coords(dst_idx);
-                let out_n = dst_coords.first().copied().unwrap_or(0);
-                let out_co = dst_coords.get(rank - 1).copied().unwrap_or(0);
+                let out_n = dst_coords.get(dst_batch_axis).copied().unwrap_or(0);
+                let out_co = dst_coords.get(dst_channel_axis).copied().unwrap_or(0);
                 let fg = (out_co / channels_per_feature_group).min(f_groups.saturating_sub(1));
                 let bg = (out_co / channels_per_batch_group).min(b_groups.saturating_sub(1));
                 let in_n = (bg * batch_per_bgroup + out_n).min(batch.saturating_sub(1));
 
                 let mut sum = 0.0_f64;
-                for ks_idx in 0..k_spatial_count {
+                'window: for ks_idx in 0..k_spatial_count {
                     let k_coords = k_spatial_sh.linear_to_coords(ks_idx);
                     let mut in_spatial_coords = Vec::with_capacity(spatial_rank);
                     for s in 0..spatial_rank {
-                        let out_s = dst_coords.get(s + 1).copied().unwrap_or(0);
+                        let out_ax = out_sp_dims.get(s).copied().unwrap_or(s + 1);
+                        let in_ax = in_sp_dims.get(s).copied().unwrap_or(s + 1);
+                        let out_s = dst_coords.get(out_ax).copied().unwrap_or(0);
                         let k_s = k_coords.get(s).copied().unwrap_or(0);
                         let stride = attrs.window_strides.get(s).copied().unwrap_or(1).max(1);
                         let p_low = attrs.pad_edge_low.get(s).copied().unwrap_or(0);
                         let l_dil = attrs.lhs_dilation.get(s).copied().unwrap_or(1).max(1);
                         let r_dil = attrs.rhs_dilation.get(s).copied().unwrap_or(1).max(1);
                         let dilated_pos = out_s * stride + k_s * r_dil;
-                        let unpadded = dilated_pos.saturating_sub(p_low);
+                        if dilated_pos < p_low {
+                            continue 'window;
+                        }
+                        let unpadded = dilated_pos - p_low;
+                        if unpadded % l_dil != 0 {
+                            continue 'window;
+                        }
                         let in_s = unpadded / l_dil;
-                        let in_ext = usize::try_from(lhs_sh.dims.get(s + 1).copied().unwrap_or(1))
+                        let in_ext = usize::try_from(lhs_sh.dims.get(in_ax).copied().unwrap_or(1))
                             .unwrap_or(1);
-                        in_spatial_coords.push(in_s.min(in_ext.saturating_sub(1)));
+                        if in_s >= in_ext {
+                            continue 'window;
+                        }
+                        in_spatial_coords.push(in_s);
                     }
                     for kc in 0..k_c_in {
                         let in_ci = (fg * k_c_in + kc).min(c_in.saturating_sub(1));
-                        let mut lhs_coords = Vec::with_capacity(rank);
-                        lhs_coords.push(in_n);
-                        lhs_coords.extend_from_slice(&in_spatial_coords);
-                        lhs_coords.push(in_ci);
+                        let mut lhs_coords = vec![0_usize; rank];
+                        if let Some(sl) = lhs_coords.get_mut(lhs_batch_axis) {
+                            *sl = in_n;
+                        }
+                        if let Some(sl) = lhs_coords.get_mut(lhs_channel_axis) {
+                            *sl = in_ci;
+                        }
+                        for (s, &sc) in in_spatial_coords.iter().enumerate() {
+                            let ax = in_sp_dims.get(s).copied().unwrap_or(0);
+                            if let Some(sl) = lhs_coords.get_mut(ax) {
+                                *sl = sc;
+                            }
+                        }
 
-                        let mut rhs_coords = Vec::with_capacity(rank);
-                        rhs_coords.extend_from_slice(&k_coords);
-                        rhs_coords.push(kc);
-                        rhs_coords.push(out_co);
+                        let mut rhs_coords = vec![0_usize; rank];
+                        if let Some(sl) = rhs_coords.get_mut(rhs_input_axis) {
+                            *sl = kc;
+                        }
+                        if let Some(sl) = rhs_coords.get_mut(rhs_output_axis) {
+                            *sl = out_co;
+                        }
+                        for (s, &kc_s) in k_coords.iter().enumerate() {
+                            let ax = ker_sp_dims.get(s).copied().unwrap_or(0);
+                            if let Some(sl) = rhs_coords.get_mut(ax) {
+                                *sl = kc_s;
+                            }
+                        }
 
                         let l_idx = lhs_sh.coords_to_linear(&lhs_coords).unwrap_or(0);
                         let r_idx = rhs_sh.coords_to_linear(&rhs_coords).unwrap_or(0);
@@ -2827,8 +2892,185 @@ impl SimulatedTpuHal {
             TpuOpCode::Gather => {
                 return Self::eval_gather_nd(out_elem_type, in_elem_type, operands, &bundle.attrs);
             }
+            TpuOpCode::CompareEq | TpuOpCode::CompareLt | TpuOpCode::CompareGt
+                if !bundle.attrs.input_shapes.is_empty() =>
+            {
+                let b1 = operands.get(1).copied().unwrap_or(&[]);
+                let flags: Vec<i128> = if in_elem_type.is_integer() {
+                    let v0 = in_elem_type.unpack_to_i128_vec(b0);
+                    let v1 = in_elem_type.unpack_to_i128_vec(b1);
+                    let first_v0 = v0.first();
+                    let first_v1 = v1.first();
+                    let n = v0.len().max(v1.len());
+                    (0..n)
+                        .map(|i| {
+                            let x = v0.get(i).or(first_v0).copied().unwrap_or(0);
+                            let y = v1.get(i).or(first_v1).copied().unwrap_or(0);
+                            let ok = match bundle.opcode {
+                                TpuOpCode::CompareEq => x == y,
+                                TpuOpCode::CompareLt => x < y,
+                                _ => x > y,
+                            };
+                            i128::from(u8::from(ok))
+                        })
+                        .collect()
+                } else {
+                    let v0 = in_elem_type.unpack_to_f64_vec(b0);
+                    let v1 = in_elem_type.unpack_to_f64_vec(b1);
+                    let first_v0 = v0.first();
+                    let first_v1 = v1.first();
+                    let n = v0.len().max(v1.len());
+                    (0..n)
+                        .map(|i| {
+                            let x = v0.get(i).or(first_v0).copied().unwrap_or(0.0);
+                            let y = v1.get(i).or(first_v1).copied().unwrap_or(0.0);
+                            let ok = match bundle.opcode {
+                                TpuOpCode::CompareEq => (x - y).abs() <= 1e-9,
+                                TpuOpCode::CompareLt => x < y,
+                                _ => x > y,
+                            };
+                            i128::from(u8::from(ok))
+                        })
+                        .collect()
+                };
+                return out_elem_type.pack_from_i128_slice(&flags);
+            }
             TpuOpCode::Scatter => {
                 return Self::eval_scatter_nd(out_elem_type, in_elem_type, operands, &bundle.attrs);
+            }
+            TpuOpCode::DynamicSlice
+                if let (Some(in_sh), Some(out_sh)) = (
+                    bundle.attrs.input_shapes.first(),
+                    bundle.attrs.output_shape.as_ref(),
+                ) =>
+            {
+                let rank = in_sh.rank();
+                let mut starts = Vec::with_capacity(rank);
+                for ax in 0..rank {
+                    let idx_bytes = operands.get(ax + 1).copied().unwrap_or(&[]);
+                    let idx_ty = bundle
+                        .attrs
+                        .input_shapes
+                        .get(ax + 1)
+                        .map_or(ElementType::S32, |s| s.element_type);
+                    let raw_idx = if idx_ty.is_integer() {
+                        idx_ty
+                            .unpack_to_i128_vec(idx_bytes)
+                            .first()
+                            .copied()
+                            .unwrap_or(0)
+                    } else {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let as_i = idx_ty
+                            .unpack_to_f64_vec(idx_bytes)
+                            .first()
+                            .copied()
+                            .unwrap_or(0.0) as i128;
+                        as_i
+                    };
+                    let dim_ext =
+                        usize::try_from(in_sh.dims.get(ax).copied().unwrap_or(1)).unwrap_or(1);
+                    let sl_ext =
+                        usize::try_from(out_sh.dims.get(ax).copied().unwrap_or(1)).unwrap_or(1);
+                    let max_start = dim_ext.saturating_sub(sl_ext);
+                    let clamped = usize::try_from(raw_idx.max(0))
+                        .unwrap_or(max_start)
+                        .min(max_start);
+                    starts.push(clamped);
+                }
+                let out_cnt = out_sh.element_count();
+                if out_elem_type.is_integer() {
+                    let src_i = in_elem_type.unpack_to_i128_vec(b0);
+                    let mut out_i = Vec::with_capacity(out_cnt);
+                    for oi in 0..out_cnt {
+                        let mut c = out_sh.linear_to_coords(oi);
+                        for (ax, slot) in c.iter_mut().enumerate() {
+                            *slot += starts.get(ax).copied().unwrap_or(0);
+                        }
+                        let li = in_sh.coords_to_linear(&c).unwrap_or(0);
+                        out_i.push(src_i.get(li).copied().unwrap_or(0));
+                    }
+                    return out_elem_type.pack_from_i128_slice(&out_i);
+                }
+                let src_f = in_elem_type.unpack_to_f64_vec(b0);
+                let mut out_f = Vec::with_capacity(out_cnt);
+                for oi in 0..out_cnt {
+                    let mut c = out_sh.linear_to_coords(oi);
+                    for (ax, slot) in c.iter_mut().enumerate() {
+                        *slot += starts.get(ax).copied().unwrap_or(0);
+                    }
+                    let li = in_sh.coords_to_linear(&c).unwrap_or(0);
+                    out_f.push(src_f.get(li).copied().unwrap_or(0.0));
+                }
+                return out_elem_type.pack_from_f64_slice(&out_f);
+            }
+            TpuOpCode::DynamicUpdateSlice
+                if let [in_sh, upd_sh, _, ..] = bundle.attrs.input_shapes.as_slice() =>
+            {
+                let rank = in_sh.rank();
+                let mut starts = Vec::with_capacity(rank);
+                for ax in 0..rank {
+                    let idx_bytes = operands.get(ax + 2).copied().unwrap_or(&[]);
+                    let idx_ty = bundle
+                        .attrs
+                        .input_shapes
+                        .get(ax + 2)
+                        .map_or(ElementType::S32, |s| s.element_type);
+                    let raw_idx = if idx_ty.is_integer() {
+                        idx_ty
+                            .unpack_to_i128_vec(idx_bytes)
+                            .first()
+                            .copied()
+                            .unwrap_or(0)
+                    } else {
+                        #[allow(clippy::cast_possible_truncation)]
+                        let as_i = idx_ty
+                            .unpack_to_f64_vec(idx_bytes)
+                            .first()
+                            .copied()
+                            .unwrap_or(0.0) as i128;
+                        as_i
+                    };
+                    let dim_ext =
+                        usize::try_from(in_sh.dims.get(ax).copied().unwrap_or(1)).unwrap_or(1);
+                    let sl_ext =
+                        usize::try_from(upd_sh.dims.get(ax).copied().unwrap_or(1)).unwrap_or(1);
+                    let max_start = dim_ext.saturating_sub(sl_ext);
+                    let clamped = usize::try_from(raw_idx.max(0))
+                        .unwrap_or(max_start)
+                        .min(max_start);
+                    starts.push(clamped);
+                }
+                let upd_bytes = operands.get(1).copied().unwrap_or(&[]);
+                let upd_cnt = upd_sh.element_count();
+                if out_elem_type.is_integer() {
+                    let mut dst_i = in_elem_type.unpack_to_i128_vec(b0);
+                    let upd_i = upd_sh.element_type.unpack_to_i128_vec(upd_bytes);
+                    for ui in 0..upd_cnt {
+                        let mut c = upd_sh.linear_to_coords(ui);
+                        for (ax, slot) in c.iter_mut().enumerate() {
+                            *slot += starts.get(ax).copied().unwrap_or(0);
+                        }
+                        let li = in_sh.coords_to_linear(&c).unwrap_or(usize::MAX);
+                        if let Some(d_slot) = dst_i.get_mut(li) {
+                            *d_slot = upd_i.get(ui).copied().unwrap_or(0);
+                        }
+                    }
+                    return out_elem_type.pack_from_i128_slice(&dst_i);
+                }
+                let mut dst_f = in_elem_type.unpack_to_f64_vec(b0);
+                let upd_f = upd_sh.element_type.unpack_to_f64_vec(upd_bytes);
+                for ui in 0..upd_cnt {
+                    let mut c = upd_sh.linear_to_coords(ui);
+                    for (ax, slot) in c.iter_mut().enumerate() {
+                        *slot += starts.get(ax).copied().unwrap_or(0);
+                    }
+                    let li = in_sh.coords_to_linear(&c).unwrap_or(usize::MAX);
+                    if let Some(d_slot) = dst_f.get_mut(li) {
+                        *d_slot = upd_f.get(ui).copied().unwrap_or(0.0);
+                    }
+                }
+                return out_elem_type.pack_from_f64_slice(&dst_f);
             }
             TpuOpCode::Convolution => {
                 let v0 = in_elem_type.unpack_to_f64_vec(b0);
@@ -2983,7 +3225,100 @@ impl SimulatedTpuHal {
         Self::eval_bundle(bundle.opcode, out_elem_type, operands)
     }
 
-    /// Evaluates a single [`crate::compiler::TpuInstructionBundle`] against a register bank of byte vectors.
+    /// Evaluates ternary `Select` or `Clamp` instruction bundles across integer, predicate, and float types.
+    ///
+    /// # Arguments
+    ///
+    /// * `opcode` - Ternary [`TpuOpCode`] (`Select` or `Clamp`).
+    /// * `elem_type` - Tensor [`ElementType`].
+    /// * `operands` - Slice of three operand byte slices `(cond_or_min, on_true_or_operand, on_false_or_max)`.
+    fn eval_select_or_clamp(
+        opcode: TpuOpCode,
+        elem_type: ElementType,
+        operands: &[&[u8]],
+    ) -> Vec<u8> {
+        let raw_c = operands.first().copied().unwrap_or(&[]);
+        let raw_t = operands.get(1).copied().unwrap_or(&[]);
+        let raw_f = operands.get(2).copied().unwrap_or(&[]);
+        if opcode == TpuOpCode::Select && elem_type.is_integer() && elem_type != ElementType::Pred {
+            let t = elem_type.unpack_to_i128_vec(raw_t);
+            let f = elem_type.unpack_to_i128_vec(raw_f);
+            let use_pred_bytes = raw_c.len() == t.len() || raw_c.len() == 1;
+            let c_vals = if use_pred_bytes {
+                Vec::new()
+            } else {
+                elem_type.unpack_to_i128_vec(raw_c)
+            };
+            let first_c = raw_c.first();
+            let sel_i: Vec<i128> = (0..t.len())
+                .map(|i| {
+                    let cond_true = if use_pred_bytes {
+                        raw_c.get(i).or(first_c).copied().unwrap_or(0) != 0
+                    } else {
+                        c_vals.get(i).copied().unwrap_or(0) != 0
+                    };
+                    if cond_true {
+                        t.get(i).copied().unwrap_or(0)
+                    } else {
+                        f.get(i).copied().unwrap_or(0)
+                    }
+                })
+                .collect();
+            return elem_type.pack_from_i128_slice(&sel_i);
+        }
+        if matches!(elem_type, ElementType::S64 | ElementType::U64) {
+            let c = elem_type.unpack_to_i64_vec(raw_c);
+            let t = elem_type.unpack_to_i64_vec(raw_t);
+            let f = elem_type.unpack_to_i64_vec(raw_f);
+            let sel_i64: Vec<i64> = c
+                .iter()
+                .zip(t.iter().zip(f.iter()))
+                .map(|(&first, (&second, &third))| {
+                    let lo = first.min(third);
+                    let hi = first.max(third);
+                    second.max(lo).min(hi)
+                })
+                .collect();
+            return elem_type.pack_from_i64_slice(&sel_i64);
+        }
+        let t = elem_type.unpack_to_f64_vec(raw_t);
+        let f = elem_type.unpack_to_f64_vec(raw_f);
+        let use_pred_bytes =
+            opcode == TpuOpCode::Select && (raw_c.len() == t.len() || raw_c.len() == 1);
+        if use_pred_bytes {
+            let first_c = raw_c.first();
+            let sel: Vec<f64> = (0..t.len())
+                .map(|i| {
+                    let cond_true = raw_c.get(i).or(first_c).copied().unwrap_or(0) != 0;
+                    if cond_true {
+                        t.get(i).copied().unwrap_or(0.0)
+                    } else {
+                        f.get(i).copied().unwrap_or(0.0)
+                    }
+                })
+                .collect();
+            return elem_type.pack_from_f64_slice(&sel);
+        }
+        let c = elem_type.unpack_to_f64_vec(raw_c);
+        let sel: Vec<f64> = c
+            .iter()
+            .zip(t.iter().zip(f.iter()))
+            .map(|(&first, (&second, &third))| {
+                if opcode == TpuOpCode::Clamp {
+                    let lo = first.min(third);
+                    let hi = first.max(third);
+                    second.max(lo).min(hi)
+                } else if first == 0.0 {
+                    third
+                } else {
+                    second
+                }
+            })
+            .collect();
+        elem_type.pack_from_f64_slice(&sel)
+    }
+
+    /// Evaluates a single `TpuInstructionBundle` given `opcode`, `elem_type`, and `operands`.
     ///
     /// # Arguments
     ///
@@ -3001,46 +3336,7 @@ impl SimulatedTpuHal {
         operands: &[&[u8]],
     ) -> Vec<u8> {
         if opcode == TpuOpCode::Select || opcode == TpuOpCode::Clamp {
-            if matches!(elem_type, ElementType::S64 | ElementType::U64) {
-                let c = elem_type.unpack_to_i64_vec(operands.first().copied().unwrap_or(&[]));
-                let t = elem_type.unpack_to_i64_vec(operands.get(1).copied().unwrap_or(&[]));
-                let f = elem_type.unpack_to_i64_vec(operands.get(2).copied().unwrap_or(&[]));
-                let sel_i64: Vec<i64> = c
-                    .iter()
-                    .zip(t.iter().zip(f.iter()))
-                    .map(|(&first, (&second, &third))| {
-                        if opcode == TpuOpCode::Clamp {
-                            let lo = first.min(third);
-                            let hi = first.max(third);
-                            second.max(lo).min(hi)
-                        } else if first == 0 {
-                            third
-                        } else {
-                            second
-                        }
-                    })
-                    .collect();
-                return elem_type.pack_from_i64_slice(&sel_i64);
-            }
-            let c = elem_type.unpack_to_f64_vec(operands.first().copied().unwrap_or(&[]));
-            let t = elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));
-            let f = elem_type.unpack_to_f64_vec(operands.get(2).copied().unwrap_or(&[]));
-            let sel: Vec<f64> = c
-                .iter()
-                .zip(t.iter().zip(f.iter()))
-                .map(|(&first, (&second, &third))| {
-                    if opcode == TpuOpCode::Clamp {
-                        let lo = first.min(third);
-                        let hi = first.max(third);
-                        second.max(lo).min(hi)
-                    } else if first == 0.0 {
-                        third
-                    } else {
-                        second
-                    }
-                })
-                .collect();
-            elem_type.pack_from_f64_slice(&sel)
+            Self::eval_select_or_clamp(opcode, elem_type, operands)
         } else if opcode == TpuOpCode::Scatter || opcode == TpuOpCode::DynamicUpdateSlice {
             let mut dst = elem_type.unpack_to_f64_vec(operands.first().copied().unwrap_or(&[]));
             let idx_or_upd = elem_type.unpack_to_f64_vec(operands.get(1).copied().unwrap_or(&[]));

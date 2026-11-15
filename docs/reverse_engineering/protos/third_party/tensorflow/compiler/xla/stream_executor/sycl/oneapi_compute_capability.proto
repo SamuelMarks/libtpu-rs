@@ -1,0 +1,8 @@
+syntax = "proto3";
+package stream_executor;
+message OneAPIComputeCapabilityProto {
+  reserved 2;
+  reserved "variant";
+  string architecture = 1;
+  optional uint32 generation = 3;
+}

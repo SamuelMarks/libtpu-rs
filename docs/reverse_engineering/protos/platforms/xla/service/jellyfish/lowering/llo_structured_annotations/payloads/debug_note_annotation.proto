@@ -1,0 +1,6 @@
+syntax = "proto2";
+package xla.jellyfish.annotations;
+message DebugNoteAnnotationProto {
+  optional string primary = 1;
+  repeated string additional = 2;
+}

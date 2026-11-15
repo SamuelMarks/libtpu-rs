@@ -1,0 +1,64 @@
+syntax = "proto2";
+package xprof.tpu;
+import "platforms/asic_sw/driver/deepsea/gxc/glc/profiler/trace_entries.proto";
+import "platforms/asic_sw/driver/deepsea/jxc/common/performance_trace_entry.proto";
+import "platforms/asic_sw/driver/deepsea/pxc/common/profiler/trace_entries.proto";
+import "platforms/asic_sw/driver/deepsea/vxc/vfc/profiler/trace_entries.proto";
+import "platforms/asic_sw/driver/deepsea/vxc/vlc/profiler/trace_entries.proto";
+import "platforms/asic_sw/driver/deepsea/gxc/gfc/profiler/trace_entries.proto";
+import "platforms/asic_sw/proto/device_identifiers.proto";
+import "platforms/deepsea/jellyfish/xdb/debugger.proto";
+message JfTrace {
+  reserved 2;
+  reserved 7;
+  reserved 9;
+  message GtcSample {
+    optional int64 walltime_ns = 1;
+    optional uint64 gtc = 2;
+  }
+  message OverlayInfo {
+    optional uint32 id = 1;
+    optional uint32 address = 2;
+  }
+  message RunDebugInfo {
+    reserved 1;
+    reserved 3;
+    reserved 6;
+    enum CoreType {
+      TENSOR_CORE = 0;
+      BARNA_CORE = 1;
+      SPARSE_CORE = 2;
+    }
+    optional .xprof.tpu.JfTrace.RunDebugInfo.CoreType core_type = 7 [default = TENSOR_CORE];
+    optional int32 core_num = 2;
+    optional uint64 program_id = 4;
+    optional .platforms_deepsea.jellyfish.xdb.RuntimeMetadata runtime_metadata = 5;
+  }
+  optional uint32 device_id = 1;
+  optional int64 start_walltime_ns = 10;
+  optional uint64 start_gtc = 11;
+  optional int64 stop_walltime_ns = 14;
+  optional uint64 stop_gtc = 18;
+  repeated .xprof.tpu.JfTrace.GtcSample gtc_sample = 21;
+  optional .asic_sw.proto.DeviceIdentifiers device_identifiers = 19;
+  optional bool compressed = 25 [default = false];
+  repeated bytes encoded_entries = 5;
+  repeated .asic_sw.driver.deepsea.jxc.PerformanceTraceEntry raw_entries = 4;
+  repeated .asic_sw.driver.deepsea.pxc.profiler.TraceEntry pxc_entries = 13;
+  repeated .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceEntry vlc_entries = 20;
+  repeated .asic_sw.driver.deepsea.vxc.vfc.profiler.TraceEntry vfc_entries = 23;
+  repeated .asic_sw.driver.deepsea.gxc.glc.profiler.TraceEntry glc_entries = 24;
+  repeated .asic_sw.driver.deepsea.gxc.gfc.profiler.TraceEntry gfc_entries = 27;
+  map<int32, int32> initial_power_state = 30;
+  map<int32, int32> initial_tc_throttle_state = 31;
+  map<int32, int32> initial_sc_throttle_state = 32;
+  optional int32 chip_id = 6;
+  repeated uint64 initial_program_id = 12;
+  repeated uint64 initial_run_id = 17;
+  repeated int32 initial_overlay = 8;
+  repeated .xprof.tpu.JfTrace.OverlayInfo initial_overlay_info = 15;
+  repeated uint32 initial_tracemark = 16;
+  repeated .xprof.tpu.JfTrace.RunDebugInfo run_debug_info = 3;
+  optional bool mega_core = 22;
+  optional bool trace_buffers_dropped = 26 [default = false];
+}

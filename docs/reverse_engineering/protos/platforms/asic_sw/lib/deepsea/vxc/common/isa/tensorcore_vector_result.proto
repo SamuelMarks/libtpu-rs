@@ -1,0 +1,41 @@
+syntax = "proto2";
+package asic_sw.deepsea.vxc.isa;
+import "platforms/asic_sw/lib/deepsea/vxc/common/isa/common_encodings.proto";
+message TensorCoreVectorResult {
+  message PopEupResult {
+    optional uint32 dest = 1;
+  }
+  message PopMxuResult {
+    enum MrfSource {
+      MRF_SOURCE_MRF_0 = 0;
+      MRF_SOURCE_MRF_1 = 1;
+      MRF_SOURCE_MRF_2 = 2;
+      MRF_SOURCE_MRF_3 = 3;
+    }
+    optional .asic_sw.deepsea.vxc.isa.TensorCoreVectorResult.PopMxuResult.MrfSource unit = 1;
+    optional uint32 dest = 2;
+  }
+  message TransposeResult {
+    enum TrfSource {
+      TRF_SOURCE_TRF_0 = 0;
+      TRF_SOURCE_TRF_1 = 1;
+      TRF_SOURCE_TRF_2 = 2;
+      TRF_SOURCE_RESERVED = 3;
+    }
+    optional .asic_sw.deepsea.vxc.isa.TensorCoreVectorResult.TransposeResult.TrfSource unit = 1;
+    optional uint32 dest = 2;
+  }
+  message PopCcrfResult {
+    optional uint32 dest = 1;
+  }
+  oneof inst {
+    .asic_sw.deepsea.vxc.isa.TensorCoreVectorResult.PopEupResult pop_eup_result = 5;
+    .asic_sw.deepsea.vxc.isa.TensorCoreVectorResult.PopMxuResult pop_mxu_result = 6;
+    .asic_sw.deepsea.vxc.isa.TensorCoreVectorResult.TransposeResult transpose_result = 7;
+    .asic_sw.deepsea.vxc.isa.TensorCoreVectorResult.PopCcrfResult pop_ccrf_result = 8;
+  }
+  optional .asic_sw.deepsea.vxc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional uint32 latency = 2 [default = 1];
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

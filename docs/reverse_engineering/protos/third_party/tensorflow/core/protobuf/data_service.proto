@@ -1,0 +1,38 @@
+syntax = "proto3";
+package tensorflow.data;
+enum DeploymentMode {
+  DEPLOYMENT_MODE_UNSPECIFIED = 0;
+  DEPLOYMENT_MODE_COLOCATED = 1;
+  DEPLOYMENT_MODE_REMOTE = 2;
+  DEPLOYMENT_MODE_HYBRID = 3;
+}
+message ProcessingModeDef {
+  enum ShardingPolicy {
+    OFF = 0;
+    DYNAMIC = 1;
+    FILE = 2;
+    DATA = 3;
+    FILE_OR_DATA = 4;
+    HINT = 5;
+  }
+  .tensorflow.data.ProcessingModeDef.ShardingPolicy sharding_policy = 1;
+}
+message DataServiceMetadata {
+  enum Compression {
+    COMPRESSION_UNSPECIFIED = 0;
+    COMPRESSION_OFF = 1;
+    COMPRESSION_SNAPPY = 2;
+    COMPRESSION_FORCED_SNAPPY = 3;
+  }
+  oneof optional_element_spec {
+    bytes element_spec = 1;
+  }
+  .tensorflow.data.DataServiceMetadata.Compression compression = 2;
+  int64 cardinality = 3;
+}
+message CrossTrainerCacheOptions {
+  string trainer_id = 1;
+}
+message DataServiceConfig {
+  .tensorflow.data.DeploymentMode deployment_mode = 1;
+}

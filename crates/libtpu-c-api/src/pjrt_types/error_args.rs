@@ -235,7 +235,9 @@ impl PjrtArgsStruct for PJRT_Error_GetCode_Args {
 }
 impl PjrtArgsStruct for PJRT_Error_ForEachPayload_Args {}
 impl PjrtArgsStruct for PJRT_Plugin_Initialize_Args {}
-impl PjrtArgsStruct for PJRT_Plugin_Attributes_Args {}
+impl PjrtArgsStruct for PJRT_Plugin_Attributes_Args {
+    const LEGACY_MIN_STRUCT_SIZE: usize = 24;
+}
 impl PjrtArgsStruct for PJRT_Event_Destroy_Args {}
 impl PjrtArgsStruct for PJRT_Event_IsReady_Args {
     const MIN_STRUCT_SIZE: usize = 25;

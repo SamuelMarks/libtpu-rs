@@ -1,0 +1,14 @@
+syntax = "proto2";
+package pgraph;
+import "google/protobuf/timestamp.proto";
+message DatasetAttributes {
+  extensions 1103;
+  extensions 1104;
+  extensions 1105;
+  message VersionMetadata {
+    optional uint64 id = 1;
+  }
+  optional .google.protobuf.Timestamp fetch_timestamp = 1;
+  optional .pgraph.DatasetAttributes.VersionMetadata version = 2;
+  optional string break_glass_reason = 3;
+}

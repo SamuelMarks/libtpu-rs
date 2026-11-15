@@ -1,0 +1,32 @@
+syntax = "proto3";
+package tensorflow.tf2xla;
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+message TensorId {
+  string node_name = 1;
+  int64 output_index = 2;
+}
+message Feed {
+  .tensorflow.tf2xla.TensorId id = 1;
+  .tensorflow.TensorShapeProto shape = 2;
+  string name = 3;
+  .tensorflow.DataType type = 4;
+}
+message Fetch {
+  .tensorflow.tf2xla.TensorId id = 1;
+  string name = 2;
+  .tensorflow.TensorShapeProto shape = 3;
+  .tensorflow.DataType type = 4;
+}
+message Variable {
+  string node_name = 1;
+  string name = 2;
+  .tensorflow.TensorShapeProto shape = 3;
+  .tensorflow.DataType type = 4;
+  bool readonly = 5;
+}
+message Config {
+  repeated .tensorflow.tf2xla.Feed feed = 1;
+  repeated .tensorflow.tf2xla.Fetch fetch = 2;
+  repeated .tensorflow.tf2xla.Variable variable = 3;
+}

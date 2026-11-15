@@ -1,0 +1,6 @@
+syntax = "proto3";
+package asic_fw.black_box;
+import "platforms/asic_sw/generators/black_box/event_definition.proto";
+message EventDefinitionMap {
+  map<int32, .asic_fw.black_box.EventDefinition> events = 1;
+}

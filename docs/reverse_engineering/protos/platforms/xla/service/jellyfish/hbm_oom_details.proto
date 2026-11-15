@@ -1,0 +1,6 @@
+syntax = "proto3";
+package xla;
+message HbmOomDetails {
+  optional int64 total_allocation_bytes = 1;
+  optional int64 user_allocation_shared_memory_limit_bytes = 2;
+}

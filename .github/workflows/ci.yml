@@ -108,13 +108,13 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends doxygen graphviz
-          python -m pip install --upgrade pip ruff mypy pytest pyelftools
+          python -m pip install --upgrade pip ruff mypy pytest pyelftools numpy ml_dtypes maturin jax
 
       - name: Install Doxygen and Python linters (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install doxygen
-          python -m pip install --upgrade pip ruff mypy pytest pyelftools
+          python -m pip install --upgrade pip ruff mypy pytest pyelftools numpy ml_dtypes maturin jax
 
       - name: Run pre-commit clippy hook (clippy, rustdoc, ruff check, mypy, doxygen)
         run: python3 scripts/pre_commit.py clippy --check
@@ -142,22 +142,27 @@ jobs:
       - name: Cache Cargo registry and target
         uses: Swatinem/rust-cache@v2
 
-      - name: Install CMake, Clang, and pytest-cov
+      - name: Install CMake, Clang, and Python test dependencies
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends cmake clang llvm
           fi
-          python -m pip install --upgrade pip pytest pytest-cov pyelftools
+          python -m pip install --upgrade pip pytest pytest-cov pyelftools numpy ml_dtypes maturin jax
 
-      - name: Build workspace and run pre-commit test hook (cargo test, pytest, ctest)
+      - name: Build workspace and run ABI, proto-sync, ASan/UBSan, and test hooks
         env:
           CC: clang
           CXX: clang++
         run: |
           python3 scripts/pre_commit.py build --check
           python3 scripts/pre_commit.py abi --check
+          python3 scripts/pre_commit.py proto-sync --check
           python3 scripts/pre_commit.py test --check
+          cmake -B cpp/build-asan -S cpp -DENABLE_SANITIZERS=ON
+          cmake --build cpp/build-asan
+          ctest --test-dir cpp/build-asan --output-on-failure
+          rm -rf cpp/build-asan
 
   coverage-and-shields:
     name: "Hook 5: 100% Doc & Test Coverage + Shields (${{ matrix.os }})"
@@ -197,19 +202,34 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends clang clang-format cmake doxygen llvm
-          python -m pip install --upgrade pip ruff mypy pytest pytest-cov pyelftools pre-commit
+          python -m pip install --upgrade pip ruff mypy pytest pytest-cov pyelftools numpy ml_dtypes maturin jax pre-commit
 
       - name: Install system and Python dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install clang-format doxygen
-          python -m pip install --upgrade pip ruff mypy pytest pytest-cov pyelftools pre-commit
+          python -m pip install --upgrade pip ruff mypy pytest pytest-cov pyelftools numpy ml_dtypes maturin jax pre-commit
 
-      - name: Run full pre-commit pipeline in strict check mode
+      - name: Run full pre-commit pipeline in strict 100% doc/line/function/branch check mode
         env:
           CC: clang
           CXX: clang++
-        run: python3 scripts/pre_commit.py all --check
+        run: |
+          python3 scripts/pre_commit.py all --check
+          python3 -c '
+          import json
+          rs = json.load(open("target/llvm-cov/coverage.json"))["data"][0]["totals"]
+          assert rs["lines"]["percent"] == 100.0, rs["lines"]
+          assert rs["functions"]["percent"] == 100.0, rs["functions"]
+          assert rs["branches"]["percent"] == 100.0 and rs["branches"]["count"] > 0, rs["branches"]
+          py = json.load(open("target/llvm-cov/py_coverage.json"))["totals"]
+          assert py["missing_lines"] == 0 and py["missing_branches"] == 0 and py["percent_covered"] == 100.0, py
+          cpp = json.load(open("target/llvm-cov/cpp_coverage.json"))["data"][0]["totals"]
+          assert cpp["lines"]["percent"] == 100.0, cpp["lines"]
+          assert cpp["functions"]["percent"] == 100.0, cpp["functions"]
+          assert cpp["regions"]["percent"] == 100.0, cpp["regions"]
+          assert cpp["branches"]["percent"] == 100.0 and cpp["branches"]["count"] > 0, cpp["branches"]
+          '
 
       - name: Run pre-commit framework over all hooks
         env:

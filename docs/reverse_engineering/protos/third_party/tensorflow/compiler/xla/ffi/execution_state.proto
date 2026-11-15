@@ -1,0 +1,6 @@
+syntax = "proto3";
+package xla.ffi;
+message ExecutionStateProto {
+  string type_name = 1;
+  bytes state = 2;
+}

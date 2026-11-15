@@ -1,0 +1,34 @@
+syntax = "proto2";
+package xla.jellyfish.annotations;
+message HpptAnnotationProto {
+  enum InstType {
+    INST_TYPE_UNSPECIFIED = 0;
+    SHARD_RECV_WAIT = 1;
+    SHARD_SEND_WAIT = 2;
+  }
+  enum TransferType {
+    TRANSFER_TYPE_UNSPECIFIED = 0;
+    REMOTE_DMA = 1;
+    PARTNER_TRANSFER = 2;
+  }
+  enum Dimension {
+    DIMENSION_UNSPECIFIED = 0;
+    DIMENSION_X = 1;
+    DIMENSION_Y = 2;
+    DIMENSION_Z = 3;
+    DIMENSION_FREE_RING = 4;
+  }
+  enum Direction {
+    DIRECTION_UNSPECIFIED = 0;
+    DIRECTION_NEXT_CHIP = 1;
+    DIRECTION_PREV_CHIP = 2;
+    DIRECTION_NEXT_CORE = 3;
+    DIRECTION_PREV_CORE = 4;
+    DIRECTION_CW = 5;
+    DIRECTION_CCW = 6;
+  }
+  optional .xla.jellyfish.annotations.HpptAnnotationProto.InstType inst_type = 1;
+  optional .xla.jellyfish.annotations.HpptAnnotationProto.Dimension physical_dimension = 2;
+  optional .xla.jellyfish.annotations.HpptAnnotationProto.Direction direction = 3;
+  optional .xla.jellyfish.annotations.HpptAnnotationProto.TransferType transfer_type = 4;
+}

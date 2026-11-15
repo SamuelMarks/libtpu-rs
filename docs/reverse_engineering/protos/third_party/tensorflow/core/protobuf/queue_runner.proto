@@ -1,0 +1,10 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/protobuf/error_codes.proto";
+message QueueRunnerDef {
+  string queue_name = 1;
+  repeated string enqueue_op_name = 2;
+  string close_op_name = 3;
+  string cancel_op_name = 4;
+  repeated .tensorflow.error.Code queue_closed_exception_types = 5;
+}

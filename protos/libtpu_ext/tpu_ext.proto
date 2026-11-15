@@ -1,0 +1,130 @@
+syntax = "proto3";
+
+package libtpu.ext.tpu;
+
+// Mosaic / Pallas DMA descriptor for custom kernel lowering.
+message MosaicDmaDescriptorProto {
+  uint32 dma_id = 1;
+  uint32 src_memory_space = 2;
+  uint32 dst_memory_space = 3;
+  uint64 transfer_bytes = 4;
+  uint32 semaphore_id = 5;
+}
+
+// Mosaic / Pallas scratchpad layout configuration.
+message MosaicScratchpadLayoutProto {
+  uint64 vmem_bytes = 1;
+  uint64 smem_bytes = 2;
+  uint64 cmem_bytes = 3;
+  repeated int64 tile_strides = 4;
+}
+
+// Mosaic / Pallas custom kernel backend configuration.
+message MosaicBackendConfigProto {
+  string kernel_name = 1;
+  int32 core_type = 2;
+  repeated int64 grid_bounds = 3;
+  MosaicScratchpadLayoutProto scratchpad_layout = 4;
+  repeated MosaicDmaDescriptorProto dma_descriptors = 5;
+}
+
+// HLO module structural fingerprint components.
+message HloModuleFingerprintProto {
+  string module_name = 1;
+  uint64 structural_hash = 2;
+  uint64 sharding_hash = 3;
+  uint64 layout_hash = 4;
+}
+
+// Compiler environment fingerprint components.
+message TpuCompilerEnvironmentFingerprintProto {
+  int32 tpu_version = 1;
+  string compiler_abi_hash = 2;
+  uint64 flags_digest = 3;
+  bool megacore_enabled = 4;
+}
+
+// Composite TPU compilation cache key fingerprint.
+message TpuCompilationFingerprintProto {
+  string hex_sha256 = 1;
+  HloModuleFingerprintProto hlo_fingerprint = 2;
+  TpuCompilerEnvironmentFingerprintProto env_fingerprint = 3;
+  uint64 topology_fingerprint = 4;
+}
+
+// TPU embedding partitioned table configuration.
+message TpuEmbeddingPartitionedConfigProto {
+  int32 num_partitions = 1;
+  repeated string table_names = 2;
+  bytes raw_config_bytes = 3;
+}
+
+// TPU embedding HBM/SPMEM memory reservation summary.
+message TpuEmbeddingMemoryConfigProto {
+  int32 num_segments = 1;
+  repeated bytes segment_blobs = 2;
+}
+
+// TPU embedding cross-host network coordination configuration.
+message TpuEmbeddingHostNetworkConfigProto {
+  string endpoint_address = 1;
+  bytes partition_payload = 2;
+}
+
+// Chip power state telemetry sample.
+message TpuPowerStateProto {
+  uint32 chip_id = 1;
+  int32 power_state_level = 2;
+  double current_watts = 3;
+  double max_tdp_watts = 4;
+  double junction_temp_celsius = 5;
+}
+
+// Chip thermal throttle telemetry summary.
+message ChipThermalThrottleSummaryProto {
+  uint32 chip_id = 1;
+  uint64 throttle_duration_us = 2;
+  uint32 throttle_event_count = 3;
+  double peak_temp_celsius = 4;
+}
+
+// Chip clock frequency scaling telemetry snapshot.
+message FrequencyScalingTelemetryProto {
+  uint32 chip_id = 1;
+  uint32 nominal_clock_mhz = 2;
+  uint32 active_clock_mhz = 3;
+  uint32 hbm_clock_mhz = 4;
+  repeated TpuPowerStateProto power_states = 5;
+  repeated ChipThermalThrottleSummaryProto thermal_summaries = 6;
+}
+
+// tpuz active HLO execution trace on a single core.
+message TpuzActiveHloExecutionTraceProto {
+  uint32 core_id = 1;
+  string hlo_module_name = 2;
+  string active_hlo_op_name = 3;
+  string active_hlo_category = 4;
+  uint64 program_counter = 5;
+  uint64 elapsed_cycles = 6;
+}
+
+// tpuz live device buffer allocation entry.
+message TpuzLiveBufferAllocationProto {
+  uint64 buffer_id = 1;
+  uint32 memory_space = 2;
+  uint64 base_address = 3;
+  uint64 size_bytes = 4;
+  string shape_description = 5;
+  string owner_hlo_name = 6;
+}
+
+// tpuz per-core telemetry snapshot.
+message TpuzCoreTelemetrySnapshotProto {
+  uint32 chip_id = 1;
+  uint32 core_id = 2;
+  uint32 core_type = 3;
+  TpuzActiveHloExecutionTraceProto active_trace = 4;
+  repeated TpuzLiveBufferAllocationProto live_buffers = 5;
+  uint64 vmem_bytes_in_use = 6;
+  uint64 hbm_bytes_in_use = 7;
+}

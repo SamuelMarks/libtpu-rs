@@ -1,0 +1,5 @@
+syntax = "proto3";
+package xla;
+message ShapeIndexProto {
+  repeated int64 indexes = 1;
+}

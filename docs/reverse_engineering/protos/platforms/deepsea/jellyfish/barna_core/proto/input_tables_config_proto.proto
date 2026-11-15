@@ -1,0 +1,44 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.barna_core;
+import "third_party/tensorflow/compiler/xla/tpu/protobuf/tpu_embedding_configuration.proto";
+message SoftwareDeduplicationAlgorithm {
+  message None {
+  }
+  message KValent {
+    optional int64 max_unique_frequent_id_count_per_batch = 1;
+    optional int32 max_frequent_id_count_per_feature = 2;
+  }
+  message Multivalent {
+    optional int64 max_unique_frequent_id_count_per_batch = 1;
+    optional int64 max_total_frequent_id_count_per_batch = 2;
+  }
+  message TestOnlyConstantDeduplicationLiterals {
+    optional int64 extra_sample_count = 1;
+  }
+  oneof algorithm {
+    .platforms_deepsea.jellyfish.barna_core.SoftwareDeduplicationAlgorithm.None none = 1;
+    .platforms_deepsea.jellyfish.barna_core.SoftwareDeduplicationAlgorithm.KValent k_valent = 2;
+    .platforms_deepsea.jellyfish.barna_core.SoftwareDeduplicationAlgorithm.Multivalent multivalent = 3;
+    .platforms_deepsea.jellyfish.barna_core.SoftwareDeduplicationAlgorithm.TestOnlyConstantDeduplicationLiterals test_only_constant_deduplication_literals = 4;
+  }
+}
+message InputTablesConfigProto {
+  message UserTable {
+    optional .tensorflow.tpu.TPUEmbeddingConfiguration.TableDescriptor config = 1;
+    optional int32 id = 2;
+    optional int32 input_table_count = 3 [default = 1];
+    optional .platforms_deepsea.jellyfish.barna_core.SoftwareDeduplicationAlgorithm software_deduplication_algorithm = 4;
+    optional bool optimize_packing = 5 [default = false];
+  }
+  message InputTable {
+    optional int32 id = 1;
+    optional int32 user_table_id = 3;
+    optional int32 index_within_user_table = 4 [default = 0];
+  }
+  repeated .platforms_deepsea.jellyfish.barna_core.InputTablesConfigProto.UserTable user_tables = 1;
+  repeated .platforms_deepsea.jellyfish.barna_core.InputTablesConfigProto.InputTable input_tables = 2;
+  optional int32 tensor_core_count = 6;
+  optional int32 user_batch_size = 7;
+  optional int32 tensor_core_batch_size = 8;
+  optional int32 barna_clump_size = 9 [default = 1];
+}

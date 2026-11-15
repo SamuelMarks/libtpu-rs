@@ -1,0 +1,32 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+message TpuSequencerPartsProto {
+  message Register {
+    .tpu.TpuRegisterTypeProto type = 1;
+    int32 count = 2;
+  }
+  message ScalarIsa {
+    bool has_smul_u24 = 2;
+    bool has_smul_u32 = 3;
+  }
+  message VectorIsa {
+    int32 lane_count = 2;
+    int32 sublane_count = 3;
+    int32 issue_latency_cycle_count = 4;
+    int32 mxu_count = 5;
+    int32 xlu_count = 6;
+    int32 iar_count = 7;
+  }
+  message BarnaCoreFsm {
+    int64 freg_smem_word_offset = 1;
+    int64 freg_smem_word_count = 2;
+  }
+  .tpu.TpuVersionProto version = 1;
+  .tpu.TpuSequencerTypeProto type = 2;
+  repeated .tpu.TpuSequencerPartsProto.Register registers = 3;
+  .tpu.TpuSequencerPartsProto.ScalarIsa scalar_isa = 4;
+  .tpu.TpuSequencerPartsProto.VectorIsa vector_isa = 5;
+  .tpu.TpuSequencerPartsProto.BarnaCoreFsm barna_core_fsm = 6;
+}

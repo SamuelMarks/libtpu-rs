@@ -1,0 +1,34 @@
+syntax = "proto2";
+package superpod.tpunetd;
+import "google/protobuf/timestamp.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+enum NetworkSliceVersion {
+  NETWORK_SLICE_UNSPECIFIED = 0;
+  NETWORK_SLICE_V1 = 1;
+  NETWORK_SLICE_V2 = 2;
+}
+enum CoreDumpType {
+  CORE_DUMP_UNKNOWN = 0;
+  CORE_DUMP_ICI_DUMP = 1;
+  CORE_DUMP_CHIP_DUMP = 2;
+}
+message NetworkContextId {
+  optional int64 job_uid = 1;
+  optional int64 task_id = 2;
+}
+message NetworkContextConfig {
+  reserved 3;
+  optional .superpod.tpunetd.NetworkContextId id = 1;
+  optional string prod_user = 2;
+  optional string locus_type = 4;
+  optional string runtime_arguments = 5;
+  repeated string authorized_prod_users = 6;
+  repeated .asic_sw.proto.ChipLocation chip_locations = 7;
+  optional .google.protobuf.Timestamp create_timestamp = 8;
+  optional .google.protobuf.Timestamp delete_timestamp = 9;
+  optional .superpod.tpunetd.NetworkSliceVersion slice_version = 10;
+}
+message NetworkContextTableConfig {
+  repeated .superpod.tpunetd.NetworkContextConfig entries = 1;
+}

@@ -1,0 +1,19 @@
+syntax = "proto2";
+package asic_sw.arm;
+import "platforms/asic_sw/lib/common/stack_frame.proto";
+message ExceptionInfo {
+  optional uint32 r0 = 1;
+  optional uint32 r1 = 2;
+  optional uint32 r2 = 3;
+  optional uint32 r3 = 4;
+  optional uint32 r12 = 5;
+  optional uint32 lr = 6;
+  optional uint32 return_address = 7;
+  optional uint32 psr = 8;
+}
+message Results {
+  repeated uint64 cpu_registers = 1;
+  repeated .asic_sw.StackFrame firmware_stack = 2;
+  optional .asic_sw.arm.ExceptionInfo exception_info = 3;
+  optional int32 exception_info_frame_index = 4;
+}

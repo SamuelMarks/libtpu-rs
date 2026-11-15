@@ -1,0 +1,22 @@
+syntax = "proto2";
+package xla.service.jellyfish.accuracy;
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message AccuracyEntry {
+  message ErrorInfo {
+    optional double abs_error = 1;
+    optional double max_rel_error = 2;
+    optional double max_ulps_error = 3;
+  }
+  optional string opcode = 1;
+  optional .xla.PrimitiveType element_type = 2;
+  optional .tpu.TpuVersionProto device_type = 3;
+  optional bool high_accuracy = 4;
+  optional double max_abs_error = 5;
+  optional double max_rel_error = 6;
+  optional double max_ulps_error = 7;
+  repeated .xla.service.jellyfish.accuracy.AccuracyEntry.ErrorInfo error_info = 8;
+}
+message AccuracyTable {
+  repeated .xla.service.jellyfish.accuracy.AccuracyEntry accuracy_entry = 1;
+}

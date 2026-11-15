@@ -1,0 +1,120 @@
+syntax = "proto3";
+package libtpu.tpunetd;
+import "cloud/tpu/lib/monitoring/proto/utilization_metrics.proto";
+import "google/protobuf/duration.proto";
+import "platforms/accel_ssw/deepsea/slice_builder/proto/ici_dump.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+import "platforms/asic_sw/proto/core_dump.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/chip_coordinate.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/topology.proto";
+import "platforms/deepsea/software/superpod/routing/tpunetd/proto/common.proto";
+import "third_party/protobuf/cpp_features.proto";
+enum VBARRequestType {
+  VBARREQUEST_UNSPECIFIED = 0;
+  START_SESSION = 1;
+  STOP_SESSION = 2;
+  STAT_SESSION = 3;
+  CHECK_SESSION_HEALTH = 4;
+  GET_CORE_DUMP = 5;
+  TPU_BACKEND_CONNECTION_TEST = 6;
+  GET_CHIP_COORDINATES = 7;
+  GET_HOST_METRICS = 8;
+}
+message StartSessionRequest {
+  repeated .asic_sw.proto.ChipLocation chips = 1;
+  .superpod.routing.proto.Topology topology = 2;
+}
+message StopSessionRequest {
+  repeated .asic_sw.proto.ChipLocation chips = 1;
+  .superpod.routing.proto.Topology topology = 2;
+}
+message StatSessionRequest {
+  repeated .asic_sw.proto.ChipLocation chips = 1;
+  .superpod.routing.proto.Topology topology = 2;
+}
+message CheckSessionHealthRequest {
+  repeated .asic_sw.proto.ChipLocation chips = 1;
+}
+message GetCoreDumpRequest {
+  reserved 1;
+  .google.protobuf.Duration timeout = 2;
+  .superpod.tpunetd.CoreDumpType core_dump_type = 3;
+  repeated .asic_sw.proto.ChipLocation chips = 4;
+  .superpod.routing.proto.Topology topology = 5;
+}
+message TPUBackendConnectionTestRequest {
+  repeated .asic_sw.proto.ChipLocation chips = 1;
+}
+message GetChipCoordinatesRequest {
+  repeated .asic_sw.proto.ChipLocation chips = 1;
+}
+message GetHostMetricsRequest {
+}
+message StartSessionResponse {
+}
+message StopSessionResponse {
+}
+message StatSessionResponse {
+}
+message CheckSessionHealthResponse {
+  repeated .asic_sw.proto.ChipLocation failed_chips = 1;
+}
+message GetCoreDumpResponse {
+  .accel_ssw.deepsea.slice_builder.proto.IciDump ici_dump = 1;
+  repeated .asic_sw.proto.ChipCoreDump core_dumps = 2;
+}
+message TPUBackendConnectionTestResponse {
+}
+message GetChipCoordinatesResponse {
+  .superpod.routing.proto.ChipCoordinateMapping coordinate_mappings = 1;
+}
+message GetHostMetricsResponse {
+  repeated .cloud_tpu_lib_monitoring_proto.UtilizationMetricData metrics_data = 1;
+}
+message VBARRequestInput {
+  oneof request {
+    .libtpu.tpunetd.StartSessionRequest start_session_request = 1;
+    .libtpu.tpunetd.StopSessionRequest stop_session_request = 2;
+    .libtpu.tpunetd.StatSessionRequest stat_session_request = 3;
+    .libtpu.tpunetd.CheckSessionHealthRequest check_session_health_request = 4;
+    .libtpu.tpunetd.GetCoreDumpRequest get_core_dump_request = 5;
+    .libtpu.tpunetd.TPUBackendConnectionTestRequest tpu_backend_connection_test_request = 6;
+    .libtpu.tpunetd.GetChipCoordinatesRequest get_chip_coordinates_request = 7;
+  }
+  .libtpu.tpunetd.VBARRequestType request_type = 15;
+}
+message Status {
+  enum StatusCode {
+    STATUS_UNSPECIFIED = 0;
+    OK = 1;
+    INVALID_ARGUMENT = 2;
+    GRPC_ERROR = 3;
+    INTERNAL = 4;
+  }
+  .libtpu.tpunetd.Status.StatusCode code = 1;
+  string msg = 2;
+}
+message VBARResponseOutput {
+  oneof response {
+    .libtpu.tpunetd.StartSessionResponse start_session_response = 1;
+    .libtpu.tpunetd.StopSessionResponse stop_session_response = 2;
+    .libtpu.tpunetd.StatSessionResponse stat_session_response = 3;
+    .libtpu.tpunetd.CheckSessionHealthResponse check_session_health_response = 4;
+    .libtpu.tpunetd.GetCoreDumpResponse get_core_dump_response = 5;
+    .libtpu.tpunetd.TPUBackendConnectionTestResponse tpu_backend_connection_test_response = 6;
+    .libtpu.tpunetd.GetChipCoordinatesResponse get_chip_coordinates_response = 7;
+    .libtpu.tpunetd.GetHostMetricsResponse get_host_metrics_response = 8;
+  }
+  .libtpu.tpunetd.Status status = 14;
+  .libtpu.tpunetd.VBARRequestType request_type = 15;
+}
+service VBARControl {
+  rpc StartSession(.libtpu.tpunetd.StartSessionRequest) returns (.libtpu.tpunetd.StartSessionResponse);
+  rpc StopSession(.libtpu.tpunetd.StopSessionRequest) returns (.libtpu.tpunetd.StopSessionResponse);
+  rpc StatSession(.libtpu.tpunetd.StatSessionRequest) returns (.libtpu.tpunetd.StatSessionResponse);
+  rpc CheckSessionHealth(.libtpu.tpunetd.CheckSessionHealthRequest) returns (.libtpu.tpunetd.CheckSessionHealthResponse);
+  rpc GetCoreDump(.libtpu.tpunetd.GetCoreDumpRequest) returns (.libtpu.tpunetd.GetCoreDumpResponse);
+  rpc TPUBackendConnectionTest(.libtpu.tpunetd.TPUBackendConnectionTestRequest) returns (.libtpu.tpunetd.TPUBackendConnectionTestResponse);
+  rpc GetChipCoordinates(.libtpu.tpunetd.GetChipCoordinatesRequest) returns (.libtpu.tpunetd.GetChipCoordinatesResponse);
+  rpc GetHostMetrics(.libtpu.tpunetd.GetHostMetricsRequest) returns (.libtpu.tpunetd.GetHostMetricsResponse);
+}

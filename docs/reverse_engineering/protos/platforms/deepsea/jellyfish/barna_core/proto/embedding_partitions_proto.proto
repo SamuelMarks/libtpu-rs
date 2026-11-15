@@ -1,0 +1,46 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.barna_core;
+import "platforms/deepsea/jellyfish/barna_core/proto/input_tables_config_proto.proto";
+message EmbeddingPartitionsProto {
+  message InputTable {
+    message TpuTable {
+      reserved 3;
+      message HbmLineOffset {
+        optional int64 primary = 1;
+        optional int64 replica = 2;
+      }
+      optional int32 id = 1;
+      optional int32 virtual_id = 9;
+      optional int32 width = 2;
+      optional int32 tile_offset = 4;
+      optional int32 partition_row = 5;
+      repeated int32 hbm_channel_ids = 6;
+      optional .platforms_deepsea.jellyfish.barna_core.EmbeddingPartitionsProto.InputTable.TpuTable.HbmLineOffset hbm_line_offset = 7;
+      optional int32 channel_broadcast_group_width = 8;
+    }
+    optional int32 id = 1;
+    repeated .platforms_deepsea.jellyfish.barna_core.EmbeddingPartitionsProto.InputTable.TpuTable tpu_tables = 2;
+    optional int32 user_table_id = 3;
+    optional int32 index_within_user_table = 4 [default = 0];
+  }
+  message InputFeature {
+    optional int32 input_table_id = 1;
+    optional int32 user_feature_index = 2;
+    optional int32 index_within_input_table = 3 [default = 0];
+  }
+  message TpuSampleFeatureIndexSequence {
+    repeated int32 indexes_within_input_sample = 1;
+  }
+  message TpuSamplesForSingleRow {
+    repeated .platforms_deepsea.jellyfish.barna_core.EmbeddingPartitionsProto.TpuSampleFeatureIndexSequence tpu_samples = 1;
+  }
+  repeated .platforms_deepsea.jellyfish.barna_core.InputTablesConfigProto.UserTable user_tables = 9;
+  repeated .platforms_deepsea.jellyfish.barna_core.EmbeddingPartitionsProto.InputTable input_tables = 1;
+  optional int32 barna_core_count_per_row = 12;
+  optional int32 barna_core_count_per_column = 8;
+  optional int32 barna_clump_size = 14 [default = 1];
+  optional int32 user_batch_size = 10;
+  optional int32 tensor_core_batch_size = 13;
+  repeated .platforms_deepsea.jellyfish.barna_core.EmbeddingPartitionsProto.InputFeature input_feature_order = 5;
+  repeated .platforms_deepsea.jellyfish.barna_core.EmbeddingPartitionsProto.TpuSamplesForSingleRow tpu_samples_by_row = 7;
+}

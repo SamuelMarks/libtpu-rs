@@ -1,0 +1,84 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+import "learning/45eac/tpu/runtime/topology/tpu_topology_args.proto";
+import "platforms/xla/megascale/common/runtime.proto";
+import "platforms/xla/megascale/runtime/common/megascale_status.proto";
+import "third_party/tensorflow/compiler/xla/megascale/addresses.proto";
+message GetMultiSliceTopologyRequest {
+  .xla.megascale.runtime.NetworkAddressMapping address_mapping = 1;
+  .tpu.TpuTopologyArgsProto tpu_topology_args = 2;
+  uint64 incarnation_id = 3;
+}
+message MultiSliceTopologyInfo {
+  repeated .xla.megascale.runtime.SliceInfo slice_info = 1;
+  repeated .xla.megascale.runtime.NetworkAddressMapping address_mappings = 2;
+  uint64 incarnation_id = 3;
+}
+message GetMultiSliceTopologyResponse {
+  bytes serialized_topology_info = 1;
+}
+message BarrierRequest {
+  string barrier_id = 1;
+  int32 slice_id = 2;
+  int32 host_id = 3;
+  int32 num_participants = 4;
+}
+message BarrierResponse {
+  string barrier_id = 1;
+}
+message SendRequest {
+  .xla.megascale.runtime.TransferBufferRequest request_header = 1;
+  bytes payload = 2;
+}
+message RequestId {
+  uint64 process_id = 1;
+  uint64 seq = 2;
+}
+message TransferBufferRequest {
+  reserved 8;
+  string key = 1;
+  uint64 payload_size = 2;
+  optional int32 numa_node = 12;
+  uint64 send_time_us = 3;
+  uint64 activation_time_us = 11;
+  .xla.megascale.runtime.RequestId request_id = 4;
+  int32 slice_id = 13;
+  int32 tpu_host_id = 14;
+  bool is_compressed = 5;
+  bool has_checksum = 6;
+  uint64 checksum = 7;
+  optional uint64 output_offset = 9;
+  optional uint64 output_size = 10;
+  optional uint64 incarnation_id = 15;
+}
+message TransferBufferResponse {
+  uint64 received_time_us = 1;
+}
+message ReportErrorRequest {
+  int32 slice_id = 1;
+  int32 host_id = 2;
+  .xla.megascale.runtime.MegaScaleRuntimeError error = 3;
+}
+message ReportErrorResponse {
+}
+message TriggerErrorRequest {
+  .xla.megascale.runtime.MegaScaleRuntimeError.ErrorType error_type = 1;
+  string error_message = 2;
+  int32 launch_id = 3;
+}
+message TriggerErrorResponse {
+}
+message HeartBeatRequest {
+  bool is_shutdown = 1;
+  .xla.megascale.runtime.NetworkAddressMapping sender_address = 2;
+}
+message HeartBeatResponse {
+}
+service MegaScaleTransport {
+  rpc Send(.xla.megascale.runtime.SendRequest) returns (.xla.megascale.runtime.TransferBufferResponse);
+  rpc GetMultiSliceTopology(.xla.megascale.runtime.GetMultiSliceTopologyRequest) returns (.xla.megascale.runtime.GetMultiSliceTopologyResponse);
+  rpc Barrier(.xla.megascale.runtime.BarrierRequest) returns (.xla.megascale.runtime.BarrierResponse);
+  rpc ReportError(.xla.megascale.runtime.ReportErrorRequest) returns (.xla.megascale.runtime.ReportErrorResponse);
+  rpc TriggerError(.xla.megascale.runtime.TriggerErrorRequest) returns (.xla.megascale.runtime.TriggerErrorResponse);
+  rpc SendHeartBeat(.xla.megascale.runtime.HeartBeatRequest) returns (.xla.megascale.runtime.HeartBeatResponse);
+}

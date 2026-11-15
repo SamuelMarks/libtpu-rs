@@ -1,0 +1,66 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+import "platforms/xla/megascale/runtime/common/debug_logging.proto";
+import "platforms/xla/megascale/runtime/common/impairments.proto";
+import "platforms/xla/megascale/runtime/common/megascale_status.proto";
+import "util/task/status.proto";
+message GetDebugInfoRequest {
+}
+message CallbackRegistryDebugDump {
+  repeated string callbacks = 1;
+  repeated string values = 2;
+}
+message GetDebugInfoResponse {
+  repeated .xla.megascale.runtime.TpuCoreHLO hlos = 1;
+  .xla.megascale.runtime.CallbackRegistryDebugDump callback_registry = 2;
+}
+message SetImpairmentsRequest {
+  .xla.megascale.runtime.Impairments impairments = 1;
+}
+message SetImpairmentsResponse {
+}
+message TriggerLoggingRequest {
+  string dump_location = 1;
+}
+message TriggerLoggingResponse {
+  string dump_location = 1;
+}
+message UpdateSettingsRequest {
+  reserved 1;
+  reserved 2;
+  reserved 3;
+  message Value {
+    oneof value {
+      bool bool_value = 1;
+    }
+  }
+  map<string, .xla.megascale.runtime.UpdateSettingsRequest.Value> settings = 4;
+}
+message UpdateSettingsResponse {
+}
+message RaiseErrorRequest {
+  .xla.megascale.runtime.MegaScaleRuntimeError.ErrorType error_type = 1;
+  .util.StatusProto error = 2;
+  int32 launch_id = 3;
+}
+message RaiseErrorResponse {
+}
+message ConsumeErrorRequest {
+}
+message ConsumeErrorResponse {
+  .xla.megascale.runtime.MegaScaleRuntimeError error = 1;
+}
+message GetFatalErrorInfoRequest {
+}
+message GetFatalErrorInfoResponse {
+  optional .xla.megascale.runtime.FatalErrorInfo fatal_error = 1;
+}
+service MegascaleDebugService {
+  rpc GetDebugInfo(.xla.megascale.runtime.GetDebugInfoRequest) returns (.xla.megascale.runtime.GetDebugInfoResponse);
+  rpc SetImpairments(.xla.megascale.runtime.SetImpairmentsRequest) returns (.xla.megascale.runtime.SetImpairmentsResponse);
+  rpc TriggerLogging(.xla.megascale.runtime.TriggerLoggingRequest) returns (.xla.megascale.runtime.TriggerLoggingResponse);
+  rpc RaiseError(.xla.megascale.runtime.RaiseErrorRequest) returns (.xla.megascale.runtime.RaiseErrorResponse);
+  rpc UpdateSettings(.xla.megascale.runtime.UpdateSettingsRequest) returns (.xla.megascale.runtime.UpdateSettingsResponse);
+  rpc ConsumeError(.xla.megascale.runtime.ConsumeErrorRequest) returns (.xla.megascale.runtime.ConsumeErrorResponse);
+  rpc GetFatalErrorInfo(.xla.megascale.runtime.GetFatalErrorInfoRequest) returns (.xla.megascale.runtime.GetFatalErrorInfoResponse);
+}

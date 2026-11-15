@@ -1,0 +1,33 @@
+syntax = "proto3";
+package deepsea.common.chip_runner;
+import "third_party/protobuf/cpp_features.proto";
+message CoreInformation {
+  enum CoreType {
+    UNKNOWN = 0;
+    TENSOR_CORE = 1;
+    SPARSE_CORE = 2;
+  }
+  .deepsea.common.chip_runner.CoreInformation.CoreType core_type = 1;
+  int32 core_index = 2;
+}
+message BlockResult {
+  enum ResultStatus {
+    UNKNOWN = 0;
+    PASS = 1;
+    FAIL = 2;
+    INCONCLUSIVE = 3;
+  }
+  .deepsea.common.chip_runner.BlockResult.ResultStatus status = 1;
+  string block_name = 2;
+  string failure_details = 3;
+}
+message CoreResult {
+  enum RunStatus {
+    UNKNOWN = 0;
+    COMPLETED_OK = 1;
+    COMPLETED_WITH_FAILURES = 2;
+  }
+  .deepsea.common.chip_runner.CoreInformation core_info = 1;
+  .deepsea.common.chip_runner.CoreResult.RunStatus run_status = 2;
+  repeated .deepsea.common.chip_runner.BlockResult block_results = 3;
+}

@@ -1,0 +1,10 @@
+syntax = "proto2";
+package util;
+import "google/protobuf/any.proto";
+import "n2a/p4r2d3/bridge/proto/message_set.proto";
+message NonMessageSetPayload {
+  repeated .google.protobuf.Any payloads = 1;
+  extend .proto2.bridge.MessageSet {
+    optional .util.NonMessageSetPayload message_set_extension = 258191113;
+  }
+}

@@ -1,0 +1,16 @@
+syntax = "proto3";
+package asic_sw.deepsea;
+message HbmHash {
+  uint64 half_quadrant_hash = 1;
+  repeated uint64 pseudo_channel_hash = 2;
+  repeated uint64 pseudo_channel_hash_adder = 3;
+  repeated uint64 bank_hash = 4;
+  repeated uint64 bank_hash_adder = 5;
+  repeated uint64 row_offset = 6;
+  repeated uint64 col_offset = 7;
+  bool addressing_mode_for_half = 8;
+  bool addressing_mode_for_ps = 9;
+  bool addressing_mode_for_bank = 10;
+  bool addressing_mode_for_row = 11;
+  bool addressing_mode_for_col = 12;
+}

@@ -1,0 +1,8 @@
+syntax = "proto2";
+package operations_research;
+message FakeSolveParameters {
+  optional double solve_duration_seconds = 1;
+  optional int32 status = 2 [default = 0];
+  optional int32 burn_cpu = 3 [default = 0];
+  optional double ram_usage_mb = 4;
+}

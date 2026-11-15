@@ -1,0 +1,21 @@
+syntax = "proto3";
+package xla.jellyfish;
+message FusionDataProtoGenerationOptions {
+  bool include_standalone_fusion_module = 1;
+  bool include_expert_and_gating_features = 2;
+}
+message LearnedCostModelClientOptions {
+  enum ServiceType {
+    SERVICE_TYPE_UNSPECIFIED = 0;
+    SERVICE_TYPE_LOCAL = 1;
+    SERVICE_TYPE_REMOTE = 2;
+  }
+  .xla.jellyfish.LearnedCostModelClientOptions.ServiceType embedding_service_type = 1;
+  string remote_embedding_server_address = 2;
+  string remote_embedding_model_name = 3;
+  int32 inflight_rpc_monitoring_interval_milliseconds = 4;
+  string local_embedding_model_path = 5;
+  string embedding_cache_path = 6;
+  .xla.jellyfish.FusionDataProtoGenerationOptions fusion_data_proto_generation_options = 7;
+  int32 max_batch_size = 8;
+}

@@ -1,0 +1,5 @@
+syntax = "proto3";
+package tech.file;
+message SymlinkData {
+  string one_hop_symlink_target = 1;
+}

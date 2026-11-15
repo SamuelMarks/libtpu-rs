@@ -1,0 +1,6 @@
+syntax = "proto2";
+package asic_sw.driver.deepsea.jxc;
+message BarnaCoreErrorMask {
+  optional bool instruction_sequencer_timeout = 1 [default = false];
+  optional bool sync_timeout = 2 [default = false];
+}

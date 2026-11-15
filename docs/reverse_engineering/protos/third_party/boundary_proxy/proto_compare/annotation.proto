@@ -1,0 +1,90 @@
+syntax = "proto2";
+package proto_compare;
+import "n2a/p4r2d3/proto/descriptor.proto";
+enum FieldDisposition {
+  FD_UNSPECIFIED = 0;
+  FD_INCLUDE = 1;
+  FD_EXCLUDE = 2;
+  FD_TRANSFORM = 3;
+}
+enum ExcludeReason {
+  ER_UNSPECIFIED = 0;
+  ER_TIMESTAMP = 1;
+  ER_STATUS = 2;
+  ER_METRIC = 3;
+  ER_CAPACITY = 4;
+  ER_IDENTIFIER = 5;
+  ER_OPAQUE_IDENTIFIER = 9;
+  ER_SIGNATURE = 6;
+  ER_STREAMED_DATA = 7;
+  ER_CONTROL_PARAMETERS = 8;
+}
+enum FileUseCase {
+  FILE_USE_CASE_UNSPECIFIED = 0;
+  FILE_USE_CASE_INTERNAL_TPC = 1;
+  FILE_USE_CASE_EXTERNAL_TPC = 2;
+}
+enum TpcType {
+  TT_UNSPECIFIED = 0;
+  TT_OBSERVABILITY = 1;
+  TT_CHANGE = 2;
+  TT_SDR_OBSERVABILITY = 3;
+}
+message ComparisonOptions {
+  reserved 3;
+  reserved 4;
+  reserved "int_uncertainty";
+  reserved "float_uncertainty";
+  enum RepeatedFieldOptions {
+    UNSPECIFIED = 0;
+    AS_LIST = 1;
+    AS_SET = 2;
+  }
+  enum DataHandlingPolicy {
+    DP_UNSPECIFIED = 0;
+    DP_EQUAL = 1;
+    DP_REPLACE_WITH_HASHED_VALUE = 2;
+  }
+  optional .proto_compare.ComparisonOptions.RepeatedFieldOptions repeated_field = 1;
+  optional .proto_compare.ComparisonOptions.DataHandlingPolicy data_handling_policy = 5;
+  optional bool ignore_field_if_missing_in_comparison = 6;
+}
+message RedactionOptions {
+  enum TimestampPrecision {
+    TP_UNSPECIFIED = 0;
+    TP_DAY = 1;
+    TP_HOUR = 2;
+    TP_MINUTE = 3;
+    TP_SECOND = 4;
+    TP_MILLISECOND = 5;
+    TP_DAY_PT = 6;
+  }
+  optional bool omit_entirely = 1;
+  optional int32 max_string_length = 2;
+  optional int32 max_repeated_values = 3;
+  optional string match_regex = 4;
+  optional int64 min_integer_value = 5;
+  optional int64 max_integer_value = 6;
+  optional string audit_instructions = 7;
+  optional .proto_compare.RedactionOptions.TimestampPrecision timestamp_precision = 8;
+  optional double min_double_value = 9;
+  optional double max_double_value = 10;
+  optional string field_reference = 11;
+}
+extend .proto2.FieldOptions {
+  optional .proto_compare.FieldDisposition disposition = 484519953;
+  optional .proto_compare.ExcludeReason exclude_reason = 482813086;
+  optional .proto_compare.ComparisonOptions options = 478786899;
+  optional .proto_compare.RedactionOptions redaction = 485077330;
+  repeated .proto_compare.RedactionOptions redactions_by_reference = 425736634;
+  optional string comment = 486375988;
+}
+extend .proto2.FileOptions {
+  optional string file_vetting_status = 501006184;
+  repeated .proto_compare.FileUseCase file_use_case = 525000016;
+}
+extend .proto2.MethodOptions {
+  optional .proto_compare.TpcType tpc_type = 520991498;
+  optional string method_comment = 522360157;
+  optional bool future_exemplar = 525000015;
+}

@@ -1,0 +1,68 @@
+syntax = "proto3";
+package tensorflow.profiler;
+import "third_party/xprof/plugin/tensorboard_plugin_profile/protobuf/op_metrics.proto";
+import "third_party/xprof/plugin/tensorboard_plugin_profile/protobuf/source_info.proto";
+message FlatOpMetrics {
+  enum TpuCoreType {
+    UNKNOWN = 0;
+    TENSOR_CORE = 1;
+    SPARSE_CORE = 2;
+  }
+  message MemoryAccessed {
+    enum OperationType {
+      UNKNOWN = 0;
+      READ = 1;
+      WRITE = 2;
+    }
+    .tensorflow.profiler.FlatOpMetrics.MemoryAccessed.OperationType operation_type = 1;
+    uint64 memory_space = 2;
+    uint64 bytes_accessed = 3;
+  }
+  uint64 op_id = 1;
+  uint64 parent_op_id = 2;
+  uint64 symbol_id = 3;
+  uint64 hlo_module_id = 4;
+  uint64 children_count = 5;
+  bool has_sc_children = 6;
+  string hlo_name = 7;
+  string long_name = 8;
+  string category = 9;
+  string provenance = 10;
+  string deduplicated_name = 11;
+  uint64 self_time_ps = 12;
+  uint64 time_ps = 13;
+  uint64 total_time_ps = 14;
+  uint64 normalized_time_ps = 15;
+  uint64 min_time_ps = 16;
+  uint64 dma_stall_ps = 17;
+  uint64 occurrences = 18;
+  uint64 model_flops = 19;
+  double model_flops_v2 = 20;
+  double flops_v2 = 21;
+  uint64 flops = 22;
+  double bytes_accessed = 23;
+  repeated .tensorflow.profiler.FlatOpMetrics.MemoryAccessed memory_accessed_breakdown = 24;
+  bool is_eager = 25;
+  bool autotuned = 26;
+  uint32 num_cores = 27;
+  .tensorflow.profiler.FlatOpMetrics.TpuCoreType core_type = 28;
+  bool is_fusion_child = 29;
+  optional .tensorflow.profiler.SourceInfo source_info = 30;
+  double estimated_flops = 31;
+  double estimated_bytes_accessed = 32;
+}
+message FlatOpMetricsDb {
+  repeated .tensorflow.profiler.FlatOpMetrics op_instances = 1;
+  uint64 total_time_ps = 2;
+  uint64 profile_time_ps = 3;
+  uint64 total_op_time_ps = 4;
+  uint64 idle_time_ps = 5;
+  uint64 busy_time_ps = 6;
+  uint64 idle_time_high_confidence_ps = 9;
+  uint64 busy_time_high_confidence_ps = 10;
+  uint64 normalized_total_op_time_ps = 7;
+  .tensorflow.profiler.PrecisionStats precision_stats = 8;
+}
+message FlatOpMetricsDbMap {
+  map<uint64, .tensorflow.profiler.FlatOpMetricsDb> program_to_db = 1;
+}

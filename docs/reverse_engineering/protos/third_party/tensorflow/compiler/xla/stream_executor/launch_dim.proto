@@ -1,0 +1,16 @@
+syntax = "proto3";
+package stream_executor;
+message Dim3DProto {
+  int64 x = 1;
+  int64 y = 2;
+  int64 z = 3;
+}
+message ThreadDimProto {
+  .stream_executor.Dim3DProto coordinates = 1;
+}
+message BlockDimProto {
+  .stream_executor.Dim3DProto coordinates = 2;
+}
+message ClusterDimProto {
+  .stream_executor.Dim3DProto coordinates = 3;
+}

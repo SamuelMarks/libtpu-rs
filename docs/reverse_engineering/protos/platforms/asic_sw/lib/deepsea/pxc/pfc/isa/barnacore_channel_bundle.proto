@@ -1,0 +1,16 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.pfc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_scalar.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_vector_alu_0.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_vector_alu_1.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_vector_extended_result.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_vector_load.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_vector_store.proto";
+message BarnaCoreChannelBundle {
+  optional .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorExtendedResult vector_extended_result = 1;
+  optional .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorLoad vector_load = 2;
+  optional .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorStore vector_store = 3;
+  optional .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0 vector_alu_0 = 4;
+  optional .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu1 vector_alu_1 = 5;
+  optional .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelScalar scalar = 6;
+}

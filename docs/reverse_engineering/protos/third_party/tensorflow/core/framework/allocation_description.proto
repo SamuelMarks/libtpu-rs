@@ -1,0 +1,10 @@
+syntax = "proto3";
+package tensorflow;
+message AllocationDescription {
+  int64 requested_bytes = 1;
+  int64 allocated_bytes = 2;
+  string allocator_name = 3;
+  int64 allocation_id = 4;
+  bool has_single_reference = 5;
+  uint64 ptr = 6;
+}

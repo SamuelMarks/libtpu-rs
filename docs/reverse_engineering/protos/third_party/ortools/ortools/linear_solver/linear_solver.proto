@@ -1,0 +1,215 @@
+syntax = "proto2";
+package operations_research;
+import "google/api/inclusion.proto";
+import "third_party/ortools/ortools/util/optional_boolean.proto";
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+import "util/operations_research/util/fake_solve.proto";
+import "wireless/android/privacy/annotations/proto/collection_basis_annotations.proto";
+enum MPSolverResponseStatus {
+  MPSOLVER_OPTIMAL = 0;
+  MPSOLVER_FEASIBLE = 1;
+  MPSOLVER_INFEASIBLE = 2;
+  MPSOLVER_UNBOUNDED = 3;
+  MPSOLVER_ABNORMAL = 4;
+  MPSOLVER_NOT_SOLVED = 6;
+  MPSOLVER_MODEL_IS_VALID = 97;
+  MPSOLVER_CANCELLED_BY_USER = 98;
+  MPSOLVER_UNKNOWN_STATUS = 99;
+  MPSOLVER_MODEL_INVALID = 5;
+  MPSOLVER_MODEL_INVALID_SOLUTION_HINT = 84;
+  MPSOLVER_MODEL_INVALID_SOLVER_PARAMETERS = 85;
+  MPSOLVER_SOLVER_TYPE_UNAVAILABLE = 7;
+  MPSOLVER_INCOMPATIBLE_OPTIONS = 113;
+  MPSOLVER_SERVER_ERROR = 8;
+  MPSOLVER_SERVER_ERROR_REQUEST_IS_QOD = 129;
+  MPSOLVER_SERVER_ERROR_RPC_DEADLINE_TOO_SMALL = 130;
+  MPSOLVER_SERVER_ERROR_SERVER_IS_SHUTTING_DOWN = 131;
+  MPSOLVER_SERVER_ERROR_REQUEST_TOO_LARGE = 132;
+  MPSOLVER_SERVER_ERROR_FULL = 133;
+  MPSOLVER_SERVER_ERROR_RPC_CANCELLED = 134;
+}
+message MPVariableProto {
+  optional double lower_bound = 1 [default = -inf];
+  optional double upper_bound = 2 [default = inf];
+  optional double objective_coefficient = 3 [default = 0];
+  optional bool is_integer = 4 [default = false];
+  optional string name = 5;
+  optional int32 branching_priority = 6 [default = 0];
+}
+message MPConstraintProto {
+  repeated int32 var_index = 6 [packed = true];
+  repeated double coefficient = 7 [packed = true];
+  optional double lower_bound = 2 [default = -inf];
+  optional double upper_bound = 3 [default = inf];
+  optional string name = 4;
+  optional bool is_lazy = 5 [default = false];
+}
+message MPGeneralConstraintProto {
+  oneof general_constraint {
+    .operations_research.MPIndicatorConstraint indicator_constraint = 2;
+    .operations_research.MPSosConstraint sos_constraint = 3;
+    .operations_research.MPQuadraticConstraint quadratic_constraint = 4;
+    .operations_research.MPAbsConstraint abs_constraint = 5;
+    .operations_research.MPArrayConstraint and_constraint = 6;
+    .operations_research.MPArrayConstraint or_constraint = 7;
+    .operations_research.MPArrayWithConstantConstraint min_constraint = 8;
+    .operations_research.MPArrayWithConstantConstraint max_constraint = 9;
+  }
+  optional string name = 1;
+}
+message MPIndicatorConstraint {
+  optional int32 var_index = 1;
+  optional int32 var_value = 2;
+  optional .operations_research.MPConstraintProto constraint = 3;
+}
+message MPSosConstraint {
+  enum Type {
+    SOS1_DEFAULT = 0;
+    SOS2 = 1;
+  }
+  optional .operations_research.MPSosConstraint.Type type = 1 [default = SOS1_DEFAULT];
+  repeated int32 var_index = 2;
+  repeated double weight = 3;
+}
+message MPQuadraticConstraint {
+  repeated int32 var_index = 1;
+  repeated double coefficient = 2;
+  repeated int32 qvar1_index = 3;
+  repeated int32 qvar2_index = 4;
+  repeated double qcoefficient = 5;
+  optional double lower_bound = 6 [default = -inf];
+  optional double upper_bound = 7 [default = inf];
+}
+message MPAbsConstraint {
+  optional int32 var_index = 1;
+  optional int32 resultant_var_index = 2;
+}
+message MPArrayConstraint {
+  repeated int32 var_index = 1;
+  optional int32 resultant_var_index = 2;
+}
+message MPArrayWithConstantConstraint {
+  repeated int32 var_index = 1;
+  optional double constant = 2;
+  optional int32 resultant_var_index = 3;
+}
+message MPQuadraticObjective {
+  repeated int32 qvar1_index = 1;
+  repeated int32 qvar2_index = 2;
+  repeated double coefficient = 3;
+}
+message PartialVariableAssignment {
+  repeated int32 var_index = 1 [packed = true];
+  repeated double var_value = 2 [packed = true];
+}
+message MPModelProto {
+  message Annotation {
+    enum TargetType {
+      VARIABLE_DEFAULT = 0;
+      CONSTRAINT = 1;
+      GENERAL_CONSTRAINT = 2;
+    }
+    optional .operations_research.MPModelProto.Annotation.TargetType target_type = 1;
+    optional int32 target_index = 2;
+    optional string target_name = 3;
+    optional string payload_key = 4;
+    optional string payload_value = 5;
+  }
+  repeated .operations_research.MPVariableProto variable = 3;
+  repeated .operations_research.MPConstraintProto constraint = 4;
+  repeated .operations_research.MPGeneralConstraintProto general_constraint = 7;
+  optional bool maximize = 1 [default = false];
+  optional double objective_offset = 2 [default = 0];
+  optional .operations_research.MPQuadraticObjective quadratic_objective = 8;
+  optional string name = 5;
+  optional .operations_research.PartialVariableAssignment solution_hint = 6;
+  repeated .operations_research.MPModelProto.Annotation annotation = 9;
+}
+message OptionalDouble {
+  optional double value = 1;
+}
+message MPSolverCommonParameters {
+  enum LPAlgorithmValues {
+    LP_ALGO_UNSPECIFIED = 0;
+    LP_ALGO_DUAL = 1;
+    LP_ALGO_PRIMAL = 2;
+    LP_ALGO_BARRIER = 3;
+  }
+  optional .operations_research.OptionalDouble relative_mip_gap = 1;
+  optional .operations_research.OptionalDouble primal_tolerance = 2;
+  optional .operations_research.OptionalDouble dual_tolerance = 3;
+  optional .operations_research.MPSolverCommonParameters.LPAlgorithmValues lp_algorithm = 4 [default = LP_ALGO_UNSPECIFIED];
+  optional .operations_research.OptionalBoolean presolve = 5 [default = BOOL_UNSPECIFIED];
+  optional .operations_research.OptionalBoolean scaling = 7 [default = BOOL_UNSPECIFIED];
+}
+message MPModelDeltaProto {
+  optional string baseline_model_file_path = 1;
+  map<int32, .operations_research.MPVariableProto> variable_overrides = 2;
+  map<int32, .operations_research.MPConstraintProto> constraint_overrides = 3;
+}
+message MPModelRequest {
+  reserved 12;
+  enum SolverType {
+    CLP_LINEAR_PROGRAMMING = 0;
+    GLOP_LINEAR_PROGRAMMING = 2;
+    GLPK_LINEAR_PROGRAMMING = 1;
+    GUROBI_LINEAR_PROGRAMMING = 6;
+    HIGHS_LINEAR_PROGRAMMING = 15;
+    SCIP_MIXED_INTEGER_PROGRAMMING = 3;
+    GLPK_MIXED_INTEGER_PROGRAMMING = 4;
+    CBC_MIXED_INTEGER_PROGRAMMING = 5;
+    GUROBI_MIXED_INTEGER_PROGRAMMING = 7;
+    HIGHS_MIXED_INTEGER_PROGRAMMING = 16;
+    BOP_INTEGER_PROGRAMMING = 12;
+    SAT_INTEGER_PROGRAMMING = 14;
+    GLIP_MIXED_INTEGER_PROGRAMMING = 9;
+    PDLP_LINEAR_PROGRAMMING = 8;
+  }
+  enum StatsCollection {
+    ALLOW_GLOBAL_STATS_COLLECTION = 0;
+    ALLOW_MODEL_COLLECTION = 1;
+    DISABLE_STATS_COLLECTION = 2;
+  }
+  enum AutoscaleModeBits {
+    AUTOMATIC = 0;
+    DISABLE = 1;
+    FORCE = 2;
+    FORBID_CONSTRAINTS_UPSCALE = 4;
+  }
+  optional .operations_research.MPModelProto model = 1;
+  optional .operations_research.MPModelRequest.SolverType solver_type = 2 [default = GLOP_LINEAR_PROGRAMMING];
+  optional double solver_time_limit_seconds = 3;
+  optional bool clamp_time_limit_to_deadline = 18 [default = false];
+  optional double solver_cpu_limit = 15;
+  optional double solver_ram_limit_mb = 16;
+  optional bool enable_internal_solver_output = 4 [default = false];
+  optional string solver_specific_parameters = 5;
+  optional bool ignore_solver_specific_parameters_failure = 9 [default = false];
+  optional .operations_research.MPModelRequest.StatsCollection stats_collection = 6 [default = ALLOW_GLOBAL_STATS_COLLECTION];
+  optional .operations_research.MPModelDeltaProto model_delta = 8;
+  optional bool solver_time_limit_was_populated_by_server = 7 [default = false];
+  optional int32 use_mpmodel_autoscale = 10;
+  optional int32 populate_additional_solutions_up_to = 11 [default = 0];
+  optional .operations_research.FakeSolveParameters fake_solve_parameters = 19;
+}
+message MPSolution {
+  optional double objective_value = 1;
+  repeated double variable_value = 2 [packed = true];
+}
+message MPSolveInfo {
+  optional double solve_wall_time_seconds = 1;
+  optional double solve_user_time_seconds = 2;
+}
+message MPSolutionResponse {
+  reserved 9;
+  optional .operations_research.MPSolverResponseStatus status = 1 [default = MPSOLVER_UNKNOWN_STATUS];
+  optional string status_str = 7;
+  optional double objective_value = 2;
+  optional double best_objective_bound = 5;
+  repeated double variable_value = 3 [packed = true];
+  optional .operations_research.MPSolveInfo solve_info = 10;
+  optional bytes solver_specific_info = 11;
+  repeated double dual_value = 4 [packed = true];
+  repeated double reduced_cost = 6 [packed = true];
+  repeated .operations_research.MPSolution additional_solutions = 8;
+}

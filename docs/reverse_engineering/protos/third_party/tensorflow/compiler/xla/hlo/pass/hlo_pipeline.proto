@@ -1,0 +1,21 @@
+syntax = "proto3";
+package xla;
+message HloPassOptionValue {
+  oneof value {
+    bool bool_val = 1;
+    int64 int_val = 2;
+    string string_val = 3;
+  }
+}
+message HloPipelineNodeProto {
+  string name = 1;
+  .xla.HloPipelineNodeSequenceProto sub_nodes = 2;
+  map<string, .xla.HloPassOptionValue> options = 3;
+  int32 max_fixed_point_iterations = 4;
+}
+message HloPipelineNodeSequenceProto {
+  repeated .xla.HloPipelineNodeProto nodes = 1;
+}
+message HloPipelineProto {
+  .xla.HloPipelineNodeSequenceProto root = 1;
+}

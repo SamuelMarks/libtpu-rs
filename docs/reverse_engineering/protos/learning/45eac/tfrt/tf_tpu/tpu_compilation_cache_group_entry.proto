@@ -1,0 +1,17 @@
+syntax = "proto3";
+package tensorflow.tfrt_tpu;
+import "google/protobuf/duration.proto";
+import "learning/45eac/tfrt/tpu/tpu_compilation_cache_entry.proto";
+message TpuCompilationCacheMetadataProto {
+  string runtime_signature = 1;
+}
+message TpuCompilationCacheGroupEntryProto {
+  repeated .tfrt.tpu.TpuCompilationCacheEntryProto entries = 1;
+  string key = 2;
+  .google.protobuf.Duration compile_time = 3;
+  int32 entry_count = 4;
+}
+message TpuCompilationCacheProto {
+  .tensorflow.tfrt_tpu.TpuCompilationCacheMetadataProto metadata = 1;
+  repeated .tensorflow.tfrt_tpu.TpuCompilationCacheGroupEntryProto groups = 2;
+}

@@ -1,0 +1,26 @@
+syntax = "proto2";
+package streamz;
+import "monitoring/streamz/api/data_model.proto";
+import "monitoring/streamz/api/geographic_restriction.proto";
+import "monitoring/streamz/api/hierarchical_isolation.proto";
+message DefineMetricsRequest {
+  repeated .streamz.MetricDescriptor metric_descriptor = 1;
+  optional .streamz.HierarchicalIsolationRole isolation_role = 2;
+}
+message DefineMetricsResponse {
+}
+message WriteRequest {
+  required .streamz.Entity entity = 1;
+  repeated .streamz.PointSet point_set = 2;
+  optional .streamz.HierarchicalIsolationRole isolation_role = 3;
+  optional .streamz.GeographicRestriction geographic_restriction = 4;
+  optional bool skip_tee = 5 [default = false];
+  repeated .streamz.MetricDescriptor metric_descriptor = 6;
+  optional bool enable_453a9b3_write_details = 7 [default = false];
+}
+message WriteResponse {
+}
+service StreamzCollection {
+  rpc DefineMetrics(.streamz.DefineMetricsRequest) returns (.streamz.DefineMetricsResponse);
+  rpc Write(.streamz.WriteRequest) returns (.streamz.WriteResponse);
+}

@@ -1,0 +1,12 @@
+syntax = "proto2";
+package util;
+import "n2a/p4r2d3/bridge/proto/message_set.proto";
+message StackTrace {
+  repeated uint64 addresses = 1;
+}
+message StackTraces {
+  repeated .util.StackTrace traces = 1;
+  extend .proto2.bridge.MessageSet {
+    optional .util.StackTraces message_set_extension = 181005703;
+  }
+}

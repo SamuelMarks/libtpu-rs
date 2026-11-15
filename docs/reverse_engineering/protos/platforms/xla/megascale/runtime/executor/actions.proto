@@ -1,0 +1,144 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+import "platforms/xla/megascale/common/megascale_info.proto";
+import "platforms/xla/megascale/runtime/executor/tpu_buffer_details.proto";
+import "platforms/xla/megascale/runtime/host_command/host_command.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message MegaScaleAction {
+  reserved 7;
+  message DeviceToHost {
+    string done_key = 2;
+    .xla.megascale.runtime.HostCommandActions.Action host_command_action = 3;
+    int64 device_id = 4;
+  }
+  message HostToDevice {
+    string trigger_key = 1;
+    .xla.megascale.runtime.HostCommandActions.Action host_command_action = 3;
+    int64 device_id = 4;
+  }
+  message NetworkSend {
+    .xla.megascale.runtime.TransferInfo transfer_info = 1;
+    optional int32 dcn_topology_level = 2;
+    optional int64 ragged_shard_index = 3;
+  }
+  message NetworkReceive {
+    reserved 3;
+    string done_key = 1;
+    int64 buffer_size = 2;
+    optional int32 dcn_topology_level = 4;
+    bool device_bound = 5;
+  }
+  message Compute {
+    enum Operation {
+      UNKNOWN_OPERATION = 0;
+      SUM = 1;
+      MAX = 2;
+      MIN = 3;
+      PRODUCT = 4;
+    }
+    .xla.megascale.runtime.MegaScaleAction.Compute.Operation operation = 1;
+    repeated .xla.PrimitiveType input_types = 2;
+    .xla.PrimitiveType output_type = 3;
+    repeated int64 expected_input_sizes = 4;
+    optional int64 expected_output_size = 5;
+  }
+  message Compress {
+    reserved 3;
+    message BufferSlice {
+      int64 offset = 1;
+      int64 size = 2;
+    }
+    optional uint32 exponent_bits = 1;
+    optional uint32 mantissa_bits = 2;
+    optional uint64 quantization_block_size = 4;
+  }
+  message Decompress {
+    optional uint32 exponent_bits = 1;
+    optional uint32 mantissa_bits = 2;
+    optional uint64 quantization_block_size = 3;
+  }
+  message SimulatedChannel {
+    int64 bytes_txed = 1;
+    repeated int64 bytes_per_h2d = 2;
+    optional .xla.megascale.runtime.MegaScaleAction.Compute.Operation operation = 3;
+    optional int64 group_size = 4;
+    optional .xla.PrimitiveType data_type = 5;
+  }
+  message End {
+  }
+  message Slice {
+    int64 offset = 1;
+    int64 size = 2;
+  }
+  message HostToDeviceDone {
+  }
+  message DeviceToHostDone {
+  }
+  message NetworkSendPrepare {
+    .xla.megascale.runtime.TransferInfo transfer_info = 1;
+    optional int32 dcn_topology_level = 2;
+  }
+  message NetworkSendDone {
+    int64 total_bytes = 1;
+  }
+  message PrepareInput {
+    reserved 1;
+    .xla.megascale.runtime.TpuBufferDetails buffer = 2;
+    .xla.megascale.runtime.HostCommandActions.Action host_command_action = 3;
+    int64 device_id = 4;
+  }
+  message PrepareOutput {
+    reserved 1;
+    .xla.megascale.runtime.TpuBufferDetails buffer = 2;
+  }
+  message Input {
+    reserved 2;
+    oneof source {
+      int32 action_index = 1;
+      string external_key = 3;
+    }
+  }
+  oneof action {
+    .xla.megascale.runtime.MegaScaleAction.DeviceToHost device_to_host = 1;
+    .xla.megascale.runtime.MegaScaleAction.HostToDevice host_to_device = 2;
+    .xla.megascale.runtime.MegaScaleAction.NetworkSend network_send = 3;
+    .xla.megascale.runtime.MegaScaleAction.NetworkReceive network_receive = 4;
+    .xla.megascale.runtime.MegaScaleAction.Compute compute = 5;
+    .xla.megascale.runtime.MegaScaleAction.SimulatedChannel simulated_channel = 9;
+    .xla.megascale.runtime.MegaScaleAction.Compress compress = 10;
+    .xla.megascale.runtime.MegaScaleAction.Decompress decompress = 11;
+    .xla.megascale.runtime.MegaScaleAction.End end = 12;
+    .xla.megascale.runtime.MegaScaleAction.Slice slice = 13;
+    .xla.megascale.runtime.MegaScaleAction.HostToDeviceDone host_to_device_done = 14;
+    .xla.megascale.runtime.MegaScaleAction.DeviceToHostDone device_to_host_done = 15;
+    .xla.megascale.runtime.MegaScaleAction.PrepareOutput prepare_output = 16;
+    .xla.megascale.runtime.MegaScaleAction.PrepareInput prepare_input = 17;
+    .xla.megascale.runtime.MegaScaleAction.NetworkSendPrepare network_send_prepare = 18;
+    .xla.megascale.runtime.MegaScaleAction.NetworkSendDone network_send_done = 19;
+  }
+  int32 index = 8;
+  repeated .xla.megascale.runtime.MegaScaleAction.Input inputs = 6;
+}
+message MegaScaleActionGraph {
+  reserved 8;
+  reserved 9;
+  enum ExecutionType {
+    XLA_TPU = 0;
+    XLA_CPU = 1;
+    TPU_HOST_OFFLOADED = 2;
+  }
+  string id = 1;
+  string key_prefix = 14;
+  repeated int64 send_channel_ids = 12;
+  repeated int64 recv_channel_ids = 13;
+  string hlo_module = 7;
+  repeated .xla.megascale.runtime.MegaScaleAction actions = 2;
+  .xla.megascale.runtime.MegaScaleInfoProto.TransferType collective_type = 3;
+  int64 input_size = 4;
+  bool compress = 6;
+  .xla.megascale.runtime.MegaScaleActionGraph.ExecutionType execution_type = 10;
+  repeated int64 endpoints = 11;
+}
+message MegaScaleActionGraphs {
+  repeated .xla.megascale.runtime.MegaScaleActionGraph graphs = 1;
+}

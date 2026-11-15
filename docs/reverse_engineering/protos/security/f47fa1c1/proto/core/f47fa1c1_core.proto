@@ -1,0 +1,14 @@
+syntax = "proto2";
+package f47fa1c1;
+import "google/api/inclusion.proto";
+import "third_party/boundary_proxy/proto_compare/annotation.proto";
+message f47fa1c1 {
+  message DarklaunchSignature {
+    optional bytes signature_only = 1;
+    optional bytes carabiner = 2;
+  }
+  repeated bytes signature_and_message = 1;
+  optional bytes one_hop_message = 2;
+  optional bytes chained_verification_key = 3;
+  repeated bytes darklaunch_signatures = 4;
+}

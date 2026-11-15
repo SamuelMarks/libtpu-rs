@@ -1,0 +1,17 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/attr_value.proto";
+import "third_party/tensorflow/core/framework/full_type.proto";
+message NodeDef {
+  message ExperimentalDebugInfo {
+    repeated string original_node_names = 1;
+    repeated string original_func_names = 2;
+  }
+  string name = 1;
+  string op = 2;
+  repeated string input = 3;
+  string device = 4;
+  map<string, .tensorflow.AttrValue> attr = 5;
+  .tensorflow.NodeDef.ExperimentalDebugInfo experimental_debug_info = 6;
+  .tensorflow.FullTypeDef experimental_type = 7;
+}

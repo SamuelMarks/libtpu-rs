@@ -1,0 +1,261 @@
+syntax = "proto2";
+package asic_sw.driver.deepsea.jxc;
+message PerformanceTraceMarkLimits {
+  optional uint32 lower = 1 [default = 4294967295];
+  optional uint32 upper = 2 [default = 0];
+}
+message PerformanceGtcLimits {
+  optional uint64 lower = 1 [default = 18446744073709551615];
+  optional uint64 upper = 2 [default = 0];
+}
+message PerformanceTraceConfig {
+  message TensorNode {
+    enum CoreTraceControl {
+      CORE_DISABLED = 0;
+      CORE_ENABLED = 1;
+      CORE_ENABLED_IF_TRACEMARK_IN_BOUNDS = 2;
+      CORE_ENABLED_IF_GTC_IN_BOUNDS = 3;
+      CORE_ENABLED_IF_TRACEMARK_AND_GTC_IN_BOUNDS = 4;
+      CORE_ENABLED_IF_TRACEMARK_OR_GTC_IN_BOUNDS = 5;
+    }
+    message TensorCore {
+      message Events {
+        optional bool event_mask_ext_success = 1 [default = true];
+        optional bool event_mask_ext_success_without_trace_bit = 2;
+        optional bool event_mask_ext_last = 3 [default = true];
+        optional bool event_mask_ext_any = 4;
+        optional bool event_mask_update = 5;
+        optional bool event_mask_sync = 6 [default = true];
+        optional bool event_mask_read = 7;
+        optional bool event_mask_watched_ext_success = 8;
+        optional bool event_mask_watched_ext_last = 9;
+        optional bool event_mask_watched_ext_any = 10;
+        optional bool event_mask_watched_update = 11;
+        optional bool event_mask_watched_sync = 12;
+        optional bool event_mask_watched_read = 13;
+        optional bool event_mask_host_int = 14 [default = true];
+        optional bool event_mask_tracemark = 15 [default = true];
+        optional bool event_mask_sfence_start = 16 [default = true];
+        optional bool event_mask_sfence_end = 17 [default = true];
+        optional bool event_mask_software = 18 [default = true];
+        optional bool disable_control_trace = 19 [default = true];
+      }
+      message WatchedSyncFlag {
+        optional uint32 flag = 1;
+        optional uint32 mask = 2;
+      }
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.CoreTraceControl control = 1 [default = CORE_DISABLED];
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceMarkLimits trace_mark_limits = 2;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 3;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.TensorCore.Events events = 4;
+      optional int32 dma_descriptor_sample_rate = 5 [default = 1];
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.TensorCore.WatchedSyncFlag watched_sync_flag = 6;
+    }
+    message BarnaCore {
+      message Events {
+        optional bool enable_process_host_trace = 1 [default = true];
+        optional bool enable_process_brn_trace = 2 [default = true];
+        optional bool enable_sparse_reduce_trace = 3 [default = true];
+        optional bool enable_instruction_sequencer_trace = 4 [default = true];
+        optional bool enable_dma_controller_trace_last = 5 [default = true];
+        optional bool enable_dma_controller_trace_any = 6;
+        optional bool enable_trace_instruction_trace = 7 [default = true];
+        optional bool enable_sync_instruction_trace = 8 [default = true];
+        optional bool enable_tracemark_write_trace = 9 [default = true];
+        optional bool enable_host_interrupt_trace = 10 [default = true];
+        optional bool enable_fence_trace = 11 [default = true];
+      }
+      message Concat {
+        optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.CoreTraceControl control = 1 [default = CORE_DISABLED];
+        optional .asic_sw.driver.deepsea.jxc.PerformanceTraceMarkLimits trace_mark_limits = 2;
+        optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 3;
+      }
+      message Channel {
+        message Events {
+          optional int32 enable_fetch_id_trace = 1 [default = 255];
+          optional int32 enable_address_handler_trace = 2 [default = 255];
+          optional int32 enable_flush_id_trace = 3 [default = 255];
+        }
+        optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.CoreTraceControl control = 1 [default = CORE_DISABLED];
+        optional .asic_sw.driver.deepsea.jxc.PerformanceTraceMarkLimits trace_mark_limits = 2;
+        optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 3;
+        optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.BarnaCore.Channel.Events events = 4;
+      }
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.CoreTraceControl control = 1 [default = CORE_DISABLED];
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceMarkLimits trace_mark_limits = 2;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 3;
+      optional int32 dma_trace_sample_rate = 4 [default = 1];
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.BarnaCore.Events events = 5;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.BarnaCore.Concat concat = 6;
+      repeated .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.BarnaCore.Channel channel = 7;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceMarkLimits trace_mark_limits_v2 = 8;
+    }
+    message Hib {
+      enum TraceControl {
+        DISABLED = 0;
+        ENABLED = 1;
+        ENABLED_IF_GTC_IN_BOUNDS = 2;
+        ENABLED_IF_EVERYONE_TRACE = 3;
+      }
+      message Events {
+        optional bool read_request_trace_enable = 1 [default = true];
+        optional bool read_completion_trace_enable = 2;
+        optional bool write_request_trace_enable = 3;
+        optional bool write_completion_trace_enable = 4 [default = true];
+        optional bool interrupt_trace_enable = 5;
+        optional bool interrupt_actual_trace_enable = 6 [default = true];
+        optional bool sync_update_trace_enable = 7;
+        optional bool trace_last_sync_only = 8 [default = true];
+        optional bool trace_4k = 9;
+        optional bool hbm_write_trace_enable = 10 [default = true];
+      }
+      message QueueTraceEnables {
+        optional bool tc_outfeed = 1 [default = true];
+        optional bool bc_outfeed = 2 [default = true];
+        optional bool nf_outfeed = 3 [default = true];
+        optional bool chip_debug = 4;
+        optional bool status_block_write = 5;
+        optional bool tc_infeed = 6 [default = true];
+        optional bool bc_infeed = 7 [default = true];
+        optional bool hbm_write = 8 [default = true];
+        optional bool bc_fsm = 9 [default = true];
+        optional bool queue_fetch = 10;
+        optional bool page_table_fetch = 11;
+      }
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.Hib.TraceControl control = 1 [default = ENABLED_IF_EVERYONE_TRACE];
+      optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 2;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.Hib.Events events = 10;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.Hib.QueueTraceEnables enabled_queues = 11;
+      optional int32 hbm_trace_sample_rate = 12 [default = 1];
+    }
+    message NodeFabric {
+      message Events {
+        optional bool enable_tc_dma = 1 [default = true];
+        optional bool enable_bc_dma = 2 [default = true];
+        optional bool enable_hib_dma = 3;
+        optional bool enable_hbm_command = 4;
+        optional bool enable_hbm_write_end = 5;
+        optional bool enable_bmem_command = 6;
+        optional bool enable_bmem_write_end = 7;
+        optional bool enable_vmem_hbm_read_command = 8;
+        optional bool enable_vmem_hbm_write_command = 9;
+        optional bool enable_vmem_hbm_write_end = 10;
+        optional bool enable_vmem_ici_read_command = 11;
+        optional bool enable_vmem_ici_write_command = 12;
+        optional bool enable_vmem_ici_write_end = 13;
+        optional bool enable_smem_command = 14;
+        optional bool enable_smem_write_end = 15;
+        optional bool enable_imem_command = 16;
+        optional bool enable_imem_write_end = 17;
+        optional bool enable_ici_send_start = 18;
+        optional bool enable_ici_send_end = 19;
+        optional bool enable_ici_receive_start = 20;
+        optional bool enable_ici_receive_end = 21;
+        optional bool enable_hib_write_command = 22;
+        optional bool enable_hib_write_end = 23;
+        optional bool enable_hib_write_receive = 24;
+        optional bool enable_tc_control_message_receive = 25 [default = true];
+        optional bool enable_bc_control_message_receive = 26 [default = true];
+        optional bool enable_hbm_mux_switch = 27 [default = true];
+      }
+      optional bool everyone_trace_if_tensor_core_is_tracing = 1 [default = true];
+      optional bool everyone_trace_if_barna_core_is_tracing = 2 [default = true];
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.NodeFabric.Events events = 3;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 4;
+    }
+    optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.TensorCore tensor_core = 1;
+    optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.BarnaCore barna_core = 2;
+    optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.Hib hib = 3;
+    optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode.NodeFabric node_fabric = 4;
+  }
+  message Ici {
+    message ExternalEgressLinkEvents {
+      enum PacketFilter {
+        CONTROL = 0;
+        DATA = 1;
+      }
+      optional bool capture_first_dma_packet_header_egress = 1 [default = true];
+      optional bool capture_first_dma_packet_tail_egress = 2;
+      optional bool capture_last_dma_packet_header_egress = 3;
+      optional bool capture_last_dma_packet_tail_egress = 4 [default = true];
+      optional bool capture_middle_dma_packet_header_egress = 5;
+      optional bool capture_middle_dma_packet_tail_egress = 6;
+      optional bool enable_source_chip_id_filter = 7;
+      optional int32 source_chip_id_filter = 8;
+      optional bool enable_source_node_id_filter = 9;
+      optional int32 source_node_id_filter = 10;
+      optional bool enable_destination_chip_id_filter = 11;
+      optional int32 destination_chip_id_filter = 12;
+      optional bool enable_destination_node_id_filter = 13;
+      optional int32 destination_node_id_filter = 14;
+      optional bool enable_packet_type_filter = 15;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.Ici.ExternalEgressLinkEvents.PacketFilter packet_type_filter = 16;
+    }
+    message NodeFabricEgressLinkEvents {
+      enum PacketFilter {
+        CONTROL = 0;
+        DATA = 1;
+      }
+      optional bool capture_first_dma_packet_header_egress = 1 [default = true];
+      optional bool capture_first_dma_packet_tail_egress = 2;
+      optional bool capture_last_dma_packet_header_egress = 3;
+      optional bool capture_last_dma_packet_tail_egress = 4 [default = true];
+      optional bool capture_middle_dma_packet_header_egress = 5;
+      optional bool capture_middle_dma_packet_tail_egress = 6;
+      optional bool enable_source_chip_id_filter = 7;
+      optional bool source_chip_id_filter = 8;
+      optional bool enable_source_node_id_filter = 9;
+      optional bool source_node_id_filter = 10;
+      optional bool enable_packet_type_filter = 11;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.Ici.NodeFabricEgressLinkEvents.PacketFilter packet_type_filter = 12;
+    }
+    message ExternalIngressLinkEvents {
+      enum PacketFilter {
+        CONTROL = 0;
+        DATA = 1;
+      }
+      optional bool capture_first_dma_packet_header_ingress = 1 [default = true];
+      optional bool capture_first_dma_packet_tail_ingress = 2;
+      optional bool capture_last_dma_packet_header_ingress = 3;
+      optional bool capture_last_dma_packet_tail_ingress = 4 [default = true];
+      optional bool capture_middle_dma_packet_header_ingress = 5;
+      optional bool capture_middle_dma_packet_tail_ingress = 6;
+      optional bool enable_source_chip_id_filter = 7;
+      optional int32 source_chip_id_filter = 8;
+      optional bool enable_source_node_id_filter = 9;
+      optional int32 source_node_id_filter = 10;
+      optional bool enable_destination_chip_id_filter = 11;
+      optional int32 destination_chip_id_filter = 12;
+      optional bool enable_destination_node_id_filter = 13;
+      optional int32 destination_node_id_filter = 14;
+      optional bool enable_packet_type_filter = 15;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.Ici.ExternalIngressLinkEvents.PacketFilter packet_type_filter = 16;
+    }
+    message NodeFabricIngressLinkEvents {
+      enum PacketFilter {
+        CONTROL = 0;
+        DATA = 1;
+      }
+      optional bool capture_first_dma_packet_header_ingress = 1 [default = true];
+      optional bool capture_first_dma_packet_tail_ingress = 2;
+      optional bool capture_last_dma_packet_header_ingress = 3;
+      optional bool capture_last_dma_packet_tail_ingress = 4 [default = true];
+      optional bool capture_middle_dma_packet_header_ingress = 5;
+      optional bool capture_middle_dma_packet_tail_ingress = 6;
+      optional bool enable_destination_chip_id_filter = 7;
+      optional bool destination_chip_id_filter = 8;
+      optional bool enable_destination_node_id_filter = 9;
+      optional bool destination_node_id_filter = 10;
+      optional bool enable_packet_type_filter = 11;
+      optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.Ici.NodeFabricIngressLinkEvents.PacketFilter packet_type_filter = 12;
+    }
+    repeated .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.Ici.ExternalEgressLinkEvents external_egress_link = 1;
+    repeated .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.Ici.NodeFabricEgressLinkEvents node_fabric_egress_link = 2;
+    repeated .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.Ici.ExternalIngressLinkEvents external_ingress_link = 3;
+    repeated .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.Ici.NodeFabricIngressLinkEvents node_fabric_ingress_link = 4;
+    optional .asic_sw.driver.deepsea.jxc.PerformanceGtcLimits gtc_limits = 5;
+  }
+  repeated .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.TensorNode node = 1;
+  optional .asic_sw.driver.deepsea.jxc.PerformanceTraceConfig.Ici ici = 2;
+  optional uint32 num_trace_buffers = 3 [default = 16];
+}

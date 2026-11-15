@@ -1,0 +1,9 @@
+syntax = "proto3";
+package xla;
+enum ReductionKindProto {
+  REDUCTION_KIND_UNSPECIFIED = 0;
+  REDUCTION_KIND_SUM = 1;
+  REDUCTION_KIND_PRODUCT = 2;
+  REDUCTION_KIND_MIN = 3;
+  REDUCTION_KIND_MAX = 4;
+}

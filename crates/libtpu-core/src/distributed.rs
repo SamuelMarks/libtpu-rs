@@ -8,6 +8,39 @@
 //! - [`DcnLoopbackAndTcpTransport`]: Cross-slice / cross-host message framing and loopback/TCP channel.
 //! - [`CollectiveRuntimeEngine`]: Multi-replica Ring/Halving-Doubling `AllReduce`, `ReduceScatter`,
 //!   `AllGather`, `AllToAll`, and `CollectivePermute` collective algorithms across all 29 [`ElementType`]s.
+//! - [`crate::distributed::coordination`]: Wire-compatible HTTP/2 + Protobuf gRPC client & server for all 19
+//!   `tensorflow.CoordinationService` RPCs and multi-host topology discovery.
+//! - [`crate::distributed::ici`]: Generation-exact 2D Torus and 3D Twisted-Torus deadlock-free DOR/VC router,
+//!   subslice boundary clamping, and link-health bypass schedules.
+//! - [`crate::distributed::megascale`]: Multi-socket TCP/DCN striped transport, hierarchical `DCN`+`ICI`
+//!   collectives, RTT/ECN congestion windowing, full 16-op `MegaScaleActionGraph` runner, and `RapidEye` digests.
+
+/// Wire-compatible HTTP/2 + Protobuf gRPC `tensorflow.CoordinationService` (`Phase 8.1`).
+///
+pub mod coordination;
+/// 2D Torus and 3D Twisted-Torus deadlock-free ICI router & collectives (`Phase 8.2`).
+///
+pub mod ici;
+/// Multi-socket TCP/DCN `MegaScale` runtime, congestion control, and `RapidEye` (`Phase 8.3`).
+///
+pub mod megascale;
+
+#[cfg(test)]
+mod phase8_tests;
+
+pub use coordination::{
+    CoordinationGrpcClient, CoordinationGrpcServer, CoordinationServiceState, GrpcProtoEnvelope,
+    HTTP2_CLIENT_PREFACE, HpackCodec, Http2Frame, Http2FrameType, MultiHostTopologyHandshake,
+    serve_http2_unary_stream,
+};
+pub use ici::{
+    DeadlockFreeIciRouter, IciCollectiveAlgorithm, IciCollectiveEngine, IciCollectiveSchedule,
+    IciRoutedHop, IciSchedulePhase, SubsliceWindow, TwistedTorusMeshSpec,
+};
+pub use megascale::{
+    HierarchicalDcnIciRuntime, MegaScaleFullActionGraphRunner, MegaScaleMultiSocketTransport,
+    MegascaleCongestionController, RapidEyeTelemetryBuilder, compute_megascale_payload_checksum,
+};
 
 use crate::error::{LibTpuError, LibTpuResult};
 use crate::proto::{
@@ -181,6 +214,7 @@ impl DistributedCoordinator {
             unrecoverable_error_type: 1,
             runtime_error_id: 1,
             hang_error_type: 0,
+            ..MegaScaleRuntimeErrorProto::default()
         };
         self.put_key_value(
             &format!("errors/{slice_id}/{task_id}"),
@@ -271,6 +305,7 @@ impl DistributedCoordinator {
                     unrecoverable_error_type: 0,
                     runtime_error_id: now_ms,
                     hang_error_type: 1, // Timeout
+                    ..MegaScaleRuntimeErrorProto::default()
                 });
             }
         }
@@ -434,34 +469,35 @@ impl DistributedCoordinator {
             HeartbeatRequestProto, HeartbeatResponseProto, IncrementKeyValueRequestProto,
             IncrementKeyValueResponseProto, InsertKeyValueRequestProto,
             InsertKeyValueResponseProto, KeyValueEntryProto, PollForErrorRequestProto,
-            PollForErrorResponseProto, RegisterTaskRequestProto, RegisterTaskResponseProto,
-            ReportErrorToServiceRequestProto, ReportErrorToServiceResponseProto,
-            ReportErrorToTaskRequestProto, ReportErrorToTaskResponseProto, ResetTaskRequestProto,
-            ResetTaskResponseProto, ShutdownTaskRequestProto, ShutdownTaskResponseProto,
-            TryGetKeyValueRequestProto, TryGetKeyValueResponseProto, WaitForAllTasksRequestProto,
-            WaitForAllTasksResponseProto, WatchJobStateRequestProto, WatchJobStateResponseProto,
+            PollForErrorResponseProto, ProtoSchemaMessage as _, RegisterTaskRequestProto,
+            RegisterTaskResponseProto, ReportErrorToServiceRequestProto,
+            ReportErrorToServiceResponseProto, ReportErrorToTaskRequestProto,
+            ReportErrorToTaskResponseProto, ResetTaskRequestProto, ResetTaskResponseProto,
+            ShutdownTaskRequestProto, ShutdownTaskResponseProto, TryGetKeyValueRequestProto,
+            TryGetKeyValueResponseProto, WaitForAllTasksRequestProto, WaitForAllTasksResponseProto,
+            WatchJobStateRequestProto, WatchJobStateResponseProto,
         };
         match method_id {
             1 => {
-                let req = RegisterTaskRequestProto::decode(request_bytes)?;
+                let req = RegisterTaskRequestProto::decode_proto(request_bytes)?;
                 let task_id = req.source_task.as_ref().map_or(0, |t| t.task_id);
                 self.record_heartbeat(0, task_id, req.incarnation.max(1));
                 Ok(RegisterTaskResponseProto {
                     leader_incarnation: 1,
                 }
-                .encode())
+                .encode_proto())
             }
             2 => {
-                let req = HeartbeatRequestProto::decode(request_bytes)?;
+                let req = HeartbeatRequestProto::decode_proto(request_bytes)?;
                 let task_id = req.source_task.as_ref().map_or(0, |t| t.task_id);
                 self.record_heartbeat(0, task_id, req.incarnation.max(1));
                 Ok(HeartbeatResponseProto {
                     leader_incarnation: 1,
                 }
-                .encode())
+                .encode_proto())
             }
             3 => {
-                let req = InsertKeyValueRequestProto::decode(request_bytes)?;
+                let req = InsertKeyValueRequestProto::decode_proto(request_bytes)?;
                 if let Some(kv) = req.kv {
                     if !req.allow_overwrite && self.try_get_key_value(&kv.key).is_some() {
                         return Err(LibTpuError::CollectiveError {
@@ -472,10 +508,10 @@ impl DistributedCoordinator {
                     }
                     self.put_key_value(&kv.key, kv.value);
                 }
-                Ok(InsertKeyValueResponseProto {}.encode())
+                Ok(InsertKeyValueResponseProto {}.encode_proto())
             }
             4 => {
-                let req = GetKeyValueRequestProto::decode(request_bytes)?;
+                let req = GetKeyValueRequestProto::decode_proto(request_bytes)?;
                 let val = self.get_key_value(&req.key)?;
                 Ok(GetKeyValueResponseProto {
                     kv: Some(KeyValueEntryProto {
@@ -483,20 +519,20 @@ impl DistributedCoordinator {
                         value: val,
                     }),
                 }
-                .encode())
+                .encode_proto())
             }
             5 => {
-                let req = TryGetKeyValueRequestProto::decode(request_bytes)?;
+                let req = TryGetKeyValueRequestProto::decode_proto(request_bytes)?;
                 let kv = self
                     .try_get_key_value(&req.key)
                     .map(|value| KeyValueEntryProto {
                         key: req.key,
                         value,
                     });
-                Ok(TryGetKeyValueResponseProto { kv }.encode())
+                Ok(TryGetKeyValueResponseProto { kv }.encode_proto())
             }
             6 => {
-                let req = IncrementKeyValueRequestProto::decode(request_bytes)?;
+                let req = IncrementKeyValueRequestProto::decode_proto(request_bytes)?;
                 let cur = self
                     .try_get_key_value(&req.key)
                     .and_then(|b| String::from_utf8(b).ok())
@@ -511,10 +547,10 @@ impl DistributedCoordinator {
                         value: val_bytes,
                     }),
                 }
-                .encode())
+                .encode_proto())
             }
             7 => {
-                let req = GetKeyValueDirRequestProto::decode(request_bytes)?;
+                let req = GetKeyValueDirRequestProto::decode_proto(request_bytes)?;
                 let mut kv = Vec::new();
                 for (key, value) in self.get_key_value_dir(&req.directory_key) {
                     kv.push(KeyValueEntryProto { key, value });
@@ -523,10 +559,10 @@ impl DistributedCoordinator {
                     directory_key: req.directory_key,
                     kv,
                 }
-                .encode())
+                .encode_proto())
             }
             8 => {
-                let req = DeleteKeyValueRequestProto::decode(request_bytes)?;
+                let req = DeleteKeyValueRequestProto::decode_proto(request_bytes)?;
                 if req.is_directory {
                     for (k, _) in self.get_key_value_dir(&req.key) {
                         let _ = self.delete_key_value(&k);
@@ -534,10 +570,10 @@ impl DistributedCoordinator {
                 } else {
                     let _ = self.delete_key_value(&req.key);
                 }
-                Ok(DeleteKeyValueResponseProto {}.encode())
+                Ok(DeleteKeyValueResponseProto {}.encode_proto())
             }
             9 => {
-                let req = BarrierRequestProto::decode(request_bytes)?;
+                let req = BarrierRequestProto::decode_proto(request_bytes)?;
                 let task_id = req.source_task.unwrap_or_default().task_id;
                 let expected = req.tasks.len().max(1);
                 let b_id = u64::try_from(req.counter.max(1)).unwrap_or(1);
@@ -545,41 +581,41 @@ impl DistributedCoordinator {
                 Ok(BarrierResponseProto {
                     counter: i64::try_from(count).unwrap_or(1),
                 }
-                .encode())
+                .encode_proto())
             }
             10 => {
-                let req = CancelBarrierRequestProto::decode(request_bytes)?;
+                let req = CancelBarrierRequestProto::decode_proto(request_bytes)?;
                 let b_id = u64::try_from(req.counter.max(1)).unwrap_or(1);
                 let _ = self.cancel_barrier(0, b_id);
-                Ok(CancelBarrierResponseProto {}.encode())
+                Ok(CancelBarrierResponseProto {}.encode_proto())
             }
             11 => {
-                let req = GetAliveTasksRequestProto::decode(request_bytes)?;
+                let req = GetAliveTasksRequestProto::decode_proto(request_bytes)?;
                 let incarnations = vec![1_u64; req.tasks.len()];
                 Ok(GetAliveTasksResponseProto {
                     alive_tasks: req.tasks,
                     incarnations,
                 }
-                .encode())
+                .encode_proto())
             }
             13 => {
-                let req = WaitForAllTasksRequestProto::decode(request_bytes)?;
+                let req = WaitForAllTasksRequestProto::decode_proto(request_bytes)?;
                 let task_id = req.source_task.unwrap_or_default().task_id;
                 self.record_heartbeat(0, task_id, 1);
                 Ok(WaitForAllTasksResponseProto {
                     leader_incarnation: 1,
                     device_info: req.device_info,
                 }
-                .encode())
+                .encode_proto())
             }
             14 => {
-                let req = ResetTaskRequestProto::decode(request_bytes)?;
+                let req = ResetTaskRequestProto::decode_proto(request_bytes)?;
                 let task_id = req.source_task.unwrap_or_default().task_id;
                 let _ = self.heartbeats_ms.lock().remove(&(0, task_id));
-                Ok(ResetTaskResponseProto {}.encode())
+                Ok(ResetTaskResponseProto {}.encode_proto())
             }
             15 => {
-                let req = ReportErrorToTaskRequestProto::decode(request_bytes)?;
+                let req = ReportErrorToTaskRequestProto::decode_proto(request_bytes)?;
                 let task_id = req
                     .error_payload
                     .unwrap_or_default()
@@ -587,16 +623,16 @@ impl DistributedCoordinator {
                     .unwrap_or_default()
                     .task_id;
                 let _ = self.report_error_to_service(0, task_id, &req.error_message);
-                Ok(ReportErrorToTaskResponseProto {}.encode())
+                Ok(ReportErrorToTaskResponseProto {}.encode_proto())
             }
             16 => {
-                let req = ReportErrorToServiceRequestProto::decode(request_bytes)?;
+                let req = ReportErrorToServiceRequestProto::decode_proto(request_bytes)?;
                 let task_id = req.error_origin.unwrap_or_default().task_id;
                 let _ = self.report_error_to_service(0, task_id, &req.error_message);
-                Ok(ReportErrorToServiceResponseProto {}.encode())
+                Ok(ReportErrorToServiceResponseProto {}.encode_proto())
             }
             17 => {
-                let req = GetTaskStateRequestProto::decode(request_bytes)?;
+                let req = GetTaskStateRequestProto::decode_proto(request_bytes)?;
                 let hb = self.heartbeats_ms.lock();
                 let mut task_state = Vec::with_capacity(req.source_task.len());
                 for t in req.source_task {
@@ -611,10 +647,10 @@ impl DistributedCoordinator {
                     });
                 }
                 drop(hb);
-                Ok(GetTaskStateResponseProto { task_state }.encode())
+                Ok(GetTaskStateResponseProto { task_state }.encode_proto())
             }
             18 => {
-                let req = WatchJobStateRequestProto::decode(request_bytes)?;
+                let req = WatchJobStateRequestProto::decode_proto(request_bytes)?;
                 let hb = self.heartbeats_ms.lock();
                 let mut task_state = Vec::with_capacity(hb.len());
                 for &(_, tid) in hb.keys() {
@@ -636,17 +672,17 @@ impl DistributedCoordinator {
                     task_state,
                     version_number: req.version_number.saturating_add(1).max(1),
                 }
-                .encode())
+                .encode_proto())
             }
             19 => {
-                let _req = PollForErrorRequestProto::decode(request_bytes)?;
-                Ok(PollForErrorResponseProto {}.encode())
+                let _req = PollForErrorRequestProto::decode_proto(request_bytes)?;
+                Ok(PollForErrorResponseProto {}.encode_proto())
             }
             _ => {
-                let req = ShutdownTaskRequestProto::decode(request_bytes)?;
+                let req = ShutdownTaskRequestProto::decode_proto(request_bytes)?;
                 let task_id = req.source_task.unwrap_or_default().task_id;
                 let _ = self.heartbeats_ms.lock().remove(&(0, task_id));
-                Ok(ShutdownTaskResponseProto {}.encode())
+                Ok(ShutdownTaskResponseProto {}.encode_proto())
             }
         }
     }
@@ -872,28 +908,34 @@ impl MultiSliceTopologyAssembler {
     pub fn compute_dcn_topology_leaf_slices(
         dcn_topology: &crate::proto::DcnTopologyTreeProto,
     ) -> Vec<i32> {
-        if let Some(sym) = &dcn_topology.symmetric_tree {
-            let total = sym
-                .branching_per_layer
-                .iter()
-                .fold(1_i32, |acc, &b| acc.saturating_mul(b.max(1)));
-            return (0..total).collect();
-        }
-        let mut slices = Vec::new();
-        if let Some(root) = &dcn_topology.tree {
-            let mut stack = vec![root];
-            while let Some(node) = stack.pop() {
-                for r in &node.slice_ranges {
-                    for s_id in r.slice_id_start..r.slice_id_end.max(r.slice_id_start + 1) {
-                        slices.push(s_id);
+        match &dcn_topology.representation {
+            Some(crate::proto::dcn_topology::Representation::SymmetricTree(sym)) => {
+                let total = sym
+                    .branching_per_layer
+                    .iter()
+                    .fold(1_i32, |acc, &b| acc.saturating_mul(b.max(1)));
+                return (0..total).collect();
+            }
+            Some(crate::proto::dcn_topology::Representation::Tree(root)) => {
+                let mut slices = Vec::new();
+                let mut stack = vec![root];
+                while let Some(node) = stack.pop() {
+                    for r in &node.slice_ranges {
+                        for s_id in r.slice_id_start..r.slice_id_end.max(r.slice_id_start + 1) {
+                            slices.push(s_id);
+                        }
+                    }
+                    for child in node.nodes.iter().rev() {
+                        stack.push(child);
                     }
                 }
-                for child in node.nodes.iter().rev() {
-                    stack.push(child);
+                if !slices.is_empty() {
+                    return slices;
                 }
             }
+            None => {}
         }
-        if slices.is_empty() { vec![0] } else { slices }
+        vec![0]
     }
 }
 
@@ -1606,10 +1648,12 @@ impl DcnLoopbackAndTcpTransport {
         elem_type: ElementType,
         reduction_op: CollectiveReductionOp,
     ) -> LibTpuResult<Vec<Vec<u8>>> {
-        let branching = dcn_tree
-            .symmetric_tree
-            .as_ref()
-            .map_or(&[][..], |st| st.branching_per_layer.as_slice());
+        let branching = match &dcn_tree.representation {
+            Some(crate::proto::dcn_topology::Representation::SymmetricTree(st)) => {
+                st.branching_per_layer.as_slice()
+            }
+            _ => &[][..],
+        };
         let num_levels = branching.len().max(1);
         let group_size = branching
             .first()
@@ -2191,21 +2235,25 @@ impl MegaScaleActionGraphExecutor {
     )> {
         let launch_id = self.next_launch_id;
         self.next_launch_id = self.next_launch_id.saturating_add(1);
-        let transport = DcnLoopbackAndTcpTransport::new(self.transport_config.clone());
+        let transport = DcnLoopbackAndTcpTransport::new(self.transport_config);
         let mut completed_actions = Vec::with_capacity(graph.actions.len());
         let mut xevents = Vec::with_capacity(graph.actions.len());
 
         for (step_idx, action) in graph.actions.iter().enumerate() {
             for dep in &action.inputs {
-                if !completed_actions.contains(&dep.action_index) {
-                    return Err(LibTpuError::CollectiveError {
-                        communicator_id: 0,
-                        op_name: "MegaScaleActionGraphExecutor::execute_action_graph",
-                        reason: format!(
-                            "Unsatisfied or cyclic dependency: action {} depends on {}",
-                            action.index, dep.action_index
-                        ),
-                    });
+                if let Some(crate::proto::mega_scale_action::input::Source::ActionIndex(dep_idx)) =
+                    dep.source
+                {
+                    if !completed_actions.contains(&dep_idx) {
+                        return Err(LibTpuError::CollectiveError {
+                            communicator_id: 0,
+                            op_name: "MegaScaleActionGraphExecutor::execute_action_graph",
+                            reason: format!(
+                                "Unsatisfied or cyclic dependency: action {} depends on {dep_idx}",
+                                action.index
+                            ),
+                        });
+                    }
                 }
             }
             let _ = transport.transmit_socket_dcn_packet(payload)?;
@@ -2213,10 +2261,9 @@ impl MegaScaleActionGraphExecutor {
             let offset_ps = i64::try_from(step_idx * 1000).unwrap_or(0);
             xevents.push(crate::proto::XEventProto {
                 metadata_id: i64::from(action.index),
-                offset_ps,
                 duration_ps: 500,
                 stats: Vec::new(),
-                num_occurrences: 1,
+                data: Some(crate::proto::x_event::Data::OffsetPs(offset_ps)),
             });
         }
 
@@ -2227,6 +2274,7 @@ impl MegaScaleActionGraphExecutor {
                 completed_actions,
                 pending_actions: Vec::new(),
                 active_actions: Vec::new(),
+                ..crate::proto::PendingGraphStateProto::default()
             }],
         };
         let xspace = crate::proto::XSpaceProto {
@@ -2563,7 +2611,7 @@ impl CollectiveRuntimeEngine {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
-    use crate::proto::DistributedDeviceProto;
+    use crate::proto::{DistributedDeviceProto, ProtoSchemaMessage as _};
 
     #[test]
     #[allow(clippy::too_many_lines)]
@@ -2622,37 +2670,48 @@ mod tests {
         assert_eq!(endpoints.address_mappings.len(), 4);
 
         let sym_dcn = crate::proto::DcnTopologyTreeProto {
-            symmetric_tree: Some(crate::proto::DcnSymmetricTreeProto {
-                branching_per_layer: vec![2, 2],
-            }),
-            tree: None,
+            representation: Some(crate::proto::dcn_topology::Representation::SymmetricTree(
+                crate::proto::DcnSymmetricTreeProto {
+                    branching_per_layer: vec![2, 2],
+                },
+            )),
         };
         assert_eq!(
             MultiSliceTopologyAssembler::compute_dcn_topology_leaf_slices(&sym_dcn),
             vec![0, 1, 2, 3]
         );
         let asym_dcn = crate::proto::DcnTopologyTreeProto {
-            symmetric_tree: None,
-            tree: Some(crate::proto::DcnTreeNodeProto {
-                label: Some(String::from("spine")),
-                nodes: vec![crate::proto::DcnTreeNodeProto {
-                    label: Some(String::from("rack0")),
-                    nodes: Vec::new(),
-                    slice_ranges: vec![crate::proto::DcnSliceRangeProto {
-                        slice_id_start: 0,
-                        slice_id_end: 2,
+            representation: Some(crate::proto::dcn_topology::Representation::Tree(
+                crate::proto::DcnTreeNodeProto {
+                    label: Some(String::from("spine")),
+                    nodes: vec![crate::proto::DcnTreeNodeProto {
+                        label: Some(String::from("rack0")),
+                        nodes: Vec::new(),
+                        slice_ranges: vec![crate::proto::DcnSliceRangeProto {
+                            slice_id_start: 0,
+                            slice_id_end: 2,
+                        }],
+                        egress_constraint: Some(1.0),
+                        ring_transfers: true,
                     }],
-                    egress_constraint: Some(1.0),
-                    ring_transfers: true,
-                }],
-                slice_ranges: Vec::new(),
-                egress_constraint: None,
-                ring_transfers: false,
-            }),
+                    slice_ranges: Vec::new(),
+                    egress_constraint: None,
+                    ring_transfers: false,
+                },
+            )),
         };
         assert_eq!(
             MultiSliceTopologyAssembler::compute_dcn_topology_leaf_slices(&asym_dcn),
             vec![0, 1]
+        );
+        let empty_tree_dcn = crate::proto::DcnTopologyTreeProto {
+            representation: Some(crate::proto::dcn_topology::Representation::Tree(
+                crate::proto::DcnTreeNodeProto::default(),
+            )),
+        };
+        assert_eq!(
+            MultiSliceTopologyAssembler::compute_dcn_topology_leaf_slices(&empty_tree_dcn),
+            vec![0]
         );
         assert_eq!(
             MultiSliceTopologyAssembler::compute_dcn_topology_leaf_slices(
@@ -2674,7 +2733,7 @@ mod tests {
                         incarnation: 7,
                         source_task: Some(task0.clone()),
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -2686,7 +2745,7 @@ mod tests {
                         incarnation: 7,
                         source_task: Some(task0.clone()),
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -2701,7 +2760,7 @@ mod tests {
                         }),
                         allow_overwrite: true,
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -2709,7 +2768,7 @@ mod tests {
             coord
                 .handle_protobuf_rpc(
                     3,
-                    &crate::proto::InsertKeyValueRequestProto::default().encode()
+                    &crate::proto::InsertKeyValueRequestProto::default().encode_proto()
                 )
                 .is_ok()
         );
@@ -2720,7 +2779,7 @@ mod tests {
                     &crate::proto::GetKeyValueRequestProto {
                         key: String::from("cnt/a"),
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -2731,7 +2790,7 @@ mod tests {
                     &crate::proto::TryGetKeyValueRequestProto {
                         key: String::from("cnt/a"),
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -2743,7 +2802,7 @@ mod tests {
                         key: String::from("cnt/a"),
                         increment: 5,
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -2754,7 +2813,7 @@ mod tests {
                     &crate::proto::GetKeyValueDirRequestProto {
                         directory_key: String::from("cnt/"),
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -2766,7 +2825,7 @@ mod tests {
                         key: String::from("cnt/a"),
                         is_directory: false,
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -2781,7 +2840,7 @@ mod tests {
                         source_task: Some(task0.clone()),
                         counter: 1,
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -2794,7 +2853,7 @@ mod tests {
                         source_task: Some(task0.clone()),
                         counter: 1,
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -2806,7 +2865,7 @@ mod tests {
                         requesting_task: Some(task0.clone()),
                         tasks: vec![task0.clone()],
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -2817,7 +2876,7 @@ mod tests {
                     &crate::proto::ShutdownTaskRequestProto {
                         source_task: Some(task0),
                     }
-                    .encode()
+                    .encode_proto()
                 )
                 .is_ok()
         );
@@ -3217,10 +3276,11 @@ mod tests {
             );
         }
         let dcn_tree = crate::proto::DcnTopologyTreeProto {
-            symmetric_tree: Some(crate::proto::DcnSymmetricTreeProto {
-                branching_per_layer: vec![1, 2],
-            }),
-            tree: None,
+            representation: Some(crate::proto::dcn_topology::Representation::SymmetricTree(
+                crate::proto::DcnSymmetricTreeProto {
+                    branching_per_layer: vec![1, 2],
+                },
+            )),
         };
         let tree_ar = DcnLoopbackAndTcpTransport::execute_hierarchical_tree_all_reduce_mscl(
             &dcn_tree,
@@ -3236,14 +3296,24 @@ mod tests {
             );
         }
         let single_tree = crate::proto::DcnTopologyTreeProto {
-            symmetric_tree: Some(crate::proto::DcnSymmetricTreeProto {
-                branching_per_layer: vec![4],
-            }),
-            tree: None,
+            representation: Some(crate::proto::dcn_topology::Representation::SymmetricTree(
+                crate::proto::DcnSymmetricTreeProto {
+                    branching_per_layer: vec![4],
+                },
+            )),
         };
         assert!(
             DcnLoopbackAndTcpTransport::execute_hierarchical_tree_all_reduce_mscl(
                 &single_tree,
+                &slice_bufs,
+                ElementType::F32,
+                CollectiveReductionOp::Sum,
+            )
+            .is_ok()
+        );
+        assert!(
+            DcnLoopbackAndTcpTransport::execute_hierarchical_tree_all_reduce_mscl(
+                &crate::proto::DcnTopologyTreeProto::default(),
                 &slice_bufs,
                 ElementType::F32,
                 CollectiveReductionOp::Sum,
@@ -3305,13 +3375,23 @@ mod tests {
                 crate::proto::MegaScaleActionProto {
                     inputs: Vec::new(),
                     index: 0,
+                    ..crate::proto::MegaScaleActionProto::default()
                 },
                 crate::proto::MegaScaleActionProto {
-                    inputs: vec![crate::proto::MegaScaleActionInputProto { action_index: 0 }],
+                    inputs: vec![
+                        crate::proto::MegaScaleActionInputProto {
+                            source: Some(
+                                crate::proto::mega_scale_action::input::Source::ActionIndex(0),
+                            ),
+                        },
+                        crate::proto::MegaScaleActionInputProto { source: None },
+                    ],
                     index: 1,
+                    ..crate::proto::MegaScaleActionProto::default()
                 },
             ],
             hlo_module: String::from("main"),
+            ..crate::proto::MegaScaleActionGraphProto::default()
         };
         let exec_res = ag_exec.execute_action_graph(&valid_graph, b"dcn_action_payload");
         assert!(exec_res.is_ok());
@@ -3322,10 +3402,16 @@ mod tests {
         let cyclic_graph = crate::proto::MegaScaleActionGraphProto {
             id: String::from("ag_cycle"),
             actions: vec![crate::proto::MegaScaleActionProto {
-                inputs: vec![crate::proto::MegaScaleActionInputProto { action_index: 0 }],
+                inputs: vec![crate::proto::MegaScaleActionInputProto {
+                    source: Some(crate::proto::mega_scale_action::input::Source::ActionIndex(
+                        0,
+                    )),
+                }],
                 index: 0,
+                ..crate::proto::MegaScaleActionProto::default()
             }],
             hlo_module: String::from("main"),
+            ..crate::proto::MegaScaleActionGraphProto::default()
         };
         assert!(ag_exec.execute_action_graph(&cyclic_graph, b"x").is_err());
 
@@ -3353,7 +3439,7 @@ mod tests {
             }),
             incarnation: 1,
         }
-        .encode();
+        .encode_proto();
         let reg_frame = DistributedCoordinator::encode_grpc_frame(&reg_req, false);
         let reg_frame_comp = DistributedCoordinator::encode_grpc_frame(&reg_req, true);
         assert!(
@@ -3376,21 +3462,21 @@ mod tests {
                     }),
                     allow_overwrite: false,
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "GetKeyValue",
                 crate::proto::GetKeyValueRequestProto {
                     key: String::from("/dir/k1"),
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "TryGetKeyValue",
                 crate::proto::TryGetKeyValueRequestProto {
                     key: String::from("/dir/k1"),
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "IncrementKeyValue",
@@ -3398,14 +3484,14 @@ mod tests {
                     key: String::from("/dir/cnt"),
                     increment: 1,
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "GetKeyValueDir",
                 crate::proto::GetKeyValueDirRequestProto {
                     directory_key: String::from("/dir/"),
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "DeleteKeyValue",
@@ -3413,7 +3499,7 @@ mod tests {
                     key: String::from("/dir/"),
                     is_directory: true,
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "Barrier",
@@ -3424,7 +3510,7 @@ mod tests {
                     source_task: None,
                     counter: 1,
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "CancelBarrier",
@@ -3433,7 +3519,7 @@ mod tests {
                     source_task: None,
                     counter: 1,
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "GetAliveTasks",
@@ -3441,7 +3527,7 @@ mod tests {
                     requesting_task: None,
                     tasks: Vec::new(),
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "WaitForAllTasks",
@@ -3449,7 +3535,7 @@ mod tests {
                     source_task: None,
                     device_info: None,
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "GetTaskState",
@@ -3467,7 +3553,7 @@ mod tests {
                         },
                     ],
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "WatchJobState",
@@ -3475,7 +3561,7 @@ mod tests {
                     job_name: String::from("worker"),
                     version_number: 1,
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "ReportErrorToTask",
@@ -3491,7 +3577,7 @@ mod tests {
                         }),
                     }),
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "ReportErrorToService",
@@ -3504,19 +3590,19 @@ mod tests {
                         recoverable: true,
                     }),
                 }
-                .encode(),
+                .encode_proto(),
             ),
             (
                 "PollForError",
-                crate::proto::PollForErrorRequestProto { source_task: None }.encode(),
+                crate::proto::PollForErrorRequestProto { source_task: None }.encode_proto(),
             ),
             (
                 "ResetTask",
-                crate::proto::ResetTaskRequestProto { source_task: None }.encode(),
+                crate::proto::ResetTaskRequestProto { source_task: None }.encode_proto(),
             ),
             (
                 "ShutdownTask",
-                crate::proto::ShutdownTaskRequestProto { source_task: None }.encode(),
+                crate::proto::ShutdownTaskRequestProto { source_task: None }.encode_proto(),
             ),
         ] {
             let f = DistributedCoordinator::encode_grpc_frame(&req_bytes, false);
@@ -3534,7 +3620,7 @@ mod tests {
             }),
             allow_overwrite: false,
         }
-        .encode();
+        .encode_proto();
         assert!(grpc_coord.handle_protobuf_rpc(3, &dup_req).is_err());
         assert!(
             grpc_coord

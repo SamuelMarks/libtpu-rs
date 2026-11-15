@@ -1,0 +1,281 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.isa;
+import "platforms/asic_sw/driver/deepsea/jxc/common/dma_resource.proto";
+import "platforms/asic_sw/lib/deepsea/common/sync_flag.proto";
+import "platforms/deepsea/jellyfish/isa/tensorcore_isa.proto";
+enum BarnaCorePushAddress {
+  BARNA_CORE_PUSH_ADDRESS = 65535;
+}
+enum BarnaCoreIsaConstant {
+  BARNA_CORE_LOG2_NUM_BARNA_CORES_IN_A_ROW = 7;
+  BARNA_CORE_LOG2_HBM_CHANNEL_WIDTH = 5;
+  BARNA_CORE_LOG2_WORD_SIZE = 2;
+  BARNA_CORE_LOG2_LINE_SIZE = 9;
+  BARNA_CORE_REMOTE_BUFFERS_PER_COMMAND = 32;
+  BARNA_CORE_MAX_REMOTE_BUFFER_SIZE_BYTES = 1073741824;
+}
+enum TrainingDirection {
+  FORWARD = 0;
+  BACKWARD = 1;
+}
+enum BarnaOpcode {
+  BARNA_OP_SYNC_FLAG_COMMAND = 0;
+  BARNA_OP_DMA_REQUEST_COMMAND = 1;
+  BARNA_OP_PROCESS_HOST_ID_REQUEST_COMMAND = 2;
+  BARNA_OP_PROCESS_BARNACORE_ID_REQUEST_COMMAND = 3;
+  BARNA_OP_FETCH_UNIQUE_IDS_COMMAND = 4;
+  BARNA_OP_ISSUE_ADDRESS_HANDLER_COMMAND = 5;
+  BARNA_OP_ISSUE_CONCAT_INSTRUCTIONS_COMMAND = 6;
+  BARNA_OP_SPARSE_REDUCE_COMMAND = 7;
+  BARNA_OP_FLUSH_IDS_COMMAND = 8;
+  BARNA_OP_ALLOCATE_REMOTE_BUFFER_COMMAND = 9;
+}
+enum ReductionMode {
+  APPLY_GAIN = 0;
+  NO_GAIN = 1;
+}
+enum BarnaCoreAddressHandlerScalarRegister {
+  BARNA_CORE_ID_VMEM_ADDRESS = 0;
+  GRADIENT_VMEM_ADDRESS = 1;
+  BARNA_CORE_ID_WEIGHT = 2;
+  BARNA_CORE_ID_ARGUMENTS = 3;
+}
+message ProcessHostIdRequestCommand {
+  optional uint32 host_embedding_data_location = 1;
+  optional uint32 host_embedding_data_size = 2;
+  optional .platforms_deepsea.jellyfish.isa.TrainingDirection training_direction = 3;
+  optional uint32 smem_address = 7;
+  optional bool disable_smem_update = 8;
+  optional uint32 scratch_pad_memory_offset = 5;
+  optional uint32 scratch_pad_size = 6;
+}
+message AllocateRemoteBufferCommand {
+  optional int32 start_remote_buffer = 1;
+  optional .platforms_deepsea.jellyfish.isa.TrainingDirection training_direction = 2;
+  optional int32 start_buffer_offset = 3;
+  optional int32 end_remote_buffer = 4;
+  repeated int32 buffer_size = 5;
+}
+message ProcessBarnaCoreIdRequestCommand {
+  optional int32 predicate_smem_offset = 1;
+  optional uint32 predicate_mask = 2;
+  optional uint32 smem_address = 7;
+  optional bool disable_smem_update = 8;
+  optional uint32 host_embedding_data_location = 4;
+  optional .platforms_deepsea.jellyfish.isa.TrainingDirection training_direction = 5;
+  optional uint32 weight_gradient_vmem_location_per_channel = 6;
+}
+message FetchUniqueIdsCommand {
+  optional int32 predicate_smem_offset = 1;
+  optional uint32 predicate_mask = 2;
+  optional uint32 smem_address = 10;
+  optional bool disable_smem_update = 11;
+  optional int32 channel_id = 4;
+  optional uint32 vmem_sw_cache_line_offset = 6;
+  optional int32 feature_length_multiple = 7;
+  optional bool broadcast = 8;
+  optional int32 broadcast_mask = 9;
+}
+message IssueAddressHandlerCommand {
+  optional uint32 predicate_smem_offset = 1;
+  optional uint32 predicate_mask = 2;
+  optional uint32 smem_address = 12;
+  optional bool disable_smem_update = 13;
+  optional int32 channel_id = 4;
+  optional int32 vmem_location_of_gradients = 5;
+  optional int32 program_counter_start_location = 6;
+  optional int32 program_counter_end_location = 7;
+  optional bool send_id_to_flush_unit = 8;
+  optional bool flush_unique_ids = 9;
+  optional bool broadcast = 10;
+  optional int32 broadcast_mask = 11;
+}
+message IssueConcatInstructionsCommand {
+  optional uint32 predicate_smem_offset = 1;
+  optional uint32 predicate_mask = 2;
+  optional uint32 smem_address = 5;
+  optional bool disable_smem_update = 6;
+  optional uint32 concat_output_store_location = 4;
+}
+message SparseReduceCommand {
+  optional uint32 predicate_smem_offset = 1;
+  optional uint32 predicate_mask = 2;
+  optional uint32 smem_address = 12;
+  optional bool disable_smem_update = 13;
+  optional .platforms_deepsea.jellyfish.isa.TrainingDirection training_direction = 4;
+  optional uint32 input_activation_gradient_location = 5;
+  optional .platforms_deepsea.jellyfish.isa.ReductionMode mode = 6;
+  optional uint32 reduction_buffer_location = 7;
+  optional uint32 reduced_gradient_location = 8;
+  optional bool no_reduce = 10;
+  optional uint32 tile_size_in_lines = 11;
+}
+message SyncFlagCommand {
+  optional uint32 smem_address = 1;
+  optional uint32 expected_sync = 2;
+  optional uint32 sync_mask = 3;
+  optional uint32 delay_count = 4;
+  optional bool no_sync = 5;
+  optional bool modify_flag = 6;
+  optional bool less_than_equal_check = 7;
+  optional uint32 or_mask = 8;
+  optional uint32 and_mask = 9;
+  optional int32 repeat_count = 10;
+}
+message DmaRequestCommand {
+  oneof dest_resource {
+    .asic_sw.driver.deepsea.jxc.DmaResource destination_resource_id = 7;
+    int32 segment_id = 22;
+  }
+  optional uint64 source_address = 1;
+  optional uint64 sink_address = 2;
+  optional uint32 source_update_address = 3;
+  optional uint32 sink_update_address = 4;
+  optional uint32 destination_chip_id = 5;
+  optional uint32 destination_node_id = 6;
+  optional .asic_sw.deepsea.SyncFlag.Core dest_update_core = 8;
+  optional .asic_sw.driver.deepsea.jxc.DmaResource source_resource_id = 9;
+  optional .asic_sw.deepsea.SyncFlag.Core source_update_core = 10;
+  optional uint32 transfer_size_in_lines = 11;
+  optional uint32 transfer_size_memory_location = 12;
+  optional bool is_segment = 13;
+  optional bool trace = 14 [default = true];
+  optional bool multicast = 15;
+  optional bool zero_sink_buffer = 16;
+  optional bool destination_update = 17;
+  optional bool source_update = 18;
+  optional bool ack_update = 19;
+  optional uint32 ack_update_address = 20;
+  optional bool hib_update = 21;
+}
+message FlushIdsCommand {
+  optional uint32 predicate_smem_offset = 1;
+  optional uint32 predicate_mask = 2;
+  optional uint32 smem_address = 9;
+  optional bool disable_smem_update = 10;
+  optional int32 channel_id = 4;
+  optional int32 feature_length_multiple = 5;
+  optional bool broadcast = 6;
+  optional int32 broadcast_mask = 7;
+  optional bool sync_after_commit = 8;
+}
+message BarnaCoreFsmInstruction {
+  oneof command {
+    .platforms_deepsea.jellyfish.isa.ProcessHostIdRequestCommand process_host_id_request = 4;
+    .platforms_deepsea.jellyfish.isa.ProcessBarnaCoreIdRequestCommand process_barna_core_id_request = 5;
+    .platforms_deepsea.jellyfish.isa.FetchUniqueIdsCommand fetch_unique_ids = 6;
+    .platforms_deepsea.jellyfish.isa.IssueAddressHandlerCommand issue_address_handler = 7;
+    .platforms_deepsea.jellyfish.isa.IssueConcatInstructionsCommand issue_concat_instructions = 8;
+    .platforms_deepsea.jellyfish.isa.SparseReduceCommand sparse_reduce = 9;
+    .platforms_deepsea.jellyfish.isa.SyncFlagCommand sync_flag = 10;
+    .platforms_deepsea.jellyfish.isa.DmaRequestCommand dma_request = 11;
+    .platforms_deepsea.jellyfish.isa.AllocateRemoteBufferCommand allocate_remote_buffer = 12;
+    .platforms_deepsea.jellyfish.isa.FlushIdsCommand flush_ids = 13;
+  }
+  optional .platforms_deepsea.jellyfish.isa.BarnaOpcode opcode = 1;
+  optional int32 pc_tag = 2;
+  optional int32 step_marker = 3;
+}
+message BarnaCoreFsmProgram {
+  repeated .platforms_deepsea.jellyfish.isa.BarnaCoreFsmInstruction fsm_instructions = 1;
+}
+message BarnaCorePredication {
+  enum Condition {
+    option allow_alias = true;
+    FIRST_ID = 0;
+    FIRST_ID_IN_FEATURE = 1;
+    NEW_FEATURE_ID = 2;
+    NEW_TOKEN_ID = 3;
+    NEW_SAMPLE = 4;
+    LAST_ID_IN_BATCH = 5;
+    ONLY_ID_IN_FEATURE_SAMPLE = 5;
+    FIRST_ID_IN_BATCH = 6;
+    NEW_TILE = 7;
+    COMPARE_FEATURE_ID = 8;
+    REPEATED_TOKEN_FEATURE = 9;
+    FIRST_ITERATION = 10;
+    LAST_ITERATION = 11;
+    NEW_SAMPLE_OR_TILE_FOR_THE_SAME_ID = 12;
+    REPEATED_TILE_SAMPLE = 13;
+    NEW_FEATURE_OR_TOKEN_FOR_THE_SAME_ID = 14;
+    ALWAYS = 15;
+  }
+  optional .platforms_deepsea.jellyfish.isa.BarnaCorePredication.Condition condition = 1;
+  optional bool value = 2;
+}
+message BarnaCoreAddressHandlerScalarSlot {
+  message Loop {
+    optional uint32 loop_size_minus_one = 1;
+  }
+  message ShiftMask {
+    optional .platforms_deepsea.jellyfish.isa.BarnaCorePredication predication = 1;
+  }
+  message Push {
+  }
+  message Branch {
+    optional .platforms_deepsea.jellyfish.isa.BarnaCorePredication predication = 1;
+    optional bool branch_type = 2;
+    optional uint32 branch_target_pc = 3;
+  }
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerScalarSlot.Loop loop = 1;
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerScalarSlot.ShiftMask shift_mask = 2;
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerScalarSlot.Push push = 3;
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerScalarSlot.Branch branch = 4;
+  optional bool prog_end = 5;
+}
+message BarnaCoreAddressHandlerVectorSlot {
+  message Store {
+    reserved 2;
+    optional .platforms_deepsea.jellyfish.isa.BarnaCorePredication predication = 1;
+    optional .platforms_deepsea.jellyfish.isa.VectorRegister source = 7;
+    optional .platforms_deepsea.jellyfish.isa.BaseAddressEncoding base = 3;
+    optional uint32 feature_length_multiplier = 4;
+    optional bool use_loop_index = 5;
+    optional bool push_to_concat_register = 6;
+  }
+  message Load {
+    reserved 2;
+    optional .platforms_deepsea.jellyfish.isa.BarnaCorePredication predication = 1;
+    optional .platforms_deepsea.jellyfish.isa.VectorRegister destination = 6;
+    optional .platforms_deepsea.jellyfish.isa.BaseAddressEncoding base = 3;
+    optional uint32 feature_length_multiplier = 4;
+    optional bool use_loop_index = 5;
+  }
+  message AluInstruction {
+    optional .platforms_deepsea.jellyfish.isa.BarnaCorePredication predication = 1;
+    optional .platforms_deepsea.jellyfish.isa.VectorAluInstruction instruction = 2;
+  }
+  message Result {
+    reserved 3;
+    optional .platforms_deepsea.jellyfish.isa.BarnaCorePredication predication = 1;
+    optional .platforms_deepsea.jellyfish.isa.VectorResultDestination which_destination = 2;
+    optional .platforms_deepsea.jellyfish.isa.VectorRegister destination = 4;
+  }
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerVectorSlot.Store store = 1;
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerVectorSlot.Load load = 2;
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerVectorSlot.AluInstruction alu_0 = 3;
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerVectorSlot.AluInstruction alu_1 = 4;
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerVectorSlot.Result result = 5;
+}
+message BarnaCoreAddressHandlerBundle {
+  message Common {
+    optional uint32 compared_feature_id = 1;
+    optional bool indexed_load_destination = 2;
+    optional bool indexed_store_source = 3;
+    optional bool indexed_alu_0_x = 4;
+    optional bool indexed_alu_0_destination = 5;
+    optional bool indexed_alu_1_x = 6;
+    optional bool indexed_alu_1_destination = 7;
+    optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerScalarRegister vs0 = 8;
+    optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerScalarRegister vs1 = 9;
+    optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerScalarRegister vs2 = 10;
+    optional uint32 imm_0 = 11;
+    optional uint32 imm_1 = 12;
+  }
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerBundle.Common common = 1;
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerScalarSlot scalar = 2;
+  optional .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerVectorSlot vector = 3;
+}
+message BarnaCoreAddressHandlerProgram {
+  repeated .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerBundle bundles = 1;
+}

@@ -1,0 +1,7 @@
+syntax = "proto3";
+package tensorflow.tpu;
+message PaddingMap {
+  int32 arg_index = 1;
+  int32 shape_index = 2;
+  int32 padding_arg_index = 3;
+}

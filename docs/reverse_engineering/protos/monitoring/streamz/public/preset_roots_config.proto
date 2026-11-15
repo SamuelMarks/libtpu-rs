@@ -1,0 +1,17 @@
+syntax = "proto3";
+package monitoring.streamz;
+message PresetRootsConfig {
+  message PresetRootConfig {
+    message EntityLabel {
+      oneof value {
+        string string_value = 21;
+        int64 int64_value = 22;
+        bool bool_value = 23;
+        bool from_default_label = 25;
+      }
+      string name = 10;
+    }
+    repeated .monitoring.streamz.PresetRootsConfig.PresetRootConfig.EntityLabel entity_label = 100;
+  }
+  repeated .monitoring.streamz.PresetRootsConfig.PresetRootConfig preset_root = 10;
+}

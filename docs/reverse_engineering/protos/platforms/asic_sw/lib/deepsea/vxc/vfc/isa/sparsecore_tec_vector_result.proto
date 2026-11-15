@@ -1,0 +1,88 @@
+syntax = "proto2";
+package asic_sw.deepsea.vxc.vfc.isa;
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_common_encodings.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/common/isa/common_encodings.proto";
+message SparseCoreTecVectorResult {
+  message EupResult {
+    optional uint32 dest_one = 1;
+  }
+  message PopXrfWriteAll {
+    enum VresUnit {
+      VRES_UNIT_XRF0 = 0;
+      VRES_UNIT_XRF1 = 1;
+    }
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWriteAll.VresUnit unit = 1;
+    optional uint32 dest_one = 2;
+    optional uint32 dest_two = 3;
+    optional uint32 dest_vm = 4;
+  }
+  message PopXrfWritePartial0 {
+    enum VresUnit {
+      VRES_UNIT_XRF0 = 0;
+      VRES_UNIT_XRF1 = 1;
+    }
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWritePartial0.VresUnit unit = 1;
+    optional uint32 dest_one = 2;
+  }
+  message PopXrfWritePartial1 {
+    enum VresUnit {
+      VRES_UNIT_XRF0 = 0;
+      VRES_UNIT_XRF1 = 1;
+    }
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWritePartial1.VresUnit unit = 1;
+    optional uint32 dest_one = 2;
+    optional uint32 dest_vm = 3;
+  }
+  message PopXrfWritePartial2 {
+    enum VresUnit {
+      VRES_UNIT_XRF0 = 0;
+      VRES_UNIT_XRF1 = 1;
+    }
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWritePartial2.VresUnit unit = 1;
+    optional uint32 dest_two = 2;
+  }
+  message PopXrfWritePartial3 {
+    enum VresUnit {
+      VRES_UNIT_XRF0 = 0;
+      VRES_UNIT_XRF1 = 1;
+    }
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWritePartial3.VresUnit unit = 1;
+    optional uint32 dest_two = 2;
+    optional uint32 dest_vm = 3;
+  }
+  message PopXrfWritePartial4 {
+    enum VresUnit {
+      VRES_UNIT_XRF0 = 0;
+      VRES_UNIT_XRF1 = 1;
+    }
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWritePartial4.VresUnit unit = 1;
+    optional uint32 dest_one = 2;
+    optional uint32 dest_two = 3;
+  }
+  message VresMove {
+    optional uint32 dest_one = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort port = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+  }
+  oneof inst {
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.EupResult eup_result = 6;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWriteAll pop_xrf_write_all = 7;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWritePartial0 pop_xrf_write_partial_0 = 8;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWritePartial1 pop_xrf_write_partial_1 = 9;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWritePartial2 pop_xrf_write_partial_2 = 10;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWritePartial3 pop_xrf_write_partial_3 = 11;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.PopXrfWritePartial4 pop_xrf_write_partial_4 = 12;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorResult.VresMove vres_move = 13;
+  }
+  optional .asic_sw.deepsea.vxc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional bool predication_inversion = 2;
+  optional uint32 latency = 3 [default = 1];
+  map<string, uint32> resource_usage = 4;
+  optional uint32 bit_width = 5;
+}

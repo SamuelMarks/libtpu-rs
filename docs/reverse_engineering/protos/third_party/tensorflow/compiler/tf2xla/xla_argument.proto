@@ -1,0 +1,29 @@
+syntax = "proto3";
+package tensorflow.tf2xla;
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+import "third_party/tensorflow/core/framework/tensor.proto";
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+message XlaArgumentProto {
+  message Shape {
+    oneof shape {
+      .tensorflow.TensorShapeProto tensor_shape = 1;
+      .xla.ShapeProto xla_shape = 2;
+    }
+  }
+  int32 kind = 1;
+  .tensorflow.DataType type = 2;
+  optional .tensorflow.tf2xla.XlaArgumentProto.Shape shape = 3;
+  .tensorflow.TensorProto constant_value = 4;
+  optional .tensorflow.TensorProto value_bound = 5;
+  optional .tensorflow.TensorProto value_dynamism = 6;
+  string name = 7;
+  string node_name = 8;
+  int32 resource_kind = 9;
+  bool initialized = 10;
+  bool fast_mem = 11;
+  int64 max_array_size = 12;
+  repeated string tensor_array_gradients = 13;
+  bool is_same_data_across_replicas = 14;
+  bool requires_broadcast = 15;
+}

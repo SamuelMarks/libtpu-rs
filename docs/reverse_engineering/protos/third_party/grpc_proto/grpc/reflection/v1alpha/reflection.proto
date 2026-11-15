@@ -1,0 +1,46 @@
+syntax = "proto3";
+package grpc.reflection.v1alpha;
+message ServerReflectionRequest {
+  oneof message_request {
+    string file_by_filename = 3;
+    string file_containing_symbol = 4;
+    .grpc.reflection.v1alpha.ExtensionRequest file_containing_extension = 5;
+    string all_extension_numbers_of_type = 6;
+    string list_services = 7;
+  }
+  string host = 1;
+}
+message ExtensionRequest {
+  string containing_type = 1;
+  int32 extension_number = 2;
+}
+message ServerReflectionResponse {
+  oneof message_response {
+    .grpc.reflection.v1alpha.FileDescriptorResponse file_descriptor_response = 4;
+    .grpc.reflection.v1alpha.ExtensionNumberResponse all_extension_numbers_response = 5;
+    .grpc.reflection.v1alpha.ListServiceResponse list_services_response = 6;
+    .grpc.reflection.v1alpha.ErrorResponse error_response = 7;
+  }
+  string valid_host = 1;
+  .grpc.reflection.v1alpha.ServerReflectionRequest original_request = 2;
+}
+message FileDescriptorResponse {
+  repeated bytes file_descriptor_proto = 1;
+}
+message ExtensionNumberResponse {
+  string base_type_name = 1;
+  repeated int32 extension_number = 2;
+}
+message ListServiceResponse {
+  repeated .grpc.reflection.v1alpha.ServiceResponse service = 1;
+}
+message ServiceResponse {
+  string name = 1;
+}
+message ErrorResponse {
+  int32 error_code = 1;
+  string error_message = 2;
+}
+service ServerReflection {
+  rpc ServerReflectionInfo(stream .grpc.reflection.v1alpha.ServerReflectionRequest) returns (stream .grpc.reflection.v1alpha.ServerReflectionResponse);
+}

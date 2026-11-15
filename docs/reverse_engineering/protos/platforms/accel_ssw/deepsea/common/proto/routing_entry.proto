@@ -1,0 +1,85 @@
+syntax = "proto2";
+package accel_ssw.deepsea.proto;
+enum VirtualChannelControl {
+  option allow_alias = true;
+  VC_NO_CHANGE = 0;
+  VC_FORCE_LOW = 1;
+  VC_FORCE_VC0 = 1;
+  VC_FORCE_HIGH = 2;
+  VC_FORCE_VC1 = 2;
+  VC_TOGGLE = 3;
+  VC_FORCE_VC2 = 4;
+  VC_INCREMENT = 5;
+}
+enum MergeBehavior {
+  DEFAULT_NO_MERGE = 0;
+  MERGE_TO_UPPER = 1;
+  MERGE_TO_LOWER = 2;
+}
+enum EntryType {
+  ET_DEFAULT = 0;
+  ET_CUMULATIVE_WEIGHTS_EGRESS = 1;
+  ET_RANDOMIZED_UNICAST_EGRESS_NEXT_HOP = 2;
+}
+message UnicastTarget {
+  optional uint32 target = 1;
+  optional .accel_ssw.deepsea.proto.VirtualChannelControl vc_control = 2;
+  optional bool is_terminal = 3 [default = false];
+  optional bool invalid = 4 [default = false];
+}
+message MulticastTarget {
+  reserved 1 to 6;
+  optional .accel_ssw.deepsea.proto.VirtualChannelControl vc_control = 7;
+  repeated uint32 targets = 8;
+  optional bool is_terminal = 9 [default = false];
+}
+message WeightedRoute {
+  optional .accel_ssw.deepsea.proto.UnicastTarget unicast = 1;
+  optional uint32 cumulative_weight = 2;
+}
+message WeightedTarget {
+  repeated .accel_ssw.deepsea.proto.WeightedRoute weighted_routes = 1;
+  optional uint32 max_weight = 2 [default = 12];
+}
+message RandomizedUnicastEgressNextHopRoutingEntry {
+  repeated .accel_ssw.deepsea.proto.UnicastTarget unicast_targets = 1;
+}
+message CumulativeWeightsEgressRoutingEntry {
+  repeated uint32 cumulative_weights = 1 [packed = true];
+}
+message ChannelMergeBehavior {
+  optional uint32 source_lst = 1;
+  optional uint32 destination_lst = 2;
+  optional .accel_ssw.deepsea.proto.MergeBehavior merge_behavior = 3;
+}
+message RoutingEntry {
+  optional .accel_ssw.deepsea.proto.UnicastTarget unicast = 1;
+  repeated .accel_ssw.deepsea.proto.MulticastTarget multicast = 2;
+  optional uint64 table_index = 3;
+  optional bool invalid = 4 [default = false];
+  optional .accel_ssw.deepsea.proto.WeightedTarget weighted_target = 5;
+}
+message UnicastRoutingTable {
+  repeated .accel_ssw.deepsea.proto.UnicastTarget unicast_targets = 1;
+  repeated .accel_ssw.deepsea.proto.ChannelMergeBehavior channel_merges = 2;
+}
+message RandomizedUnicastEgressNextHopRoutingTable {
+  repeated .accel_ssw.deepsea.proto.RandomizedUnicastEgressNextHopRoutingEntry randomized_unicast_egress_next_hop_routing_entries = 1;
+}
+message CumulativeWeightsEgressRoutingTable {
+  repeated .accel_ssw.deepsea.proto.CumulativeWeightsEgressRoutingEntry cumulative_weights_egress_routing_entries = 1;
+}
+message CompactedRoutingTable {
+  optional .accel_ssw.deepsea.proto.EntryType entry_type = 1;
+  optional bytes entries = 2;
+}
+message RoutingTable {
+  oneof table {
+    .accel_ssw.deepsea.proto.CompactedRoutingTable compacted_table = 9;
+    .accel_ssw.deepsea.proto.UnicastRoutingTable unicast_table = 3;
+    .accel_ssw.deepsea.proto.RandomizedUnicastEgressNextHopRoutingTable randomized_unicast_egress_next_hop_table = 4;
+    .accel_ssw.deepsea.proto.CumulativeWeightsEgressRoutingTable cumulative_weights_egress_table = 5;
+  }
+  repeated .accel_ssw.deepsea.proto.RoutingEntry entries = 1;
+  repeated .accel_ssw.deepsea.proto.ChannelMergeBehavior channel_merges = 2;
+}

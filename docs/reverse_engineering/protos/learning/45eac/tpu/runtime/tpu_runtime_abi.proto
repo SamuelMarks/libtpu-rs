@@ -1,0 +1,33 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/host_commands/host_command_opcodes.proto";
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+message TpuCoreProgramAbiOptionsProto {
+  bool use_continuations = 1;
+}
+message TpuRuntimeAbiHostCommandVersionProto {
+  .tpu.HostCommandOpcodeProto opcode = 1;
+  int64 version = 2;
+}
+message TpuCoreProgramAbiProto {
+  .tpu.TpuVersionProto version = 1;
+  string variant = 2;
+  string chip_config = 3;
+  int64 base_abi_version = 4;
+  int64 hardware_abi_version = 5;
+  string required_compiler_hash = 6;
+  .tpu.TpuCoreProgramAbiOptionsProto options = 7;
+  repeated .tpu.TpuRuntimeAbiHostCommandVersionProto host_command_abi_versions = 8;
+}
+message TpuRuntimeAbiProto {
+  message HardwareAbiVersion {
+    .tpu.TpuVersionProto version = 1;
+    string variant = 2;
+    string chip_config = 3;
+    int64 abi_version = 4;
+  }
+  int64 base_abi_version = 1;
+  repeated .tpu.TpuRuntimeAbiProto.HardwareAbiVersion hardware_abi_versions = 2;
+  string compiler_hash = 3;
+  repeated .tpu.TpuRuntimeAbiHostCommandVersionProto host_command_abi_versions = 4;
+}

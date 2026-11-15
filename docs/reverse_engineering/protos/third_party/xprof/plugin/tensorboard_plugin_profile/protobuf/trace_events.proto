@@ -1,0 +1,54 @@
+syntax = "proto2";
+package tensorflow.profiler;
+import "third_party/xprof/plugin/tensorboard_plugin_profile/protobuf/task.proto";
+message Trace {
+  reserved 2;
+  reserved 3;
+  map<uint32, .tensorflow.profiler.Device> devices = 1;
+  map<uint32, .tensorflow.profiler.Task> tasks = 6;
+  optional uint64 min_timestamp_ps = 4;
+  optional uint64 max_timestamp_ps = 5;
+  optional uint64 num_events = 7;
+  map<fixed64, string> name_table = 8;
+}
+message Device {
+  reserved 4;
+  optional string name = 1;
+  optional uint32 device_id = 2;
+  map<uint64, .tensorflow.profiler.Resource> resources = 3;
+}
+message Resource {
+  optional string name = 1;
+  optional uint64 resource_id = 2;
+  optional uint32 num_events = 3;
+}
+message TraceEvent {
+  reserved 4;
+  enum EventType {
+    EVENT_TYPE_UNSPECIFIED = 0;
+    EVENT_TYPE_COMPLETE = 1;
+    EVENT_TYPE_ASYNC = 3;
+    EVENT_TYPE_COUNTER = 4;
+  }
+  enum FlowEntryType {
+    FLOW_NONE = 0;
+    FLOW_START = 1;
+    FLOW_MID = 2;
+    FLOW_END = 3;
+  }
+  oneof name_oneof {
+    string name = 3;
+    fixed64 name_ref = 12;
+  }
+  optional .tensorflow.profiler.TraceEvent.EventType type = 14;
+  optional uint32 device_id = 1;
+  optional uint64 resource_id = 2;
+  optional int64 group_id = 5 [default = -1];
+  optional uint64 timestamp_ps = 6;
+  optional uint64 duration_ps = 7;
+  optional bytes raw_data = 8;
+  optional uint64 flow_id = 9;
+  optional .tensorflow.profiler.TraceEvent.FlowEntryType flow_entry_type = 10;
+  optional uint32 flow_category = 11;
+  optional uint32 serial = 13;
+}

@@ -1,0 +1,15 @@
+syntax = "proto3";
+package asic_sw.tools.deepsea.pxc;
+message ArchitecturalStateResourceIds {
+  enum Ids {
+    UNKNOWN = 0;
+    TC0_GAIN_STAGING_FIFO_NORMAL = 1;
+    TC0_GAIN_STAGING_FIFO_TRANSPOSED = 2;
+    TC0_GAIN_MATRIX_REGISTER = 3;
+    TC0_SMEM = 7;
+    TC1_GAIN_STAGING_FIFO_NORMAL = 4;
+    TC1_GAIN_STAGING_FIFO_TRANSPOSED = 5;
+    TC1_GAIN_MATRIX_REGISTER = 6;
+    TC1_SMEM = 8;
+  }
+}

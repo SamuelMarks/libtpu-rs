@@ -1,0 +1,10 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/allocation_description.proto";
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+message TensorDescription {
+  .tensorflow.DataType dtype = 1;
+  .tensorflow.TensorShapeProto shape = 2;
+  .tensorflow.AllocationDescription allocation_description = 4;
+}

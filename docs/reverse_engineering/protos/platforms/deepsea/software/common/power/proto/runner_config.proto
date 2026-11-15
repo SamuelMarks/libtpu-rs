@@ -1,0 +1,178 @@
+syntax = "proto2";
+package deepsea.common.power;
+import "platforms/asic_sw/lib/common/device_coredump.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+import "platforms/deepsea/software/common/chip_runner/proto/core_result.proto";
+enum ThrottleSource {
+  UNSPECIFIED_THROTTLE = 0;
+  SW_THROTTLE = 1;
+  EXTERNAL_THROTTLE = 2;
+  THERMAL_THROTTLE = 3;
+  LDIDT_THROTTLE = 4;
+  PPM_SUSTAINED_AGGRESSIVE_THROTTLE = 5;
+  PPM_SUSTAINED_NOMINAL_THROTTLE = 6;
+  PPM_DIDT_AGGRESSIVE_THROTTLE = 7;
+  PPM_DIDT_NOMINAL_THROTTLE = 8;
+  PPM_OVERSHOOT_AGGRESSIVE_THROTTLE = 9;
+  PPM_OVERSHOOT_NOMINAL_THROTTLE = 10;
+  DVFS_SW_THROTTLE = 11;
+  POWER_METER_SW_THROTTLE = 12;
+  EXTERNAL_BRAKE_THROTTLE = 13;
+  LDIDT_BRAKE_THROTTLE = 14;
+  LDIDT_DROOP_THROTTLE = 15;
+  PPM_SELF_THROTTLE = 16;
+  COMMON_SLOW_THROTTLE = 17;
+  COMMON_FAST_THROTTLE = 18;
+  SMALL_DIDT_THROTTLE = 19;
+  LARGE_DIDT_THROTTLE = 20;
+  MINI_SUSTAINED_THROTTLE = 21;
+  SMALL_SUSTAINED_THROTTLE = 22;
+  LARGE_SUSTAINED_THROTTLE = 23;
+  THERMAL_ALARM_THROTTLE = 24;
+  THERMAL_PANIC_THROTTLE = 25;
+  ADD_0_THROTTLE = 26;
+  ADD_1_THROTTLE = 27;
+  ADD_2_THROTTLE = 28;
+  ADD_3_THROTTLE = 29;
+}
+message LdidtSkitterResult {
+  optional int32 lowest_bit = 1;
+  optional int32 highest_bit = 2;
+  optional int32 idle_encoding = 3;
+}
+message HBMBandwidthResult {
+  optional float total_bandwidth = 1;
+  optional float total_byte_throttle_rate = 2;
+}
+message DvfsResidency {
+  optional string requestor = 1;
+  repeated float residency_percent = 2;
+}
+message PowerRunnerResultPerDie {
+  optional int32 die_index = 1;
+  repeated .deepsea.common.chip_runner.CoreResult core_results = 2;
+  repeated float average_core_clock = 3;
+  repeated .deepsea.common.power.LdidtSkitterResult ldidt_skitter_results = 4;
+  map<string, float> throttle_results = 5;
+  optional .deepsea.common.power.HBMBandwidthResult hbmc_bandwidth_result = 6;
+  repeated .deepsea.common.power.Measurement measurements = 7;
+  repeated .deepsea.common.power.DvfsResidency dvfs_residencies = 8;
+}
+message PowerRunnerResult {
+  reserved 3;
+  reserved 4;
+  reserved 5;
+  reserved 6;
+  reserved 7;
+  reserved 8;
+  reserved 9;
+  reserved 10;
+  optional .asic_sw.proto.ChipLocation chip_location = 1;
+  repeated .deepsea.common.chip_runner.CoreResult core_results = 2;
+  repeated .deepsea.common.power.PowerRunnerResultPerDie results_per_die = 12;
+  repeated .asic_sw.Info anomalies_infos = 11;
+}
+message PerformanceCounter {
+  optional string name = 1;
+  optional uint64 offset = 2;
+}
+message ConfigPerDie {
+  optional uint32 die_index = 1;
+  repeated uint64 throttle_fleet_base_offset = 2;
+  repeated uint64 thermal_control_watermark_offset = 3;
+  repeated uint64 software_throttle_offset = 4;
+  optional uint64 stable_clock_cycle_count_offset = 5;
+  optional .deepsea.common.power.ThrottleInfo throttles_info = 6;
+  repeated uint64 ldidt_sensor_index = 7;
+  optional .deepsea.common.power.HbmcAggregatedCountersInfo hbmc_aggregated_counters_info = 8;
+  repeated uint64 tcs_stats_base_offset = 9;
+  optional .deepsea.common.power.ThrottleInfo tcs_throttles_info = 10;
+  optional uint64 tcs_stats_control_offset = 11;
+  optional uint64 tcs_stats_window_offset = 12;
+  repeated .deepsea.common.power.PerformanceCounter tcs_performance_counters = 13;
+}
+message HbmcAggregatedCountersInfo {
+  repeated uint64 base_offset = 1;
+  optional uint32 cycle_count_offset = 2;
+  optional uint32 bytes_read_offset = 3;
+  optional uint32 bytes_written_offset = 4;
+  optional uint32 bytes_read_throttle_offset = 5;
+  optional uint32 bytes_written_throttle_offset = 6;
+  optional float hbm_clk_mhz = 7;
+}
+message ThrottleOffset {
+  optional .deepsea.common.power.ThrottleSource source = 1;
+  optional uint64 offset = 2;
+}
+message ThrottleInfo {
+  repeated .deepsea.common.power.ThrottleOffset throttle_offsets = 1;
+  optional uint64 cycle_count_offset = 2;
+}
+message ConversionParam {
+  optional float bias = 1;
+  optional float slope = 2;
+}
+message RemoteDmaErrorOffset {
+  optional uint64 dma_fatals_error_status_unprivileged = 1;
+  optional uint64 dma_fatals_error_status_privileged = 2;
+  optional uint64 dma_fatals_error_mask = 3;
+  optional uint64 dma_fatals_interrupt_error_mask = 4;
+  optional uint64 dma_fatals_error_history = 5;
+  optional uint64 dma_fatals_interrupt_error_active = 6;
+  optional uint64 dma_fatals_interrupt_error_pending = 7;
+  optional uint64 dma_fatals_interrupt_error_set_pending = 8;
+}
+message ThrottlesOffsets {
+  optional uint64 cycle_count_offset = 1;
+  optional uint64 sw_throttle_count_offset = 2;
+  optional uint64 ldidt_throttle_count_offset = 3;
+  optional uint64 ext_throttle_count_offset = 4;
+  optional uint64 thermal_throttle_count_offset = 5;
+  optional uint64 ppm_aggressive_count_offset = 6;
+  optional uint64 ppm_nominal_count_offset = 7;
+  optional uint64 ext_brake_count_offset = 8;
+  optional uint64 ext_droop_count_offset = 9;
+  optional uint64 ldidt_brake_count_offset = 10;
+  optional uint64 ldidt_droop_count_offset = 11;
+  optional uint64 ppm_didt_aggressive_count_offset = 12;
+  optional uint64 ppm_didt_nominal_count_offset = 13;
+  optional uint64 ppm_overshoot_aggressive_count_offset = 14;
+  optional uint64 ppm_overshoot_nominal_count_offset = 15;
+  optional uint64 dvfs_sw_throttle_count_offset = 16;
+  optional uint64 power_meter_sw_throttle_count_offset = 17;
+  optional uint64 ppm_self_throttle_count_offset = 18;
+}
+message RunnerConfig {
+  reserved 1;
+  reserved 14;
+  repeated .deepsea.common.power.ConfigPerDie config_per_die = 18;
+  repeated .deepsea.common.power.RemoteDmaErrorOffset remote_dma_error_offsets = 17;
+  optional bool monitor_throttling = 2;
+  optional bool set_thermal_watermarks = 3;
+  optional float thermal_high_watermark = 4;
+  optional float thermal_low_watermark = 5;
+  optional string runner_results_path = 6;
+  optional bool set_sw_throttle = 7;
+  optional uint32 sw_throttle_value = 8;
+  optional uint64 dma_timeout_ms = 9 [default = 5000];
+  optional uint64 workload_stop_wait_ms = 10 [default = 5000];
+  optional float stable_clock_mhz = 11;
+  optional bool monitor_ldidt_skitter = 12;
+  optional .deepsea.common.power.ConversionParam thermal_conversion_param = 13;
+  optional bool enable_tracing = 15 [default = false];
+  optional bool snap_on_fail = 16 [default = false];
+  optional bool monitor_power = 19 [default = false];
+  optional bool monitor_dvfs_residency = 20 [default = false];
+  optional bool monitor_performance = 21 [default = false];
+  optional bool monitor_thermal = 22 [default = false];
+}
+message PowerMeasurement {
+  repeated .deepsea.common.power.Measurement power_readings = 1;
+}
+message Measurement {
+  optional string name = 1;
+  optional string unit = 2;
+  optional double value = 3;
+  optional double upper_specification_limit = 4;
+  optional double lower_specification_limit = 5;
+}

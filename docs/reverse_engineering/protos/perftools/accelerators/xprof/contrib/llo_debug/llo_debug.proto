@@ -1,0 +1,13 @@
+syntax = "proto3";
+package xprof.tpu.llo_debug;
+import "perftools/accelerators/xprof/contrib/llo_debug/source_map.proto";
+import "platforms/xla/service/jellyfish/proto/llo_module.proto";
+message LloDebugProto {
+  .xla.jellyfish.LloModuleProto llo_module = 1;
+  bytes llo_mlirbc = 2;
+  .xprof.tpu.llo_debug.SourceMapProto source_map = 3;
+}
+message LloDebugDumpProto {
+  map<string, .xprof.tpu.llo_debug.LloDebugProto> kernels = 1;
+  repeated .xla.jellyfish.LloModuleProto llo_modules = 2;
+}

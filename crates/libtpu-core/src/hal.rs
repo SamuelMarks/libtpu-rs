@@ -4,14 +4,20 @@
 //! backed [`LinuxDeviceHal`] supporting the reverse-engineered Gasket (`0xdc`) and VFIO (`0x3b`)
 //! device protocols.
 
+/// Cycle-accurate architectural Cloud TPU `PCIe`/`VFIO`/`Gasket` emulator (`VirtualVfioGasketDevice`).
+pub mod emulator;
 /// Tensor operation evaluation routines (`MXU`, `VALU`, `EUP`, and ICI collectives).
 pub mod eval;
+/// `VFIO` (`0x3B`), `Gasket` (`0xDC`), buddy/slab HBM allocator, hugepage DMA staging, and `dma-buf` IOMMU layer.
+pub mod iommu;
 /// Linux VFIO and Gasket hardware device HAL ([`LinuxDeviceHal`]) and backend selector.
 pub mod linux;
 /// HBM/VMEM region allocation, BAR MMIO apertures, and device memory statistics.
 pub mod memory;
 /// Linux `sysfs` `PCIe` hardware discovery and TPU topology descriptors.
 pub mod pci;
+/// `sysfs` `PCIe` (`0x1ae0`) enumerator & `csr_register_map.json` BAR0 hardware CSR prober.
+pub mod pcie;
 /// Gasket/VFIO `ioctl` constants, `DeepSea` BAR0 register maps, and CSR bitflags.
 pub mod registers;
 /// Deterministic in-memory TPU hardware simulator ([`SimulatedTpuHal`]).
@@ -21,9 +27,21 @@ pub mod syscall;
 /// Architectural `TensorCore` VLIW execution state machine ([`TpuCoreVmState`]).
 pub mod vm;
 
+#[cfg(test)]
+mod phase7_tests;
+
+pub use self::emulator::{
+    ArchitecturalBitStreamEngine, BitstreamExecutionSummary, HBM_CMEM_RODATA_BASE,
+    HBM_IMEM_SPARSECORE_BASE, HBM_IMEM_TENSORCORE_BASE, HBM_XPLANE_TRACE_RING_BASE,
+    HardwareTraceRingRecord, SparseHbmStore, VirtualIciTorusFabric, VirtualVfioGasketDevice,
+};
 pub use self::eval::{
     CustomCallHandlerFn, MAX_WHILE_ITERATIONS, SpmdCollectiveRendezvousEngine,
     invoke_custom_call_handler, register_custom_call_handler, unregister_custom_call_handler,
+};
+pub use self::iommu::{
+    BuddySlabHbmAllocator, DmaBufPeerRecord, DmaBufPeerRegistry, GasketIommuSession,
+    HugepageStagingPool, PinnedDmaBuffer, VfioIommuSession,
 };
 pub use self::linux::{
     GasketPageTableEntry, GasketPageTableMode, GasketTwoLevelPageTable, HalBackend,
@@ -36,6 +54,10 @@ pub use self::memory::{
 pub use self::pci::{
     DeviceSpec, DiscoveredPciTpuDevice, KernelDriverMode, PciDeviceEnumerator, PciSysfsScanner,
     TopologySpec, scan_sysfs_pci_tpu_devices,
+};
+pub use self::pcie::{
+    Bar0CsrReader, HardwareCsrProber, IciPortHardwareStatus, PcieBarResource,
+    ProbedChipCsrIdentity, SysfsPcieEnumerator, SysfsTpuPcieFunction,
 };
 pub use self::registers::{
     BAR0_CSR_DUTY_CYCLE_PERCENT, BAR0_CSR_HBM_DMA_RING_HEAD, BAR0_CSR_HBM_DMA_RING_TAIL,
@@ -235,7 +257,7 @@ pub trait TpuHal: Send + Sync + std::fmt::Debug {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
-    use crate::compiler::TpuOpCode;
+    use crate::compiler::{InstructionAttrs, TpuInstructionBundle, TpuOpCode};
     use crate::config::TpuInitConfig;
     use crate::error::LibTpuError;
     use crate::types::{
@@ -474,14 +496,14 @@ mod tests {
             &[0_u8; 8],
         );
         assert_eq!(non_sq.len(), 8);
-        let one_shape_attrs = crate::compiler::InstructionAttrs {
+        let one_shape_attrs = InstructionAttrs {
             input_shapes: vec![Shape {
                 element_type: ElementType::F32,
                 dims: vec![2, 2],
                 dynamic_dims: vec![false; 2],
                 layout: MemoryLayout::default_tpu_tiled(2),
             }],
-            ..crate::compiler::InstructionAttrs::default()
+            ..InstructionAttrs::default()
         };
         assert_eq!(
             SimulatedTpuHal::eval_dot_general(
@@ -493,7 +515,7 @@ mod tests {
             .len(),
             16
         );
-        let two_shape_attrs = crate::compiler::InstructionAttrs {
+        let two_shape_attrs = InstructionAttrs {
             input_shapes: vec![
                 Shape {
                     element_type: ElementType::F32,
@@ -508,7 +530,7 @@ mod tests {
                     layout: MemoryLayout::default_tpu_tiled(1),
                 },
             ],
-            ..crate::compiler::InstructionAttrs::default()
+            ..InstructionAttrs::default()
         };
         assert_eq!(
             SimulatedTpuHal::eval_dot_general(
@@ -525,7 +547,7 @@ mod tests {
                 ElementType::F32,
                 &[],
                 &[],
-                &crate::compiler::InstructionAttrs::default(),
+                &InstructionAttrs::default(),
             )
             .len(),
             0
@@ -535,12 +557,12 @@ mod tests {
                 ElementType::F32,
                 &[1.0, 2.0],
                 &[3.0, 4.0],
-                &crate::compiler::InstructionAttrs::default(),
+                &InstructionAttrs::default(),
             )
             .len(),
             8
         );
-        let nd_dot_attrs = crate::compiler::InstructionAttrs {
+        let nd_dot_attrs = InstructionAttrs {
             dot_lhs_batch_dims: vec![0],
             dot_rhs_batch_dims: vec![0],
             dot_lhs_contracting_dims: vec![2],
@@ -560,7 +582,7 @@ mod tests {
                 },
             ],
             output_shape: None,
-            ..crate::compiler::InstructionAttrs::default()
+            ..InstructionAttrs::default()
         };
         assert_eq!(
             SimulatedTpuHal::eval_dot_general(
@@ -577,18 +599,18 @@ mod tests {
                 ElementType::F32,
                 &[1.0, 2.0],
                 0.5,
-                &crate::compiler::InstructionAttrs::default(),
+                &InstructionAttrs::default(),
             )
             .len(),
             8
         );
-        let pad_bundle = crate::compiler::TpuInstructionBundle {
+        let pad_bundle = TpuInstructionBundle {
             pc_offset: 0,
             opcode: TpuOpCode::Pad,
             operand_slots: vec![0, 1],
             output_slot: 2,
             sync_flag_id: 1,
-            attrs: crate::compiler::InstructionAttrs {
+            attrs: InstructionAttrs {
                 pad_edge_low: vec![1],
                 pad_edge_high: vec![2],
                 pad_interior: vec![1],
@@ -599,7 +621,7 @@ mod tests {
                     layout: MemoryLayout::default_tpu_tiled(1),
                 }],
                 output_shape: None,
-                ..crate::compiler::InstructionAttrs::default()
+                ..InstructionAttrs::default()
             },
         };
         let pad_in = ElementType::F32.pack_from_f64_slice(&[10.0, 20.0]);
@@ -616,13 +638,13 @@ mod tests {
             TpuOpCode::ReduceMax,
             TpuOpCode::ReduceMin,
         ] {
-            let red_bundle = crate::compiler::TpuInstructionBundle {
+            let red_bundle = TpuInstructionBundle {
                 pc_offset: 0,
                 opcode: r_op,
                 operand_slots: vec![0],
                 output_slot: 1,
                 sync_flag_id: 1,
-                attrs: crate::compiler::InstructionAttrs {
+                attrs: InstructionAttrs {
                     reduce_dims: vec![1],
                     input_shapes: vec![Shape {
                         element_type: ElementType::F32,
@@ -636,7 +658,7 @@ mod tests {
                         dynamic_dims: vec![false],
                         layout: MemoryLayout::default_tpu_tiled(1),
                     }),
-                    ..crate::compiler::InstructionAttrs::default()
+                    ..InstructionAttrs::default()
                 },
             };
             let red_in = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
@@ -821,7 +843,7 @@ ENTRY main {
             ElementType::C128,
             &[1.0, 2.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0],
             &[3.0, 4.0, 0.0, 0.0, 0.0, 0.0, 3.0, 4.0],
-            &crate::compiler::InstructionAttrs::default(),
+            &InstructionAttrs::default(),
         );
         let c128_dot_unpacked = ElementType::C128.unpack_to_f64_vec(&c128_dot);
         assert_eq!(
@@ -832,7 +854,7 @@ ENTRY main {
             ElementType::C64,
             &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
             &[1.0, 0.0, 1.0, 0.0, 1.0, 0.0],
-            &crate::compiler::InstructionAttrs::default(),
+            &InstructionAttrs::default(),
         );
         assert_eq!(
             ElementType::C64.unpack_to_f64_vec(&c64_dot_1d),
@@ -840,13 +862,13 @@ ENTRY main {
         );
 
         // Test N-D Concatenate along axis 1 with explicit input_shapes and output_shape
-        let cat_nd_bundle = crate::compiler::TpuInstructionBundle {
+        let cat_nd_bundle = TpuInstructionBundle {
             pc_offset: 0,
             opcode: TpuOpCode::Concatenate,
             operand_slots: vec![0, 1],
             output_slot: 2,
             sync_flag_id: 1,
-            attrs: crate::compiler::InstructionAttrs {
+            attrs: InstructionAttrs {
                 concat_dim: 1,
                 input_shapes: vec![
                     Shape {
@@ -868,7 +890,7 @@ ENTRY main {
                     dynamic_dims: vec![false, false],
                     layout: MemoryLayout::default_tpu_tiled(2),
                 }),
-                ..crate::compiler::InstructionAttrs::default()
+                ..InstructionAttrs::default()
             },
         };
         let cat_in0 = ElementType::F32.pack_from_f64_slice(&[1.0, 3.0]);
@@ -906,15 +928,15 @@ ENTRY main {
             SimulatedTpuHal::eval_fft_with_mode(ElementType::F32, &[1.0, 2.0, 3.0, 4.0], "RFFT");
         assert_eq!(f32_real_fft.len(), 16);
 
-        let fft_bundle = crate::compiler::TpuInstructionBundle {
+        let fft_bundle = TpuInstructionBundle {
             pc_offset: 0,
             opcode: TpuOpCode::Fft,
             operand_slots: vec![0],
             output_slot: 1,
             sync_flag_id: 1,
-            attrs: crate::compiler::InstructionAttrs {
+            attrs: InstructionAttrs {
                 custom_call_target: String::from("FFT"),
-                ..crate::compiler::InstructionAttrs::default()
+                ..InstructionAttrs::default()
             },
         };
         assert_eq!(
@@ -929,13 +951,13 @@ ENTRY main {
             TpuOpCode::BatchNormGrad,
             TpuOpCode::SelectAndScatter,
         ] {
-            let bn_bundle = crate::compiler::TpuInstructionBundle {
+            let bn_bundle = TpuInstructionBundle {
                 pc_offset: 0,
                 opcode: bn_op,
                 operand_slots: vec![0, 1, 2],
                 output_slot: 3,
                 sync_flag_id: 1,
-                attrs: crate::compiler::InstructionAttrs::default(),
+                attrs: InstructionAttrs::default(),
             };
             assert_eq!(
                 SimulatedTpuHal::eval_bundle_with_attrs(
@@ -984,22 +1006,22 @@ ENTRY main {
             );
         }
 
-        let while_bundle = crate::compiler::TpuInstructionBundle {
+        let while_bundle = TpuInstructionBundle {
             pc_offset: 0,
             opcode: TpuOpCode::While,
             operand_slots: vec![0],
             output_slot: 1,
             sync_flag_id: 1,
-            attrs: crate::compiler::InstructionAttrs {
-                sub_computations: vec![vec![crate::compiler::TpuInstructionBundle {
+            attrs: InstructionAttrs {
+                sub_computations: vec![vec![TpuInstructionBundle {
                     pc_offset: 0,
                     opcode: TpuOpCode::NegF32,
                     operand_slots: vec![0],
                     output_slot: 0,
                     sync_flag_id: 1,
-                    attrs: crate::compiler::InstructionAttrs::default(),
+                    attrs: InstructionAttrs::default(),
                 }]],
-                ..crate::compiler::InstructionAttrs::default()
+                ..InstructionAttrs::default()
             },
         };
         let while_out = ElementType::F32.unpack_to_f64_vec(
@@ -1007,16 +1029,16 @@ ENTRY main {
         );
         assert_eq!(while_out, vec![-1.0, -3.0]);
 
-        let conv_bundle = crate::compiler::TpuInstructionBundle {
+        let conv_bundle = TpuInstructionBundle {
             pc_offset: 0,
             opcode: TpuOpCode::Convolution,
             operand_slots: vec![0, 1],
             output_slot: 2,
             sync_flag_id: 1,
-            attrs: crate::compiler::InstructionAttrs {
+            attrs: InstructionAttrs {
                 window_strides: vec![1],
                 rhs_dilation: vec![1],
-                ..crate::compiler::InstructionAttrs::default()
+                ..InstructionAttrs::default()
             },
         };
         assert_eq!(
@@ -1029,32 +1051,32 @@ ENTRY main {
             8
         );
 
-        let branch_bundle = crate::compiler::TpuInstructionBundle {
+        let branch_bundle = TpuInstructionBundle {
             pc_offset: 0,
             opcode: TpuOpCode::Conditional,
             operand_slots: vec![0, 1],
             output_slot: 2,
             sync_flag_id: 1,
-            attrs: crate::compiler::InstructionAttrs {
+            attrs: InstructionAttrs {
                 sub_computations: vec![
-                    vec![crate::compiler::TpuInstructionBundle {
+                    vec![TpuInstructionBundle {
                         pc_offset: 0,
                         opcode: TpuOpCode::NegF32,
                         operand_slots: vec![0],
                         output_slot: 0,
                         sync_flag_id: 1,
-                        attrs: crate::compiler::InstructionAttrs::default(),
+                        attrs: InstructionAttrs::default(),
                     }],
-                    vec![crate::compiler::TpuInstructionBundle {
+                    vec![TpuInstructionBundle {
                         pc_offset: 0,
                         opcode: TpuOpCode::Identity,
                         operand_slots: vec![0],
                         output_slot: 0,
                         sync_flag_id: 1,
-                        attrs: crate::compiler::InstructionAttrs::default(),
+                        attrs: InstructionAttrs::default(),
                     }],
                 ],
-                ..crate::compiler::InstructionAttrs::default()
+                ..InstructionAttrs::default()
             },
         };
         let cond_true =
@@ -1142,13 +1164,13 @@ ENTRY main {
                 8
             );
         }
-        let no_shape_iota = crate::compiler::TpuInstructionBundle {
+        let no_shape_iota = TpuInstructionBundle {
             pc_offset: 0,
             opcode: TpuOpCode::Iota,
             operand_slots: vec![0],
             output_slot: 1,
             sync_flag_id: 1,
-            attrs: crate::compiler::InstructionAttrs::default(),
+            attrs: InstructionAttrs::default(),
         };
         assert_eq!(
             SimulatedTpuHal::eval_bundle_with_attrs(
@@ -1404,10 +1426,10 @@ ENTRY main {
                 let host_cmd_env = crate::proto::HostCommandEnvelopeProto {
                     opcode: 1,
                     continuation_id: 42,
-                    device_id: 0,
-                    core_index: 0,
+                    core_id: 0,
                     handler_id: 7,
                     payload: b"cmd".to_vec(),
+                    ..crate::proto::HostCommandEnvelopeProto::default()
                 };
                 hal.enqueue_host_command_envelope(&host_cmd_env);
                 for op in [1_i32, 2, 3, 4, 5, 6, 7, 8, 99] {
@@ -1612,18 +1634,12 @@ ENTRY main {
             assert!(emu_hal.detach_bar0_mmap().is_ok());
             assert!(emu_hal.close().is_ok());
         }
-        let bad_fd_hal = LinuxDeviceHal {
-            mode: KernelDriverMode::Gasket,
-            syscalls: SimulatedKernelDriverBackend::default(),
-            device_fd: -1,
-            mmio: SimulatedKernelDriverBackend::default(),
-            bar0_aperture: parking_lot::Mutex::new(None),
-            bar2_aperture: parking_lot::Mutex::new(None),
-            iommu_allocators: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
-            page_tables: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
-            pinned_dma_buffers: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
-            inner: SimulatedTpuHal::new(&cfg),
-        };
+        let bad_fd_hal = LinuxDeviceHal::with_raw_fd(
+            KernelDriverMode::Gasket,
+            SimulatedKernelDriverBackend::default(),
+            -1,
+            &cfg,
+        );
         assert!(bad_fd_hal.close().is_err());
 
         let posix = PosixKernelDriverBackend::new();
@@ -1800,6 +1816,10 @@ ENTRY main {
         );
         assert_eq!(
             PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x005e)),
+            Some(TpuGeneration::V4Lite)
+        );
+        assert_eq!(
+            PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x0062)),
             Some(TpuGeneration::V5p)
         );
         assert_eq!(
@@ -1816,6 +1836,10 @@ ENTRY main {
         );
         assert_eq!(
             PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x0076)),
+            Some(TpuGeneration::V7x)
+        );
+        assert_eq!(
+            PciDeviceEnumerator::generation_from_pci_device_id(PciDeviceId(0x007f)),
             Some(TpuGeneration::V7x)
         );
         assert_eq!(
@@ -1871,7 +1895,7 @@ ENTRY main {
         );
         let _ = std::fs::write(
             sysfs_dir.join("0000:00:05.0/device"),
-            "0x005e
+            "0x0062
 ",
         );
         // 06.0: Non-Google vendor
@@ -2069,9 +2093,9 @@ ENTRY main {
         if let Ok(prog) = CompiledProgram::compile("mlir", b"dot_general", b"") {
             let mut m_bundles = prog.encode_vliw_program();
             if let Some(b0) = m_bundles.first_mut() {
-                b0.matrix_slot.lhs_vreg = 0;
-                b0.matrix_slot.rhs_vreg = 1;
-                b0.matrix_slot.acc_vreg = 2;
+                b0.matrix_slots[0].lhs_vreg = 0;
+                b0.matrix_slots[0].rhs_vreg = 1;
+                b0.matrix_slots[0].acc_vreg = 2;
                 b0.dma_slot.dma_opcode = 1;
                 b0.dma_slot.src_space = 1;
             }
@@ -2081,6 +2105,14 @@ ENTRY main {
             if let Some(ds_exec) = prog.to_tpu_executable_proto().ds_executable {
                 vm.execute_deepsea_proto(&ds_exec);
             }
+            vm.execute_deepsea_proto(&crate::proto::DeepseaExecutableProto::default());
+            vm.execute_deepsea_proto(&crate::proto::DeepseaExecutableProto {
+                core_program: Some(crate::proto::TpuCoreProgramProto {
+                    memory_segments: vec![crate::proto::TpuMemorySegmentSetProto::default()],
+                    ..crate::proto::TpuCoreProgramProto::default()
+                }),
+                ..crate::proto::DeepseaExecutableProto::default()
+            });
         }
         if let Ok(prog_exp) = CompiledProgram::compile("mlir", b"exp_f32", b"") {
             let mut bundles = prog_exp.encode_vliw_program();
@@ -2088,19 +2120,19 @@ ENTRY main {
             for (idx, sc_op) in [2_u8, 3, 4, 5, 6].into_iter().enumerate() {
                 if let Some(b0) = bundles.first().copied() {
                     let mut b_mod = b0;
-                    b_mod.scalar_slot.opcode = sc_op;
-                    b_mod.scalar_slot.src0_sreg = 0;
-                    b_mod.scalar_slot.dst_sreg = u8::try_from(idx + 1).unwrap_or(1);
-                    b_mod.scalar_slot.imm32 = 1;
+                    b_mod.scalar_slots[0].opcode = sc_op;
+                    b_mod.scalar_slots[0].src0_sreg = 0;
+                    b_mod.scalar_slots[0].dst_sreg = u8::try_from(idx + 1).unwrap_or(1);
+                    b_mod.scalar_slots[0].imm32 = 1;
                     bundles.push(b_mod);
                 }
             }
             if let Some(b0) = bundles.first().copied() {
                 let mut b_br_false = b0;
-                b_br_false.scalar_slot.opcode = 6;
-                b_br_false.scalar_slot.src0_sreg = 10;
-                b_br_false.scalar_slot.dst_sreg = 10;
-                b_br_false.scalar_slot.imm32 = 0;
+                b_br_false.scalar_slots[0].opcode = 6;
+                b_br_false.scalar_slots[0].src0_sreg = 10;
+                b_br_false.scalar_slots[0].dst_sreg = 10;
+                b_br_false.scalar_slots[0].imm32 = 0;
                 bundles.push(b_br_false);
             }
             for v_op in [
@@ -2134,8 +2166,8 @@ ENTRY main {
             ] {
                 if let Some(b0) = bundles.first().copied() {
                     let mut b_mod = b0;
-                    b_mod.vector_slot.opcode = v_op;
-                    b_mod.vector_slot.lane_mask = 0b0101_0101;
+                    b_mod.vector_slots[0].opcode = v_op;
+                    b_mod.vector_slots[0].lane_mask = 0b0101_0101;
                     bundles.push(b_mod);
                 }
             }
@@ -2143,9 +2175,9 @@ ENTRY main {
             vm.vreg_words[1] = 4.0_f32.to_bits();
             if let Some(b0) = bundles.first().copied() {
                 let mut b_div_nonzero = b0;
-                b_div_nonzero.vector_slot.opcode = TpuOpCode::DivF32 as u16;
-                b_div_nonzero.vector_slot.src0_vreg = 0;
-                b_div_nonzero.vector_slot.src1_vreg = 1;
+                b_div_nonzero.vector_slots[0].opcode = TpuOpCode::DivF32 as u16;
+                b_div_nonzero.vector_slots[0].src0_vreg = 0;
+                b_div_nonzero.vector_slots[0].src1_vreg = 1;
                 bundles.push(b_div_nonzero);
             }
             for (x_op, p_mode, imm) in [
@@ -2172,11 +2204,11 @@ ENTRY main {
             ] {
                 if let Some(b0) = bundles.first().copied() {
                     let mut b_mod = b0;
-                    b_mod.xunary_slot.opcode = x_op;
-                    b_mod.xunary_slot.perm_mode = p_mode;
-                    b_mod.xunary_slot.imm16 = imm;
-                    b_mod.xunary_slot.src_vreg = 0;
-                    b_mod.xunary_slot.dst_vreg = 2;
+                    b_mod.xlu_slots[0].opcode = x_op;
+                    b_mod.xlu_slots[0].perm_mode = p_mode;
+                    b_mod.xlu_slots[0].imm16 = imm;
+                    b_mod.xlu_slots[0].src_vreg = 0;
+                    b_mod.xlu_slots[0].dst_vreg = 2;
                     bundles.push(b_mod);
                 }
             }
@@ -2189,13 +2221,13 @@ ENTRY main {
             for p_mode in 0..=4_u8 {
                 if let Some(b0) = bundles.first().copied() {
                     let mut b_mxu = b0;
-                    b_mxu.matrix_slot.opcode = 1;
-                    b_mxu.matrix_slot.precision_mode = p_mode;
-                    b_mxu.matrix_slot.lhs_vreg = 10;
-                    b_mxu.matrix_slot.rhs_vreg = 11;
-                    b_mxu.matrix_slot.acc_vreg = 12;
-                    b_mxu.matrix_slot.flags = (2 << 8) | 4;
-                    b_mxu.matrix_slot.k_tiles = (2 << 8) | 2;
+                    b_mxu.matrix_slots[0].opcode = 1;
+                    b_mxu.matrix_slots[0].precision_mode = p_mode;
+                    b_mxu.matrix_slots[0].lhs_vreg = 10;
+                    b_mxu.matrix_slots[0].rhs_vreg = 11;
+                    b_mxu.matrix_slots[0].acc_vreg = 12;
+                    b_mxu.matrix_slots[0].flags = (2 << 8) | 4;
+                    b_mxu.matrix_slots[0].k_tiles = (2 << 8) | 2;
                     vm.step_vliw_bundle(&b_mxu);
                     let out_tile = vm.vreg_tiles.get(&12).cloned().unwrap_or_default();
                     let unpacked = ElementType::F32.unpack_to_f64_vec(&out_tile);
@@ -2214,20 +2246,20 @@ ENTRY main {
         let hcmd = crate::proto::HostCommandEnvelopeProto {
             opcode: 1,
             continuation_id: 77,
-            device_id: 0,
-            core_index: 0,
+            core_id: 0,
             handler_id: 1,
             payload: Vec::new(),
+            ..crate::proto::HostCommandEnvelopeProto::default()
         };
         vm.dispatch_host_command(&hcmd);
         assert_eq!(vm.sreg[0], 77);
         let hcmd2 = crate::proto::HostCommandEnvelopeProto {
             opcode: 2,
             continuation_id: 78,
-            device_id: 0,
-            core_index: 0,
+            core_id: 0,
             handler_id: 1,
             payload: vec![1, 2, 3, 4],
+            ..crate::proto::HostCommandEnvelopeProto::default()
         };
         vm.dispatch_host_command(&hcmd2);
         assert_eq!(vm.sreg[0], 78);
@@ -3113,10 +3145,7 @@ ENTRY main {
             let alloc_rep = prog_imem.allocate_physical_registers(TpuGeneration::V5e);
             assert!(!alloc_rep.slot_to_vreg.is_empty());
             let mut bundles = prog_imem.encode_vliw_program();
-            let base_b = bundles
-                .first()
-                .copied()
-                .unwrap_or_else(bytemuck::Zeroable::zeroed);
+            let base_b = bundles.first().copied().unwrap_or_default();
             if let Some(first_b) = bundles.first_mut() {
                 first_b.dma_slot.dma_opcode = 1;
                 first_b.dma_slot.src_space = 0;
@@ -3124,17 +3153,17 @@ ENTRY main {
             }
             // Add a conditional backward branch bundle and a Halt bundle
             let mut branch_b = base_b;
-            branch_b.scalar_slot.opcode = 6;
-            branch_b.scalar_slot.dst_sreg = 0;
-            branch_b.scalar_slot.imm32 = 0;
+            branch_b.scalar_slots[0].opcode = 6;
+            branch_b.scalar_slots[0].dst_sreg = 0;
+            branch_b.scalar_slots[0].imm32 = 0;
             branch_b.dma_slot.dma_opcode = 2;
             branch_b.dma_slot.dst_space = 0;
             let mut halt_b = base_b;
-            halt_b.scalar_slot.opcode = 7;
+            halt_b.scalar_slots[0].opcode = 7;
             bundles.push(branch_b);
             let mut raw_no_halt = Vec::with_capacity(bundles.len() * 64);
             for b in &bundles {
-                raw_no_halt.extend_from_slice(bytemuck::bytes_of(b));
+                raw_no_halt.extend_from_slice(&b.to_bytes());
             }
             imem_vm.preg[0] = false;
             assert!(
@@ -3145,7 +3174,7 @@ ENTRY main {
             bundles.push(halt_b);
             let mut raw_imem = Vec::with_capacity(bundles.len() * 64);
             for b in &bundles {
-                raw_imem.extend_from_slice(bytemuck::bytes_of(b));
+                raw_imem.extend_from_slice(&b.to_bytes());
             }
             imem_vm.preg[0] = true;
             // First test with preg[0] = false so it reaches Halt cleanly
@@ -3161,13 +3190,13 @@ ENTRY main {
             // Also test conditional branch taken (preg[0] = true on a forward jump to Halt)
             let last_idx = bundles.len() - 1;
             if let Some(first_b) = bundles.first_mut() {
-                first_b.scalar_slot.opcode = 6;
-                first_b.scalar_slot.dst_sreg = 0;
-                first_b.scalar_slot.imm32 = u32::try_from(last_idx * 64).unwrap_or(64);
+                first_b.scalar_slots[0].opcode = 6;
+                first_b.scalar_slots[0].dst_sreg = 0;
+                first_b.scalar_slots[0].imm32 = u32::try_from(last_idx * 64).unwrap_or(64);
             }
             let mut raw_imem2 = Vec::with_capacity(bundles.len() * 64);
             for b in &bundles {
-                raw_imem2.extend_from_slice(bytemuck::bytes_of(b));
+                raw_imem2.extend_from_slice(&b.to_bytes());
             }
             imem_vm.preg[0] = true;
             assert!(
@@ -3177,19 +3206,19 @@ ENTRY main {
             );
 
             // Test S0 opcodes 5 (S_BR), 8 (S_CALL), and 9 (S_RET)
-            let mut call_b: crate::compiler::TensorCoreVliwBundle = bytemuck::Zeroable::zeroed();
-            call_b.scalar_slot.opcode = 8;
-            call_b.scalar_slot.imm32 = 128;
-            let mut br_b: crate::compiler::TensorCoreVliwBundle = bytemuck::Zeroable::zeroed();
-            br_b.scalar_slot.opcode = 5;
-            br_b.scalar_slot.imm32 = 192;
-            let mut ret_b: crate::compiler::TensorCoreVliwBundle = bytemuck::Zeroable::zeroed();
-            ret_b.scalar_slot.opcode = 9;
-            let mut halt_end: crate::compiler::TensorCoreVliwBundle = bytemuck::Zeroable::zeroed();
-            halt_end.scalar_slot.opcode = 7;
+            let mut call_b = crate::compiler::LloBundle::default();
+            call_b.scalar_slots[0].opcode = 8;
+            call_b.scalar_slots[0].imm32 = 128;
+            let mut br_b = crate::compiler::LloBundle::default();
+            br_b.scalar_slots[0].opcode = 5;
+            br_b.scalar_slots[0].imm32 = 192;
+            let mut ret_b = crate::compiler::LloBundle::default();
+            ret_b.scalar_slots[0].opcode = 9;
+            let mut halt_end = crate::compiler::LloBundle::default();
+            halt_end.scalar_slots[0].opcode = 7;
             let mut call_ret_imem = Vec::new();
             for b in [call_b, br_b, ret_b, halt_end] {
-                call_ret_imem.extend_from_slice(bytemuck::bytes_of(&b));
+                call_ret_imem.extend_from_slice(&b.to_bytes());
             }
             assert!(
                 imem_vm
@@ -3357,14 +3386,14 @@ ENTRY main {
             perm_vm.apply_vreg_2d_lane_permute(0, 1, pmode);
         }
         for pmode_mxu in 0_u8..=6 {
-            let mut mxu_b: crate::compiler::TensorCoreVliwBundle = bytemuck::Zeroable::zeroed();
-            mxu_b.matrix_slot.opcode = 1;
-            mxu_b.matrix_slot.lhs_vreg = 0;
-            mxu_b.matrix_slot.rhs_vreg = 0;
-            mxu_b.matrix_slot.acc_vreg = 2;
-            mxu_b.matrix_slot.precision_mode = pmode_mxu;
-            mxu_b.matrix_slot.flags = (2 << 8) | 2;
-            mxu_b.matrix_slot.k_tiles = (1 << 8) | 2;
+            let mut mxu_b = crate::compiler::LloBundle::default();
+            mxu_b.matrix_slots[0].opcode = 1;
+            mxu_b.matrix_slots[0].lhs_vreg = 0;
+            mxu_b.matrix_slots[0].rhs_vreg = 0;
+            mxu_b.matrix_slots[0].acc_vreg = 2;
+            mxu_b.matrix_slots[0].precision_mode = pmode_mxu;
+            mxu_b.matrix_slots[0].flags = (2 << 8) | 2;
+            mxu_b.matrix_slots[0].k_tiles = (1 << 8) | 2;
             perm_vm.step_vliw_bundle(&mxu_b);
         }
 
@@ -3395,9 +3424,12 @@ ENTRY main {
 
         // Test synthesize_coredump_proto and synthesize_stall_summary_proto on TpuCoreVmState
         let cd_proto = perm_vm.synthesize_coredump_proto("TEST_SNAPSHOT");
-        assert_eq!(cd_proto.core_states.len(), 1);
+        assert_eq!(
+            cd_proto.generic_results.as_ref().map(|r| r.anomalies.len()),
+            Some(1)
+        );
         let ss_proto = perm_vm.synthesize_stall_summary_proto();
-        assert_eq!(ss_proto.core_stall_summaries.len(), 1);
+        assert_eq!(ss_proto.core_states.len(), 1);
 
         // Test complex unary and binary ops (C64, C128)
         let c64_in0 = ElementType::C64.pack_from_complex_slice(&[(1.0, 2.0), (3.0, -1.0)]);
@@ -3537,8 +3569,11 @@ ENTRY main {
         ] {
             let rmap = ChipRegisterMap::for_generation(generation);
             let proto = rmap.to_register_translator_proto();
-            assert_eq!(proto.chip_codename, rmap.chip_codename);
-            assert!(proto.registers.len() >= 25);
+            assert_eq!(
+                proto.nodes.first().map(|n| n.mnemonic.as_str()),
+                Some(rmap.chip_codename)
+            );
+            assert!(proto.nodes.first().is_some_and(|n| n.registers.len() >= 25));
         }
 
         // Test TpuCoreVmState::step_vliw_bundle V0 reduction/sort/linalg opcodes directly
@@ -3548,17 +3583,15 @@ ENTRY main {
             ElementType::F32.pack_from_f64_slice(&[4.0, 1.0, 9.0, 16.0]),
         );
         for v0_op in [TpuOpCode::Sort, TpuOpCode::TopK, TpuOpCode::Cholesky] {
-            let v0_bundle = crate::compiler::TensorCoreVliwBundle {
-                vector_slot: crate::compiler::VectorAluSlot {
-                    opcode: u16::from(v0_op as u8),
-                    element_type: u8::try_from(ElementType::F32.as_raw()).unwrap_or(11),
-                    lane_mask: 0xFF,
-                    dst_vreg: 1,
-                    src0_vreg: 0,
-                    src1_vreg: 0,
-                    src2_vreg: 0,
-                },
-                ..bytemuck::Zeroable::zeroed()
+            let mut v0_bundle = crate::compiler::LloBundle::default();
+            v0_bundle.vector_slots[0] = crate::compiler::VectorAluSlot {
+                opcode: u16::from(v0_op as u8),
+                element_type: u8::try_from(ElementType::F32.as_raw()).unwrap_or(11),
+                lane_mask: 0xFF,
+                dst_vreg: 1,
+                src0_vreg: 0,
+                src1_vreg: 0,
+                src2_vreg: 0,
             };
             vm_v0.step_vliw_bundle(&v0_bundle);
         }
@@ -3875,13 +3908,20 @@ ENTRY main {
             let entry = CsrCatalogEntry {
                 generation: TpuGeneration::V6e,
                 full_path: sample_path,
-                byte_offset: 0x1000,
+                bar_index: 2,
+                byte_offset: 0x0042_2000,
                 width_bits: 64,
+                reset_value: 0,
                 access: sample_acc,
             };
             let csr_descriptor = entry.to_descriptor();
             assert_ne!(csr_descriptor.bitfields, [] as [CsrBitfieldSpec; 0]);
         }
+        assert!(
+            csr_cat
+                .iter()
+                .all(|e| !matches!(e.byte_offset, 0x1000 | 0x5000 | 0x9000 | 0xa000))
+        );
         assert_eq!(
             CsrAccessPermission::from_str_code("RO"),
             CsrAccessPermission::ReadOnly
@@ -3909,17 +3949,15 @@ ENTRY main {
             1,
             ElementType::C64.pack_from_complex_slice(&[(0.5, 1.0), (1.5, 2.0)]),
         );
-        let mut c64_bundle = crate::compiler::TensorCoreVliwBundle {
-            vector_slot: crate::compiler::VectorAluSlot {
-                opcode: TpuOpCode::AddF32 as u16,
-                element_type: u8::try_from(ElementType::C64.as_raw()).unwrap_or(14),
-                lane_mask: 0xFF,
-                dst_vreg: 2,
-                src0_vreg: 0,
-                src1_vreg: 1,
-                src2_vreg: 0,
-            },
-            ..crate::compiler::TensorCoreVliwBundle::default()
+        let mut c64_bundle = crate::compiler::LloBundle::default();
+        c64_bundle.vector_slots[0] = crate::compiler::VectorAluSlot {
+            opcode: TpuOpCode::AddF32 as u16,
+            element_type: u8::try_from(ElementType::C64.as_raw()).unwrap_or(14),
+            lane_mask: 0xFF,
+            dst_vreg: 2,
+            src0_vreg: 0,
+            src1_vreg: 1,
+            src2_vreg: 0,
         };
         tile_vm.step_vliw_bundle(&c64_bundle);
         assert!(tile_vm.vreg_tiles.contains_key(&2));
@@ -3937,8 +3975,8 @@ ENTRY main {
                 1,
                 ElementType::F32.pack_from_f64_slice(&[2.0, 0.0, 0.0, 3.0]),
             );
-            c64_bundle.vector_slot.opcode = linalg_op as u16;
-            c64_bundle.vector_slot.element_type =
+            c64_bundle.vector_slots[0].opcode = linalg_op as u16;
+            c64_bundle.vector_slots[0].element_type =
                 u8::try_from(ElementType::F32.as_raw()).unwrap_or(11);
             tile_vm.step_vliw_bundle(&c64_bundle);
         }
@@ -3971,73 +4009,53 @@ ENTRY main {
             tile_vm
                 .vreg_tiles
                 .insert(1, int_et.pack_from_i128_slice(&[2, 3, 4, 5]));
-            c64_bundle.vector_slot.opcode = int_op as u16;
-            c64_bundle.vector_slot.element_type = u8::try_from(int_et.as_raw()).unwrap_or(5);
+            c64_bundle.vector_slots[0].opcode = int_op as u16;
+            c64_bundle.vector_slots[0].element_type = u8::try_from(int_et.as_raw()).unwrap_or(5);
             tile_vm.step_vliw_bundle(&c64_bundle);
         }
 
         // Test TpuCoreVmState PC-driven branching (opcode 5 jump, opcode 6 branch, opcode 7 halt) and execute_generation_imem_bitstream
         let mut branch_vm = TpuCoreVmState::new();
-        let jmp_bundles = vec![
-            crate::compiler::TensorCoreVliwBundle {
-                header: crate::compiler::VliwBundleHeader {
-                    pc_offset: 0,
-                    bundle_flags: 1,
-                    pred_mask: 1,
-                },
-                scalar_slot: crate::compiler::ScalarAluSlot {
-                    opcode: 5,
-                    dst_sreg: 1,
-                    src0_sreg: 0,
-                    src1_sreg: 0,
-                    imm32: 128,
-                },
-                vector_slot: crate::compiler::VectorAluSlot::default(),
-                matrix_slot: crate::compiler::MatrixMxuSlot::default(),
-                xunary_slot: crate::compiler::ExtendedUnarySlot::default(),
-                dma_slot: crate::compiler::AsyncDmaSlot::default(),
-            },
-            crate::compiler::TensorCoreVliwBundle::default(),
-            crate::compiler::TensorCoreVliwBundle {
-                header: crate::compiler::VliwBundleHeader {
-                    pc_offset: 128,
-                    bundle_flags: 1,
-                    pred_mask: 1,
-                },
-                scalar_slot: crate::compiler::ScalarAluSlot {
-                    opcode: 6,
-                    dst_sreg: 1,
-                    src0_sreg: 0,
-                    src1_sreg: 0,
-                    imm32: 192,
-                },
-                vector_slot: crate::compiler::VectorAluSlot::default(),
-                matrix_slot: crate::compiler::MatrixMxuSlot::default(),
-                xunary_slot: crate::compiler::ExtendedUnarySlot::default(),
-                dma_slot: crate::compiler::AsyncDmaSlot::default(),
-            },
-            crate::compiler::TensorCoreVliwBundle {
-                header: crate::compiler::VliwBundleHeader {
-                    pc_offset: 192,
-                    bundle_flags: 1,
-                    pred_mask: 1,
-                },
-                scalar_slot: crate::compiler::ScalarAluSlot {
-                    opcode: 7,
-                    dst_sreg: 0,
-                    src0_sreg: 0,
-                    src1_sreg: 0,
-                    imm32: 0,
-                },
-                vector_slot: crate::compiler::VectorAluSlot::default(),
-                matrix_slot: crate::compiler::MatrixMxuSlot::default(),
-                xunary_slot: crate::compiler::ExtendedUnarySlot::default(),
-                dma_slot: crate::compiler::AsyncDmaSlot::default(),
-            },
-        ];
+        let mut jb0 = crate::compiler::LloBundle {
+            bundle_flags: 1,
+            pred_mask: 1,
+            ..crate::compiler::LloBundle::default()
+        };
+        jb0.scalar_slots[0] = crate::compiler::ScalarAluSlot {
+            opcode: 5,
+            dst_sreg: 1,
+            src0_sreg: 0,
+            src1_sreg: 0,
+            imm32: 128,
+        };
+        let mut jb2 = crate::compiler::LloBundle {
+            bundle_flags: 1,
+            pred_mask: 1,
+            ..crate::compiler::LloBundle::default()
+        };
+        jb2.scalar_slots[0] = crate::compiler::ScalarAluSlot {
+            opcode: 6,
+            dst_sreg: 1,
+            src0_sreg: 0,
+            src1_sreg: 0,
+            imm32: 192,
+        };
+        let mut jb3 = crate::compiler::LloBundle {
+            bundle_flags: 1,
+            pred_mask: 1,
+            ..crate::compiler::LloBundle::default()
+        };
+        jb3.scalar_slots[0] = crate::compiler::ScalarAluSlot {
+            opcode: 7,
+            dst_sreg: 0,
+            src0_sreg: 0,
+            src1_sreg: 0,
+            imm32: 0,
+        };
+        let jmp_bundles = vec![jb0, crate::compiler::LloBundle::default(), jb2, jb3];
         branch_vm.execute_vliw_stream(&jmp_bundles);
-        let bs = crate::compiler::TensorCoreVliwBundle::default()
-            .encode_generation_bitstream(TpuGeneration::V6e);
+        let bs =
+            crate::compiler::LloBundle::default().encode_generation_bitstream(TpuGeneration::V6e);
         assert!(
             branch_vm
                 .execute_generation_imem_bitstream(TpuGeneration::V6e, &bs)
@@ -4259,6 +4277,50 @@ ENTRY main {
             EmulatedKernelDriverBackend::default(),
             &TpuInitConfig::default(),
         ) {
+            if let Ok(hw_prog) =
+                CompiledProgram::compile("mlir", b"module @hw { stablehlo.add }", &[])
+            {
+                let in_a = sg_hal
+                    .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(16))
+                    .unwrap_or(DeviceAddress(0));
+                let in_b = sg_hal
+                    .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(16))
+                    .unwrap_or(DeviceAddress(0));
+                let out_c = sg_hal
+                    .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(16))
+                    .unwrap_or(DeviceAddress(0));
+                let _ = sg_hal.write_device_memory(DeviceId(0), in_a, &[0_u8; 16]);
+                let _ = sg_hal.write_device_memory(DeviceId(0), in_b, &[0_u8; 16]);
+                assert!(
+                    sg_hal
+                        .execute_hardware_direct_mode(
+                            DeviceId(0),
+                            &hw_prog,
+                            &[in_a, in_b],
+                            &[out_c, DeviceAddress(0xCAFE_BABE)],
+                        )
+                        .is_ok()
+                );
+                assert!(
+                    sg_hal
+                        .execute_hardware_direct_mode(
+                            DeviceId(0),
+                            &hw_prog,
+                            &[DeviceAddress(0xDEAD_BEEF)],
+                            &[out_c],
+                        )
+                        .is_err()
+                );
+            }
+            let mut dual_vm = TpuCoreVmState::new();
+            if let Ok(p_dual) = CompiledProgram::compile("mlir", b"add_f32", b"") {
+                let mut d_bundles = p_dual.encode_vliw_program();
+                if let Some(b0) = d_bundles.first_mut() {
+                    b0.set_dual_issue_slots(2, 5, 3);
+                }
+                dual_vm.execute_vliw_stream(&d_bundles);
+                assert!(dual_vm.mxu_accum[3] >= 1.0);
+            }
             let ring_cfg = sg_hal.dma_ring_config_proto();
             assert_eq!(ring_cfg.ring_capacity_entries, 64);
             assert!(ring_cfg.iommu_scatter_gather_enabled);
@@ -4274,6 +4336,480 @@ ENTRY main {
                 sg_hal
                     .submit_scatter_gather_hugepage_dma(0x1000, 0x2000, 4096, 4096, 0)
                     .is_err()
+            );
+
+            // Structured `While` & `Conditional` execution across VirtualVfioGasketDevice + TpuCoreVmState + SimulatedTpuHal
+            let while_mlir = br"module @w_mod {
+                func.func @main(%arg0: tensor<4xf32>) -> tensor<4xf32> {
+                    %lim = stablehlo.constant dense<3.0> : tensor<4xf32>
+                    %step = stablehlo.constant dense<1.0> : tensor<4xf32>
+                    %res = stablehlo.while(%it = %arg0) : tensor<4xf32>
+                    cond {
+                        %c = stablehlo.compare LT, %it, %lim : (tensor<4xf32>, tensor<4xf32>) -> tensor<4xi1>
+                        stablehlo.return %c : tensor<4xi1>
+                    } do {
+                        %n = stablehlo.add %it, %step : tensor<4xf32>
+                        stablehlo.return %n : tensor<4xf32>
+                    }
+                    func.return %res : tensor<4xf32>
+                }
+            }";
+            if let Ok(mut w_prog) = CompiledProgram::compile("mlir", while_mlir, b"") {
+                let fresh_hal = create_default_hal(&TpuInitConfig::default());
+                let in_buf = fresh_hal
+                    .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(16))
+                    .unwrap_or(DeviceAddress(0));
+                let out_buf = fresh_hal
+                    .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(16))
+                    .unwrap_or(DeviceAddress(0));
+                let _ = fresh_hal.write_device_memory(DeviceId(0), in_buf, &[0_u8; 16]);
+                assert!(
+                    fresh_hal
+                        .execute_program(DeviceId(0), &w_prog, &[in_buf], &[out_buf])
+                        .is_ok()
+                );
+                // Also test empty `cmem_output_slots` fallback on structured output commit
+                w_prog.output_slots.clear();
+                assert!(
+                    fresh_hal
+                        .execute_program(DeviceId(0), &w_prog, &[in_buf], &[out_buf])
+                        .is_ok()
+                );
+            }
+
+            // Cover step_while_bundle, step_conditional_bundle, and step_bundles_on_registers edge branches
+            let mut ctrl_vm = TpuCoreVmState::new();
+            let s32_1 = Shape {
+                element_type: ElementType::S32,
+                dims: vec![1],
+                dynamic_dims: vec![false],
+                layout: MemoryLayout::default_tpu_tiled(1),
+            };
+            let f32_2 = Shape {
+                element_type: ElementType::F32,
+                dims: vec![2],
+                dynamic_dims: vec![false],
+                layout: MemoryLayout::default_tpu_tiled(1),
+            };
+            let mut regs = vec![
+                ElementType::S32.pack_from_i128_slice(&[-1]),
+                ElementType::S32.pack_from_i128_slice(&[1]),
+                vec![1_u8],
+                vec![0_u8],
+                ElementType::F32.pack_from_f64_slice(&[10.0, 20.0]),
+                ElementType::F32.pack_from_f64_slice(&[30.0, 40.0]),
+            ];
+            let mut lr = Vec::new();
+            let ctrl_bundles = vec![
+                // Indexed conditional: negative index -> clamps to last branch, valid & OOB dst_s
+                TpuInstructionBundle {
+                    pc_offset: 0,
+                    opcode: TpuOpCode::Conditional,
+                    operand_slots: vec![0],
+                    output_slot: 4,
+                    sync_flag_id: 1,
+                    attrs: InstructionAttrs {
+                        input_shapes: vec![s32_1.clone()],
+                        conditional_is_indexed: true,
+                        conditional_result_slots: vec![4, 99],
+                        branch_output_slots: vec![vec![4, 4], vec![5, 5]],
+                        sub_computations: vec![Vec::new(), Vec::new()],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                // Indexed conditional: positive index, missing branch_output_slots & sub_computations entry
+                TpuInstructionBundle {
+                    pc_offset: 1,
+                    opcode: TpuOpCode::Conditional,
+                    operand_slots: vec![1],
+                    output_slot: 4,
+                    sync_flag_id: 2,
+                    attrs: InstructionAttrs {
+                        input_shapes: vec![s32_1.clone()],
+                        conditional_is_indexed: true,
+                        conditional_result_slots: vec![4],
+                        branch_output_slots: vec![vec![4]],
+                        sub_computations: vec![Vec::new()],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                // Predicate conditional: true & false
+                TpuInstructionBundle {
+                    pc_offset: 2,
+                    opcode: TpuOpCode::Conditional,
+                    operand_slots: vec![2],
+                    output_slot: 4,
+                    sync_flag_id: 3,
+                    attrs: InstructionAttrs {
+                        conditional_is_indexed: false,
+                        conditional_result_slots: vec![4],
+                        branch_output_slots: vec![vec![4], vec![5]],
+                        sub_computations: vec![Vec::new(), Vec::new()],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 3,
+                    opcode: TpuOpCode::Conditional,
+                    operand_slots: vec![3],
+                    output_slot: 4,
+                    sync_flag_id: 4,
+                    attrs: InstructionAttrs {
+                        conditional_is_indexed: false,
+                        conditional_result_slots: vec![4],
+                        branch_output_slots: Vec::new(),
+                        sub_computations: vec![Vec::new()],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                // Degenerate While & Conditional fallthroughs + out-of-bounds output_slot
+                TpuInstructionBundle {
+                    pc_offset: 4,
+                    opcode: TpuOpCode::While,
+                    operand_slots: vec![4],
+                    output_slot: 99,
+                    sync_flag_id: 5,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 5,
+                    opcode: TpuOpCode::While,
+                    operand_slots: vec![4],
+                    output_slot: 99,
+                    sync_flag_id: 6,
+                    attrs: InstructionAttrs {
+                        while_state_slots: vec![4],
+                        sub_computations: vec![Vec::new()],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                TpuInstructionBundle {
+                    pc_offset: 6,
+                    opcode: TpuOpCode::Conditional,
+                    operand_slots: vec![2],
+                    output_slot: 99,
+                    sync_flag_id: 7,
+                    attrs: InstructionAttrs::default(),
+                },
+                TpuInstructionBundle {
+                    pc_offset: 7,
+                    opcode: TpuOpCode::Conditional,
+                    operand_slots: vec![2],
+                    output_slot: 99,
+                    sync_flag_id: 8,
+                    attrs: InstructionAttrs {
+                        conditional_result_slots: vec![4],
+                        ..InstructionAttrs::default()
+                    },
+                },
+                // While with OOB state slot (`99`) that runs 1 body step then exits
+                TpuInstructionBundle {
+                    pc_offset: 8,
+                    opcode: TpuOpCode::While,
+                    operand_slots: vec![2, 4],
+                    output_slot: 2,
+                    sync_flag_id: 9,
+                    attrs: InstructionAttrs {
+                        while_state_slots: vec![2, 99],
+                        while_cond_slot: Some(2),
+                        while_body_slots: vec![3, 4],
+                        sub_computations: vec![Vec::new(), Vec::new()],
+                        ..InstructionAttrs::default()
+                    },
+                },
+            ];
+            assert!(TpuCoreVmState::max_slot_in_bundles(&ctrl_bundles) >= 99);
+            ctrl_vm.step_bundles_on_registers(&ctrl_bundles, ElementType::F32, &mut regs, &mut lr);
+
+            // Cover eval_convolution_nd custom dims/dilation/padding/OOB axes, Compare*, DynamicSlice, DynamicUpdateSlice, and Select
+            let conv_in_sh = Shape {
+                element_type: ElementType::F32,
+                dims: vec![1, 3, 2],
+                dynamic_dims: vec![false, false, false],
+                layout: MemoryLayout::default_tpu_tiled(3),
+            };
+            let conv_k_sh = Shape {
+                element_type: ElementType::F32,
+                dims: vec![2, 2, 2],
+                dynamic_dims: vec![false, false, false],
+                layout: MemoryLayout::default_tpu_tiled(3),
+            };
+            let conv_bundle = TpuInstructionBundle {
+                pc_offset: 0,
+                opcode: TpuOpCode::Convolution,
+                operand_slots: vec![0, 1],
+                output_slot: 2,
+                sync_flag_id: 1,
+                attrs: InstructionAttrs {
+                    input_shapes: vec![conv_in_sh.clone(), conv_k_sh.clone()],
+                    output_shape: None,
+                    conv_dim_numbers: Some([0, 2, 1, 2, 0, 2]),
+                    conv_input_spatial_dims: vec![1],
+                    conv_kernel_spatial_dims: vec![0],
+                    conv_output_spatial_dims: vec![1],
+                    pad_edge_low: vec![1],
+                    pad_edge_high: vec![2],
+                    lhs_dilation: vec![1],
+                    rhs_dilation: vec![1],
+                    ..InstructionAttrs::default()
+                },
+            };
+            let conv_b0 = ElementType::F32.pack_from_f64_slice(&[1.0; 6]);
+            let conv_b1 = ElementType::F32.pack_from_f64_slice(&[1.0; 8]);
+            assert!(
+                ctrl_vm
+                    .step_bundle_with_attrs(&conv_bundle, ElementType::F32, &[&conv_b0, &conv_b1])
+                    .len()
+                    >= 4
+            );
+            let conv_dil2 = TpuInstructionBundle {
+                attrs: InstructionAttrs {
+                    lhs_dilation: vec![2],
+                    conv_input_spatial_dims: Vec::new(),
+                    conv_kernel_spatial_dims: Vec::new(),
+                    ..conv_bundle.attrs.clone()
+                },
+                ..conv_bundle.clone()
+            };
+            assert!(
+                ctrl_vm
+                    .step_bundle_with_attrs(&conv_dil2, ElementType::F32, &[&conv_b0, &conv_b1])
+                    .len()
+                    >= 4
+            );
+
+            let conv_oob_bundle = TpuInstructionBundle {
+                attrs: InstructionAttrs {
+                    input_shapes: vec![conv_in_sh, conv_k_sh],
+                    output_shape: None,
+                    conv_dim_numbers: Some([9, 9, 9, 9, 9, 9]),
+                    conv_input_spatial_dims: vec![9],
+                    conv_kernel_spatial_dims: vec![9],
+                    conv_output_spatial_dims: vec![9],
+                    ..InstructionAttrs::default()
+                },
+                ..conv_bundle
+            };
+            assert!(
+                ctrl_vm
+                    .step_bundle_with_attrs(
+                        &conv_oob_bundle,
+                        ElementType::F32,
+                        &[&conv_b0, &conv_b1]
+                    )
+                    .len()
+                    >= 4
+            );
+
+            let pred_2 = Shape {
+                element_type: ElementType::Pred,
+                dims: vec![2],
+                dynamic_dims: vec![false],
+                layout: MemoryLayout::default_tpu_tiled(1),
+            };
+            let s32_2 = Shape {
+                element_type: ElementType::S32,
+                dims: vec![2],
+                dynamic_dims: vec![false],
+                layout: MemoryLayout::default_tpu_tiled(1),
+            };
+            let int_lhs = ElementType::S32.pack_from_i128_slice(&[1, 5]);
+            let int_rhs = ElementType::S32.pack_from_i128_slice(&[1, 3]);
+            let flt_lhs = ElementType::F32.pack_from_f64_slice(&[1.0, 5.0]);
+            let flt_rhs = ElementType::F32.pack_from_f64_slice(&[1.0, 3.0]);
+            for cmp_op in [
+                TpuOpCode::CompareEq,
+                TpuOpCode::CompareLt,
+                TpuOpCode::CompareGt,
+            ] {
+                let bi = TpuInstructionBundle {
+                    pc_offset: 0,
+                    opcode: cmp_op,
+                    operand_slots: vec![0, 1],
+                    output_slot: 2,
+                    sync_flag_id: 1,
+                    attrs: InstructionAttrs {
+                        input_shapes: vec![s32_2.clone(), s32_2.clone()],
+                        output_shape: Some(pred_2.clone()),
+                        ..InstructionAttrs::default()
+                    },
+                };
+                assert_eq!(
+                    ctrl_vm
+                        .step_bundle_with_attrs(&bi, ElementType::Pred, &[&int_lhs, &int_rhs])
+                        .len(),
+                    2
+                );
+                let bf = TpuInstructionBundle {
+                    attrs: InstructionAttrs {
+                        input_shapes: vec![f32_2.clone(), f32_2.clone()],
+                        output_shape: Some(pred_2.clone()),
+                        ..InstructionAttrs::default()
+                    },
+                    ..bi
+                };
+                assert_eq!(
+                    ctrl_vm
+                        .step_bundle_with_attrs(&bf, ElementType::Pred, &[&flt_lhs, &flt_rhs])
+                        .len(),
+                    2
+                );
+            }
+
+            // DynamicSlice & DynamicUpdateSlice (int/float data x int/float start indices + fallback no-input-shapes)
+            let f32_1 = Shape {
+                element_type: ElementType::F32,
+                dims: vec![1],
+                dynamic_dims: vec![false],
+                layout: MemoryLayout::default_tpu_tiled(1),
+            };
+            let idx_i = ElementType::S32.pack_from_i128_slice(&[1]);
+            let idx_f = ElementType::F32.pack_from_f64_slice(&[1.0]);
+            let slice_int = TpuInstructionBundle {
+                pc_offset: 0,
+                opcode: TpuOpCode::DynamicSlice,
+                operand_slots: vec![0, 1],
+                output_slot: 2,
+                sync_flag_id: 1,
+                attrs: InstructionAttrs {
+                    input_shapes: vec![s32_2.clone(), s32_1.clone()],
+                    output_shape: Some(s32_1.clone()),
+                    ..InstructionAttrs::default()
+                },
+            };
+            assert_eq!(
+                ctrl_vm.step_bundle_with_attrs(&slice_int, ElementType::S32, &[&int_lhs, &idx_i]),
+                ElementType::S32.pack_from_i128_slice(&[5])
+            );
+            let slice_flt = TpuInstructionBundle {
+                attrs: InstructionAttrs {
+                    input_shapes: vec![f32_2.clone(), f32_1.clone()],
+                    output_shape: Some(f32_1.clone()),
+                    ..InstructionAttrs::default()
+                },
+                ..slice_int
+            };
+            assert_eq!(
+                ctrl_vm.step_bundle_with_attrs(&slice_flt, ElementType::F32, &[&flt_lhs, &idx_f]),
+                ElementType::F32.pack_from_f64_slice(&[5.0])
+            );
+
+            let update_int = TpuInstructionBundle {
+                pc_offset: 0,
+                opcode: TpuOpCode::DynamicUpdateSlice,
+                operand_slots: vec![0, 1, 2],
+                output_slot: 3,
+                sync_flag_id: 1,
+                attrs: InstructionAttrs {
+                    input_shapes: vec![s32_2.clone(), s32_1.clone(), s32_1],
+                    output_shape: Some(s32_2),
+                    ..InstructionAttrs::default()
+                },
+            };
+            let upd_i = ElementType::S32.pack_from_i128_slice(&[99]);
+            assert_eq!(
+                ctrl_vm.step_bundle_with_attrs(
+                    &update_int,
+                    ElementType::S32,
+                    &[&int_lhs, &upd_i, &idx_i]
+                ),
+                ElementType::S32.pack_from_i128_slice(&[1, 99])
+            );
+            let update_flt = TpuInstructionBundle {
+                attrs: InstructionAttrs {
+                    input_shapes: vec![f32_2.clone(), f32_1.clone(), f32_1],
+                    output_shape: Some(f32_2),
+                    ..InstructionAttrs::default()
+                },
+                ..update_int.clone()
+            };
+            let upd_f = ElementType::F32.pack_from_f64_slice(&[99.0]);
+            assert_eq!(
+                ctrl_vm.step_bundle_with_attrs(
+                    &update_flt,
+                    ElementType::F32,
+                    &[&flt_lhs, &upd_f, &idx_f]
+                ),
+                ElementType::F32.pack_from_f64_slice(&[1.0, 99.0])
+            );
+
+            // Select with S32 (pred-bytes vs S32-mask) & F32 (pred-bytes vs F32-mask)
+            let chosen_int_pred = SimulatedTpuHal::eval_bundle(
+                TpuOpCode::Select,
+                ElementType::S32,
+                &[&[1_u8, 0_u8], &int_lhs, &int_rhs],
+            );
+            assert_eq!(
+                chosen_int_pred,
+                ElementType::S32.pack_from_i128_slice(&[1, 3])
+            );
+            let chosen_int_mask = SimulatedTpuHal::eval_bundle(
+                TpuOpCode::Select,
+                ElementType::S32,
+                &[
+                    &ElementType::S32.pack_from_i128_slice(&[0, 1]),
+                    &int_lhs,
+                    &int_rhs,
+                ],
+            );
+            assert_eq!(
+                chosen_int_mask,
+                ElementType::S32.pack_from_i128_slice(&[1, 5])
+            );
+            let chosen_flt_pred = SimulatedTpuHal::eval_bundle(
+                TpuOpCode::Select,
+                ElementType::F32,
+                &[&[1_u8, 0_u8], &flt_lhs, &flt_rhs],
+            );
+            assert_eq!(
+                chosen_flt_pred,
+                ElementType::F32.pack_from_f64_slice(&[1.0, 3.0])
+            );
+            assert_eq!(
+                SimulatedTpuHal::eval_bundle(
+                    TpuOpCode::Select,
+                    ElementType::Pred,
+                    &[&[1_u8, 0_u8], &[1_u8, 1_u8], &[0_u8, 0_u8]],
+                ),
+                vec![1_u8, 0_u8]
+            );
+            // Empty-shape fallthroughs & empty-dst DynamicUpdateSlice
+            for fb_op in [
+                TpuOpCode::CompareEq,
+                TpuOpCode::CompareLt,
+                TpuOpCode::CompareGt,
+                TpuOpCode::DynamicSlice,
+                TpuOpCode::DynamicUpdateSlice,
+            ] {
+                let fb_bundle = TpuInstructionBundle {
+                    pc_offset: 0,
+                    opcode: fb_op,
+                    operand_slots: vec![0, 1, 2],
+                    output_slot: 3,
+                    sync_flag_id: 1,
+                    attrs: InstructionAttrs::default(),
+                };
+                let _ = ctrl_vm.step_bundle_with_attrs(
+                    &fb_bundle,
+                    ElementType::F32,
+                    &[&flt_lhs, &flt_rhs, &idx_f],
+                );
+            }
+            assert_eq!(
+                ctrl_vm.step_bundle_with_attrs(
+                    &update_int,
+                    ElementType::S32,
+                    &[&[], &upd_i, &idx_i]
+                ),
+                Vec::<u8>::new()
+            );
+            assert_eq!(
+                ctrl_vm.step_bundle_with_attrs(
+                    &update_flt,
+                    ElementType::F32,
+                    &[&[], &upd_f, &idx_f]
+                ),
+                Vec::<u8>::new()
             );
         }
     }

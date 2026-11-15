@@ -1,0 +1,15 @@
+syntax = "proto2";
+package asic_sw.driver.deepsea.jxc;
+enum DmaResource {
+  DMA_RESOURCE_TC_SYNC = 0;
+  DMA_RESOURCE_BC_SYNC = 1;
+  DMA_RESOURCE_HBM = 2;
+  DMA_RESOURCE_HOST = 3;
+  DMA_RESOURCE_TC_VMEM = 4;
+  DMA_RESOURCE_TC_IMEM = 5;
+  DMA_RESOURCE_TC_SMEM = 6;
+  DMA_RESOURCE_BC_BMEM = 7;
+  DMA_RESOURCE_BC_IMEM = 8;
+  DMA_RESOURCE_BC_SMEM = 9;
+  DMA_RESOURCE_INVALID = 10;
+}

@@ -1,0 +1,97 @@
+syntax = "proto2";
+package xprof;
+import "perftools/accelerators/xprof/convert/program_goodput.proto";
+import "perftools/accelerators/xprof/gcu_info.proto";
+import "third_party/java/protobuf/java_features.proto";
+import "third_party/protobuf/cpp_features.proto";
+import "third_party/tensorflow/core/profiler/protobuf/hardware_types.proto";
+import "third_party/tensorflow/core/profiler/protobuf/inference_stats.proto";
+import "third_party/tensorflow/core/profiler/protobuf/op_stats.proto";
+enum HostOpType {
+  INVALID_HOST_OP = 0;
+  INPUT_DATA_PRODUCER = 1;
+  INFEED_THREAD = 2;
+  OUTFEED_THREAD = 3;
+}
+message BarnaCoreSyncWaitFlagMap {
+  map<string, uint64> flag_map = 1;
+  map<string, uint64> flag_count_all = 2;
+  map<string, uint64> flag_count_complete_steps = 3;
+}
+message BarnaCoreSyncWaitDetailsPerCore {
+  optional .xprof.BarnaCoreSyncWaitFlagMap map_per_core = 1;
+  optional uint64 total_duration_per_core = 2;
+  optional uint64 other_duration_per_core = 3;
+}
+message BarnaCoreSyncWaitResult {
+  optional .xprof.BarnaCoreSyncWaitFlagMap map_all_cores = 1;
+  optional uint64 total_duration_all_cores = 2;
+  optional uint64 other_duration_all_cores = 3;
+  map<uint32, .xprof.BarnaCoreSyncWaitDetailsPerCore> details_per_core = 4;
+}
+message HostOpsPerTpuStep {
+  optional bool valid = 1 [default = false];
+  optional uint32 tpu_step_num = 2;
+  optional uint64 tpu_step_begin_ps = 3;
+  optional uint64 tpu_step_end_ps = 4;
+  map<int32, int32> step_diffs = 5;
+}
+message HostOpsDetailsPerCore {
+  map<int32, .xprof.HostOpsPerTpuStep> core_map = 1;
+}
+message HostOpsDetailsPerHost {
+  map<string, .xprof.HostOpsDetailsPerCore> host_map = 1;
+  optional uint32 step_num = 2;
+}
+message HostOpsResult {
+  reserved 1;
+  repeated .xprof.HostOpsDetailsPerHost hostops_details = 2;
+}
+message PerformanceCounterResult {
+  message PerformanceCounters {
+    optional uint64 achieved = 1;
+    optional uint64 peak = 2;
+  }
+  optional uint64 total_flops_executed = 1;
+  optional uint64 total_bytes_accessed = 2;
+  optional double matrix_unit_utilization_percent = 3;
+  optional uint64 total_cycles_executed = 4;
+  optional double hbm_utilization_percent = 6;
+  map<string, .xprof.PerformanceCounterResult.PerformanceCounters> performance_counters = 5;
+}
+message InternalRunEnvironment {
+  optional bool megacore = 1;
+}
+message TfOpStats {
+  reserved 1;
+  reserved 2;
+  reserved 4;
+  reserved 5;
+  reserved 6;
+  reserved 7;
+  reserved 9;
+  reserved 10;
+  reserved 11;
+  reserved 12;
+  reserved 15;
+  reserved 16;
+  reserved 19;
+  reserved 22;
+  reserved 23;
+  enum ConversionType {
+    UNKNOWN = 0;
+    XSPACE = 1;
+    XPROF_RESPONSE = 2;
+  }
+  optional .tensorflow.profiler.HardwareType hardware_type = 21;
+  optional .tensorflow.profiler.OpStats op_stats = 20;
+  optional .xprof.PerformanceCounterResult performance_counter_result = 13;
+  optional .xprof.HostOpsResult host_ops = 8;
+  optional .xprof.BarnaCoreSyncWaitResult bc_sync_wait_result = 14;
+  optional .tensorflow.profiler.InferenceStats inference_stats = 17;
+  optional .xprof.GcuInfo per_host_gcu_info = 18;
+  optional .xprof.InternalRunEnvironment internal_run_environment = 24;
+  optional .xprof.ProgramGoodput program_goodput = 25;
+  optional .xprof.ProgramGoodput program_goodput_high_confidence = 27;
+  optional .xprof.TfOpStats.ConversionType conversion_type = 26;
+}

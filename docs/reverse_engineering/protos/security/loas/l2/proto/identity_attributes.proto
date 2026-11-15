@@ -1,0 +1,6 @@
+syntax = "proto3";
+package security_loas_l2;
+import "security/loas/l2/proto/agenttype.proto";
+message IdentityAttributes {
+  .security_loas_l2.AgentType agent_type = 1;
+}

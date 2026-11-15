@@ -1,0 +1,22 @@
+syntax = "proto2";
+package asic_sw.deepsea.vxc.vfc.isa;
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_dma.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_immediates.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_scalar_alu.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_scalar_misc.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_stream.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_vector_scalar.proto";
+message SparseCoreTacBundle {
+  oneof scalar_instruction {
+    .asic_sw.deepsea.vxc.vfc.isa.TacScalarSubBundle scalar_alu = 1;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreDma dma = 2;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreStream stream = 6;
+  }
+  optional .asic_sw.deepsea.vxc.vfc.isa.SparseCoreScalarMisc scalar_misc = 3;
+  optional .asic_sw.deepsea.vxc.vfc.isa.SparseCoreVectorScalar vector_scalar = 4;
+  optional .asic_sw.deepsea.vxc.vfc.isa.SparseCoreImmediates immediates = 5;
+}
+message TacScalarSubBundle {
+  optional .asic_sw.deepsea.vxc.vfc.isa.SparseCoreScalarAlu scalar_alu_0 = 1;
+  optional .asic_sw.deepsea.vxc.vfc.isa.SparseCoreScalarAlu scalar_alu_1 = 2;
+}

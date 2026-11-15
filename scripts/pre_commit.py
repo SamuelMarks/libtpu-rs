@@ -22,12 +22,14 @@ from __future__ import annotations
 import argparse
 import ast
 import ctypes
+import io
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tokenize
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -244,6 +246,7 @@ def get_augmented_env() -> dict[str, str]:
 
     env["PATH"] = os.pathsep.join(paths)
     env["CARGO_TARGET_DIR"] = str(get_repo_root() / "target")
+    env.setdefault("CARGO_INCREMENTAL", "0")
     return env
 
 
@@ -289,7 +292,13 @@ def get_cpp_files(repo_root: Path) -> list[str]:
         Sorted list of relative file paths for C/C++ files.
     """
     cpp_files: list[str] = []
-    for pattern in ("cpp/src/*.h", "cpp/src/*.hpp", "cpp/src/*.cpp", "cpp/tests/*.cpp"):
+    for pattern in (
+        "cpp/src/*.h",
+        "cpp/src/*.hpp",
+        "cpp/src/*.cpp",
+        "cpp/tests/*.c",
+        "cpp/tests/*.cpp",
+    ):
         for path in sorted(repo_root.glob(pattern)):
             cpp_files.append(str(path.relative_to(repo_root)))
     return cpp_files
@@ -422,17 +431,112 @@ def hook_build(repo_root: Path, check_only: bool = False) -> int:
     return 0
 
 
+def verify_workspace_ast_invariants(repo_root: Path) -> list[str]:
+    """Audits Rust, C11/C++20, and Python sources for workspace engineering invariants.
+
+    Verifies:
+      - Zero `anyhow`, `thiserror`, `eyre`, `snafu`, or `Box<dyn Error>` in `Cargo.toml`/`.rs`.
+      - Zero secondary `enum *Error` definitions outside `LibTpuError`.
+      - Zero `.unwrap()`, `.expect()`, `unwrap_unchecked()`, `panic!()`, `todo!()`,
+        `unimplemented!()`, `unreachable!()`, `coverage(off)`, or `#[allow(dead_code)]`
+        in production Rust code, and zero `//!` missing file headers.
+      - Zero `# pragma: no cover` in Python files, and `@file` headers in `cpp/src/` files.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+
+    Returns:
+        List of invariant violation messages (empty when 100% compliant).
+    """
+    violations: list[str] = []
+    crates_dir = repo_root / "crates"
+    toml_files = [p for p in [repo_root / "Cargo.toml"] if p.exists()]
+    if crates_dir.exists():
+        toml_files.extend(sorted(crates_dir.glob("*/Cargo.toml")))
+    for toml_path in toml_files:
+        toml_text = toml_path.read_text(encoding="utf-8")
+        for banned_crate in ("anyhow", "thiserror", "eyre", "miette", "snafu"):
+            if re.search(rf"\b{banned_crate}\b", toml_text):
+                violations.append(f"{toml_path.name}: banned dependency '{banned_crate}'")
+
+    banned_rs_pats = (
+        r"\banyhow\b",
+        r"\bthiserror\b",
+        r"Box<dyn\s+(?:std::error::)?Error",
+        r"\.unwrap\(\)",
+        r"\.expect\(",
+        r"\bunwrap_unchecked\(",
+        r"\bpanic!\(",
+        r"\btodo!\(",
+        r"\bunimplemented!\(",
+        r"\bunreachable!\(",
+    )
+    allowed_error_structs = {
+        ("handles.rs", "PJRT_Error"),
+        ("tpu_driver_types.rs", "LibtpuSdk_Error"),
+    }
+    if crates_dir.exists():
+        for rs_path in sorted(crates_dir.rglob("*.rs")):
+            rs_text = rs_path.read_text(encoding="utf-8")
+            if not rs_text.lstrip().startswith("//!"):
+                violations.append(f"{rs_path.name}: missing `//!` file doc header")
+            if "#[allow(" + "dead_code)]" in rs_text:
+                violations.append(f"{rs_path.name}: forbidden allow(dead_code)")
+            prod_text = rs_text.split("#[cfg(test)]", 1)[0]
+            if "coverage(" + "off)" in prod_text:
+                violations.append(f"{rs_path.name}: forbidden coverage(off) in production code")
+            for err_m in re.finditer(r"\benum\s+([A-Za-z0-9_]*Error)\b", prod_text):
+                if (rs_path.name, err_m.group(1)) != ("error.rs", "LibTpuError"):
+                    violations.append(f"{rs_path.name}: secondary error enum '{err_m.group(1)}'")
+            for st_m in re.finditer(r"\bstruct\s+([A-Za-z0-9_]*Error)\b", prod_text):
+                if (rs_path.name, st_m.group(1)) not in allowed_error_structs:
+                    violations.append(f"{rs_path.name}: secondary error struct '{st_m.group(1)}'")
+            for raw_line in prod_text.splitlines():
+                stripped = raw_line.strip()
+                if not stripped.startswith("//"):
+                    for pat in banned_rs_pats:
+                        if re.search(pat, stripped):
+                            violations.append(f"{rs_path.name}: forbidden pattern '{pat}'")
+
+    cpp_src = repo_root / "cpp" / "src"
+    if cpp_src.exists():
+        for cpp_file in sorted(
+            [*cpp_src.glob("*.h"), *cpp_src.glob("*.hpp"), *cpp_src.glob("*.cpp")]
+        ):
+            if "@file" not in cpp_file.read_text(encoding="utf-8")[:600]:
+                violations.append(f"{cpp_file.name}: missing Doxygen `@file` header")
+
+    for py_dir_name in ("python", "scripts"):
+        py_dir = repo_root / py_dir_name
+        if py_dir.exists():
+            for py_path in sorted(py_dir.rglob("*.py")):
+                py_src = py_path.read_text(encoding="utf-8")
+                if any(
+                    tok.type == tokenize.COMMENT and "no cover" in tok.string
+                    for tok in tokenize.generate_tokens(io.StringIO(py_src).readline)
+                ):
+                    violations.append(f"{py_path.name}: forbidden pragma no cover")
+
+    return violations
+
+
 def hook_clippy(repo_root: Path, check_only: bool = False) -> int:
-    """Runs strict linters across Rust, Python, and C/C++.
+    """Runs strict linters and AST invariant auditors across Rust, Python, and C/C++.
 
     Args:
         repo_root: Path to the workspace root directory.
         check_only: Unused flag kept for uniform stage handler signature.
 
     Returns:
-        Zero on success.
+        Zero on success, or 1 if any invariant violation is detected.
     """
     _ = check_only
+    inv_errors = verify_workspace_ast_invariants(repo_root)
+    if inv_errors:
+        for err in inv_errors:
+            print(f"Invariant violation: {err}", file=sys.stderr)
+        return 1
+
     py_targets = get_python_targets(repo_root)
 
     print("==> [lint] Running cargo clippy with strictest workspace lints...")
@@ -507,10 +611,13 @@ def hook_test(repo_root: Path, check_only: bool = False) -> int:
             ["cmake", "-B", "cpp/build", "-S", "cpp", "-DENABLE_COVERAGE=ON"],
             cwd=repo_root,
         )
-        run_command(["cmake", "--build", "cpp/build"], cwd=repo_root)
+    run_command(["cmake", "--build", "cpp/build"], cwd=repo_root)
+
+    for stale_prof in build_dir.glob("test_libtpu*.profraw"):
+        stale_prof.unlink()
 
     env = get_augmented_env()
-    env["LLVM_PROFILE_FILE"] = str(repo_root / "cpp" / "build" / "test_libtpu.profraw")
+    env["LLVM_PROFILE_FILE"] = str(build_dir / "test_libtpu_%p.profraw")
     run_command(
         ["ctest", "--test-dir", "cpp/build", "--output-on-failure"],
         cwd=repo_root,
@@ -592,9 +699,9 @@ def calculate_rust_doc_coverage(repo_root: Path, force_run: bool = True) -> tupl
     if force_run or not doc_json_files:
         print("==> [shields] Generating rustdoc JSON documentation coverage...")
         env = get_augmented_env()
-        env["RUSTDOCFLAGS"] = "-Z unstable-options --show-coverage --output-format json"
+        env["RUSTDOCFLAGS"] = "-Z unstable-options --coverage --output-format json"
         run_command(
-            ["cargo", "+nightly", "doc", "--workspace", "--no-deps"],
+            ["cargo", "+nightly", "doc", "--workspace", "--no-deps", "--document-private-items"],
             cwd=repo_root,
             env=env,
         )
@@ -642,6 +749,32 @@ def _split_top_level_commas(text: str) -> list[str]:
     return segments
 
 
+def _strip_trait_impl_blocks(text: str) -> str:
+    """Blanks out `impl ... for ... { ... }` blocks whose method parameter docs live on the trait.
+
+    Args:
+        text: Rust source text with `#[cfg(test)]` tail already removed.
+
+    Returns:
+        Source text with trait implementation bodies replaced by spaces.
+    """
+    chars = list(text)
+    for impl_m in re.finditer(r"\bimpl\b[^{;]*\bfor\b[^{;]*\{", text):
+        open_brace = impl_m.end() - 1
+        depth = 1
+        pos = open_brace + 1
+        while pos < len(chars) and depth > 0:
+            if chars[pos] == "{":
+                depth += 1
+            elif chars[pos] == "}":
+                depth -= 1
+            pos += 1
+        for k in range(impl_m.start(), pos):
+            if chars[k] != "\n":
+                chars[k] = " "
+    return "".join(chars)
+
+
 def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
     """Calculates documented vs total parameters across all Rust `fn` items.
 
@@ -656,7 +789,7 @@ def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
         return 0, 0
 
     fn_re = re.compile(
-        r"((?:\s*///[^\n]*\n)+(?:\s*#\[[^\n]*\n)*)\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:unsafe\s+)?(?:extern\s+\"C\"\s+)?fn\s+([A-Za-z0-9_]+)",
+        r"((?:\s*///[^\n]*\n)*(?:\s*#\[[^\]]*\]\s*)*)\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:unsafe\s+)?(?:extern\s+\"C\"\s+)?fn\s+([A-Za-z0-9_]+)",
         re.MULTILINE,
     )
     param_re = re.compile(r"^\s*(?:mut\s+)?([A-Za-z0-9_]+)\s*:")
@@ -664,7 +797,8 @@ def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
     doc_args = 0
 
     for rs_file in sorted(crates_dir.rglob("*.rs")):
-        text = rs_file.read_text(encoding="utf-8")
+        prod_raw = rs_file.read_text(encoding="utf-8").split("#[cfg(test)]", 1)[0]
+        text = _strip_trait_impl_blocks(prod_raw)
         for match in fn_re.finditer(text):
             doc_block, _fn_name = match.groups()
             open_paren = text.find("(", match.end())
@@ -706,6 +840,9 @@ def calculate_python_doc_coverage(repo_root: Path) -> tuple[int, int]:
     with_docs = 0
     py_files = sorted((repo_root / "python" / "libtpu").rglob("*.py"))
     py_files.extend(sorted((repo_root / "python" / "libtpu").rglob("*.pyi")))
+    tests_dir = repo_root / "python" / "tests"
+    if tests_dir.exists():
+        py_files.extend(sorted(tests_dir.rglob("*.py")))
     scripts_dir = repo_root / "scripts"
     if scripts_dir.exists():
         py_files.extend(sorted(scripts_dir.rglob("*.py")))
@@ -894,7 +1031,7 @@ def calculate_test_coverage(repo_root: Path, force_run: bool = True) -> float:
     py_pct = 100.0
     if py_cov_path.exists():
         py_data = json.loads(py_cov_path.read_text(encoding="utf-8"))
-        py_pct = float(py_data.get("totals", {}).get("percent_covered", 100.0))
+        py_pct = calculate_python_test_coverage_metrics(repo_root, py_data)
 
     cpp_pct = calculate_cpp_test_coverage(repo_root, force_run=force_run)
     pct = min(line_pct, func_pct, branch_pct, py_pct, cpp_pct)
@@ -904,6 +1041,55 @@ def calculate_test_coverage(repo_root: Path, force_run: bool = True) -> float:
         f"Python: {py_pct:.2f}%, C/C++: {cpp_pct:.2f}% -> {pct:.2f}%"
     )
     return pct
+
+
+def calculate_python_test_coverage_metrics(
+    repo_root: Path,
+    py_data: dict[str, object],
+) -> float:
+    """Computes the minimum of Python line, branch, and function coverage from `py_coverage.json`.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+        py_data: Parsed `pytest-cov` JSON report dictionary.
+
+    Returns:
+        Minimum of Python statement, branch, and function coverage percentages (`0.0..100.0`).
+    """
+    totals_raw = py_data.get("totals")
+    totals = totals_raw if isinstance(totals_raw, dict) else {}
+    num_stmts = int(totals.get("num_statements", 0))
+    cov_lines = int(totals.get("covered_lines", 0))
+    line_pct = (
+        (cov_lines / num_stmts) * 100.0
+        if num_stmts > 0
+        else float(totals.get("percent_covered", 100.0))
+    )
+    num_br = int(totals.get("num_branches", 0))
+    cov_br = int(totals.get("covered_branches", 0))
+    branch_pct = (cov_br / num_br) * 100.0 if num_br > 0 else line_pct
+
+    total_funcs = 0
+    covered_funcs = 0
+    files_raw = py_data.get("files")
+    files_map = files_raw if isinstance(files_raw, dict) else {}
+    for rel_path, file_info in files_map.items():
+        src_path = repo_root / str(rel_path)
+        if not isinstance(file_info, dict) or not src_path.is_file():
+            continue
+        exec_lines = {int(ln) for ln in file_info.get("executed_lines", [])}
+        tree = ast.parse(src_path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                has_doc = bool(ast.get_docstring(node, clean=False))
+                raw_body = node.body[1:] if has_doc else node.body
+                body_stmts = [s for s in raw_body if not isinstance(s, (ast.Global, ast.Nonlocal))]
+                if body_stmts:
+                    total_funcs += 1
+                    if body_stmts[0].lineno in exec_lines:
+                        covered_funcs += 1
+    func_pct = (covered_funcs / total_funcs) * 100.0 if total_funcs > 0 else line_pct
+    return min(line_pct, branch_pct, func_pct)
 
 
 def calculate_cpp_test_coverage(repo_root: Path, force_run: bool = True) -> float:
@@ -917,33 +1103,41 @@ def calculate_cpp_test_coverage(repo_root: Path, force_run: bool = True) -> floa
         Minimum of C/C++ line, function, and branch coverage percentages (0.0 to 100.0).
     """
     cpp_cov_path = repo_root / "target" / "llvm-cov" / "cpp_coverage.json"
-    profraw = repo_root / "cpp" / "build" / "test_libtpu.profraw"
-    profdata = repo_root / "cpp" / "build" / "test_libtpu.profdata"
-    test_bin = repo_root / "cpp" / "build" / "test_libtpu"
+    build_dir = repo_root / "cpp" / "build"
+    profdata = build_dir / "test_libtpu.profdata"
+    test_bin = build_dir / "test_libtpu"
+    c11_bin = build_dir / "test_libtpu_c11"
 
     if force_run and test_bin.exists():
         env = get_augmented_env()
-        if not profraw.exists():
-            env["LLVM_PROFILE_FILE"] = str(profraw)
+        for stale_prof in build_dir.glob("test_libtpu_*.profraw"):
+            stale_prof.unlink(missing_ok=True)
+        profraw_files = sorted(build_dir.glob("test_libtpu*.profraw"))
+        if not profraw_files:
+            env["LLVM_PROFILE_FILE"] = str(build_dir.resolve() / "test_libtpu_%p.profraw")
             run_command(
                 ["ctest", "--test-dir", "cpp/build", "--output-on-failure"],
                 cwd=repo_root,
                 env=env,
             )
+            profraw_files = sorted(build_dir.glob("test_libtpu*.profraw"))
+        profraw_args = [str(p) for p in profraw_files] or [str(build_dir / "test_libtpu.profraw")]
         use_xcrun = bool(shutil.which("xcrun", path=env.get("PATH")))
         prof_prefix = ["xcrun", "llvm-profdata"] if use_xcrun else ["llvm-profdata"]
         cov_prefix = ["xcrun", "llvm-cov"] if use_xcrun else ["llvm-cov"]
         run_command(
-            [*prof_prefix, "merge", "-sparse", str(profraw), "-o", str(profdata)],
+            [*prof_prefix, "merge", "-sparse", *profraw_args, "-o", str(profdata)],
             cwd=repo_root,
             env=env,
         )
+        extra_objs = ["-object", str(c11_bin)] if c11_bin.exists() else []
         res = run_command(
             [
                 *cov_prefix,
                 "export",
                 "--format=text",
                 str(test_bin),
+                *extra_objs,
                 f"-instr-profile={profdata}",
                 str(repo_root / "cpp" / "src" / "libtpu.cpp"),
                 str(repo_root / "cpp" / "src" / "libtpu.hpp"),
@@ -962,11 +1156,12 @@ def calculate_cpp_test_coverage(repo_root: Path, force_run: bool = True) -> floa
     cpp_totals = cpp_data["data"][0]["totals"]
     cpp_line_pct = float(cpp_totals["lines"]["percent"])
     cpp_func_pct = float(cpp_totals.get("functions", {}).get("percent", cpp_line_pct))
+    cpp_region_pct = float(cpp_totals.get("regions", {}).get("percent", cpp_line_pct))
     cpp_branches = cpp_totals.get("branches", {})
     cpp_branch_pct = (
         float(cpp_branches["percent"]) if int(cpp_branches.get("count", 0)) > 0 else cpp_line_pct
     )
-    return min(cpp_line_pct, cpp_func_pct, cpp_branch_pct)
+    return min(cpp_line_pct, cpp_func_pct, cpp_region_pct, cpp_branch_pct)
 
 
 def update_readme_shields(
@@ -1134,11 +1329,17 @@ def verify_rust_and_c_abi_sources(repo_root: Path) -> list[str]:
             if req_name not in py_text:
                 errors.append(f"Python wheel API symbol {req_name} missing from {rel_py}")
 
-    cargo_toml = repo_root / "Cargo.toml"
-    if cargo_toml.exists():
-        cargo_text = cargo_toml.read_text(encoding="utf-8")
-        if "anyhow" in cargo_text or "thiserror" in cargo_text:
-            errors.append("Forbidden dependency anyhow/thiserror found in Cargo.toml")
+    toml_paths = [p for p in [repo_root / "Cargo.toml"] if p.exists()]
+    toml_paths.extend(sorted((repo_root / "crates").glob("*/Cargo.toml")))
+    for toml_path in toml_paths:
+        cargo_text = toml_path.read_text(encoding="utf-8")
+        if any(
+            re.search(rf"\b{dep}\b", cargo_text)
+            for dep in ("anyhow", "thiserror", "eyre", "miette", "snafu")
+        ):
+            errors.append(
+                f"Forbidden dependency anyhow/thiserror/eyre/miette/snafu found in {toml_path.name}"
+            )
 
     error_rs = repo_root / "crates" / "libtpu-core" / "src" / "error.rs"
     if error_rs.exists():
@@ -1146,33 +1347,92 @@ def verify_rust_and_c_abi_sources(repo_root: Path) -> list[str]:
         if "pub enum LibTpuError" not in error_text or "Display, Error, From" not in error_text:
             errors.append("LibTpuError in error.rs must derive Display, Error, From")
 
+    allowed_err_structs = {
+        ("handles.rs", "PJRT_Error"),
+        ("tpu_driver_types.rs", "LibtpuSdk_Error"),
+    }
     for rs_file in sorted((repo_root / "crates").rglob("*.rs")):
         rs_text = rs_file.read_text(encoding="utf-8")
         if (
             ".unwrap(" in rs_text
             or ".expect(" in rs_text
+            or ".unwrap_unchecked(" in rs_text
             or "panic!(" in rs_text
             or "todo!(" in rs_text
             or "unimplemented!(" in rs_text
+            or "unreachable!(" in rs_text
             or "for_loops_over_fallibles" in rs_text
             or "Box<dyn std::error::Error>" in rs_text
         ):
             errors.append(f"Forbidden .unwrap()/.expect()/panic!() found in {rs_file.name}")
+        for err_m in re.finditer(r"\benum\s+([A-Za-z0-9_]*Error)\b", rs_text):
+            if (rs_file.name, err_m.group(1)) != ("error.rs", "LibTpuError"):
+                errors.append(f"Secondary error enum '{err_m.group(1)}' found in {rs_file.name}")
+        for st_m in re.finditer(r"\bstruct\s+([A-Za-z0-9_]*Error)\b", rs_text):
+            if (rs_file.name, st_m.group(1)) not in allowed_err_structs:
+                errors.append(f"Secondary error struct '{st_m.group(1)}' found in {rs_file.name}")
+        prod_prefix = rs_text.split("#[cfg(test)]", 1)[0]
+        if "coverage(" + "off)" in prod_prefix:
+            errors.append(f"Unguarded coverage(off) found in {rs_file.name}")
 
     return errors
 
 
-def parse_proto_messages(proto_dir: Path) -> dict[str, dict[int, str]]:
-    """Parses `.proto` files in `proto_dir` into `full_message_name -> {tag: field_name}`.
+_RUST_RAW_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "as",
+        "async",
+        "await",
+        "break",
+        "const",
+        "continue",
+        "crate",
+        "dyn",
+        "else",
+        "enum",
+        "extern",
+        "fn",
+        "for",
+        "if",
+        "impl",
+        "in",
+        "let",
+        "loop",
+        "match",
+        "mod",
+        "move",
+        "mut",
+        "pub",
+        "ref",
+        "return",
+        "self",
+        "static",
+        "struct",
+        "super",
+        "trait",
+        "type",
+        "unsafe",
+        "use",
+        "where",
+        "while",
+    }
+)
+
+
+def parse_proto_messages(proto_dir: Path) -> tuple[dict[str, dict[int, str]], int]:
+    """Recursively parses `.proto` files in `proto_dir` into non-WKT messages and enum count.
 
     Args:
-        proto_dir: Directory containing `.proto` schema files.
+        proto_dir: Root directory containing `.proto` schema files.
 
     Returns:
-        Dictionary mapping fully-qualified message names to `{field_tag: field_name}` dicts.
+        Tuple `(messages, enum_count)` where `messages` maps fully-qualified non-WKT message
+        names to `{field_tag: field_name}` dictionaries and `enum_count` is the total count
+        of non-WKT `.proto` `enum` definitions.
     """
     messages: dict[str, dict[int, str]] = {}
-    for proto_file in sorted(proto_dir.glob("*.proto")):
+    enum_count = 0
+    for proto_file in sorted(proto_dir.rglob("*.proto")):
         pkg = ""
         scope_stack: list[tuple[str, str]] = []
         for raw_line in proto_file.read_text(encoding="utf-8").splitlines():
@@ -1183,22 +1443,26 @@ def parse_proto_messages(proto_dir: Path) -> dict[str, dict[int, str]]:
             if pkg_m:
                 pkg = pkg_m.group(1)
                 continue
-            block_m = re.match(r"^(message|enum|oneof)\s+([A-Za-z0-9_]+)\s*\{", line)
-            if block_m:
+            opens = line.count("{")
+            closes = line.count("}")
+            block_m = re.match(r"^(message|enum|oneof|service|extend)\s+([A-Za-z0-9_.]+)", line)
+            if block_m and opens > 0:
                 kind, bname = block_m.groups()
                 scope_stack.append((kind, bname))
-                if kind == "message":
+                if kind == "message" and pkg != "google.protobuf":
                     msg_chain = ".".join(n for k, n in scope_stack if k == "message")
                     full_name = f"{pkg}.{msg_chain}" if pkg else msg_chain
                     messages.setdefault(full_name, {})
+                elif kind == "enum" and pkg != "google.protobuf":
+                    enum_count += 1
             elif (
                 scope_stack
-                and any(k == "message" for k, _ in scope_stack)
-                and scope_stack[-1][0] != "enum"
+                and scope_stack[-1][0] in ("message", "oneof")
+                and pkg != "google.protobuf"
             ):
                 field_m = re.match(
-                    r"^(?:optional\s+|repeated\s+)?(?:map<[^>]+>|[A-Za-z0-9_.]+)"
-                    r"\s+([A-Za-z0-9_]+)\s*=\s*([0-9]+)",
+                    r"^(?!option\s)(?:optional\s+|required\s+|repeated\s+)?"
+                    r"(?:map<[^>]+>|[A-Za-z0-9_.]+)\s+([A-Za-z0-9_]+)\s*=\s*([0-9]+)",
                     line,
                 )
                 if field_m:
@@ -1206,58 +1470,169 @@ def parse_proto_messages(proto_dir: Path) -> dict[str, dict[int, str]]:
                     msg_chain = ".".join(n for k, n in scope_stack if k == "message")
                     full_name = f"{pkg}.{msg_chain}" if pkg else msg_chain
                     messages.setdefault(full_name, {})[int(ftag)] = fname
-            for _ in range(line.count("}")):
-                if scope_stack:
-                    scope_stack.pop()
-    return messages
+            if closes > 0:
+                del scope_stack[-closes:]
+    return messages, enum_count
+
+
+def find_prost_out_dir(repo_root: Path) -> Path | None:
+    """Locates the newest `prost-build` `OUT_DIR` containing `generated_proto_traits.rs`.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+
+    Returns:
+        Newest `out` directory path under `target/`, or `None` if not yet built.
+    """
+    candidates = [
+        p.parent
+        for pat in (
+            "*/build/libtpu-core-*/out/generated_proto_traits.rs",
+            "*/build/libtpu-core/*/out/generated_proto_traits.rs",
+        )
+        for p in (repo_root / "target").glob(pat)
+    ]
+    return (
+        max(candidates, key=lambda d: (d / "generated_proto_traits.rs").stat().st_mtime)
+        if candidates
+        else None
+    )
+
+
+def scan_manual_prost_derives(crates_dir: Path) -> list[str]:
+    """Scans `crates/**/*.rs` for forbidden manual `prost` derives or hand-written `*Proto` types.
+
+    Args:
+        crates_dir: Workspace `crates/` directory outside `OUT_DIR`.
+
+    Returns:
+        List of `filename:line` violation strings (empty when zero manual definitions exist).
+    """
+    allowed_c_abi_slices = {
+        ("tpu_driver_types.rs", "HloProto"),
+        ("tpu_driver_types.rs", "TpuSerializedProto"),
+    }
+    violations: list[str] = []
+    for rs_path in sorted(crates_dir.rglob("*.rs")):
+        for raw_line in rs_path.read_text(encoding="utf-8").splitlines():
+            trimmed = raw_line.strip()
+            if trimmed.startswith("#[derive(") and (
+                "Message" in trimmed or "Enumeration" in trimmed
+            ):
+                violations.append(f"{rs_path.name}: {trimmed}")
+            else:
+                proto_m = re.match(r"^pub\s+(?:struct|enum)\s+([A-Za-z0-9_]*Proto)\b", trimmed)
+                if proto_m and (rs_path.name, proto_m.group(1)) not in allowed_c_abi_slices:
+                    violations.append(f"{rs_path.name}: {trimmed}")
+    return violations
+
+
+def collect_all_proto_messages(repo_root: Path) -> tuple[dict[str, dict[int, str]], int]:
+    """Parses `.proto` messages and enum counts across forensic and extension `.proto` roots.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+
+    Returns:
+        Tuple `(messages, enum_count)` merged across all repository `.proto` roots.
+    """
+    messages, enum_count = parse_proto_messages(
+        repo_root / "docs" / "reverse_engineering" / "protos"
+    )
+    ext_proto_dir = repo_root / "protos"
+    if ext_proto_dir.exists():
+        ext_messages, ext_enums = parse_proto_messages(ext_proto_dir)
+        messages.update(ext_messages)
+        enum_count += ext_enums
+    return messages, enum_count
 
 
 def parse_rust_proto_structs(
-    proto_rs_dir: Path,
-) -> tuple[dict[str, tuple[str, dict[int, str]]], list[str]]:
-    """Parses Rust `prost::Message` structs in `proto_rs_dir` and `impl_proto_schema_message!`.
+    out_dir: Path,
+) -> tuple[dict[str, tuple[str, dict[int, str]]], list[str], int]:
+    """Parses `prost-build` generated Rust structs, field tags, and enums in `out_dir`.
 
     Args:
-        proto_rs_dir: Directory containing `crates/libtpu-core/src/proto/*.rs` files.
+        out_dir: Cargo `OUT_DIR` containing `generated_proto_traits.rs` and package `.rs` files.
 
     Returns:
-        Tuple of `(mapped_structs, unregistered_struct_names)` where `mapped_structs` maps
+        Tuple `(mapped_structs, unregistered_structs, enum_count)` where `mapped_structs` maps
         `full_proto_name -> (rust_struct_name, {tag: field_name})`.
     """
+    traits_text = (out_dir / "generated_proto_traits.rs").read_text(encoding="utf-8")
+    rpath_to_fqn = {
+        rpath: fqn for fqn, rpath in re.findall(r'\("([^"]+)",\s*"([^"]+)"\)', traits_text)
+    }
+    struct_tags: dict[str, dict[int, str]] = {}
+    enum_count = 0
+    skip_files = {
+        "generated_proto_include.rs",
+        "generated_proto_traits.rs",
+        "generated_protodesc_catalog.rs",
+    }
+    for rs_file in sorted(out_dir.glob("*.rs")):
+        if rs_file.name in skip_files:
+            continue
+        pkg_mods = (
+            []
+            if rs_file.stem == "_"
+            else [f"r#{m}" if m in _RUST_RAW_KEYWORDS else m for m in rs_file.stem.split(".")]
+        )
+        scope: list[tuple[str, str]] = []
+        pending_msg = False
+        pending_tags: list[int] = []
+        for raw_line in rs_file.read_text(encoding="utf-8").splitlines():
+            s = raw_line.strip()
+            if s.startswith("#[derive("):
+                if "Message" in s:
+                    pending_msg = True
+                elif "Enumeration" in s:
+                    enum_count += 1
+            elif s.startswith("#[prost("):
+                tag_m = re.search(r'\btag\s*=\s*"([0-9]+)"', s)
+                if tag_m:
+                    pending_tags.append(int(tag_m.group(1)))
+                tags_m = re.search(r'\btags\s*=\s*"([^"]+)"', s)
+                if tags_m:
+                    for tok in tags_m.group(1).split(","):
+                        clean_tok = tok.strip()
+                        if clean_tok.isdigit():
+                            pending_tags.append(int(clean_tok))
+            opens = s.count("{")
+            closes = s.count("}")
+            if opens > 0:
+                mod_m = re.match(r"^pub\s+mod\s+([A-Za-z0-9_#]+)\s*\{", s)
+                st_m = re.match(r"^pub\s+struct\s+([A-Za-z0-9_#]+)\s*\{", s)
+                if mod_m:
+                    scope.append(("mod", mod_m.group(1)))
+                elif st_m and pending_msg:
+                    mods = pkg_mods + [n for k, n in scope if k == "mod"]
+                    rpath = "::".join(["generated_prost_schemas", *mods, st_m.group(1)])
+                    struct_tags.setdefault(rpath, {})
+                    scope.append(("struct", rpath))
+                else:
+                    scope.append(("other", ""))
+                pending_msg = False
+                pending_tags.clear()
+            elif scope and scope[-1][0] == "struct" and s.startswith("pub ") and ":" in s:
+                fname = s.removeprefix("pub ").split(":", 1)[0].strip().removeprefix("r#")
+                for tag_num in pending_tags:
+                    struct_tags[scope[-1][1]][tag_num] = fname
+                pending_tags.clear()
+            elif not s.startswith(("#[", "///")):
+                pending_tags.clear()
+            if closes > 0:
+                del scope[-closes:]
+
     mapped_structs: dict[str, tuple[str, dict[int, str]]] = {}
     unregistered: list[str] = []
-    for rs_file in sorted(proto_rs_dir.glob("*.rs")):
-        text = rs_file.read_text(encoding="utf-8")
-        mappings = dict(
-            re.findall(
-                r'impl_proto_schema_message!\(\s*([A-Za-z0-9_]+)\s*,\s*"([^"]+)"\s*\)',
-                text,
-            )
-        )
-        for m in re.finditer(
-            r"#\[derive\([^\]]*Message[^\]]*\)\]\s*pub struct ([A-Za-z0-9_]+)\s*\{([^}]*)\}",
-            text,
-            re.S,
-        ):
-            sname, body = m.groups()
-            if sname not in mappings:
-                unregistered.append(sname)
-                continue
-            tags: dict[int, str] = {}
-            for fm in re.finditer(r"#\[prost\(([^\]]+)\)\]\s*pub (?:r#)?([A-Za-z0-9_]+):", body):
-                attr, fname = fm.groups()
-                tm = re.search(r'tag\s*=\s*"([0-9]+)"', attr)
-                if tm:
-                    tags[int(tm.group(1))] = fname
-                else:
-                    om = re.search(r'tags\s*=\s*"([^"]+)"', attr)
-                    if om:
-                        for raw_t in om.group(1).split(","):
-                            t_str = raw_t.strip()
-                            if t_str.isdigit():
-                                tags[int(t_str)] = fname
-            mapped_structs[mappings[sname]] = (sname, tags)
-    return mapped_structs, unregistered
+    for rpath, tags in sorted(struct_tags.items()):
+        sname = rpath.rsplit("::", 1)[-1]
+        if rpath in rpath_to_fqn:
+            mapped_structs[rpath_to_fqn[rpath]] = (sname, tags)
+        else:
+            unregistered.append(sname)
+    return mapped_structs, unregistered, enum_count
 
 
 def verify_rust_to_proto_1to1(repo_root: Path) -> list[str]:
@@ -1271,15 +1646,31 @@ def verify_rust_to_proto_1to1(repo_root: Path) -> list[str]:
     """
     errors: list[str] = []
     proto_dir = repo_root / "docs" / "reverse_engineering" / "protos"
-    proto_rs_dir = repo_root / "crates" / "libtpu-core" / "src" / "proto"
+    crates_dir = repo_root / "crates"
+    proto_rs_dir = crates_dir / "libtpu-core" / "src" / "proto"
     if not proto_dir.exists() or not proto_rs_dir.exists():
         errors.append("Missing docs/reverse_engineering/protos or crates/libtpu-core/src/proto")
         return errors
 
-    proto_messages = parse_proto_messages(proto_dir)
-    rust_structs, unregistered = parse_rust_proto_structs(proto_rs_dir)
+    manual = scan_manual_prost_derives(crates_dir)
+    if manual:
+        errors.append(
+            f"Forbidden manual #[derive(prost::Message/Enumeration)] outside OUT_DIR: {manual}"
+        )
+
+    out_dir = find_prost_out_dir(repo_root)
+    if out_dir is None:
+        errors.append("Missing prost-build OUT_DIR under target/")
+        return errors
+
+    proto_messages, proto_enums = collect_all_proto_messages(repo_root)
+    rust_structs, unregistered, rust_enums = parse_rust_proto_structs(out_dir)
     if unregistered:
         errors.append(f"Unregistered prost::Message struct(s): {unregistered}")
+    if rust_enums != proto_enums:
+        errors.append(
+            f"Protobuf enum count mismatch: Rust OUT_DIR has {rust_enums}, .proto has {proto_enums}"
+        )
 
     for proto_full, (sname, rtags) in sorted(rust_structs.items()):
         if proto_full not in proto_messages:
@@ -1311,8 +1702,22 @@ def verify_proto_to_rust_1to1(repo_root: Path) -> list[str]:
         errors.append("Missing docs/reverse_engineering/protos or crates/libtpu-core/src/proto")
         return errors
 
-    proto_messages = parse_proto_messages(proto_dir)
-    rust_structs, _ = parse_rust_proto_structs(proto_rs_dir)
+    build_rs = repo_root / "crates" / "libtpu-core" / "build.rs"
+    descriptor_rs = proto_rs_dir / "descriptor.rs"
+    if build_rs.exists() and "SYNTHETIC_DEPENDENCY_PROTOS" in build_rs.read_text(encoding="utf-8"):
+        errors.append("Forbidden inline SYNTHETIC_DEPENDENCY_PROTOS found in build.rs")
+    if descriptor_rs.exists() and 'env!("OUT_DIR")' not in descriptor_rs.read_text(
+        encoding="utf-8"
+    ):
+        errors.append("prost-build output in OUT_DIR is not included in proto/descriptor.rs")
+
+    out_dir = find_prost_out_dir(repo_root)
+    if out_dir is None:
+        errors.append("Missing prost-build OUT_DIR under target/")
+        return errors
+
+    proto_messages, _ = collect_all_proto_messages(repo_root)
+    rust_structs, _, _ = parse_rust_proto_structs(out_dir)
     unmapped_protos = sorted(set(proto_messages.keys()) - set(rust_structs.keys()))
     if unmapped_protos:
         errors.append(
@@ -1327,15 +1732,6 @@ def verify_proto_to_rust_1to1(repo_root: Path) -> list[str]:
                     f".proto message '{proto_full}' has field tags {missing_tags} "
                     f"omitted from Rust struct {sname}"
                 )
-
-    build_rs = repo_root / "crates" / "libtpu-core" / "build.rs"
-    proto_root_rs = repo_root / "crates" / "libtpu-core" / "src" / "proto.rs"
-    if build_rs.exists() and "SYNTHETIC_DEPENDENCY_PROTOS" in build_rs.read_text(encoding="utf-8"):
-        errors.append("Forbidden inline SYNTHETIC_DEPENDENCY_PROTOS found in build.rs")
-    if proto_root_rs.exists() and 'env!("OUT_DIR")' not in proto_root_rs.read_text(
-        encoding="utf-8"
-    ):
-        errors.append("prost-build output in OUT_DIR is not included in proto.rs")
 
     return errors
 
@@ -1618,5 +2014,5 @@ def main(argv: list[str] | None = None) -> int:
         return int(err.returncode)
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())

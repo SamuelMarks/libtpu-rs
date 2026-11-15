@@ -1,0 +1,34 @@
+syntax = "proto3";
+package xla.buffer_assignment;
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message BufferIsolationConfig {
+  int64 base_offset_bytes = 1;
+  int64 isolation_fuel = 2;
+  int64 isolation_padding_bytes = 3;
+  uint64 isolation_order_salt = 4;
+  repeated int32 isolation_colors = 5;
+}
+message BufferAssignmentAlgorithmProto {
+  enum Value {
+    DEFAULT = 0;
+    BEST_OF_SPATIAL_TEMPORAL = 1;
+    SPATIAL = 2;
+    TEMPORAL = 3;
+    FAST_MERGE = 4;
+    FAST_SPLIT = 5;
+    FAST_MERGE_WITH_FALLBACK = 6;
+  }
+  optional .xla.buffer_assignment.BufferAssignmentAlgorithmProto.Value fallback_algorithm = 1;
+}
+message AssignmentAlgorithmForComputationsWithoutOrderingProto {
+  enum Value {
+    SPATIAL = 0;
+    FAST_MERGE = 1;
+  }
+}
+message BufferAllocationSliceProto {
+  int64 offset = 1;
+  int64 size = 2;
+  int64 buffer_allocation_index = 3;
+  .xla.PrimitiveType element_type = 4;
+}

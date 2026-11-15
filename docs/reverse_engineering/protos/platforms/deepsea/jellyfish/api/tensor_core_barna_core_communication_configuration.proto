@@ -1,0 +1,50 @@
+syntax = "proto3";
+package platforms_deepsea.jellyfish.api;
+enum OptimizerDynamicInputTransformationFunction {
+  IDENTITY = 0;
+  RECIPROCAL = 1;
+}
+message TensorNodeCoordinates {
+  uint32 row = 1;
+  uint32 column = 2;
+  uint32 core_id = 3;
+}
+message DmaDestination {
+  .platforms_deepsea.jellyfish.api.TensorNodeCoordinates aligner = 1;
+  repeated .platforms_deepsea.jellyfish.api.TensorNodeCoordinates offsets = 2;
+}
+message TensorCoreBarnaCoreFeedConfiguration {
+  reserved 5;
+  reserved 10;
+  message Infeed {
+    int64 hbm_base_byte_offset = 1;
+    int32 sync_flag_number_base = 4;
+    int64 ack_hbm_buffer_base_byte_offset = 2;
+    int32 ack_sync_flag_number_base = 3;
+  }
+  message Outfeed {
+    reserved 7;
+    message OptimizerDynamicInput {
+      int32 barna_core_row = 1;
+      int32 barna_core_lane = 2;
+      int32 barna_core_vmem_line_offset = 3;
+      .platforms_deepsea.jellyfish.api.OptimizerDynamicInputTransformationFunction transformation_function = 4;
+    }
+    message OptimizerDynamicInputList {
+      reserved 1;
+      repeated .platforms_deepsea.jellyfish.api.TensorCoreBarnaCoreFeedConfiguration.Outfeed.OptimizerDynamicInput optimizer_dynamic_inputs = 2;
+    }
+    int64 gradient_hbm_base_byte_offset = 1;
+    int32 gradient_sync_flag_number_base = 2;
+    int32 gradient_ack_sync_flag_number_base = 8;
+    int64 learning_rate_hbm_base_byte_offset = 3;
+    int32 learning_rate_buffer_size = 4;
+    int32 learning_rate_sync_flag_number_base = 5;
+    int32 learning_rate_line_count = 6;
+    repeated .platforms_deepsea.jellyfish.api.TensorCoreBarnaCoreFeedConfiguration.Outfeed.OptimizerDynamicInputList optimizer_dynamic_input_lists_by_tag = 9;
+  }
+  .platforms_deepsea.jellyfish.api.DmaDestination dma_destination = 6;
+  .platforms_deepsea.jellyfish.api.TensorCoreBarnaCoreFeedConfiguration.Infeed activation_infeed = 7;
+  .platforms_deepsea.jellyfish.api.TensorCoreBarnaCoreFeedConfiguration.Infeed deduplication_data_infeed = 11;
+  .platforms_deepsea.jellyfish.api.TensorCoreBarnaCoreFeedConfiguration.Outfeed outfeed = 8;
+}

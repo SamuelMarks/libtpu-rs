@@ -1,0 +1,108 @@
+syntax = "proto3";
+package xla.jellyfish;
+import "perftools/accelerators/xprof/contrib/llo_debug/source_map.proto";
+import "platforms/xla/service/jellyfish/proto/llo_instruction.proto";
+import "platforms/xla/service/jellyfish/proto/llo_opcode.proto";
+import "platforms/xla/service/jellyfish/proto/memory_space.proto";
+import "platforms/xla/service/jellyfish/target_arguments.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+enum FixedKindProto {
+  FIXED_KIND_NONE = 0;
+  FIXED_KIND_ABSOLUTE = 1;
+  FIXED_KIND_STACK_RELATIVE = 2;
+}
+message LloAllocationProto {
+  .xla.jellyfish.MemorySpaceProto space = 1;
+  .xla.ShapeProto shape = 2;
+  int64 size = 4;
+  int32 ordinal = 5;
+  int32 alignment_in_words = 7;
+  int32 word_offset_within_allocation = 8;
+  bool is_virtual = 9;
+  bool is_spill = 10;
+  bool is_scoped = 11;
+  bool is_remote = 12;
+  .xla.jellyfish.FixedKindProto fixed_kind = 13;
+  uint32 stack_trace_handle = 14;
+}
+message LloConstantProto {
+  oneof value {
+    bool bool_value = 2;
+    uint64 scalar_bits_u64 = 3;
+    uint64 vector_bits_u64 = 4;
+    uint32 vector_mask_packed_bits = 6;
+    .xla.jellyfish.LloAllocationProto allocation = 5;
+  }
+  .xla.jellyfish.LloOpcodeProto opcode = 1;
+}
+message LloLoopProto {
+  enum LloLoopKindProto {
+    LOOP_KIND_NONE = 0;
+    LOOP_KIND_WHILE = 1;
+    LOOP_KIND_DOWHILE = 2;
+  }
+  message LoopIndexSpaceProto {
+    int64 start = 1;
+    int64 limit = 2;
+    int64 step = 3;
+  }
+  .xla.jellyfish.LloRegionProto pre_header = 1;
+  .xla.jellyfish.LloRegionProto header = 2;
+  .xla.jellyfish.LloRegionProto header_branch = 3;
+  .xla.jellyfish.LloRegionProto body = 4;
+  .xla.jellyfish.LloRegionProto footer = 5;
+  .xla.jellyfish.LloRegionProto footer_branch = 6;
+  .xla.jellyfish.LloRegionProto exit = 7;
+  .xla.jellyfish.LloLoopProto.LoopIndexSpaceProto index_space = 8;
+  .xla.jellyfish.LloLoopProto.LloLoopKindProto kind = 10;
+}
+message LloPredicatedRegionProto {
+  .xla.jellyfish.LloRegionProto check_region = 1;
+  .xla.jellyfish.LloRegionProto check_branch_region = 2;
+  .xla.jellyfish.LloRegionProto predicated_region = 3;
+  .xla.jellyfish.LloRegionProto fallthru_region = 4;
+}
+message LloRegionProto {
+  message RegionMember {
+    oneof value {
+      .xla.jellyfish.LloInstructionProto instruction = 1;
+      .xla.jellyfish.LloLoopProto loop = 2;
+      .xla.jellyfish.LloPredicatedRegionProto predicated_region = 3;
+      .xla.jellyfish.LloRegionProto sub_region = 4;
+    }
+  }
+  repeated .xla.jellyfish.LloRegionProto.RegionMember members = 1;
+  string name = 2;
+  int32 start_bundleno = 5;
+  int32 limit_bundleno = 6;
+  int32 ordinal = 7;
+}
+message StaticPerBundleUtilizationProto {
+  message RationalVectorProto {
+    repeated int32 numerator = 1;
+    int32 denominator = 2;
+  }
+  .xla.jellyfish.StaticPerBundleUtilizationProto.RationalVectorProto mxu = 1;
+  .xla.jellyfish.StaticPerBundleUtilizationProto.RationalVectorProto xlu = 2;
+  .xla.jellyfish.StaticPerBundleUtilizationProto.RationalVectorProto vector_alu = 3;
+  .xla.jellyfish.StaticPerBundleUtilizationProto.RationalVectorProto vector_eup = 4;
+  .xla.jellyfish.StaticPerBundleUtilizationProto.RationalVectorProto vector_load = 5;
+  .xla.jellyfish.StaticPerBundleUtilizationProto.RationalVectorProto vector_store = 6;
+  .xla.jellyfish.StaticPerBundleUtilizationProto.RationalVectorProto scalar_alu = 7;
+  repeated int32 vector_spill = 8;
+  repeated int32 vector_fill = 9;
+}
+message LloModuleProto {
+  reserved 3;
+  reserved 4;
+  reserved 5;
+  string hlo_instruction_name = 1;
+  string hlo_module_name = 10;
+  int64 hlo_module_id = 11;
+  .xla.jellyfish.LloRegionProto top_region = 2;
+  repeated .xla.jellyfish.LloConstantProto interned_constants = 8;
+  repeated string interned_strings = 9;
+  .xla.jellyfish.StaticPerBundleUtilizationProto static_utilization = 6;
+  .xla.TargetArgumentsProto target_arguments = 7;
+  .xprof.tpu.llo_debug.SourceMapProto source_map = 12;
+}

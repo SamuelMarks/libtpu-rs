@@ -616,15 +616,15 @@ typedef struct PJRT_Client_BufferFromHostBuffer_Args {
   int32_t host_buffer_semantics;
   /** @brief Explicit 4-byte alignment padding. */
   int32_t pad1;
-  /** @brief Target `PJRT_Device*`. */
+  /** @brief Target `PJRT_Device*` (`0x50`). */
   PJRT_Device *device;
-  /** @brief Optional target `PJRT_Memory*`. */
+  /** @brief Optional target `PJRT_Memory*` (`0x58`). */
   PJRT_Memory *memory;
-  /** @brief Optional device memory layout pointer. */
+  /** @brief Optional device memory layout pointer (`0x60`). */
   const void *device_layout;
-  /** @brief Output host buffer completion `PJRT_Event*`. */
+  /** @brief Output host buffer completion `PJRT_Event*` (`0x68`). */
   PJRT_Event *done_with_host_buffer;
-  /** @brief Output created `PJRT_Buffer*`. */
+  /** @brief Output created `PJRT_Buffer*` (`0x70`). */
   PJRT_Buffer *buffer;
 } PJRT_Client_BufferFromHostBuffer_Args;
 
@@ -823,6 +823,10 @@ typedef struct PJRT_Buffer_MemoryLayout_Output {
   size_t struct_size;
   /** @brief Extension pointer (`NULL`). */
   PJRT_Extension_Base *extension_start;
+  /** @brief Nested `Tiled`/`Strides` sub-struct size (`56` or `32`). */
+  size_t sub_struct_size;
+  /** @brief Nested `Tiled`/`Strides` sub-struct extension pointer (`NULL`). */
+  PJRT_Extension_Base *sub_extension_start;
   /** @brief Minor-to-major dimension ordering or byte strides pointer. */
   const int64_t *minor_to_major;
   /** @brief Number of minor-to-major dimensions or byte strides. */
@@ -835,8 +839,6 @@ typedef struct PJRT_Buffer_MemoryLayout_Output {
   size_t num_tiles;
   /** @brief Layout type discriminant (`0` = `Tiled`, `1` = `Strides`). */
   size_t layout_type;
-  /** @brief Reserved layout union padding words. */
-  size_t reserved[2];
 } PJRT_Buffer_MemoryLayout_Output;
 
 /**
@@ -3836,6 +3838,349 @@ LibTpuCStatus libtpu_rs_service_host_command(const uint8_t *envelope_bytes,
                                              size_t envelope_len,
                                              uint64_t *out_ack_sync);
 
+/**
+ * @brief Runs HLO rematerialization and input-output buffer donation alias
+ * analysis on `executable` (`libtpu_rs_query_rematerialization_report`).
+ * @param executable Pointer to `const PJRT_LoadedExecutable`.
+ * @param memory_limit_bytes Target peak memory budget in bytes (`>= 256`).
+ * @param out_buf Optional destination character buffer.
+ * @param buf_len Capacity of `out_buf` in bytes (including null terminator).
+ * @return Full UTF-8 byte length of the summary string, or `0` if `executable`
+ * is null.
+ */
+size_t libtpu_rs_query_rematerialization_report(
+    const PJRT_LoadedExecutable *executable, uint64_t memory_limit_bytes,
+    char *out_buf, size_t buf_len);
+
+/**
+ * @brief Executes the lowered `BarnacoreExecutableProto` `SparseCore` (`SCS` /
+ * `TAC` / `TEC`) embedding program for `executable` across all subcores
+ * (`libtpu_rs_execute_barnacore_program`).
+ * @param executable Pointer to `const PJRT_LoadedExecutable`.
+ * @param optimizer_algorithm `SparseCoreOptimizer` ordinal (`0..=17`).
+ * @param out_sparse_ops Output pointer receiving the executed sparse operation
+ * count.
+ * @return `LibTpuCStatus` indicating execution status.
+ */
+LibTpuCStatus
+libtpu_rs_execute_barnacore_program(const PJRT_LoadedExecutable *executable,
+                                    int32_t optimizer_algorithm,
+                                    uint64_t *out_sparse_ops);
+
+/**
+ * @brief Argument structure for `PJRT_Plugin_Initialize` (`16` bytes).
+ */
+typedef struct PJRT_Plugin_Initialize_Args {
+  /** @brief Size of this struct (`16`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+} PJRT_Plugin_Initialize_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Plugin_Attributes` (`32` bytes).
+ */
+typedef struct PJRT_Plugin_Attributes_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Output pointer to `PJRT_NamedValue` array. */
+  const PJRT_NamedValue *attributes;
+  /** @brief Output number of attributes. */
+  size_t num_attributes;
+} PJRT_Plugin_Attributes_Args;
+
+/**
+ * @brief Argument structure for `PJRT_ExecuteContext_Create` (`24` bytes).
+ */
+typedef struct PJRT_ExecuteContext_Create_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Output created `PJRT_ExecuteContext*`. */
+  PJRT_ExecuteContext *context;
+} PJRT_ExecuteContext_Create_Args;
+
+/**
+ * @brief Argument structure for `PJRT_ExecuteContext_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_ExecuteContext_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Execution context handle to destroy. */
+  PJRT_ExecuteContext *context;
+} PJRT_ExecuteContext_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_DeviceDescription_Id` (`32` bytes).
+ */
+typedef struct PJRT_DeviceDescription_Id_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Device description handle. */
+  const PJRT_DeviceDescription *device_description;
+  /** @brief Output device ID. */
+  int32_t id;
+  /** @brief Explicit alignment padding. */
+  int32_t pad;
+} PJRT_DeviceDescription_Id_Args;
+
+/**
+ * @brief Argument structure for `PJRT_DeviceDescription_ProcessIndex` (`32`
+ * bytes).
+ */
+typedef struct PJRT_DeviceDescription_ProcessIndex_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Device description handle. */
+  const PJRT_DeviceDescription *device_description;
+  /** @brief Output host process index. */
+  int32_t process_index;
+  /** @brief Explicit alignment padding. */
+  int32_t pad;
+} PJRT_DeviceDescription_ProcessIndex_Args;
+
+/**
+ * @brief Argument structure for `PJRT_DeviceDescription_Kind` (`40` bytes).
+ */
+typedef struct PJRT_DeviceDescription_Kind_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Device description handle. */
+  const PJRT_DeviceDescription *device_description;
+  /** @brief Output kind string pointer. */
+  const char *device_kind;
+  /** @brief Output kind string byte length. */
+  size_t device_kind_size;
+} PJRT_DeviceDescription_Kind_Args;
+
+/**
+ * @brief Argument structure for `PJRT_DeviceDescription_ToString` (`40` bytes).
+ */
+typedef struct PJRT_DeviceDescription_ToString_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Device description handle. */
+  const PJRT_DeviceDescription *device_description;
+  /** @brief Output string pointer. */
+  const char *to_string;
+  /** @brief Output string byte length. */
+  size_t to_string_size;
+} PJRT_DeviceDescription_ToString_Args;
+
+/**
+ * @brief Host data chunk descriptor for `PJRT_CopyToDeviceStream_AddChunk`
+ * (`32` bytes).
+ */
+typedef struct PJRT_Chunk {
+  /** @brief Pointer to host chunk data bytes. */
+  void *data;
+  /** @brief Byte size of `data`. */
+  size_t size;
+  /** @brief Optional chunk deleter callback (`void (*)(void*, void*)`). */
+  void (*deleter)(void *data, void *deleter_arg);
+  /** @brief Opaque argument forwarded to `deleter`. */
+  void *deleter_arg;
+} PJRT_Chunk;
+
+/**
+ * @brief Argument structure for `PJRT_CopyToDeviceStream_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_CopyToDeviceStream_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Stream handle to destroy. */
+  PJRT_CopyToDeviceStream *stream;
+} PJRT_CopyToDeviceStream_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_CopyToDeviceStream_AddChunk` (`40`
+ * bytes).
+ */
+typedef struct PJRT_CopyToDeviceStream_AddChunk_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Stream handle. */
+  PJRT_CopyToDeviceStream *stream;
+  /** @brief Input `const PJRT_Chunk*` descriptor. */
+  const PJRT_Chunk *chunk;
+  /** @brief Output completion `PJRT_Event*`. */
+  PJRT_Event *transfer_complete;
+} PJRT_CopyToDeviceStream_AddChunk_Args;
+
+/**
+ * @brief Argument structure for `PJRT_CopyToDeviceStream_TotalBytes` (`32`
+ * bytes).
+ */
+typedef struct PJRT_CopyToDeviceStream_TotalBytes_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Stream handle. */
+  const PJRT_CopyToDeviceStream *stream;
+  /** @brief Output total expected bytes. */
+  int64_t total_bytes;
+} PJRT_CopyToDeviceStream_TotalBytes_Args;
+
+/**
+ * @brief Argument structure for `PJRT_CopyToDeviceStream_GranuleSize` (`32`
+ * bytes).
+ */
+typedef struct PJRT_CopyToDeviceStream_GranuleSize_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Stream handle. */
+  const PJRT_CopyToDeviceStream *stream;
+  /** @brief Output granule size in bytes. */
+  int64_t granule_size_in_bytes;
+} PJRT_CopyToDeviceStream_GranuleSize_Args;
+
+/**
+ * @brief Argument structure for `PJRT_CopyToDeviceStream_CurrentBytes` (`32`
+ * bytes).
+ */
+typedef struct PJRT_CopyToDeviceStream_CurrentBytes_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Stream handle. */
+  const PJRT_CopyToDeviceStream *stream;
+  /** @brief Output currently transferred bytes. */
+  int64_t current_bytes;
+} PJRT_CopyToDeviceStream_CurrentBytes_Args;
+
+/**
+ * @brief Argument structure for `PJRT_FFI_TypeID_Register` (`40` bytes).
+ */
+typedef struct PJRT_FFI_TypeID_Register_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Custom type name UTF-8 pointer. */
+  const char *type_name;
+  /** @brief Byte length of `type_name`. */
+  size_t type_name_size;
+  /** @brief Registered custom type ID (`>= 1`). */
+  int64_t type_id;
+} PJRT_FFI_TypeID_Register_Args;
+
+/**
+ * @brief Argument structure for `PJRT_FFI_UserData_Add` (`48` bytes).
+ */
+typedef struct PJRT_FFI_UserData_Add_Args {
+  /** @brief Size of this struct (`48`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Target `PJRT_ExecuteContext*` handle. */
+  void *context;
+  /** @brief Registered custom type ID. */
+  int64_t type_id;
+  /** @brief Opaque user data pointer. */
+  void *data;
+  /** @brief Optional C deleter callback (`void (*)(void*)`). */
+  void (*deleter)(void *);
+} PJRT_FFI_UserData_Add_Args;
+
+/**
+ * @brief Argument structure for `PJRT_FFI_Register_Handler` (`64` bytes).
+ */
+typedef struct PJRT_FFI_Register_Handler_Args {
+  /** @brief Size of this struct (`64`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Custom-call target name UTF-8 pointer. */
+  const char *target_name;
+  /** @brief Byte length of `target_name`. */
+  size_t target_name_size;
+  /** @brief Typed `XLA_FFI_Handler` function pointer (`const void*`). */
+  const void *handler;
+  /** @brief Platform name UTF-8 pointer (`"TPU"`). */
+  const char *platform_name;
+  /** @brief Byte length of `platform_name`. */
+  size_t platform_name_size;
+  /** @brief Handler traits bitmask (`0` = default). */
+  uint32_t traits;
+  /** @brief Alignment padding (`0`). */
+  uint32_t pad;
+} PJRT_FFI_Register_Handler_Args;
+
+/**
+ * @brief `OpenXLA` Typed FFI extension descriptor (`PJRT_FFI_Extension`,
+ * `ext_type = 3`, `48` bytes).
+ */
+typedef struct PJRT_FFI_Extension {
+  /** @brief 24-byte `PJRT_Extension_Base` header (`ext_type = 3`). */
+  PJRT_Extension_Base base;
+  /** @brief Slot 1 (`0x18`): `PJRT_FFI_TypeID_Register`. */
+  PjrtApiFn type_id_register;
+  /** @brief Slot 2 (`0x20`): `PJRT_FFI_UserData_Add`. */
+  PjrtApiFn user_data_add;
+  /** @brief Slot 3 (`0x28`): `PJRT_FFI_Register_Handler`. */
+  PjrtApiFn register_handler;
+} PJRT_FFI_Extension;
+
+/**
+ * @brief Returns the static `PJRT_FFI_Extension` descriptor (`ext_type = 3`,
+ * `48` bytes).
+ * @return Non-null pointer to static `const PJRT_FFI_Extension`.
+ */
+const PJRT_FFI_Extension *PJRT_FFI_GetExtension(void);
+
+/**
+ * @brief Registers an `OpenXLA` Typed FFI (`xla::ffi`) user-data type ID
+ * (`PJRT_FFI_TypeID_Register`).
+ * @param raw_args Pointer to `PJRT_FFI_TypeID_Register_Args`.
+ * @return `NULL` on success or `PJRT_Error*` on invalid struct size.
+ */
+PJRT_Error *PJRT_FFI_TypeID_Register(void *raw_args);
+
+/**
+ * @brief Attaches typed user data to a `PJRT_ExecuteContext`
+ * (`PJRT_FFI_UserData_Add`).
+ * @param raw_args Pointer to `PJRT_FFI_UserData_Add_Args`.
+ * @return `NULL` on success or `PJRT_Error*` on invalid struct size.
+ */
+PJRT_Error *PJRT_FFI_UserData_Add(void *raw_args);
+
+/**
+ * @brief Registers an `OpenXLA` Typed FFI (`xla::ffi`) custom-call handler
+ * (`PJRT_FFI_Register_Handler`).
+ * @param raw_args Pointer to `PJRT_FFI_Register_Handler_Args`.
+ * @return `NULL` on success or `PJRT_Error*` on invalid struct size.
+ */
+PJRT_Error *PJRT_FFI_Register_Handler(void *raw_args);
+
+/**
+ * @brief Frees a compiled Triton kernel buffer allocated by
+ * `PJRT_Triton_Compile` (`PJRT_Triton_FreeCompiledAsm`).
+ * @param asm_ptr `out_asm` pointer returned by `PJRT_Triton_Compile`.
+ * @param asm_size `out_asm_size` byte length returned by `PJRT_Triton_Compile`.
+ */
+void PJRT_Triton_FreeCompiledAsm(const char *asm_ptr, size_t asm_size);
+
 /** @cond INTERNAL */
 #if defined(__cplusplus)
 static_assert(sizeof(PJRT_Extension_Base) == 24, "PJRT_Extension_Base == 24");
@@ -3920,6 +4265,24 @@ static_assert(sizeof(XLA_FFI_Api) == 56, "XLA_FFI_Api == 56");
 _Static_assert(sizeof(PJRT_Extension_Base) == 24, "PJRT_Extension_Base == 24");
 _Static_assert(sizeof(PJRT_Api_Version) == 24, "PJRT_Api_Version == 24");
 _Static_assert(sizeof(PJRT_Api) == 1144, "PJRT_Api == 1144");
+_Static_assert(sizeof(PJRT_Error_Destroy_Args) == 24, "Error_Destroy == 24");
+_Static_assert(sizeof(PJRT_Error_Message_Args) == 40, "Error_Message == 40");
+_Static_assert(sizeof(PJRT_Error_GetCode_Args) == 32, "Error_GetCode == 32");
+_Static_assert(sizeof(PJRT_Program) == 48, "PJRT_Program == 48");
+_Static_assert(sizeof(PJRT_Client_Create_Args) == 88, "Client_Create == 88");
+_Static_assert(sizeof(PJRT_Client_Destroy_Args) == 24, "Client_Destroy == 24");
+_Static_assert(sizeof(PJRT_Client_Devices_Args) == 40, "Client_Devices == 40");
+_Static_assert(sizeof(PJRT_Client_LookupDevice_Args) == 40,
+               "LookupDevice == 40");
+_Static_assert(sizeof(PJRT_Client_Compile_Args) == 56, "Client_Compile == 56");
+_Static_assert(sizeof(PJRT_Client_BufferFromHostBuffer_Args) == 120,
+               "H2D == 120");
+_Static_assert(sizeof(PJRT_LoadedExecutable_Execute_Args) == 80, "LExec == 80");
+_Static_assert(sizeof(PJRT_Buffer_ToHostBuffer_Args) == 56, "BufToHost == 56");
+_Static_assert(sizeof(PJRT_FFI_TypeID_Register_Args) == 40, "FFI_TypeID == 40");
+_Static_assert(sizeof(PJRT_FFI_UserData_Add_Args) == 48, "FFI_UserData == 48");
+_Static_assert(sizeof(PJRT_FFI_Register_Handler_Args) == 64, "FFI_Reg == 64");
+_Static_assert(sizeof(PJRT_FFI_Extension) == 48, "PJRT_FFI_Extension == 48");
 _Static_assert(sizeof(LibtpuSdk_Api) == 144, "LibtpuSdk_Api == 144");
 _Static_assert(sizeof(TpuDriverFn) == 224, "TpuDriverFn == 224");
 #endif

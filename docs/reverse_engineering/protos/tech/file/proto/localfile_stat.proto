@@ -1,0 +1,8 @@
+syntax = "proto3";
+package tech.file;
+message LocalfileStatOptions {
+  repeated string xattr_names = 1;
+}
+message LocalfileStatResult {
+  map<string, bytes> xattr_values = 1;
+}

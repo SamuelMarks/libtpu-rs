@@ -88,6 +88,62 @@ pub trait SyscallProvider: Send + Sync + std::fmt::Debug {
     ///
     /// Returns [`LibTpuError::HardwareIoError`] on failure.
     fn close_device(&self, fd: i32) -> LibTpuResult<()>;
+
+    /// Reads a 64-bit word from `PCIe` BAR `bar_index` (`0`, `2`, or `4`) at `offset`.
+    ///
+    /// # Arguments
+    ///
+    /// * `bar_index` - Target `PCIe` BAR index (`0`, `2`, or `4`).
+    /// * `offset` - Byte offset within the BAR aperture.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if the MMIO read is unsupported or out of bounds.
+    fn mmio_read_u64(&self, bar_index: u8, offset: MmioOffset) -> LibTpuResult<u64> {
+        let _ = (bar_index, offset);
+        Ok(0)
+    }
+
+    /// Writes a 64-bit word to `PCIe` BAR `bar_index` (`0`, `2`, or `4`) at `offset`,
+    /// trapping hardware doorbells on cycle-accurate emulated devices.
+    ///
+    /// # Arguments
+    ///
+    /// * `bar_index` - Target `PCIe` BAR index (`0`, `2`, or `4`).
+    /// * `offset` - Byte offset within the BAR aperture.
+    /// * `value` - 64-bit value to write.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if the MMIO write faults or hardware doorbell execution fails.
+    fn mmio_write_u64(&self, bar_index: u8, offset: MmioOffset, value: u64) -> LibTpuResult<()> {
+        let _ = (bar_index, offset, value);
+        Ok(())
+    }
+
+    /// Returns `true` when this provider is a cycle-accurate hardware device emulator
+    /// (such as [`super::emulator::VirtualVfioGasketDevice`]) that executes DMA and `IMEM`
+    /// bitstreams asynchronously upon BAR0/BAR2 doorbell writes.
+    fn is_hardware_emulated_device(&self) -> bool {
+        false
+    }
+}
+
+impl dyn SyscallProvider + '_ {
+    /// Issues a strongly-typed `#[repr(C)]` `Pod` `ioctl` command on `fd` via dynamic dispatch.
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - Open file descriptor.
+    /// * `request` - Raw `ioctl` command number (`GASKET_IOCTL_*` or `VFIO_*`).
+    /// * `payload` - Mutable reference to a `#[repr(C)]` `Pod` structure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::IoctlFailed`] on failure.
+    pub fn ioctl_pod<T: Pod>(&self, fd: i32, request: u64, payload: &mut T) -> LibTpuResult<i32> {
+        self.ioctl_bytes(fd, request, bytemuck::bytes_of_mut(payload))
+    }
 }
 
 /// Typed `ioctl` payload passed into [`EmulatedKernelDriverBackend::apply_typed_ioctl`].

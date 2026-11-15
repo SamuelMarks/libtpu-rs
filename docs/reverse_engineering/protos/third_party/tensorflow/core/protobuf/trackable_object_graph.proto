@@ -1,0 +1,33 @@
+syntax = "proto3";
+package tensorflow;
+import "google/protobuf/wrappers.proto";
+message TrackableObjectGraph {
+  message TrackableObject {
+    message ObjectReference {
+      int32 node_id = 1;
+      string local_name = 2;
+    }
+    message SerializedTensor {
+      reserved 4;
+      reserved "optional_restore";
+      string name = 1;
+      string full_name = 2;
+      string checkpoint_key = 3;
+    }
+    message SlotVariableReference {
+      int32 original_variable_node_id = 1;
+      string slot_name = 2;
+      int32 slot_variable_node_id = 3;
+    }
+    repeated .tensorflow.TrackableObjectGraph.TrackableObject.ObjectReference children = 1;
+    repeated .tensorflow.TrackableObjectGraph.TrackableObject.SerializedTensor attributes = 2;
+    repeated .tensorflow.TrackableObjectGraph.TrackableObject.SlotVariableReference slot_variables = 3;
+    .tensorflow.RegisteredSaver registered_saver = 4;
+    .google.protobuf.BoolValue has_checkpoint_values = 5;
+  }
+  repeated .tensorflow.TrackableObjectGraph.TrackableObject nodes = 1;
+}
+message RegisteredSaver {
+  string name = 1;
+  string object_name = 2;
+}

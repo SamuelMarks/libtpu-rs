@@ -1,0 +1,8 @@
+syntax = "proto3";
+package xla;
+import "learning/45eac/tpu/runtime/topology/tpu_configured_properties.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_topology_args.proto";
+message TpuPjRtTopologyDescriptionProto {
+  .tpu.TpuTopologyArgsProto tpu_topology_args = 1;
+  .tpu.TpuConfiguredPropertiesProto tpu_configured_properties = 2;
+}

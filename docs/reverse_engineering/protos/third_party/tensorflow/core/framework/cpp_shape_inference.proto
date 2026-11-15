@@ -1,0 +1,25 @@
+syntax = "proto3";
+package tensorflow.core;
+import "third_party/tensorflow/core/framework/full_type.proto";
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+message CppShapeInferenceResult {
+  reserved 2;
+  reserved 3;
+  message HandleShapeAndType {
+    reserved 3;
+    .tensorflow.TensorShapeProto shape = 1;
+    .tensorflow.DataType dtype = 2;
+    .tensorflow.FullTypeDef type = 4;
+  }
+  message HandleData {
+    bool is_set = 1;
+    repeated .tensorflow.core.CppShapeInferenceResult.HandleShapeAndType shape_and_type = 2;
+  }
+  .tensorflow.TensorShapeProto shape = 1;
+  .tensorflow.core.CppShapeInferenceResult.HandleData handle_data = 4;
+}
+message CppShapeInferenceInputsNeeded {
+  repeated int32 input_tensors_needed = 1;
+  repeated int32 input_tensors_as_shapes_needed = 2;
+}

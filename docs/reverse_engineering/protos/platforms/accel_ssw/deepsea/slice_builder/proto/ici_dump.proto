@@ -1,0 +1,23 @@
+syntax = "proto2";
+package accel_ssw.deepsea.slice_builder.proto;
+import "platforms/accel_ssw/deepsea/common/proto/local_topology.proto";
+import "platforms/accel_ssw/deepsea/common/proto/routing_entry.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/chip_coordinate.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/topology.proto";
+message IciDump {
+  message ChipIciDump {
+    message IciRoutingTables {
+      optional .accel_ssw.deepsea.proto.RoutingTable egress_routing_table = 1;
+      optional .accel_ssw.deepsea.proto.RoutingTable egress_next_hop_routing_table = 2;
+      map<int32, .accel_ssw.deepsea.proto.RoutingTable> link_next_hop_routing_tables = 3;
+    }
+    optional .asic_sw.proto.ChipLocation chip_location = 1;
+    optional int32 chip_id = 2;
+    optional .superpod.routing.proto.ChipCoordinate slice_coordinate = 3;
+    optional .accel_ssw.deepsea.proto.LocalTopology ici_local_connectivity = 4;
+    optional .accel_ssw.deepsea.slice_builder.proto.IciDump.ChipIciDump.IciRoutingTables ici_routing_tables = 5;
+  }
+  optional .superpod.routing.proto.Topology topology = 1;
+  repeated .accel_ssw.deepsea.slice_builder.proto.IciDump.ChipIciDump chip_ici_dumps = 2;
+}

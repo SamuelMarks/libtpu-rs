@@ -1,0 +1,11 @@
+syntax = "proto3";
+package asic_sw.driver.deepsea.jxc;
+import "platforms/asic_sw/lib/deepsea/common/sync_flag.proto";
+message SegmentTableEntry {
+  uint32 base_address_chunk = 1;
+  uint32 segment_size_chunks = 2;
+  uint32 sync_flag_location = 3;
+  .asic_sw.deepsea.SyncFlag.Core control_resource = 4;
+  uint32 virtual_channel = 5;
+  bool is_valid = 6;
+}

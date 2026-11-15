@@ -1,0 +1,7 @@
+syntax = "proto3";
+package xla;
+import "third_party/tensorflow/compiler/xla/service/hlo_profile_printer_data.proto";
+message HloExecutionProfileData {
+  .xla.HloProfilePrinterData printer_data = 1;
+  repeated int64 profile_counters = 2;
+}

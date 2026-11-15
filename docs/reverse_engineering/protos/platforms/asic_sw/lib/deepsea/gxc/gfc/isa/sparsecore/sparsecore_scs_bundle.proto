@@ -1,0 +1,22 @@
+syntax = "proto3";
+package asic_sw.deepsea.gxc.gfc.isa;
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_dma.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_immediates.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_scalar_alu.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_scalar_misc.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_stream.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_vector_scalar.proto";
+message SparseCoreScsBundle {
+  oneof scalar_instruction {
+    .asic_sw.deepsea.gxc.gfc.isa.ScsScalarSubBundle scalar_alu = 1;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreDma dma = 4;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreStream stream = 9;
+  }
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreVectorScalar vector_scalar = 7;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreImmediates immediates = 8;
+}
+message ScsScalarSubBundle {
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarAlu scalar_alu_0 = 1;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarAlu scalar_alu_1 = 2;
+  .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc scalar_misc = 3;
+}

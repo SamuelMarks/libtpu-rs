@@ -1,0 +1,13 @@
+syntax = "proto3";
+package asic_sw;
+import "google/protobuf/timestamp.proto";
+message FlightRecorder {
+  message Entry {
+    .google.protobuf.Timestamp timestamp = 2;
+    string group = 3;
+    string event = 4;
+    string full_text = 5;
+    repeated uint64 args = 6;
+  }
+  repeated .asic_sw.FlightRecorder.Entry entries = 1;
+}

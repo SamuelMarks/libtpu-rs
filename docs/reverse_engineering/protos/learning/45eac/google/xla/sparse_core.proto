@@ -1,0 +1,16 @@
+syntax = "proto3";
+package tensorflow.tpu;
+import "third_party/protobuf/cpp_features.proto";
+message SparseCoreTableMetadata {
+  message TableMetadata {
+    oneof max_ids {
+      int64 max_ids_per_partition = 1;
+      float max_ids_per_partition_per_sample = 2;
+    }
+    oneof max_unique_ids {
+      int64 max_unique_ids_per_partition = 3;
+      float max_unique_ids_per_partition_per_sample = 4;
+    }
+  }
+  map<string, .tensorflow.tpu.SparseCoreTableMetadata.TableMetadata> table_metadata = 1;
+}

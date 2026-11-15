@@ -1,0 +1,15 @@
+syntax = "proto3";
+package tensorflow.profiler;
+message ProfiledInstructionsProto {
+  message InstructionCost {
+    string name = 1;
+    double cost_us = 2;
+  }
+  message Latency {
+    string source = 1;
+    string target = 2;
+    double latency_us = 3;
+  }
+  repeated .tensorflow.profiler.ProfiledInstructionsProto.InstructionCost costs = 1;
+  repeated .tensorflow.profiler.ProfiledInstructionsProto.Latency latencies = 2;
+}

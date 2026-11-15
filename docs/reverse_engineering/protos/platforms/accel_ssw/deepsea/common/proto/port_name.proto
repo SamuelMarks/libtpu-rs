@@ -1,0 +1,11 @@
+syntax = "proto2";
+package accel_ssw.deepsea.proto;
+import "platforms/accel_ssw/deepsea/common/proto/dimension.proto";
+message PortName {
+  optional string host_name = 1;
+  optional int32 chip_index = 2;
+  optional int32 ici_port = 3;
+  optional .accel_ssw.deepsea.proto.Orientation orientation = 4;
+  optional int32 c_26a136ac = 5;
+  optional .accel_ssw.deepsea.proto.Polarity polarity = 6;
+}

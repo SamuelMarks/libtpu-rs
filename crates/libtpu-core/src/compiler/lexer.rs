@@ -1588,10 +1588,12 @@ impl CompiledProgram {
             ("sign", TpuOpCode::Sign, ElementType::F32, 1, &[4]),
             ("is_finite", TpuOpCode::IsFinite, ElementType::Pred, 1, &[4]),
             ("cbrt", TpuOpCode::Cbrt, ElementType::F32, 1, &[4]),
+            ("tanh_f32", TpuOpCode::TanhF32, ElementType::F32, 1, &[4]),
+            ("tanh", TpuOpCode::TanhF32, ElementType::F32, 1, &[4]),
+            ("atan2", TpuOpCode::Atan2, ElementType::F32, 2, &[4]),
             ("tan(", TpuOpCode::Tan, ElementType::F32, 1, &[4]),
             ("stablehlo.tan", TpuOpCode::Tan, ElementType::F32, 1, &[4]),
             ("power", TpuOpCode::Pow, ElementType::F32, 2, &[4]),
-            ("atan2", TpuOpCode::Atan2, ElementType::F32, 2, &[4]),
             ("clamp", TpuOpCode::Clamp, ElementType::F32, 3, &[4]),
             (
                 "popcnt",
@@ -1917,7 +1919,7 @@ impl CompiledProgram {
     /// * `text` - UTF-8 lossy program text or HLO instruction opcode.
     #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
     pub(super) fn parse_textual_program(text: &str) -> ParsedHloModule {
-        if ["sdy.", "chlo.", "scf.for", "to_apply="]
+        if ["module @", "sdy.", "chlo.", "scf.for", "to_apply="]
             .iter()
             .any(|kw| text.contains(kw))
             && let Ok(lowered) =

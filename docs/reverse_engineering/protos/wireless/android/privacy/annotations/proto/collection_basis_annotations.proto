@@ -1,0 +1,30 @@
+syntax = "proto2";
+package wireless.android.privacy;
+import "logs/proto/logs_annotations/logs_annotations.proto";
+import "n2a/p4r2d3/proto/descriptor.proto";
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+import "wireless/android/privacy/annotations/proto/collection_basis_annotations_enums.proto";
+message CollectionUseCaseWrapped {
+  optional .wireless.android.privacy.CollectionUseCase use_case = 1;
+}
+message EligibleUseCaseWrapped {
+  optional .wireless.android.privacy.EligibleUseCase eligible_use = 1;
+}
+message MessageAnnotation {
+  repeated string features = 1;
+  repeated .wireless.android.privacy.CollectionUseCase use_cases = 2;
+  repeated .wireless.android.privacy.EligibleUseCase eligible_uses = 5 [packed = true];
+  repeated int32 fields = 3;
+  repeated string field_names = 4;
+}
+message FieldAnnotation {
+  repeated string features = 1;
+  repeated .wireless.android.privacy.CollectionUseCase use_cases = 2;
+  repeated .wireless.android.privacy.EligibleUseCase eligible_uses = 5 [packed = true];
+}
+extend .proto2.FieldOptions {
+  repeated .wireless.android.privacy.FieldAnnotation collection_basis = 238270952;
+}
+extend .proto2.MessageOptions {
+  repeated .wireless.android.privacy.MessageAnnotation msg_collection_basis = 271193650;
+}

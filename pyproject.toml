@@ -1,6 +1,7 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "scripts.maturin_backend"
+backend-path = ["."]
 
 [project]
 name = "libtpu"
@@ -12,7 +13,10 @@ license = "Apache-2.0 OR MIT"
 
 [project.optional-dependencies]
 dev = [
+    "maturin>=1.7,<2.0",
+    "ml_dtypes>=0.4",
     "mypy>=1.8",
+    "numpy>=1.26",
     "pre-commit>=3.7",
     "pyelftools>=0.31",
     "pytest>=8.0",
@@ -20,23 +24,19 @@ dev = [
     "ruff>=0.4",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["python/libtpu"]
-artifacts = [
-    "python/libtpu/*.so",
-    "python/libtpu/*.dylib",
-    "python/libtpu/*.dll",
-    "python/libtpu/sdk/*.so",
-    "python/libtpu/sdk/*.dylib",
-    "python/libtpu/sdk/*.dll",
-]
-
-[tool.hatch.build.targets.sdist]
+[tool.maturin]
+manifest-path = "crates/libtpu-py/Cargo.toml"
+python-source = "python"
+module-name = "libtpu._C"
+bindings = "pyo3"
+features = ["extension-module"]
 include = [
-    "python/libtpu",
-    "README.md",
-    "LICENSE-APACHE",
-    "LICENSE-MIT",
+    { path = "python/libtpu/*.so", format = "wheel" },
+    { path = "python/libtpu/*.dylib", format = "wheel" },
+    { path = "python/libtpu/*.dll", format = "wheel" },
+    { path = "python/libtpu/sdk/*.so", format = "wheel" },
+    { path = "python/libtpu/sdk/*.dylib", format = "wheel" },
+    { path = "python/libtpu/sdk/*.dll", format = "wheel" },
 ]
 
 [tool.pytest.ini_options]
@@ -46,7 +46,7 @@ testpaths = ["python/tests"]
 [tool.coverage.run]
 branch = true
 source = ["libtpu"]
-omit = ["python/libtpu/__init__.pyi"]
+omit = ["python/libtpu/__init__.pyi", "python/libtpu/sdk/*.pyi"]
 
 [tool.coverage.report]
 fail_under = 100
@@ -56,6 +56,14 @@ show_missing = true
 strict = true
 python_version = "3.10"
 mypy_path = "python"
+
+[[tool.mypy.overrides]]
+module = ["maturin", "ml_dtypes", "numpy", "numpy.*", "jax", "jax.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["scripts.maturin_backend", "libtpu._interop", "tests.*"]
+disable_error_code = ["import-untyped"]
 
 [tool.ruff]
 line-length = 100

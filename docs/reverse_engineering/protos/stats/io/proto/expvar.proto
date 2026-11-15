@@ -1,0 +1,9 @@
+syntax = "proto3";
+message EV_KeyValuePair {
+  string name = 1;
+  string value = 2;
+  string docstring = 3;
+}
+message EV_KeyValueList {
+  repeated .EV_KeyValuePair pair = 1;
+}

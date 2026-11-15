@@ -369,6 +369,8 @@ impl TpuOpCode {
                 | Self::SemaphoreSignal
                 | Self::SemaphoreWait
                 | Self::OptimizationBarrier
+                | Self::While
+                | Self::Conditional
         )
     }
 
@@ -545,6 +547,28 @@ pub struct InstructionAttrs {
     pub replica_groups: Vec<Vec<usize>>,
     /// Source-to-target replica pairs `(src, dst)` for `CollectivePermute`.
     pub source_target_pairs: Vec<(usize, usize)>,
+    /// Optional explicit convolution `[in_batch, in_feat, ker_in_feat, ker_out_feat, out_batch, out_feat]` dimension numbers.
+    pub conv_dim_numbers: Option<[usize; 6]>,
+    /// Input spatial dimension indices in `convolution`.
+    pub conv_input_spatial_dims: Vec<usize>,
+    /// Kernel spatial dimension indices in `convolution`.
+    pub conv_kernel_spatial_dims: Vec<usize>,
+    /// Output spatial dimension indices in `convolution`.
+    pub conv_output_spatial_dims: Vec<usize>,
+    /// Register slot indices holding mutable loop state across iterations of a structured `While`.
+    pub while_state_slots: Vec<usize>,
+    /// Register slot index holding the boolean loop-continuation scalar of a structured `While` condition region.
+    pub while_cond_slot: Option<usize>,
+    /// Register slot indices produced by the body region `return` of a structured `While`.
+    pub while_body_slots: Vec<usize>,
+    /// Per-branch `return` register slot vectors for a structured `Conditional` (`stablehlo.case` / `stablehlo.if`).
+    pub branch_output_slots: Vec<Vec<usize>>,
+    /// Destination register slot indices receiving the selected branch results of a structured `Conditional`.
+    pub conditional_result_slots: Vec<usize>,
+    /// True when `Conditional` selector is an integer branch index (`stablehlo.case`) rather than `i1` predicate (`stablehlo.if`).
+    pub conditional_is_indexed: bool,
+    /// Host-transfer channel identifier for `Send` / `Recv` (`jax.pure_callback`).
+    pub send_recv_channel_id: i64,
 }
 
 /// Lowered VLIW hardware instruction bundle targeting a TPU `TensorCore`.

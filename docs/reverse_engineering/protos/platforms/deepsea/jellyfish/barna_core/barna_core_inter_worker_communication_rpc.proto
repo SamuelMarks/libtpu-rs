@@ -1,0 +1,35 @@
+syntax = "proto3";
+package platforms_deepsea.jellyfish.barna_core;
+message InputBatchMetadataAgreementRequest {
+  int32 min_tpu_batch_count = 1;
+  int32 max_tpu_batch_count = 2;
+  int64 max_infeed_size_bytes = 3;
+  int32 global_step = 4;
+  int32 variant_index = 5;
+}
+message InputBatchMetadataAgreementResponse {
+  int32 agreed_min_tpu_batch_count = 1;
+  int32 agreed_max_tpu_batch_count = 2;
+  int64 agreed_max_infeed_size_bytes = 3;
+}
+message GlobalLookupFrequenciesForUserTable {
+  reserved 5;
+  uint64 lookup_count = 1;
+  uint64 unique_lookup_count = 2;
+  uint64 frequent_lookup_count = 3;
+  uint64 unique_frequent_lookup_count = 4;
+  repeated uint64 kth_frequent_lookup_counts = 6;
+}
+message GlobalLookupFrequencies {
+  reserved 1;
+  reserved 2;
+  reserved 4;
+  reserved 5;
+  reserved 6;
+  repeated .platforms_deepsea.jellyfish.barna_core.GlobalLookupFrequenciesForUserTable by_user_table = 7;
+  uint64 num_samples = 3;
+}
+service BarnaCoreInterWorkerCommunicationRpc {
+  rpc AgreeOnInputBatchMetadata(.platforms_deepsea.jellyfish.barna_core.InputBatchMetadataAgreementRequest) returns (.platforms_deepsea.jellyfish.barna_core.InputBatchMetadataAgreementResponse);
+  rpc AccumulateAndFetchLookupFrequency(.platforms_deepsea.jellyfish.barna_core.GlobalLookupFrequencies) returns (.platforms_deepsea.jellyfish.barna_core.GlobalLookupFrequencies);
+}

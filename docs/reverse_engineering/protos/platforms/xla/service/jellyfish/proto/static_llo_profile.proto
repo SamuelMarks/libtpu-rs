@@ -1,0 +1,23 @@
+syntax = "proto3";
+package xla.jellyfish;
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+enum DmaInstructionType {
+  DMA_INSTRUCTION_TYPE_NONE = 0;
+  DMA_INSTRUCTION_TYPE_LOCAL = 1;
+  DMA_INSTRUCTION_TYPE_REMOTE = 2;
+  DMA_INSTRUCTION_TYPE_LOCAL_AND_REMOTE = 3;
+}
+message StaticLloProfileProto {
+  .xla.jellyfish.HloOpEstimate hlo_op_estimate = 1;
+}
+message HloOpEstimate {
+  string hlo_op_name = 1;
+  int64 estimated_cycles = 2;
+  int64 num_equivalent_hlos = 3;
+  .xla.jellyfish.DmaInstructionType dma_instruction_type = 4;
+  .xla.HloInstructionProto hlo_instruction = 5;
+  repeated .xla.ShapeProto operand_shapes = 6;
+  repeated .xla.HloComputationProto called_computations = 7;
+  int64 scalar_inputs = 8;
+}

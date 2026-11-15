@@ -1,0 +1,6 @@
+syntax = "proto3";
+package operations_research;
+message StatusProto {
+  int32 code = 1;
+  string message = 2;
+}

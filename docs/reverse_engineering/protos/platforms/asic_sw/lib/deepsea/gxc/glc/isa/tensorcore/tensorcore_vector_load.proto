@@ -1,0 +1,64 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.glc.isa;
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_common_encodings.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/common_encodings.proto";
+message TensorCoreVectorLoad {
+  message VectorLoadIndexed0 {
+    optional uint32 dest_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+  }
+  message VectorLoad {
+    optional uint32 dest_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 4;
+  }
+  message VectorLoadIndexed1 {
+    optional uint32 dest_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+  }
+  message VectorLoadBase {
+    optional uint32 dest_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorStride stride = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+  }
+  message ReadIar0 {
+    optional uint32 dest_vreg = 1;
+  }
+  message VectorLoadShuffled {
+    optional uint32 dest_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 4;
+  }
+  message ReadIar1 {
+    optional uint32 dest_vreg = 1;
+  }
+  message VectorLoadShuffledBase {
+    optional uint32 dest_vreg = 1;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorShuffle shuffle = 2;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.glc.isa.SublaneMask sublane_mask = 4;
+    optional .asic_sw.deepsea.gxc.glc.isa.VectorOffset offset = 5;
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorLoad.VectorLoadIndexed0 vector_load_indexed_0 = 5;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorLoad.VectorLoad vector_load = 6;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorLoad.VectorLoadIndexed1 vector_load_indexed_1 = 7;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorLoad.VectorLoadBase vector_load_base = 8;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorLoad.ReadIar0 read_iar_0 = 9;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorLoad.VectorLoadShuffled vector_load_shuffled = 10;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorLoad.ReadIar1 read_iar_1 = 11;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorLoad.VectorLoadShuffledBase vector_load_shuffled_base = 12;
+  }
+  optional .asic_sw.deepsea.gxc.glc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional uint32 latency = 2 [default = 1];
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

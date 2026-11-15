@@ -1,0 +1,46 @@
+syntax = "proto2";
+package asic_sw.riscv;
+import "platforms/asic_sw/lib/common/stack_frame.proto";
+message ExceptionInfo {
+  optional uint64 ra = 1;
+  optional uint64 sp = 2;
+  optional uint64 gp = 3;
+  optional uint64 tp = 4;
+  optional uint64 t0 = 5;
+  optional uint64 t1 = 6;
+  optional uint64 t2 = 7;
+  optional uint64 s0 = 8;
+  optional uint64 s1 = 9;
+  optional uint64 a0 = 10;
+  optional uint64 a1 = 11;
+  optional uint64 a2 = 12;
+  optional uint64 a3 = 13;
+  optional uint64 a4 = 14;
+  optional uint64 a5 = 15;
+  optional uint64 a6 = 16;
+  optional uint64 a7 = 17;
+  optional uint64 s2 = 18;
+  optional uint64 s3 = 19;
+  optional uint64 s4 = 20;
+  optional uint64 s5 = 21;
+  optional uint64 s6 = 22;
+  optional uint64 s7 = 23;
+  optional uint64 s8 = 24;
+  optional uint64 s9 = 25;
+  optional uint64 s10 = 26;
+  optional uint64 s11 = 27;
+  optional uint64 t3 = 28;
+  optional uint64 t4 = 29;
+  optional uint64 t5 = 30;
+  optional uint64 t6 = 31;
+  optional uint64 mepc = 32;
+  optional uint64 mstatus = 33;
+}
+message StackFrameWithException {
+  optional .asic_sw.StackFrame frame = 1;
+  optional .asic_sw.riscv.ExceptionInfo exception_info = 2;
+}
+message Results {
+  repeated uint64 cpu_registers = 1;
+  repeated .asic_sw.riscv.StackFrameWithException firmware_stack = 2;
+}

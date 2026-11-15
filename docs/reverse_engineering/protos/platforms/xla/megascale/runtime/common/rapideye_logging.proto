@@ -1,0 +1,99 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+import "platforms/xla/megascale/runtime/common/megascale_status.proto";
+message RapidEyeErrorDigestProto {
+  reserved 3;
+  reserved 4;
+  reserved 6;
+  reserved 13;
+  reserved 16;
+  enum Cause {
+    UNKNOWN_CAUSE = 0;
+    BAD_TPU_CHIP = 1;
+    FINGERPRINT_MISMATCH = 2;
+    DATA_INPUT_STALL = 3;
+    UNRECOVERABLE_ERROR = 4;
+    DIFFERENT_MODULE = 5;
+    NETWORKING_ISSUE = 6;
+    BAD_SC_CHIP = 7;
+    PROGRAM_NOT_QUEUED = 8;
+    LAUNCHES_ORDER_INCONSISTENT = 9;
+    ICI_ERROR = 10;
+  }
+  message WorkerAndCoreInfo {
+    message CoreInfo {
+      int32 chip_id = 1;
+      int32 core_idx = 2;
+      string physical_location = 3;
+    }
+    string worker_id = 1;
+    string host_name = 2;
+    .xla.megascale.runtime.RapidEyeErrorDigestProto.WorkerAndCoreInfo.CoreInfo core_info = 3;
+  }
+  message WorkerInfo {
+    string worker_id = 1;
+    string host_name = 2;
+    string cloud_instance_id = 3;
+  }
+  message WorkersByTpuState {
+    message TpuState {
+      reserved 5;
+      string hlo_name = 3;
+      string computation_name = 4;
+      int64 tag = 1;
+      int64 pc = 2;
+    }
+    .xla.megascale.runtime.RapidEyeErrorDigestProto.WorkersByTpuState.TpuState tpu_state = 1;
+    repeated .xla.megascale.runtime.RapidEyeErrorDigestProto.WorkerAndCoreInfo workers = 2;
+  }
+  message Executable {
+    reserved 2;
+    string fingerprint = 1;
+    string module_name = 3;
+    .xla.megascale.runtime.RapidEyeErrorDigestProto.WorkerAndCoreInfo sample_worker = 4;
+  }
+  message Launch {
+    string launch_id = 1;
+    repeated .xla.megascale.runtime.RapidEyeErrorDigestProto.Executable executables = 3;
+    repeated .xla.megascale.runtime.RapidEyeErrorDigestProto.WorkersByTpuState workers_by_tpu_states = 2;
+  }
+  message FaultyNetworkLink {
+    .xla.megascale.runtime.RapidEyeErrorDigestProto.WorkerInfo src_worker = 1;
+    .xla.megascale.runtime.RapidEyeErrorDigestProto.WorkerInfo dst_worker = 2;
+  }
+  message ErrorMessage {
+    .xla.megascale.runtime.RapidEyeErrorDigestProto.WorkerAndCoreInfo worker = 1;
+    string error_message = 2;
+  }
+  message OffloadedSparseCoreTagPc {
+    message SparseCoreTagPcToWorkers {
+      int64 tag = 1;
+      int64 pc = 2;
+      repeated .xla.megascale.runtime.RapidEyeErrorDigestProto.WorkerAndCoreInfo worker_and_core_info = 3;
+    }
+    string hlo = 1;
+    repeated .xla.megascale.runtime.RapidEyeErrorDigestProto.OffloadedSparseCoreTagPc.SparseCoreTagPcToWorkers sparse_core_tag_pc_to_workers = 2;
+  }
+  message BuildInfo {
+    int64 changelist = 1;
+    int64 baseline_changelist = 2;
+    int64 build_timestamp_secs = 3;
+    string build_label = 4;
+    string build_target = 5;
+    string build_id = 6;
+  }
+  .xla.megascale.runtime.RapidEyeErrorDigestProto.Cause potential_cause = 1;
+  repeated .xla.megascale.runtime.RapidEyeErrorDigestProto.WorkerAndCoreInfo potential_culprit_workers = 2;
+  repeated .xla.megascale.runtime.RapidEyeErrorDigestProto.Launch launches = 21;
+  repeated .xla.megascale.runtime.RapidEyeErrorDigestProto.WorkerInfo all_workers = 5;
+  repeated .xla.megascale.runtime.RapidEyeErrorDigestProto.FaultyNetworkLink faulty_network_links = 18;
+  repeated .xla.megascale.runtime.RapidEyeErrorDigestProto.ErrorMessage error_messages = 12;
+  repeated .xla.megascale.runtime.RapidEyeErrorDigestProto.OffloadedSparseCoreTagPc offloaded_sparse_core_tag_pc = 19;
+  .xla.megascale.runtime.RapidEyeErrorDigestProto.BuildInfo build_info = 20;
+  int64 timestamp_ns = 7;
+  .xla.megascale.runtime.MegaScaleRuntimeError first_recorded_error = 11;
+  fixed64 event_id = 14;
+  int64 xid = 15;
+  string app_type = 17;
+  repeated fixed64 runtime_error_ids = 22;
+}

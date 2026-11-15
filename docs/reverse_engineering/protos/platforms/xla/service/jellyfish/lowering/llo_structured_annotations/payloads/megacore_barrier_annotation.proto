@@ -1,0 +1,5 @@
+syntax = "proto2";
+package xla.jellyfish.annotations;
+message MegacoreBarrierAnnotationProto {
+  optional bool is_barrier = 1;
+}

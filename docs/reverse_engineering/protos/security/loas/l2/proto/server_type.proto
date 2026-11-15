@@ -1,0 +1,6 @@
+syntax = "proto3";
+package security_loas_l2;
+enum ServerType {
+  SERVER_TYPE_UNSPECIFIED = 0;
+  SERVER_TYPE_66d7a6 = 1;
+}

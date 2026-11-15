@@ -1,0 +1,23 @@
+syntax = "proto3";
+package expvar;
+message MapProto {
+  message Pairs {
+    string key = 3;
+    int64 value_int = 4;
+    double value_float = 5;
+    string value_string = 6;
+  }
+  string key_description = 1;
+  repeated .expvar.MapProto.Pairs pairs = 2;
+}
+message VariableProto {
+  string name = 1;
+  string docstring = 6;
+  int64 value_int = 2;
+  double value_float = 3;
+  string value_string = 4;
+  .expvar.MapProto value_map = 5;
+}
+message ListProto {
+  repeated .expvar.VariableProto pair = 1;
+}

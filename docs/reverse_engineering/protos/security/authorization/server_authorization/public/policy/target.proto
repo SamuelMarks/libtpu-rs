@@ -1,0 +1,40 @@
+syntax = "proto3";
+package server_authz;
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+enum TargetType {
+  UNSPECIFIED_TARGET_TYPE = 0;
+  AUTODETECT = 1;
+  ABNS = 2;
+  ABNS_DNS = 3;
+  ABNS_UNSUPPORTED = 23;
+  BNS = 4;
+  BNS_CUSTOM = 26;
+  BNS_DNS = 5;
+  BNS_PRODUCT = 19;
+  c_66d7a6 = 6;
+  GOOGLEAPIS = 7;
+  GSLB = 9;
+  GSLB_DNS = 10;
+  LBNS = 17;
+  LEADER_ELECTION = 28;
+  LS = 20;
+  MBNS = 21;
+  PROD2CLOUD = 16;
+  PROD2CLOUD_GKE = 27;
+  RSLB = 22;
+  RSLB_DNS = 32;
+  BORGHOST_ADDRESS = 29;
+  HOSTNAME = 24;
+  HOST_PORT_ADDRESS = 12;
+  IP_PORT_ADDRESS = 11;
+  LOCALHOST_ADDRESS = 25;
+  MACHINE_HOSTNAME_WITH_CONTAINER_IP_ADDRESS = 31;
+  NETWORK_DEVICE_ADDRESS = 30;
+  UDS = 18;
+  FLAG = 13;
+  UNSUPPORTED = 14;
+}
+message Target {
+  .server_authz.TargetType type = 1;
+  string target = 2;
+}

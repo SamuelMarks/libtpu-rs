@@ -1,0 +1,49 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/shared_isa_base.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_isa_base.proto";
+message TensorCoreVectorResult0 {
+  message Noop {
+  }
+  message PopEupResult {
+    optional .asic_sw.deepsea.pxc.isa.VresDest dest = 1;
+    optional uint32 v0_dest = 2;
+    optional uint32 v1_dest = 3;
+    optional uint32 vld_dest = 4;
+    optional uint32 aux_dest = 5;
+  }
+  message PopMxuResult {
+    optional uint32 mrf_number = 1;
+    optional .asic_sw.deepsea.pxc.isa.VresDest dest = 2;
+    optional uint32 v0_dest = 3;
+    optional uint32 v1_dest = 4;
+    optional uint32 vld_dest = 5;
+    optional uint32 aux_dest = 6;
+  }
+  message PopTransposeResult {
+    optional bool trf = 1;
+    optional .asic_sw.deepsea.pxc.isa.VresDest dest = 2;
+    optional uint32 v0_dest = 3;
+    optional uint32 v1_dest = 4;
+    optional uint32 vld_dest = 5;
+    optional uint32 aux_dest = 6;
+  }
+  message PopCrfResult {
+    optional .asic_sw.deepsea.pxc.isa.VresDest dest = 1;
+    optional uint32 v0_dest = 2;
+    optional uint32 v1_dest = 3;
+    optional uint32 vld_dest = 4;
+    optional uint32 aux_dest = 5;
+  }
+  oneof inst {
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorResult0.Noop noop = 5;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorResult0.PopEupResult pop_eup_result = 6;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorResult0.PopMxuResult pop_mxu_result = 7;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorResult0.PopTransposeResult pop_transpose_result = 8;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorResult0.PopCrfResult pop_crf_result = 9;
+  }
+  optional .asic_sw.deepsea.pxc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional uint32 latency = 2 [default = 1];
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

@@ -1,0 +1,11 @@
+syntax = "proto3";
+package platforms_xla_sparse_core_hlo;
+import "platforms/xla/service/jellyfish/lowering/backend_configs.proto";
+message EmbeddingsLoopConfigs {
+  message OptimalLoopConfig {
+    string kernel_name = 1;
+    .xla.jellyfish.LoopConfig loop_config = 2;
+    optional int32 max_feature_width_for_full_unroll = 3;
+  }
+  repeated .platforms_xla_sparse_core_hlo.EmbeddingsLoopConfigs.OptimalLoopConfig optimal_loop_configs = 1;
+}

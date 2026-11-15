@@ -1,0 +1,10 @@
+syntax = "proto3";
+package xla.tpu.sparse_core.isa_emitter.ghostlite;
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/sparsecore/sparsecore_scs_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/sparsecore/sparsecore_tac_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/sparsecore/sparsecore_tec_program.proto";
+message ProgramWrapper {
+  .asic_sw.deepsea.gxc.glc.isa.SparseCoreTacProgram tac = 1;
+  .asic_sw.deepsea.gxc.glc.isa.SparseCoreTecProgram tec = 2;
+  .asic_sw.deepsea.gxc.glc.isa.SparseCoreScsProgram scs = 3;
+}

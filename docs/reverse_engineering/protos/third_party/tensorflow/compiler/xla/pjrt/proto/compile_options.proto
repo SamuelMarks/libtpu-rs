@@ -1,0 +1,63 @@
+syntax = "proto3";
+package xla;
+import "third_party/tensorflow/compiler/xla/service/gpu_topology.proto";
+import "third_party/tensorflow/compiler/xla/stream_executor/device_description.proto";
+import "third_party/tensorflow/compiler/xla/xla.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message ExecutableBuildOptionsProto {
+  reserved 26;
+  reserved 20;
+  reserved 21;
+  reserved "slice_size";
+  int64 device_ordinal = 1;
+  .xla.ShapeProto result_layout = 2;
+  .xla.CompilationEnvironmentsProto comp_envs = 13;
+  .xla.DebugOptions debug_options = 3;
+  int64 num_replicas = 4;
+  int64 num_partitions = 5;
+  bool use_spmd_partitioning = 6;
+  bool use_auto_spmd_partitioning = 7;
+  .xla.ExecutionOptions.EffortLevel optimization_level = 24;
+  .xla.ExecutionOptions.EffortLevel memory_fitting_level = 25;
+  bool deduplicate_hlo = 8;
+  .xla.DeviceAssignmentProto device_assignment = 9;
+  bool alias_passthrough_params = 10;
+  bool run_backend_only = 11;
+  repeated bool allow_spmd_sharding_propagation_to_parameters = 18;
+  repeated bool allow_spmd_sharding_propagation_to_output = 12;
+  bytes fdo_profile = 14;
+  int64 device_memory_size = 15;
+  repeated int64 auto_spmd_partitioning_mesh_shape = 16;
+  repeated int64 auto_spmd_partitioning_mesh_ids = 17;
+  bool use_shardy_partitioner = 19;
+  int64 process_index = 22;
+  int64 process_count = 23;
+  .xla.GpuTopologyProto gpu_topology = 27;
+}
+message OptionOverrideProto {
+  oneof value {
+    string string_field = 1;
+    bool bool_field = 2;
+    int64 int_field = 3;
+    double double_field = 4;
+  }
+}
+message CompileOptionsProto {
+  repeated .xla.ShapeProto argument_layouts = 1;
+  bool parameter_is_tupled_arguments = 2;
+  .xla.ExecutableBuildOptionsProto executable_build_options = 3;
+  bool compile_portable_executable = 4;
+  int64 profile_version = 5;
+  bytes serialized_multi_slice_config = 6;
+  map<string, .xla.OptionOverrideProto> env_option_overrides = 7;
+  .stream_executor.GpuTargetConfigProto target_config = 8;
+  bool allow_in_place_mlir_modification = 9;
+  .xla.PrecisionConfig.Precision matrix_unit_operand_precision = 10;
+  optional string compiler_variant = 11;
+  repeated int32 individually_defined_output_indices = 12;
+}
+message ExecutableAndOptionsProto {
+  bytes serialized_executable = 1;
+  .xla.CompileOptionsProto compile_options = 2;
+  string pjrt_client_name = 3;
+}

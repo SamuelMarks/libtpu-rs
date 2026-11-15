@@ -1,0 +1,14 @@
+syntax = "proto3";
+package asic_sw.driver.deepsea.jxc;
+enum RunStatus {
+  HALTING = 0;
+  HALTED = 1;
+  BREAKPOINT = 2;
+  PEEKING1 = 3;
+  PEEKING2 = 4;
+  PEEK_DONE = 5;
+  START1 = 6;
+  START2 = 7;
+  RUN_FIRST = 8;
+  RUNNING = 9;
+}

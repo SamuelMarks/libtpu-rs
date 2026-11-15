@@ -1,0 +1,9 @@
+syntax = "proto3";
+package platforms_deepsea.jellyfish.xdb;
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message LaunchInfo {
+  int64 hlo_module_id = 1;
+  string hlo_module_name = 2;
+  int32 launch_barrier_id = 3;
+  .xla.DeviceAssignmentProto device_assignment = 4;
+}

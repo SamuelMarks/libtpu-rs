@@ -23,6 +23,8 @@ pub mod carver;
 pub mod disassembler;
 /// Artifact digests (`SHA-256`/`BLAKE3`) and golden manifest parsers.
 pub mod manifest;
+/// Zero-`.symtab` `DescriptorTable` `protodesc_cold` carver, `.proto` decompiler, and `encoded_gcsr` Brotli CSR decoder.
+pub mod proto_carver;
 /// ELF64 `.rela.dyn` relocation resolver and C/C++ vtable reconstructors.
 pub mod relocations;
 /// ELF64/Mach-O symbol inspector, `.eh_frame` parser, and C++ demangler.
@@ -60,6 +62,15 @@ pub use self::manifest::{
     GoldenLibtpuSo, GoldenPjrtSlot, GoldenProtoDescriptorEntry, GoldenProtoDescriptorsManifest,
     GoldenSdkSo, GoldenStructLayouts, compute_artifact_digests, parse_golden_binary_manifest,
     parse_golden_proto_descriptors, parse_golden_struct_layouts,
+};
+pub use self::proto_carver::{
+    DescriptorTableRecord, ExtractedCsrBitfield, ExtractedHardwareCsrEntry, StaticCsrFamily,
+    decode_barna_core_constant_parameters, decode_barna_core_model_parameters,
+    decode_brotli_error_sources, decode_encoded_gcsr_brotli_csr_map,
+    decode_encoded_gcsr_brotli_detailed, decompile_file_descriptor_to_proto,
+    extract_elf64_descriptor_table_protos, extract_elf64_filewrapper_toc_entries,
+    extract_elf64_static_csr_maps, gcsr_swaccess_to_code, sanitize_proto_qualified_name,
+    topological_sort_file_descriptors,
 };
 pub use self::relocations::{
     CppRttiHierarchyExtractor, ElfRelativeRelocation, ExtractedExtensionNode,

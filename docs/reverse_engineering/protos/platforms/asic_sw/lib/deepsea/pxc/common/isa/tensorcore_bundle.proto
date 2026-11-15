@@ -1,0 +1,28 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_cmem_load.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_misc.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_scalar_0.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_scalar_1.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_vector_alu_0.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_vector_alu_1.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_vector_extended_0.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_vector_extended_1.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_vector_load.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_vector_result_0.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_vector_result_1.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_vector_store.proto";
+message TensorCoreBundle {
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreScalar0 scalar_0 = 1;
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreScalar1 scalar_1 = 2;
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreVectorAlu0 vector_alu_0 = 3;
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreVectorAlu1 vector_alu_1 = 4;
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore vector_store = 5;
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreVectorLoad vector_load = 6;
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreCmemLoad cmem_load = 7;
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreVectorExtended0 vector_extended_0 = 8;
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreVectorExtended1 vector_extended_1 = 9;
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreVectorResult0 vector_result_0 = 10;
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreVectorResult1 vector_result_1 = 11;
+  optional .asic_sw.deepsea.pxc.isa.TensorCoreMisc misc = 12;
+}

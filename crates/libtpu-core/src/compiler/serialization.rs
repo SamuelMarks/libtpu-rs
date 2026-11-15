@@ -4,12 +4,10 @@ use super::CompiledProgram;
 use super::opcode::TpuOpCode;
 use crate::error::{LibTpuError, LibTpuResult, Utf8ErrorWrapper};
 use crate::proto::{
-    CompileOptionsProto, DeepseaConstantPoolEntryProto, DeepseaExecutableProto,
-    DeepseaOverlaySectionProto, DeepseaRelocationEntryProto, DeepseaSyncFlagInitProto,
-    IsaBundleSlotProto, IsaCoreProgramHeaderProto, IsaProgramProto, IsaSymbolTableEntryProto,
-    IsaVliwBundleProto, LayoutProto, ProgramRelocationProto, ShapeProto, TargetArgumentsProto,
-    TileProto, TpuCoreProgramAbiProto, TpuExecutableProto, TpuSerializedExecutableProto,
-    sha256_fingerprint_u64,
+    BufferAllocationAssignedProto, CompileOptionsProto, DeepseaExecutableProto, IsaProgramProto,
+    LayoutProto, LoadableSegmentProto, ProgramRelocationProto, ProtoSchemaMessage as _, ShapeProto,
+    TargetArgumentsProto, TileProto, TpuCoreProgramAbiProto, TpuExecutableProto,
+    TpuSerializedExecutableProto, flat_attribute_proto,
 };
 use crate::types::{ByteSize, DeviceAddress, ElementType};
 
@@ -37,7 +35,7 @@ pub const R_DEEPSEA_SYNC_FLAG16: u32 = 4;
 /// Relocated and unpacked `EM_DEEPSEA` (`0x1AE0`) ELF64 device executable artifact.
 #[derive(Debug, Clone)]
 pub struct DeepseaRelocatedArtifact {
-    /// Relocated 64-byte `TensorCoreVliwBundle` `IMEM` binary stream (`.text.llo`).
+    /// Relocated 64-byte `LloBundle` `IMEM` binary stream (`.text.llo`).
     pub relocated_imem: Vec<u8>,
     /// Constant tensor pool bytes extracted from `.rodata.cst`.
     pub constant_pool: Vec<u8>,
@@ -99,58 +97,44 @@ impl CompiledProgram {
             allocations.push(crate::proto::BufferAllocationProto {
                 index: next_idx,
                 size,
-                is_thread_local: false,
-                is_tuple: false,
                 is_entry_computation_parameter: true,
                 parameter_number: i64::try_from(param_idx).unwrap_or(0),
-                is_constant: false,
-                maybe_live_out: false,
                 color: 0,
-                assigned: vec![crate::proto::BufferAllocationSliceProto {
-                    offset: 0,
-                    size,
-                    buffer_allocation_index: next_idx,
-                    element_type: shape.element_type.as_raw(),
-                }],
-                assigned_logical_buffers: vec![crate::proto::BufferAllocationAssignedProto {
+                assigned: vec![BufferAllocationAssignedProto {
                     logical_buffer_id: next_idx,
                     offset: 0,
                     size,
+                    element_type: shape.element_type.as_raw(),
                 }],
+                ..crate::proto::BufferAllocationProto::default()
             });
             next_idx += 1;
         }
 
         let liveness = self.compute_liveness_intervals();
         let vmem_size = self.memory_stats.temp_size_in_bytes.max(256);
-        let mut vmem_slices = vec![crate::proto::BufferAllocationSliceProto {
+        let mut vmem_assigned = vec![BufferAllocationAssignedProto {
+            logical_buffer_id: next_idx,
             offset: 0,
             size: vmem_size,
-            buffer_allocation_index: next_idx,
             element_type: ElementType::F32.as_raw(),
         }];
         for iv in &liveness {
             let slice_sz = i64::try_from(iv.size_bytes.max(256)).unwrap_or(256);
             let slice_off = i64::try_from(iv.assigned_vmem_offset).unwrap_or(0);
-            vmem_slices.push(crate::proto::BufferAllocationSliceProto {
+            vmem_assigned.push(BufferAllocationAssignedProto {
+                logical_buffer_id: next_idx,
                 offset: slice_off,
                 size: slice_sz,
-                buffer_allocation_index: next_idx,
                 element_type: ElementType::F32.as_raw(),
             });
         }
         allocations.push(crate::proto::BufferAllocationProto {
             index: next_idx,
             size: vmem_size,
-            is_thread_local: false,
-            is_tuple: false,
-            is_entry_computation_parameter: false,
-            parameter_number: 0,
-            is_constant: false,
-            maybe_live_out: false,
             color: 1,
-            assigned: vmem_slices,
-            assigned_logical_buffers: Vec::new(),
+            assigned: vmem_assigned,
+            ..crate::proto::BufferAllocationProto::default()
         });
         next_idx += 1;
 
@@ -160,20 +144,15 @@ impl CompiledProgram {
                 allocations.push(crate::proto::BufferAllocationProto {
                     index: next_idx,
                     size: c_size,
-                    is_thread_local: false,
-                    is_tuple: false,
-                    is_entry_computation_parameter: false,
-                    parameter_number: 0,
                     is_constant: true,
-                    maybe_live_out: false,
                     color: 0,
-                    assigned: vec![crate::proto::BufferAllocationSliceProto {
+                    assigned: vec![BufferAllocationAssignedProto {
+                        logical_buffer_id: next_idx,
                         offset: 0,
                         size: c_size,
-                        buffer_allocation_index: next_idx,
                         element_type: ElementType::F32.as_raw(),
                     }],
-                    assigned_logical_buffers: Vec::new(),
+                    ..crate::proto::BufferAllocationProto::default()
                 });
                 next_idx += 1;
             }
@@ -184,24 +163,15 @@ impl CompiledProgram {
             allocations.push(crate::proto::BufferAllocationProto {
                 index: next_idx,
                 size,
-                is_thread_local: false,
-                is_tuple: false,
-                is_entry_computation_parameter: false,
-                parameter_number: 0,
-                is_constant: false,
                 maybe_live_out: true,
                 color: 0,
-                assigned: vec![crate::proto::BufferAllocationSliceProto {
-                    offset: 0,
-                    size,
-                    buffer_allocation_index: next_idx,
-                    element_type: out_shape.element_type.as_raw(),
-                }],
-                assigned_logical_buffers: vec![crate::proto::BufferAllocationAssignedProto {
+                assigned: vec![BufferAllocationAssignedProto {
                     logical_buffer_id: next_idx,
                     offset: 0,
                     size,
+                    element_type: out_shape.element_type.as_raw(),
                 }],
+                ..crate::proto::BufferAllocationProto::default()
             });
             next_idx += 1;
         }
@@ -210,6 +180,7 @@ impl CompiledProgram {
             logical_buffers: Vec::new(),
             buffer_allocations: allocations,
             heap_simulator_traces: Vec::new(),
+            ..crate::proto::BufferAssignmentProto::default()
         }
     }
 
@@ -223,7 +194,7 @@ impl CompiledProgram {
                 element_type: s.element_type.as_raw(),
                 dimensions: s.dims.clone(),
                 tuple_shapes: Vec::new(),
-                layout: Some(LayoutProto {
+                layout: Some(Box::new(LayoutProto {
                     minor_to_major: (0..s.dims.len())
                         .rev()
                         .map(|i| i64::try_from(i).unwrap_or(0))
@@ -238,7 +209,7 @@ impl CompiledProgram {
                     element_size_in_bits: i64::try_from(s.element_type.bit_size()).unwrap_or(0),
                     dynamic_shape_metadata_prefix_bytes: 0,
                     ..LayoutProto::default()
-                }),
+                })),
                 is_dynamic_dimension: s.dynamic_dims.clone(),
             })
             .collect();
@@ -259,115 +230,73 @@ impl CompiledProgram {
         }
     }
 
-    /// Builds the structured [`IsaProgramProto`] for this [`CompiledProgram`], populating
-    /// only the active functional unit slots (`scalar_s0`, `vector_v0`, `matrix_m0`, `unary_xlu`, `dma_d0`)
-    /// for each lowered [`super::opcode::TpuInstructionBundle`].
+    /// Builds the wire-exact [`IsaProgramProto`] (`platforms/xla/service/jellyfish/isa_program.proto`)
+    /// for this [`CompiledProgram`] using the active [`crate::config::global_init_config`] generation.
     #[must_use]
-    #[allow(clippy::too_many_lines)]
     pub fn build_isa_program_proto(&self) -> IsaProgramProto {
-        let raw_vliw_stream = self.encode_architectural_imem();
-        let mut structured_bundles: Vec<IsaVliwBundleProto> =
-            Vec::with_capacity(self.instruction_bundles.len());
-        for b in &self.instruction_bundles {
-            let src0 = u32::try_from(b.operand_slots.first().copied().unwrap_or(0)).unwrap_or(0);
-            let src1 = u32::try_from(b.operand_slots.get(1).copied().unwrap_or(0)).unwrap_or(0);
-            let dst_reg = u32::try_from(b.output_slot).unwrap_or(0);
-            let op_code = u32::from(u8::from(b.opcode));
-            let imm = i64::from(b.sync_flag_id);
-            let is_mxu = b.opcode == TpuOpCode::DotGeneralF32;
-            let is_xunary = b.opcode.is_transcendental();
-            let is_dma = b.opcode.has_side_effects();
+        let generation = crate::config::global_init_config().generation;
+        self.build_isa_program_proto_for_generation(generation)
+    }
 
-            let scalar_s0 = Some(IsaBundleSlotProto {
-                unit_kind: 0,
-                opcode: 1,
-                dst_reg: 0,
-                src0_reg: u32::try_from(b.attrs.iota_dim).unwrap_or(0),
-                src1_reg: u32::try_from(b.attrs.concat_dim).unwrap_or(0),
-                predicate_reg: 0,
-                immediate: i64::from(b.pc_offset),
-            });
-            let vector_v0 = Some(IsaBundleSlotProto {
-                unit_kind: 1,
-                opcode: op_code,
-                dst_reg,
-                src0_reg: src0,
-                src1_reg: src1,
-                predicate_reg: 0,
-                immediate: imm,
-            });
-            let matrix_m0 = is_mxu.then_some(IsaBundleSlotProto {
-                unit_kind: 2,
-                opcode: op_code,
-                dst_reg,
-                src0_reg: src0,
-                src1_reg: src1,
-                predicate_reg: 0,
-                immediate: imm,
-            });
-            let unary_xlu = is_xunary.then_some(IsaBundleSlotProto {
-                unit_kind: 3,
-                opcode: op_code,
-                dst_reg,
-                src0_reg: src0,
-                src1_reg: 0,
-                predicate_reg: 0,
-                immediate: imm,
-            });
-            let dma_d0 = is_dma.then_some(IsaBundleSlotProto {
-                unit_kind: 4,
-                opcode: op_code,
-                dst_reg,
-                src0_reg: src0,
-                src1_reg: src1,
-                predicate_reg: 0,
-                immediate: imm,
-            });
-            structured_bundles.push(IsaVliwBundleProto {
-                pc_index: b.pc_offset,
-                scalar_s0,
-                scalar_s1: None,
-                vector_v0,
-                vector_v1: None,
-                matrix_m0,
-                matrix_m1: None,
-                unary_xlu,
-                dma_d0,
-                llo_annotation: format!("llo.{:?}", b.opcode),
-            });
-        }
-        let imem_bytes = u64::try_from(raw_vliw_stream.len()).unwrap_or(0);
-        let schedules = self.compute_polyhedral_tile_schedules();
+    /// Builds the wire-exact [`IsaProgramProto`] for `generation`, populating `loadable_segments`,
+    /// `relocations`, `abi`, and the generation-exact `isa_programs` `oneof` variant.
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target [`crate::types::TpuGeneration`].
+    #[must_use]
+    pub fn build_isa_program_proto_for_generation(
+        &self,
+        generation: crate::types::TpuGeneration,
+    ) -> IsaProgramProto {
+        use crate::proto::isa_program_proto::IsaPrograms;
+        let llo_bundles = self.encode_vliw_program();
+        let raw_vliw_stream = self.encode_architectural_imem();
+        let isa_programs = Some(match generation {
+            crate::types::TpuGeneration::V2 => IsaPrograms::DeepseaProgram(
+                super::isa::JellyfishIsaCodec::to_isa_program_proto(&llo_bundles),
+            ),
+            crate::types::TpuGeneration::V3 => IsaPrograms::DeepseaProgram(
+                super::isa::DragonfishIsaCodec::to_isa_program_proto(&llo_bundles),
+            ),
+            crate::types::TpuGeneration::V4 | crate::types::TpuGeneration::V4Lite => {
+                IsaPrograms::PufferfishTensorcoreProgram(
+                    super::isa::PufferfishIsaCodec::to_isa_program_proto(&llo_bundles),
+                )
+            }
+            crate::types::TpuGeneration::V5e | crate::types::TpuGeneration::V5p => {
+                IsaPrograms::ViperfishTensorcoreProgram(
+                    super::isa::ViperfishIsaCodec::to_isa_program_proto(&llo_bundles),
+                )
+            }
+            crate::types::TpuGeneration::V6e => IsaPrograms::GhostliteTensorcoreProgram(
+                super::isa::GhostfishIsaCodec::to_isa_program_proto(&llo_bundles),
+            ),
+            crate::types::TpuGeneration::V7x => IsaPrograms::C6acc60406TensorcoreProgram(
+                super::isa::IronwoodIsaCodec::to_isa_program_proto(&llo_bundles),
+            ),
+        });
         let mut isa_relocations = Vec::new();
         for (p_idx, _) in self.parameter_shapes.iter().enumerate() {
+            let bundle_idx =
+                i64::try_from(p_idx % self.instruction_bundles.len().max(1)).unwrap_or(0);
             isa_relocations.push(ProgramRelocationProto {
-                offset: i64::try_from((p_idx % self.instruction_bundles.len().max(1)) * 64 + 12)
-                    .unwrap_or(12),
+                bundle: bundle_idx,
+                slot: 3,
                 kind: 0,
-                target_index: i64::try_from(p_idx).unwrap_or(0),
-                addend: 0,
+                memory_space: 0,
+                memory_sub_space: i32::try_from(p_idx).unwrap_or(0),
             });
         }
         for (o_idx, _) in self.output_shapes.iter().enumerate() {
-            let last_b = self.instruction_bundles.len().saturating_sub(1);
+            let last_b =
+                i64::try_from(self.instruction_bundles.len().saturating_sub(1)).unwrap_or(0);
             isa_relocations.push(ProgramRelocationProto {
-                offset: i64::try_from(last_b * 64 + 12).unwrap_or(12),
+                bundle: last_b,
+                slot: 3,
                 kind: 1,
-                target_index: i64::try_from(o_idx).unwrap_or(0),
-                addend: 0,
-            });
-        }
-        for (b_idx, sched) in schedules.iter().enumerate() {
-            let vmem_off = if (b_idx & 1) == 0 {
-                sched.ping_vmem_offset
-            } else {
-                sched.pong_vmem_offset
-            };
-            isa_relocations.push(ProgramRelocationProto {
-                offset: i64::try_from(b_idx * 64 + 12).unwrap_or(12),
-                kind: 2,
-                target_index: i64::try_from(b_idx).unwrap_or(0),
-                addend: i64::try_from(vmem_off).unwrap_or(0),
+                memory_space: 0,
+                memory_sub_space: i32::try_from(o_idx).unwrap_or(0),
             });
         }
         let has_sparse_core = self.instruction_bundles.iter().any(|b| {
@@ -376,36 +305,20 @@ impl CompiledProgram {
                     || b.attrs.custom_call_target.contains("TpuEmbedding"))
         });
         IsaProgramProto {
-            isa_architecture: String::from("vfc"),
-            isa_abi_version: 163,
-            core_programs: vec![IsaCoreProgramHeaderProto {
-                core_index: 0,
-                core_type: 0,
-                entry_pc: 0,
-                bundle_count: u64::try_from(structured_bundles.len()).unwrap_or(0),
-                raw_vliw_stream,
-                structured_bundles,
+            loadable_segments: vec![LoadableSegmentProto {
+                address: Some(crate::proto::LloAddressProto {
+                    offset: 0,
+                    space: 1,
+                }),
+                data: raw_vliw_stream,
+                payload: 0,
+                data_hash: self.fingerprint.as_bytes().to_vec(),
+                is_compressed: false,
             }],
-            symbols: vec![IsaSymbolTableEntryProto {
-                name: self.name.clone(),
-                pc_offset: 0,
-                size_bytes: imem_bytes,
-            }],
-            fingerprint: sha256_fingerprint_u64(self.fingerprint.as_bytes()),
-            smem_size_bytes: 1_048_576,
-            vmem_size_bytes: 16_777_216,
-            cmem_size_bytes: 0,
-            imem_size_bytes: i64::try_from(imem_bytes).unwrap_or(0),
-            stack_frame_size_bytes: 4096,
-            sync_flag_count: 512,
-            xla_compiler_version: String::from("libtpu-rs-0.0.52"),
-            llo_schedule_fingerprint: sha256_fingerprint_u64(self.name.as_bytes()),
-            predication_mode: 0,
-            bundle_compression_kind: 0,
+            relocations: isa_relocations,
             compilation_id: 1,
             scs_start_bundle: i64::from(has_sparse_core),
             tile_start_bundle: 0,
-            relocations: isa_relocations,
             abi: Some(TpuCoreProgramAbiProto {
                 version: 6,
                 variant: String::from("default"),
@@ -416,19 +329,22 @@ impl CompiledProgram {
                     "04aaaa86d5833da9604b4c12f1d288aeae18f36853d311e8c143611207b66f52",
                 ),
                 options: None,
+                host_command_abi_versions: Vec::new(),
             }),
             program_name: self.name.clone(),
             oom_during_compilation: false,
+            isa_programs,
+            ..IsaProgramProto::default()
         }
     }
 
     /// Applies [`ProgramRelocationProto`] entries from [`IsaProgramProto::relocations`] in-place
     /// onto a raw 64-byte-aligned `IMEM` binary image (`imem_bytes`), patching the scalar immediate
-    /// (`S0.imm32`) field with the resolved `param_addrs`, `output_addrs`, or `VMEM` ping/pong offsets.
+    /// (`S0.imm32`) field with the resolved `param_addrs` or `output_addrs`.
     ///
     /// # Arguments
     ///
-    /// * `imem_bytes` - Mutable `IMEM` binary image of 64-byte [`super::vliw::TensorCoreVliwBundle`]s.
+    /// * `imem_bytes` - Mutable `IMEM` binary image of 64-byte [`super::llo::LloBundle`] words.
     /// * `relocations` - Slice of [`ProgramRelocationProto`] records to apply.
     /// * `param_addrs` - Device HBM base addresses for input parameters (`kind == 0`).
     /// * `output_addrs` - Device HBM base addresses for output buffers (`kind == 1`).
@@ -438,38 +354,19 @@ impl CompiledProgram {
         param_addrs: &[DeviceAddress],
         output_addrs: &[DeviceAddress],
     ) -> usize {
-        let mut applied = 0_usize;
+        let param_iovas: Vec<u64> = param_addrs.iter().map(|a| a.0).collect();
+        let output_iovas: Vec<u64> = output_addrs.iter().map(|a| a.0).collect();
         for rel in relocations {
-            let off = usize::try_from(rel.offset.max(0)).unwrap_or(0);
-            let idx = usize::try_from(rel.target_index.max(0)).unwrap_or(0);
-            let base_u64 = match rel.kind {
-                0 => param_addrs.get(idx).map_or(0, |a| a.0),
-                1 => output_addrs.get(idx).map_or(0, |a| a.0),
-                _ => 0,
-            };
-            #[allow(clippy::cast_sign_loss)]
-            let patched_u64 = base_u64.wrapping_add(rel.addend as u64);
-            #[allow(clippy::cast_possible_truncation)]
-            let patched_u32 = patched_u64 as u32;
-            let end = off.saturating_add(4).min(imem_bytes.len());
-            for (dst, &src) in imem_bytes
-                .iter_mut()
-                .skip(off)
-                .take(end.saturating_sub(off))
-                .zip(patched_u32.to_le_bytes().iter())
-            {
-                *dst = src;
-            }
-            applied += 1;
+            rel.apply_to_imem(imem_bytes, &param_iovas, &output_iovas);
         }
-        applied
+        relocations.len()
     }
 
     /// Encodes this [`CompiledProgram`] into a generation-specific VLIW bitstream
     /// (`32B` for `V2`/`V3`, `40B` for `V4`/`V4Lite`, `52B` for `V5e`/`V5p`, `64B` for `V6e`/`V7x`),
     /// applies all [`IsaProgramProto::relocations`] for `param_addrs` and `output_addrs` to the
-    /// bundle scalar immediate bitfields, and recomputes each bundle's CRC-8 parity digest so
-    /// [`super::vliw::TensorCoreVliwBundle::decode_generation_bitstream`] succeeds on the relocated bitstream.
+    /// bundle scalar immediate bitfields, and recomputes each bundle's `HighwayHash64` tag so
+    /// [`super::llo::LloBundle::decode_generation_bitstream`] succeeds on the relocated bitstream.
     ///
     /// # Arguments
     ///
@@ -484,17 +381,19 @@ impl CompiledProgram {
         output_addrs: &[DeviceAddress],
     ) -> Vec<u8> {
         let mut arch_imem = self.encode_architectural_imem();
-        let isa_proto = self.build_isa_program_proto();
+        let isa_proto = self.build_isa_program_proto_for_generation(generation);
         let _ = Self::apply_isa_relocations(
             &mut arch_imem,
             &isa_proto.relocations,
             param_addrs,
             output_addrs,
         );
-        let width = super::vliw::TensorCoreVliwBundle::generation_bundle_byte_width(generation);
+        let width = super::llo::LloBundle::generation_bundle_byte_width(generation);
         let mut out = Vec::with_capacity(self.instruction_bundles.len() * width);
         for chunk in arch_imem.chunks_exact(64) {
-            let bundle: super::vliw::TensorCoreVliwBundle = bytemuck::pod_read_unaligned(chunk);
+            let mut arr = [0_u8; 64];
+            arr.copy_from_slice(chunk);
+            let bundle = super::llo::LloBundle::from_bytes(&arr);
             out.extend_from_slice(&bundle.encode_generation_bitstream(generation));
         }
         out
@@ -541,11 +440,14 @@ impl CompiledProgram {
                 segments: vec![crate::proto::TpuMemorySegmentProto {
                     segment_type: 1,
                     memory_type: 1,
-                    initialized_data_range: Some(crate::proto::TpuMemorySegmentRangeProto {
-                        offset: 0,
-                        size: imem_len_i64,
-                    }),
-                    segment_size_in_bytes: imem_len_i64,
+                    segment: Some(
+                        crate::proto::tpu_memory_segment_proto::Segment::InitializedDataRange(
+                            crate::proto::TpuMemorySegmentRangeProto {
+                                start_byte_offset: 0,
+                                size: imem_len_i64,
+                            },
+                        ),
+                    ),
                 }],
                 initialized_data: raw_vliw_stream.to_vec(),
                 hash: self.fingerprint.as_bytes().to_vec(),
@@ -563,45 +465,11 @@ impl CompiledProgram {
                     "04aaaa86d5833da9604b4c12f1d288aeae18f36853d311e8c143611207b66f52",
                 ),
                 options: None,
+                host_command_abi_versions: Vec::new(),
             }),
             oom_during_compilation: false,
-            relocations: Vec::new(),
+            ..crate::proto::TpuCoreProgramProto::default()
         }
-    }
-
-    /// Builds wire-compatible [`DeepseaRelocationEntryProto`] and [`DeepseaConstantPoolEntryProto`]
-    /// tables from the lowered instruction bundles.
-    #[must_use]
-    pub fn build_deepsea_relocations_and_constants(
-        &self,
-    ) -> (
-        Vec<DeepseaRelocationEntryProto>,
-        Vec<DeepseaConstantPoolEntryProto>,
-    ) {
-        let relocations = self
-            .instruction_bundles
-            .iter()
-            .enumerate()
-            .map(|(idx, b)| DeepseaRelocationEntryProto {
-                bundle_offset_bytes: u64::try_from(idx * 64).unwrap_or(0),
-                slot_index: 1,
-                buffer_index: u32::try_from(b.output_slot).unwrap_or(0),
-                addend_bytes: 0,
-                memory_space: 0,
-            })
-            .collect();
-        let constants = self
-            .instruction_bundles
-            .iter()
-            .enumerate()
-            .map(|(idx, b)| DeepseaConstantPoolEntryProto {
-                constant_id: u32::try_from(idx).unwrap_or(0),
-                memory_space: 1,
-                offset_bytes: u64::try_from(idx * 256).unwrap_or(0),
-                payload: b.attrs.constant_bytes.clone(),
-            })
-            .collect();
-        (relocations, constants)
     }
 
     /// Builds a wire-compatible [`crate::proto::HostOffloadingExecutableProto`] for host-offloaded
@@ -619,6 +487,7 @@ impl CompiledProgram {
                 ..crate::proto::HloModuleProto::default()
             }),
             executable_type: 1,
+            aot_compilation_result: None,
         }
     }
 
@@ -639,17 +508,17 @@ impl CompiledProgram {
         attrs.insert(
             String::from("module_name"),
             crate::proto::FfiFlatAttributeProto {
-                scalar: None,
-                array: None,
-                str: self.name.as_bytes().to_vec(),
+                value: Some(flat_attribute_proto::Value::Str(
+                    self.name.as_bytes().to_vec(),
+                )),
             },
         );
         attrs.insert(
             String::from("fingerprint"),
             crate::proto::FfiFlatAttributeProto {
-                scalar: None,
-                array: None,
-                str: self.fingerprint.as_bytes().to_vec(),
+                value: Some(flat_attribute_proto::Value::Str(
+                    self.fingerprint.as_bytes().to_vec(),
+                )),
             },
         );
         (
@@ -659,57 +528,20 @@ impl CompiledProgram {
     }
 
     /// Converts this [`CompiledProgram`] into a full wire-compatible [`TpuExecutableProto`]
-    /// containing [`DeepseaExecutableProto`], [`IsaProgramProto`], and [`TargetArgumentsProto`].
+    /// (`learning/45eac/research/pjrt/tpu_executable.proto`) containing [`DeepseaExecutableProto`],
+    /// [`crate::proto::TpuCoreProgramProto`], and [`TargetArgumentsProto`].
     #[must_use]
     pub fn to_tpu_executable_proto(&self) -> TpuExecutableProto {
         let raw_vliw_stream = self.encode_architectural_imem();
-        let imem_bytes = u64::try_from(raw_vliw_stream.len()).unwrap_or(0);
-        let isa_prog = self.build_isa_program_proto();
         let tpu_gen = crate::config::global_init_config().generation;
-        let tpu_version = i32::from(tpu_gen);
-        let chip_variant = tpu_gen.to_string();
-        let hbm_cap = i64::try_from(tpu_gen.hbm_capacity_bytes().0).unwrap_or(17_179_869_184);
-        let vmem_cap =
-            i64::try_from(tpu_gen.vmem_capacity_bytes_per_core().0).unwrap_or(16_777_216);
-        let target_args = TargetArgumentsProto {
-            tpu_version,
-            chip_variant,
-            clock_rate_mhz: 1750,
-            hbm_capacity_bytes: hbm_cap,
-            vmem_capacity_bytes: vmem_cap,
-            smem_capacity_bytes: 2 * 1024 * 1024,
-            cmem_capacity_bytes: 128 * 1024 * 1024,
-            tensor_cores_per_chip: i32::try_from(tpu_gen.logical_devices_per_chip()).unwrap_or(2),
-            sparse_cores_per_chip: 4,
-            mxu_dimension: 128,
-            ici_bandwidth_bps: 4_800_000_000_000,
-        };
+        let target_args = TargetArgumentsProto::from_generation(tpu_gen);
         let core_prog = self.build_core_program_proto(&raw_vliw_stream);
-        let (relocations, constants) = self.build_deepsea_relocations_and_constants();
+        let compiler_meta = self.build_compiler_metadata_proto();
         let ds_exec = DeepseaExecutableProto {
-            module_name: self.name.clone(),
-            isa_program: Some(isa_prog),
-            overlays: vec![DeepseaOverlaySectionProto {
-                overlay_id: 0,
-                symbol_name: format!(".text.{}", self.name),
-                imem_offset_bytes: 0,
-                byte_size: imem_bytes,
-                encoded_bundles: raw_vliw_stream,
-                core_type: 0,
-            }],
-            relocations,
-            constants,
-            sync_flags: vec![DeepseaSyncFlagInitProto::default()],
-            target_arguments: Some(target_args.clone()),
-            vmem_allocation_bytes: self.memory_stats.temp_size_in_bytes,
-            smem_allocation_bytes: 4096,
-            cmem_allocation_bytes: 0,
-            hbm_scratchpad_bytes: self.memory_stats.generated_code_size_in_bytes,
             core_program: Some(core_prog.clone()),
+            compiler_metadata: Some(compiler_meta.clone()),
             sparse_core_program: Some(core_prog),
-            host_command_table: Vec::new(),
-            program_relocations: Vec::new(),
-            xdb_compiler_metadata: Some(self.build_compiler_metadata_proto()),
+            sparse_core_compiler_metadata: Some(compiler_meta),
         };
         let hlo_mod = self.hlo_module_proto.clone();
         let hlo_with_cfg = crate::proto::HloModuleProtoWithConfig {
@@ -724,66 +556,153 @@ impl CompiledProgram {
         TpuExecutableProto {
             ds_executable: Some(ds_exec),
             hlo_module_with_config: Some(hlo_with_cfg),
-            compile_options: CompileOptionsProto::decode(&self.compile_options_bytes).ok(),
+            host_transfers: Vec::new(),
+            host_executions: Vec::new(),
+            compile_options: CompileOptionsProto::decode_proto(&self.compile_options_bytes).ok(),
             target_arguments: Some(target_args),
-            legacy_executable: Some(self.to_executable_proto()),
             source_uri: format!("embed://{}", self.name),
         }
     }
 
     /// Synthesizes a wire-compatible [`crate::proto::CompilerMetadataProto`] (`platforms_deepsea.jellyfish.xdb.CompilerMetadata`)
-    /// containing `.text.imem` / `.bss.vmem` section allocations, LLO symbol table entries, and
-    /// 1:1 `HloToLloMapping` ranges for every compiled VLIW bundle.
+    /// including HLO-to-LLO PC `TrapMetadata` source-location entries.
     #[must_use]
     pub fn build_compiler_metadata_proto(&self) -> crate::proto::CompilerMetadataProto {
+        use crate::proto::generated_prost_schemas::platforms_deepsea::jellyfish::xdb::{
+            TagAndPc, TrapEntry, TrapMetadata,
+        };
         let imem_bytes = u64::try_from(self.instruction_bundles.len() * 64)
             .unwrap_or(64)
             .max(64);
-        let vmem_bytes =
-            u64::try_from(self.memory_stats.temp_size_in_bytes.max(256)).unwrap_or(256);
-        let hlo_to_llo_mappings: Vec<crate::proto::HloToLloMappingProto> = self
+        let trap_entries: Vec<TrapEntry> = self
             .instruction_bundles
             .iter()
             .enumerate()
-            .map(|(idx, b)| {
-                let b_idx = u32::try_from(idx).unwrap_or(0);
-                crate::proto::HloToLloMappingProto {
-                    hlo_op_name: format!("{:?}_{b_idx}", b.opcode),
-                    start_bundle_index: b_idx,
-                    end_bundle_index: b_idx + 1,
-                }
+            .map(|(pc_idx, b)| TrapEntry {
+                tag_and_pc: Some(TagAndPc {
+                    sequencer_type: Some(0),
+                    tag: Some(i64::try_from(pc_idx + 1).unwrap_or(1)),
+                    pc: Some(i64::try_from(pc_idx).unwrap_or(0)),
+                }),
+                display_message: Some(format!("{}:{:?}@pc={pc_idx}", self.name, b.opcode)),
+                trap_id: Some(i32::try_from(pc_idx).unwrap_or(0)),
             })
             .collect();
+        let end_pc = i64::try_from(self.instruction_bundles.len()).unwrap_or(1);
         crate::proto::CompilerMetadataProto {
-            program_id: 1,
-            replica_count: i32::try_from(self.num_replicas).unwrap_or(1),
-            num_cores_per_replica: i32::try_from(self.num_partitions).unwrap_or(1),
-            is_haltless: false,
-            executable_size: i64::try_from(imem_bytes).unwrap_or(256),
-            optimized_hlo_instruction_count: i64::try_from(self.instruction_bundles.len())
-                .unwrap_or(1),
-            module_name: self.name.clone(),
-            executable_fingerprint: self.fingerprint.clone(),
-            section_allocations: vec![
-                crate::proto::CompilerSectionAllocationProto {
-                    section_name: String::from(".text.imem"),
-                    base_offset: 0,
-                    byte_size: imem_bytes,
-                    memory_space: 1,
-                },
-                crate::proto::CompilerSectionAllocationProto {
-                    section_name: String::from(".bss.vmem"),
-                    base_offset: 0,
-                    byte_size: vmem_bytes,
-                    memory_space: 1,
-                },
-            ],
-            symbol_table: vec![crate::proto::CompilerSymbolTableEntryProto {
-                symbol_name: format!("entry_{}", self.name),
-                imem_offset_bytes: 0,
-                byte_size: imem_bytes,
-            }],
-            hlo_to_llo_mappings,
+            program_id: Some(1),
+            replica_count: Some(i64::try_from(self.num_replicas).unwrap_or(1)),
+            num_cores_per_replica: Some(i64::try_from(self.num_partitions).unwrap_or(1)),
+            is_haltless: Some(false),
+            executable_size: Some(i64::try_from(imem_bytes).unwrap_or(256)),
+            optimized_hlo_instruction_count: Some(
+                i64::try_from(self.instruction_bundles.len()).unwrap_or(1),
+            ),
+            module_name: Some(self.name.clone()),
+            executable_fingerprint: Some(self.fingerprint.as_bytes().to_vec()),
+            trap_metadata: Some(TrapMetadata {
+                success_tag_and_pc: Some(TagAndPc {
+                    sequencer_type: Some(0),
+                    tag: Some(0),
+                    pc: Some(end_pc),
+                }),
+                trap_entries,
+                compressed_trap_entries: None,
+            }),
+            ..crate::proto::CompilerMetadataProto::default()
+        }
+    }
+
+    /// Synthesizes [`crate::proto::HostCommandEnvelopeProto`] descriptors for host-callback,
+    /// infeed (`Send`), and outfeed (`Recv`) instructions in this program.
+    #[must_use]
+    pub fn build_host_command_envelopes(&self) -> Vec<crate::proto::HostCommandEnvelopeProto> {
+        let mut envelopes = Vec::new();
+        for (idx, b) in self.instruction_bundles.iter().enumerate() {
+            let opcode = match b.opcode {
+                TpuOpCode::Infeed => Some(1_i32),
+                TpuOpCode::Outfeed => Some(2_i32),
+                TpuOpCode::CustomCall if b.attrs.custom_call_target.contains("Host") => {
+                    Some(16_i32)
+                }
+                _ => None,
+            };
+            if let Some(hc_op) = opcode {
+                envelopes.push(crate::proto::HostCommandEnvelopeProto {
+                    opcode: hc_op,
+                    channel_id: i64::try_from(idx + 1).unwrap_or(1),
+                    core_id: 0,
+                    completion_sync_flag: b.sync_flag_id.max(1),
+                    continuation_id: u64::try_from(idx).unwrap_or(0),
+                    handler_id: u64::try_from(idx + 1).unwrap_or(1),
+                    payload: b.attrs.custom_call_target.as_bytes().to_vec(),
+                    handler_name: b.attrs.custom_call_target.clone(),
+                });
+            }
+        }
+        envelopes
+    }
+
+    /// Builds the `xla.PjRtExecutableAbiVersionProto` stamp for this compiled executable.
+    #[must_use]
+    pub fn build_executable_abi_version_proto(
+        &self,
+    ) -> crate::proto::PjRtExecutableAbiVersionProto {
+        let tpu_gen = crate::config::global_init_config().generation;
+        crate::proto::PjRtExecutableAbiVersionProto {
+            platform: 0x5450_5500,
+            version: format!("libtpu-abi-v6-{tpu_gen:?}").into_bytes(),
+        }
+    }
+
+    /// Validates an `xla.PjRtExecutableAbiVersionProto` against the runtime platform ID (`0x5450_5500`).
+    ///
+    /// # Arguments
+    ///
+    /// * `abi` - Candidate [`crate::proto::PjRtExecutableAbiVersionProto`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidExecutableFormat`] if `abi.platform` is unsupported or `abi.version` is empty.
+    pub fn verify_executable_abi_version(
+        abi: &crate::proto::PjRtExecutableAbiVersionProto,
+    ) -> LibTpuResult<()> {
+        if (abi.platform != 0x5450_5500) | abi.version.is_empty() {
+            return Err(LibTpuError::InvalidExecutableFormat {
+                reason: format!(
+                    "Incompatible PjRtExecutableAbiVersionProto platform={:#x} len={}",
+                    abi.platform,
+                    abi.version.len()
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    /// Packages this [`CompiledProgram`] into a relocatable `xla.TpuRelocatableProto` bundling
+    /// input/output donation aliases and `PjRtPartialProgramProto` stages.
+    #[must_use]
+    pub fn to_relocatable_proto(&self) -> crate::proto::TpuRelocatableProto {
+        let aliases = vec![crate::proto::tpu_relocatable_proto::ParameterOutputAlias {
+            parameter_index: 0,
+            output_index: 0,
+        }];
+        let partial = crate::proto::PjRtPartialProgramProto {
+            program: self.serialize(),
+            program_format: String::from("ltpuexec"),
+            producer_phase: String::from("binary_serialization"),
+            consumer_phases: Vec::new(),
+            version: String::from("0.0.52"),
+            program_name: self.name.clone(),
+        };
+        crate::proto::TpuRelocatableProto {
+            name: self.name.clone(),
+            build_id: self.fingerprint.clone(),
+            shape: None,
+            call_backend_config: Vec::new(),
+            has_side_effects: false,
+            parameter_output_aliases: aliases,
+            programs: vec![partial],
         }
     }
 
@@ -1093,6 +1012,30 @@ impl CompiledProgram {
         out
     }
 
+    /// Packages `TpuExecutableProto` inside a 64-byte `RiegeliRecordCodec` container protected by
+    /// `HighwayHash64` header and payload checksums (`serialize_riegeli_executable`).
+    #[must_use]
+    pub fn serialize_riegeli_executable(&self) -> Vec<u8> {
+        use crate::proto::ProtoSchemaMessage as _;
+        let tpu_exec_bytes = self.to_tpu_executable_proto().encode_proto();
+        crate::proto::RiegeliRecordCodec::wrap_record(&tpu_exec_bytes)
+    }
+
+    /// Verifies `HighwayHash64` header & payload checksums on a Riegeli-framed `TpuExecutableProto`
+    /// and reconstructs the [`CompiledProgram`].
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Riegeli-framed executable payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if Riegeli `HighwayHash64` verification or `TpuExecutableProto` decoding fails.
+    pub fn deserialize_riegeli_executable(bytes: &[u8]) -> LibTpuResult<Self> {
+        let (_, unwrapped) = crate::proto::RiegeliRecordCodec::unwrap_record_decompressed(bytes)?;
+        Self::deserialize(&unwrapped)
+    }
+
     /// Reads a little-endian `u32` from `cursor` via `bytemuck` and advances the slice.
     ///
     /// # Arguments
@@ -1144,14 +1087,26 @@ impl CompiledProgram {
             });
         };
         if magic != EXECUTABLE_MAGIC {
+            if bytes.starts_with(&crate::proto::RIEGELI_BLOCK_MAGIC) {
+                let (_, inner) =
+                    crate::proto::RiegeliRecordCodec::unwrap_record_decompressed(bytes)?;
+                return Self::deserialize(&inner);
+            }
             if bytes.starts_with(b"\x7fELF") {
                 return Self::from_deepsea_elf64(bytes, 0x1000_0000, 0x2000).map(|r| r.program);
             }
-            let candidate = TpuExecutableProto::decode(bytes)
-                .ok()
-                .and_then(|tpu_exec| tpu_exec.legacy_executable)
-                .or_else(|| TpuSerializedExecutableProto::decode(bytes).ok());
-            if let Some(proto) = candidate {
+            if let Ok(tpu_exec) = TpuExecutableProto::decode_proto(bytes) {
+                if let Some(hlo_with_cfg) = tpu_exec.hlo_module_with_config {
+                    if let Some(hlo_mod) = hlo_with_cfg.hlo_module {
+                        let opts_bytes = tpu_exec
+                            .compile_options
+                            .as_ref()
+                            .map_or_else(Vec::new, CompileOptionsProto::encode_proto);
+                        return Self::compile("hlo", &hlo_mod.encode_proto(), &opts_bytes);
+                    }
+                }
+            }
+            if let Ok(proto) = TpuSerializedExecutableProto::decode(bytes) {
                 if !proto.hlo_module_bytes.is_empty() {
                     let raw_op = proto.instruction_opcodes.first().copied().unwrap_or(0);
                     let op_byte = u8::try_from(raw_op).unwrap_or(255);

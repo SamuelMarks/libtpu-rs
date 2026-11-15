@@ -141,7 +141,7 @@ size_t Buffer::tile_count() const noexcept {
       sizeof(PJRT_Buffer_GetMemoryLayout_Args),
       nullptr,
       handle_,
-      {0, nullptr, nullptr, 0, nullptr, nullptr, 0, 0, {0, 0}}};
+      {0, nullptr, 0, nullptr, nullptr, 0, nullptr, nullptr, 0, 0}};
   (void)GetPjrtApi()->pjrt_buffer_get_memory_layout(&args);
   return args.layout.num_tiles;
 }
@@ -548,12 +548,16 @@ Status Client::compile(const char *format, const uint8_t *code, size_t code_len,
   while (format[fmt_len] != '\0') {
     ++fmt_len;
   }
-  PJRT_Program prog{sizeof(PJRT_Program),
-                    nullptr,
-                    reinterpret_cast<const char *>(code),
-                    code_len,
-                    format,
-                    fmt_len};
+  return compile(
+      std::string_view(format, fmt_len),
+      std::string_view(reinterpret_cast<const char *>(code), code_len),
+      exec_out);
+}
+
+Status Client::compile(std::string_view format, std::string_view code,
+                       LoadedExecutable *exec_out) noexcept {
+  PJRT_Program prog{sizeof(PJRT_Program), nullptr,       code.data(),
+                    code.size(),          format.data(), format.size()};
   PJRT_Client_Compile_Args comp_args{sizeof(PJRT_Client_Compile_Args),
                                      nullptr,
                                      handle_,
@@ -1749,5 +1753,222 @@ query_llo_schedule_summary(const LoadedExecutable &executable) noexcept {
   const uint32_t hops = compute_ici_route(0, 0, 0, 1, 1, 0, true);
   return llo + "\n" + regs + "\nici_hops=" + std::to_string(hops);
 }
+
+std::string
+query_rematerialization_report(const LoadedExecutable &executable,
+                               uint64_t memory_limit_bytes) noexcept {
+  const size_t len = libtpu_rs_query_rematerialization_report(
+      executable.raw(), memory_limit_bytes, nullptr, 0);
+  if (len == 0) {
+    return "";
+  }
+  std::string out(len + 1, '\0');
+  (void)libtpu_rs_query_rematerialization_report(
+      executable.raw(), memory_limit_bytes, &out[0], out.size());
+  out.resize(len);
+  return out;
+}
+
+Status execute_barnacore_program(const LoadedExecutable &executable,
+                                 int32_t optimizer_algorithm,
+                                 uint64_t *out_sparse_ops) noexcept {
+  const LibTpuCStatus st = libtpu_rs_execute_barnacore_program(
+      executable.raw(), optimizer_algorithm, out_sparse_ops);
+  return Status(st);
+}
+
+Plugin::Plugin() noexcept : api_(GetPjrtApi()) {
+  PJRT_Plugin_Initialize_Args args{sizeof(PJRT_Plugin_Initialize_Args),
+                                   nullptr};
+  (void)api_->pjrt_plugin_initialize(&args);
+}
+
+Plugin::~Plugin() noexcept { api_ = nullptr; }
+
+Plugin::Plugin(Plugin &&other) noexcept : api_(other.api_) {
+  other.api_ = nullptr;
+}
+
+Plugin &Plugin::operator=(Plugin &&other) noexcept {
+  api_ = other.api_;
+  other.api_ = nullptr;
+  return *this;
+}
+
+size_t Plugin::attribute_count() const noexcept {
+  PJRT_Plugin_Attributes_Args args{sizeof(PJRT_Plugin_Attributes_Args), nullptr,
+                                   nullptr, 0};
+  (void)GetPjrtApi()->pjrt_plugin_attributes(&args);
+  return args.num_attributes;
+}
+
+const PJRT_Api *Plugin::raw() const noexcept { return api_; }
+
+DeviceDescription::DeviceDescription(
+    const PJRT_DeviceDescription *handle) noexcept
+    : handle_(handle) {}
+
+DeviceDescription::DeviceDescription(DeviceDescription &&other) noexcept
+    : handle_(other.handle_) {
+  other.handle_ = nullptr;
+}
+
+DeviceDescription &
+DeviceDescription::operator=(DeviceDescription &&other) noexcept {
+  handle_ = other.handle_;
+  other.handle_ = nullptr;
+  return *this;
+}
+
+int32_t DeviceDescription::id() const noexcept {
+  PJRT_DeviceDescription_Id_Args args{sizeof(PJRT_DeviceDescription_Id_Args),
+                                      nullptr, handle_, 0, 0};
+  (void)GetPjrtApi()->pjrt_device_description_id(&args);
+  return args.id;
+}
+
+int32_t DeviceDescription::process_index() const noexcept {
+  PJRT_DeviceDescription_ProcessIndex_Args args{
+      sizeof(PJRT_DeviceDescription_ProcessIndex_Args), nullptr, handle_, 0, 0};
+  (void)GetPjrtApi()->pjrt_device_description_process_index(&args);
+  return args.process_index;
+}
+
+std::string DeviceDescription::kind() const noexcept {
+  PJRT_DeviceDescription_Kind_Args args{
+      sizeof(PJRT_DeviceDescription_Kind_Args), nullptr, handle_, nullptr, 0};
+  (void)GetPjrtApi()->pjrt_device_description_kind(&args);
+  return std::string(args.device_kind, args.device_kind_size);
+}
+
+std::string DeviceDescription::to_string() const noexcept {
+  PJRT_DeviceDescription_ToString_Args args{
+      sizeof(PJRT_DeviceDescription_ToString_Args), nullptr, handle_, nullptr,
+      0};
+  (void)GetPjrtApi()->pjrt_device_description_to_string(&args);
+  return std::string(args.to_string, args.to_string_size);
+}
+
+ExecuteContext::ExecuteContext() noexcept : handle_(nullptr) {
+  PJRT_ExecuteContext_Create_Args args{sizeof(PJRT_ExecuteContext_Create_Args),
+                                       nullptr, nullptr};
+  (void)GetPjrtApi()->pjrt_execute_context_create(&args);
+  handle_ = args.context;
+}
+
+ExecuteContext::~ExecuteContext() noexcept {
+  PJRT_ExecuteContext_Destroy_Args args{
+      sizeof(PJRT_ExecuteContext_Destroy_Args), nullptr, handle_};
+  (void)GetPjrtApi()->pjrt_execute_context_destroy(&args);
+}
+
+ExecuteContext::ExecuteContext(ExecuteContext &&other) noexcept
+    : handle_(other.handle_) {
+  other.handle_ = nullptr;
+}
+
+ExecuteContext &ExecuteContext::operator=(ExecuteContext &&other) noexcept {
+  PJRT_ExecuteContext *next = other.handle_;
+  other.handle_ = nullptr;
+  PJRT_ExecuteContext_Destroy_Args args{
+      sizeof(PJRT_ExecuteContext_Destroy_Args), nullptr, handle_};
+  (void)GetPjrtApi()->pjrt_execute_context_destroy(&args);
+  handle_ = next;
+  return *this;
+}
+
+PJRT_ExecuteContext *ExecuteContext::raw() const noexcept { return handle_; }
+
+CopyToDeviceStream::CopyToDeviceStream(PJRT_CopyToDeviceStream *handle) noexcept
+    : handle_(handle) {}
+
+CopyToDeviceStream::~CopyToDeviceStream() noexcept {
+  PJRT_CopyToDeviceStream_Destroy_Args args{
+      sizeof(PJRT_CopyToDeviceStream_Destroy_Args), nullptr, handle_};
+  (void)GetPjrtApi()->pjrt_copy_to_device_stream_destroy(&args);
+}
+
+CopyToDeviceStream::CopyToDeviceStream(CopyToDeviceStream &&other) noexcept
+    : handle_(other.handle_) {
+  other.handle_ = nullptr;
+}
+
+CopyToDeviceStream &
+CopyToDeviceStream::operator=(CopyToDeviceStream &&other) noexcept {
+  PJRT_CopyToDeviceStream *next = other.handle_;
+  other.handle_ = nullptr;
+  PJRT_CopyToDeviceStream_Destroy_Args args{
+      sizeof(PJRT_CopyToDeviceStream_Destroy_Args), nullptr, handle_};
+  (void)GetPjrtApi()->pjrt_copy_to_device_stream_destroy(&args);
+  handle_ = next;
+  return *this;
+}
+
+Status
+CopyToDeviceStream::add_chunk(std::span<const uint8_t> chunk_bytes) noexcept {
+  PJRT_Chunk chunk{const_cast<uint8_t *>(chunk_bytes.data()),
+                   chunk_bytes.size(), nullptr, nullptr};
+  PJRT_CopyToDeviceStream_AddChunk_Args args{
+      sizeof(PJRT_CopyToDeviceStream_AddChunk_Args), nullptr, handle_, &chunk,
+      nullptr};
+  PJRT_Error *err = GetPjrtApi()->pjrt_copy_to_device_stream_add_chunk(&args);
+  Event ev(args.transfer_complete);
+  (void)ev.await();
+  return pjrt_error_to_status(err);
+}
+
+int64_t CopyToDeviceStream::total_bytes() const noexcept {
+  PJRT_CopyToDeviceStream_TotalBytes_Args args{
+      sizeof(PJRT_CopyToDeviceStream_TotalBytes_Args), nullptr, handle_, 0};
+  (void)GetPjrtApi()->pjrt_copy_to_device_stream_total_bytes(&args);
+  return args.total_bytes;
+}
+
+int64_t CopyToDeviceStream::granule_size() const noexcept {
+  PJRT_CopyToDeviceStream_GranuleSize_Args args{
+      sizeof(PJRT_CopyToDeviceStream_GranuleSize_Args), nullptr, handle_, 0};
+  (void)GetPjrtApi()->pjrt_copy_to_device_stream_granule_size(&args);
+  return args.granule_size_in_bytes;
+}
+
+int64_t CopyToDeviceStream::current_bytes() const noexcept {
+  PJRT_CopyToDeviceStream_CurrentBytes_Args args{
+      sizeof(PJRT_CopyToDeviceStream_CurrentBytes_Args), nullptr, handle_, 0};
+  (void)GetPjrtApi()->pjrt_copy_to_device_stream_current_bytes(&args);
+  return args.current_bytes;
+}
+
+DlPackTensor::DlPackTensor(const Buffer &buffer) noexcept
+    : data_addr_(reinterpret_cast<uintptr_t>(buffer.raw())),
+      ndim_(buffer.rank()), dtype_(buffer.element_type()), device_type_(12) {}
+
+DlPackTensor::~DlPackTensor() noexcept { data_addr_ = 0; }
+
+DlPackTensor::DlPackTensor(DlPackTensor &&other) noexcept
+    : data_addr_(other.data_addr_), ndim_(other.ndim_), dtype_(other.dtype_),
+      device_type_(other.device_type_) {
+  other.data_addr_ = 0;
+  other.ndim_ = 0;
+}
+
+DlPackTensor &DlPackTensor::operator=(DlPackTensor &&other) noexcept {
+  data_addr_ = other.data_addr_;
+  ndim_ = other.ndim_;
+  dtype_ = other.dtype_;
+  device_type_ = other.device_type_;
+  other.data_addr_ = 0;
+  other.ndim_ = 0;
+  return *this;
+}
+
+int32_t DlPackTensor::dlpack_device_type() const noexcept {
+  return device_type_;
+}
+
+uintptr_t DlPackTensor::data_address() const noexcept { return data_addr_; }
+
+size_t DlPackTensor::ndim() const noexcept { return ndim_; }
+
+DataType DlPackTensor::dtype() const noexcept { return dtype_; }
 
 } // namespace libtpu

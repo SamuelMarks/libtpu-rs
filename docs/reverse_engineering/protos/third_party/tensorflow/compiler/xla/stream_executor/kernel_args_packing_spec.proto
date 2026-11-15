@@ -1,0 +1,18 @@
+syntax = "proto3";
+package stream_executor;
+message KernelArgPackingRelocationProto {
+  reserved 3;
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_BITS64_ABSOLUTE = 1;
+  }
+  .stream_executor.KernelArgPackingRelocationProto.Kind kind = 1;
+  int32 argument_index = 2;
+}
+message KernelArgPackingSpecProto {
+  repeated .stream_executor.KernelArgPackingRelocationProto relocations = 1;
+  bytes data = 2;
+}
+message KernelArgsPackingSpecProto {
+  repeated .stream_executor.KernelArgPackingSpecProto kernel_arguments = 1;
+}

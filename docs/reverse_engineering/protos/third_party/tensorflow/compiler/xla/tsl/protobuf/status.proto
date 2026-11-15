@@ -1,0 +1,8 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/compiler/xla/tsl/protobuf/error_codes.proto";
+message StatusProto {
+  .tensorflow.error.Code code = 1;
+  string message = 2;
+  map<string, bytes> payload = 3;
+}

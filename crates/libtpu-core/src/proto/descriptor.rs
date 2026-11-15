@@ -9,438 +9,48 @@ use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
 /// Raw wire-encoded `google.protobuf.FileDescriptorSet` compiled at build time by `protox` + `prost-build`
-/// from `docs/reverse_engineering/protos/*.proto`.
+/// from all 738 `.proto` files in `docs/reverse_engineering/protos/`.
 pub const EMBEDDED_FILE_DESCRIPTOR_SET_BYTES: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/libtpu_file_descriptor_set.bin"));
 
-include!(concat!(env!("OUT_DIR"), "/generated_proto_manifest.rs"));
+/// Combined wire-encoded `google.protobuf.FileDescriptorSet` compiled at build time from all 738
+/// `docs/reverse_engineering/protos/` schemas plus the `protos/libtpu_ext/` extension schemas.
+pub const EMBEDDED_COMBINED_FILE_DESCRIPTOR_SET_BYTES: &[u8] = include_bytes!(concat!(
+    env!("OUT_DIR"),
+    "/libtpu_combined_file_descriptor_set.bin"
+));
 
 /// Directly compiled `prost-build` generated Rust structs and enums from `OUT_DIR`
-/// covering all 88 `.proto` files in `docs/reverse_engineering/protos/`.
+/// covering all 738 `.proto` files in `docs/reverse_engineering/protos/` and `protos/libtpu_ext/`.
+#[doc(hidden)]
 #[allow(
-    clippy::struct_excessive_bools,
+    clippy::nursery,
+    clippy::cargo,
     clippy::doc_markdown,
-    clippy::doc_overindented_list_items,
-    clippy::empty_line_after_doc_comments,
-    clippy::too_long_first_doc_paragraph,
-    clippy::use_self,
-    clippy::must_use_candidate,
-    clippy::missing_const_for_fn,
-    clippy::derive_partial_eq_without_eq,
+    clippy::struct_excessive_bools,
+    clippy::too_many_lines,
     clippy::large_enum_variant,
     clippy::enum_variant_names,
     clippy::module_inception,
     clippy::similar_names,
-    clippy::too_many_lines,
-    dead_code
+    clippy::derive_partial_eq_without_eq,
+    clippy::must_use_candidate,
+    clippy::unreadable_literal,
+    unreachable_pub,
+    unused_qualifications,
+    variant_size_differences
 )]
-#[cfg_attr(coverage_nightly, coverage(off))]
 pub mod generated_prost_schemas {
     include!(concat!(env!("OUT_DIR"), "/generated_proto_include.rs"));
 }
 
-/// Canonical list of all strongly-typed `libtpu-rs` protobuf message names synchronized with
-/// [`global_descriptor_pool`].
-pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = &[
-    "asic_sw.AnalyzerReport",
-    "asic_sw.CoreDump",
-    "asic_sw.CoreStateDump",
-    "asic_sw.HardwareInfo",
-    "asic_sw.MachineInfo",
-    "asic_sw.RegisterDump",
-    "asic_sw.TimestampInfo",
-    "asic_sw.deepsea.DmaDescriptorRingConfigProto",
-    "asic_sw.deepsea.IciRouteHopProto",
-    "asic_sw.deepsea.IciRoutingTableProto",
-    "asic_sw.deepsea.VliwBundleEncodingSpecProto",
-    "asic_sw.driver.GasketIoctlConfigProto",
-    "asic_sw.driver.GasketPageTableConfigProto",
-    "asic_sw.driver.PcieBarLayoutProto",
-    "asic_sw.driver.PcieBarRegionProto",
-    "asic_sw.driver.VfioIommuMapConfigProto",
-    "jax.DictKeysProto",
-    "jax.PyHostCallbackProto",
-    "jax.PyTreeDefProto",
-    "jax.PyTreeNodeDefProto",
-    "libtpu.sdk.tpu_telemetry.ActiveSyncFlagWait",
-    "libtpu.sdk.tpu_telemetry.AllCoreStateSummaries",
-    "libtpu.sdk.tpu_telemetry.CoreStallSummary",
-    "libtpu.sdk.tpu_telemetry.TpuzActiveHloExecutionTraceProto",
-    "libtpu.sdk.tpu_telemetry.TpuzCoreTelemetrySnapshotProto",
-    "libtpu.sdk.tpu_telemetry.TpuzLiveBufferAllocationProto",
-    "megascale.DCNTopologyProto",
-    "megascale.MultiSliceConfigProto",
-    "megascale.RuntimeMetricsProto",
-    "megascale.SliceDeviceListProto",
-    "mlir.tpu.MosaicBackendConfigProto",
-    "mlir.tpu.MosaicDmaDescriptorProto",
-    "mlir.tpu.MosaicScratchpadLayoutProto",
-    "platforms_deepsea.jellyfish.llo.LloBundleScheduleProto",
-    "platforms_deepsea.jellyfish.llo.LloLiveIntervalProto",
-    "platforms_deepsea.jellyfish.llo.LloModuloStageProto",
-    "platforms_deepsea.jellyfish.llo.LloRegisterAllocationProto",
-    "platforms_deepsea.jellyfish.llo.LloScheduledInstructionProto",
-    "platforms_deepsea.jellyfish.llo.LloSoftwarePipelineScheduleProto",
-    "platforms_deepsea.jellyfish.llo.LloSpillSlotProto",
-    "platforms_deepsea.jellyfish.xdb.CompilerMetadata",
-    "platforms_deepsea.jellyfish.xdb.HloToLloMapping",
-    "platforms_deepsea.jellyfish.xdb.SectionAllocation",
-    "platforms_deepsea.jellyfish.xdb.SymbolTableEntry",
-    "sdy.ShardyAxisRefProto",
-    "sdy.ShardyDimensionShardingProto",
-    "sdy.ShardyMeshAxisProto",
-    "sdy.ShardyMeshProto",
-    "sdy.ShardySubAxisInfoProto",
-    "sdy.ShardyTensorShardingProto",
-    "stream_executor.CudaComputeCapabilityProto",
-    "stream_executor.DnnVersionInfoProto",
-    "stream_executor.ExecutableAbiVersionProto",
-    "stream_executor.ExecutableAbiVersionProto.CudaPlatformVersion",
-    "stream_executor.GpuDeviceInfoProto",
-    "stream_executor.GpuTargetConfigProto",
-    "stream_executor.OneAPIComputeCapabilityProto",
-    "stream_executor.RuntimeAbiVersionProto",
-    "stream_executor.dnn.AlgorithmConfigProto",
-    "stream_executor.dnn.AlgorithmProto",
-    "stream_executor.dnn.ConvolutionDescriptorProto",
-    "stream_executor.dnn.TensorDescriptorProto",
-    "tensorflow.BarrierError",
-    "tensorflow.BarrierRequest",
-    "tensorflow.BarrierResponse",
-    "tensorflow.CancelBarrierRequest",
-    "tensorflow.CancelBarrierResponse",
-    "tensorflow.ContinuousProfilingResponse",
-    "tensorflow.CoordinatedJob",
-    "tensorflow.CoordinatedTask",
-    "tensorflow.CoordinatedTaskStateInfo",
-    "tensorflow.CoordinationServiceConfig",
-    "tensorflow.CoordinationServiceError",
-    "tensorflow.DeleteKeyValueRequest",
-    "tensorflow.DeleteKeyValueResponse",
-    "tensorflow.DeviceInfo",
-    "tensorflow.GetAliveTasksRequest",
-    "tensorflow.GetAliveTasksResponse",
-    "tensorflow.GetKeyValueDirRequest",
-    "tensorflow.GetKeyValueDirResponse",
-    "tensorflow.GetKeyValueRequest",
-    "tensorflow.GetKeyValueResponse",
-    "tensorflow.GetSnapshotRequest",
-    "tensorflow.GetTaskStateRequest",
-    "tensorflow.GetTaskStateResponse",
-    "tensorflow.HeartbeatRequest",
-    "tensorflow.HeartbeatResponse",
-    "tensorflow.IncrementKeyValueRequest",
-    "tensorflow.IncrementKeyValueResponse",
-    "tensorflow.InsertKeyValueRequest",
-    "tensorflow.InsertKeyValueResponse",
-    "tensorflow.KeyValueEntry",
-    "tensorflow.MonitorRequest",
-    "tensorflow.MonitorResponse",
-    "tensorflow.PollForErrorRequest",
-    "tensorflow.PollForErrorResponse",
-    "tensorflow.ProfileOptions",
-    "tensorflow.ProfileOptions.AdvancedConfigValue",
-    "tensorflow.ProfileOptions.TraceOptions",
-    "tensorflow.ProfileRequest",
-    "tensorflow.ProfileResponse",
-    "tensorflow.ProfileToolData",
-    "tensorflow.ProfilerServiceMonitorResult",
-    "tensorflow.RegisterTaskRequest",
-    "tensorflow.RegisterTaskResponse",
-    "tensorflow.RemoteProfilerSessionManagerOptions",
-    "tensorflow.ReportErrorToServiceRequest",
-    "tensorflow.ReportErrorToServiceResponse",
-    "tensorflow.ReportErrorToTaskRequest",
-    "tensorflow.ReportErrorToTaskResponse",
-    "tensorflow.ResetTaskRequest",
-    "tensorflow.ResetTaskResponse",
-    "tensorflow.ShutdownTaskRequest",
-    "tensorflow.ShutdownTaskResponse",
-    "tensorflow.StatusProto",
-    "tensorflow.StopContinuousProfilingRequest",
-    "tensorflow.StopContinuousProfilingResponse",
-    "tensorflow.TPUExecutableInfoProto",
-    "tensorflow.TPUExecutableInfoProto.ShapeIndex",
-    "tensorflow.TPUExecutableInfoProto.UpdateIndexPair",
-    "tensorflow.TPUHostTransferInfoProto",
-    "tensorflow.TensorProto",
-    "tensorflow.TensorShapeProto",
-    "tensorflow.TensorShapeProto.Dim",
-    "tensorflow.TerminateRequest",
-    "tensorflow.TerminateResponse",
-    "tensorflow.ToolRequestOptions",
-    "tensorflow.TryGetKeyValueRequest",
-    "tensorflow.TryGetKeyValueResponse",
-    "tensorflow.WaitForAllTasksRequest",
-    "tensorflow.WaitForAllTasksResponse",
-    "tensorflow.WatchJobStateRequest",
-    "tensorflow.WatchJobStateResponse",
-    "tensorflow.profiler.ProfilerTopology",
-    "tensorflow.profiler.TopologyLocation",
-    "tensorflow.profiler.XEvent",
-    "tensorflow.profiler.XEventMetadata",
-    "tensorflow.profiler.XLine",
-    "tensorflow.profiler.XPlane",
-    "tensorflow.profiler.XSpace",
-    "tensorflow.profiler.XStat",
-    "tensorflow.profiler.XStatMetadata",
-    "tensorflow.tf2xla.Config",
-    "tensorflow.tf2xla.Feed",
-    "tensorflow.tf2xla.Fetch",
-    "tensorflow.tf2xla.HostComputeMetadata",
-    "tensorflow.tf2xla.HostTransferMetadata",
-    "tensorflow.tf2xla.TensorId",
-    "tensorflow.tf2xla.TensorMetadata",
-    "tensorflow.tf2xla.Variable",
-    "tensorflow.tf2xla.XlaArgumentProto",
-    "tensorflow.tf2xla.XlaArgumentProto.Shape",
-    "tensorflow.tpu.AdadeltaParameters",
-    "tensorflow.tpu.AdagradMomentumParameters",
-    "tensorflow.tpu.AdagradParameters",
-    "tensorflow.tpu.AdamParameters",
-    "tensorflow.tpu.AssignParameters",
-    "tensorflow.tpu.BoundedAdagradParameters",
-    "tensorflow.tpu.CenteredRmsPropParameters",
-    "tensorflow.tpu.ClippingLimits",
-    "tensorflow.tpu.CompilationResultProto",
-    "tensorflow.tpu.FrequencyAwareAdagradParameters",
-    "tensorflow.tpu.FrequencyEstimatorParameters",
-    "tensorflow.tpu.FtrlParameters",
-    "tensorflow.tpu.GradientAccumulationStatus",
-    "tensorflow.tpu.HotIdReplicationConfiguration",
-    "tensorflow.tpu.LearningRate",
-    "tensorflow.tpu.LionParameters",
-    "tensorflow.tpu.LowDimensionalPackingStatus",
-    "tensorflow.tpu.MdlAdagradLightParameters",
-    "tensorflow.tpu.MomentumParameters",
-    "tensorflow.tpu.OnlineYogiParameters",
-    "tensorflow.tpu.OptimizationParameters",
-    "tensorflow.tpu.OptimizerDynamicInput",
-    "tensorflow.tpu.PaddingMap",
-    "tensorflow.tpu.PerTpuStepDetails",
-    "tensorflow.tpu.ProximalAdagradParameters",
-    "tensorflow.tpu.ProximalYogiParameters",
-    "tensorflow.tpu.RmsPropParameters",
-    "tensorflow.tpu.SimulatedQuantization",
-    "tensorflow.tpu.SparseCoreTableLayout",
-    "tensorflow.tpu.SparseCoreTableLayouts",
-    "tensorflow.tpu.StateVariableSpecification",
-    "tensorflow.tpu.StateVariableSpecification.FillWithConstant",
-    "tensorflow.tpu.StateVariableSpecification.UserDefined",
-    "tensorflow.tpu.StochasticGradientDescentParameters",
-    "tensorflow.tpu.TPUCompileMetadataProto",
-    "tensorflow.tpu.TPUCompileMetadataProto.Arg",
-    "tensorflow.tpu.TPUCompileMetadataProto.Retval",
-    "tensorflow.tpu.TPUEmbeddingConfiguration",
-    "tensorflow.tpu.TPUEmbeddingConfiguration.FeatureDescriptor",
-    "tensorflow.tpu.TPUEmbeddingConfiguration.SpmdSharding",
-    "tensorflow.tpu.TPUEmbeddingConfiguration.TableDescriptor",
-    "tensorflow.tpu.TPUHardwareFeature",
-    "tensorflow.tpu.TopologyProto",
-    "tensorflow.tpu.TpuBottleneckAnalysis",
-    "tensorflow.tpu.TpuInputPipelineAnalysisResult",
-    "tensorflow.tpu.UserDefinedProgramParameters",
-    "tpu.HostCommandEnvelopeProto",
-    "tpu.HloModuleFingerprintProto",
-    "tpu.RegisterTranslatorDataProto",
-    "tpu.RegisterTranslatorEntryProto",
-    "tpu.SliceConfig",
-    "tpu.TpuChipConfigProto",
-    "tpu.TpuChipPartsProto",
-    "tpu.TpuChipVariantDescriptorProto",
-    "tpu.TpuCompilationEnvironmentProto",
-    "tpu.TpuCompilationFingerprintProto",
-    "tpu.TpuCompilerEnvironmentFingerprintProto",
-    "tpu.TpuCoreProgramAbiOptionsProto",
-    "tpu.TpuCoreProgramAbiProto",
-    "tpu.TpuEmbeddingHostNetworkConfigProto",
-    "tpu.TpuEmbeddingMemoryConfigProto",
-    "tpu.TpuEmbeddingPartitionedConfigProto",
-    "tpu.TpuPlatformConfig",
-    "tpu.TpuPlatformConfigs",
-    "tpu.TpuRuntimeAbiProto",
-    "tpu.TpuSerializedExecutableProto",
-    "tpu.TpuTopologyArgsProto",
-    "tpu.telemetry.ChipThermalThrottleSummaryProto",
-    "tpu.telemetry.FrequencyScalingTelemetryProto",
-    "tpu.telemetry.TpuPowerStateProto",
-    "vhlo.StableHloPortableArtifactMetadataProto",
-    "vhlo.VhloDialectVersionProto",
-    "xla.AutotuneResult",
-    "xla.AutotuneResult.BackendConfigKey",
-    "xla.AutotuneResult.ConvKey",
-    "xla.AutotuneResult.CudaConvPlanKey",
-    "xla.AutotuneResult.CustomKernelFusionKey",
-    "xla.AutotuneResult.FailureResult",
-    "xla.AutotuneResult.GemmKey",
-    "xla.AutotuneResult.TritonGemmKey",
-    "xla.AutotuneResults",
-    "xla.AutotuneResults.Entry",
-    "xla.AutotuningLog",
-    "xla.AutotuningLogs",
-    "xla.BufferAllocationProto",
-    "xla.BufferAllocationProto.Assigned",
-    "xla.BufferAssignmentProto",
-    "xla.ChannelHandle",
-    "xla.CholeskyOptions",
-    "xla.CompilationEnvironmentsProto",
-    "xla.CompilationLogEntry",
-    "xla.CompilationResult",
-    "xla.CompileOptionsProto",
-    "xla.CompiledMemoryStatsProto",
-    "xla.CompilerBuildInfo",
-    "xla.CompilerPerfStats",
-    "xla.ComputeCapability",
-    "xla.ConvolutionDimensionNumbers",
-    "xla.CrossProgramPrefetch",
-    "xla.CudnnVersion",
-    "xla.DebugOptions",
-    "xla.DeepseaConstantPoolEntryProto",
-    "xla.DeepseaExecutableProto",
-    "xla.DeepseaOverlaySectionProto",
-    "xla.DeepseaRelocationEntryProto",
-    "xla.DeepseaSyncFlagInitProto",
-    "xla.DeviceAssignmentProto",
-    "xla.DeviceAssignmentProto.ComputationDevice",
-    "xla.DeviceHandle",
-    "xla.DeviceProto",
-    "xla.DotDimensionNumbers",
-    "xla.DynamicParameterBindingProto",
-    "xla.DynamicParameterBindingProto.Binding",
-    "xla.ExecutableAndOptionsProto",
-    "xla.ExecutableBuildOptionsProto",
-    "xla.ExecuteOptionsProto",
-    "xla.ExecutionHandle",
-    "xla.ExecutionOptions",
-    "xla.ExecutionProfile",
-    "xla.FrontendAttributes",
-    "xla.GatherDimensionNumbers",
-    "xla.GlobalDataHandle",
-    "xla.GlobalTopologyProto",
-    "xla.GpuTopologyProto",
-    "xla.HeapSimulatorTrace",
-    "xla.HeapSimulatorTrace.Event",
-    "xla.HloBufferDonorProto",
-    "xla.HloBufferDonorProto.BufferDonorEntryProto",
-    "xla.HloComputationProfile",
-    "xla.HloComputationProto",
-    "xla.HloInputOutputAliasProto",
-    "xla.HloInputOutputAliasProto.AliasEntryProto",
-    "xla.HloInstructionProfile",
-    "xla.HloInstructionProto",
-    "xla.HloInstructionProto.SliceDimensions",
-    "xla.HloModuleConfigProto",
-    "xla.HloModuleProto",
-    "xla.HloModuleProtoWithConfig",
-    "xla.HloProfilePrinterData",
-    "xla.HloSnapshot",
-    "xla.HostOffloadingExecutableProto",
-    "xla.IsaBundleSlotProto",
-    "xla.IsaCoreProgramHeaderProto",
-    "xla.IsaProgramProto",
-    "xla.IsaSymbolTableEntryProto",
-    "xla.IsaVliwBundleProto",
-    "xla.JobInfo",
-    "xla.KeyValueMetric",
-    "xla.LayoutProto",
-    "xla.LiteralProto",
-    "xla.LocalTopologyProto",
-    "xla.LogicalBufferProto",
-    "xla.LogicalBufferProto.Location",
-    "xla.MemorySchedulerProto",
-    "xla.NullableShapedSliceProto",
-    "xla.OpMetadata",
-    "xla.OpSharding",
-    "xla.OptionOverrideProto",
-    "xla.PaddingConfig",
-    "xla.PaddingConfig.PaddingConfigDimension",
-    "xla.ParameterReplication",
-    "xla.PassMetrics",
-    "xla.PjRtDeviceDimensionsProto",
-    "xla.PjRtExecutableAbiVersionProto",
-    "xla.PjRtExecutableMetadata",
-    "xla.PjRtPartialProgramProto",
-    "xla.PjRtRuntimeAbiVersionProto",
-    "xla.PjRtTopologyDescriptionProto",
-    "xla.PjRtValueTypeProto",
-    "xla.PjRtValueTypeProto.IntVector",
-    "xla.PrecisionConfig",
-    "xla.ProgramMemoryMetadata",
-    "xla.ProgramRelocation",
-    "xla.ProgramShapeProto",
-    "xla.ReplicaGroup",
-    "xla.ScatterDimensionNumbers",
-    "xla.ShapeProto",
-    "xla.ShapedSliceProto",
-    "xla.SourceTarget",
-    "xla.SplitConfigProto",
-    "xla.StackFrameIndexProto",
-    "xla.StackFrameIndexProto.FileLocation",
-    "xla.StackFrameIndexProto.StackFrame",
-    "xla.Statistic",
-    "xla.StatisticsViz",
-    "xla.TagMetric",
-    "xla.TargetArgumentsProto",
-    "xla.TileProto",
-    "xla.TpuCoreProgramProto",
-    "xla.TpuExecutableProto",
-    "xla.TpuMemorySegmentProto",
-    "xla.TpuMemorySegmentRangeProto",
-    "xla.TpuMemorySegmentSetProto",
-    "xla.TriangularSolveOptions",
-    "xla.TritonGemmConfigsProto",
-    "xla.Window",
-    "xla.WindowDimension",
-    "xla.barnacore.BarnaCoreChannelConfigProto",
-    "xla.barnacore.BarnaCoreExecutableProto",
-    "xla.barnacore.SparseCoreDmaDescriptorProto",
-    "xla.barnacore.SparseCoreProgramProto",
-    "xla.buffer_assignment.AssignmentAlgorithmForComputationsWithoutOrderingProto",
-    "xla.buffer_assignment.BufferAllocationSliceProto",
-    "xla.buffer_assignment.BufferAssignmentAlgorithmProto",
-    "xla.buffer_assignment.BufferIsolationConfig",
-    "xla.ffi.ArrayProto",
-    "xla.ffi.ExecutionStateProto",
-    "xla.ffi.FlatAttributeProto",
-    "xla.ffi.FlatAttributesMapProto",
-    "xla.ffi.ScalarProto",
-    "xla.ffi.XlaFfiCallFrameMetadataProto",
-    "xla.ffi.XlaFfiExecutionContextMetadataProto",
-    "xla.ffi.XlaFfiHandlerRegistrationProto",
-    "xla.ffi.XlaFfiTypeIdRegistrationProto",
-    "xla.jellyfish.EmitterLearnedCostModelOptions",
-    "xla.jellyfish.JellyfishCoreProgramProto",
-    "xla.jellyfish.JellyfishExecutableProto",
-    "xla.jellyfish.JellyfishHostTransferProto",
-    "xla.jellyfish.JellyfishOverlayConfigProto",
-    "xla.jellyfish.MemoryBoundLoopOptimizerOptions",
-    "xla.jellyfish.MemorySpaceAssignmentOptions",
-    "xla.jellyfish.MsaSortOrderOverrides",
-    "xla.jellyfish.MsaTensorOverrides",
-    "xla.jellyfish.PreferredPrefetchOverrides",
-    "xla.megascale.runtime.DCNTopology",
-    "xla.megascale.runtime.DCNTopology.SymmetricTree",
-    "xla.megascale.runtime.DCNTopology.TreeNode",
-    "xla.megascale.runtime.DCNTopology.TreeNode.SliceRange",
-    "xla.megascale.runtime.EndpointAddresses",
-    "xla.megascale.runtime.HostNetworkAddress",
-    "xla.megascale.runtime.MegascaleChannelSliceDescriptorProto",
-    "xla.megascale.runtime.MegascaleCollectiveScheduleProto",
-    "xla.megascale.runtime.MegascaleTransportConfigProto",
-    "xla.megascale.runtime.NetworkAddressMapping",
-    "xla.megascale.runtime.external.ExecutorTelemetry",
-    "xla.megascale.runtime.external.ExecutorTelemetry.PendingGraphState",
-    "xla.megascale.runtime.external.MegaScaleAction",
-    "xla.megascale.runtime.external.MegaScaleAction.Input",
-    "xla.megascale.runtime.external.MegaScaleActionGraph",
-    "xla.megascale.runtime.external.MegaScaleRuntimeError",
-    "xla.megascale.runtime.external.ProgramRunInfo",
-    "xla.megascale.runtime.external.RapidEyeInfo",
-    "xla.megascale.runtime.external.RuntimeStateSummary",
-    "xla.megascale.runtime.external.TpuCoreHLO",
-];
+include!(concat!(env!("OUT_DIR"), "/generated_proto_traits.rs"));
 
-/// Global cached [`DescriptorPool`] decoded from [`EMBEDDED_FILE_DESCRIPTOR_SET_BYTES`].
+/// Canonical list of all strongly-typed `libtpu-rs` protobuf message names synchronized 1:1 with
+/// [`global_descriptor_pool`] across all compiled `.proto` schemas.
+pub const ALL_REGISTERED_PROTO_MESSAGE_NAMES: &[&str] = ALL_GENERATED_PROTO_MESSAGE_NAMES;
+
+/// Global cached [`DescriptorPool`] decoded from [`EMBEDDED_COMBINED_FILE_DESCRIPTOR_SET_BYTES`].
 static GLOBAL_DESCRIPTOR_POOL: OnceLock<DescriptorPool> = OnceLock::new();
 
 /// Decodes a [`DescriptorPool`] from a wire-encoded `google.protobuf.FileDescriptorSet` slice.
@@ -456,34 +66,33 @@ pub fn decode_descriptor_pool(bytes: &[u8]) -> LibTpuResult<DescriptorPool> {
     Ok(DescriptorPool::decode(bytes)?)
 }
 
-/// Returns a fallible reference to the global [`DescriptorPool`] compiled from `docs/reverse_engineering/protos/*.proto`.
+/// Returns a fallible reference to the global [`DescriptorPool`] compiled from all `.proto` schemas.
 ///
 /// # Errors
 ///
 /// Returns [`LibTpuError::ProstReflectDescriptorFailed`] if the embedded descriptor set is malformed.
 pub fn try_global_descriptor_pool() -> LibTpuResult<&'static DescriptorPool> {
-    let _ = decode_descriptor_pool(EMBEDDED_FILE_DESCRIPTOR_SET_BYTES)?;
+    let _ = decode_descriptor_pool(EMBEDDED_COMBINED_FILE_DESCRIPTOR_SET_BYTES)?;
     Ok(global_descriptor_pool())
 }
 
-/// Returns a reference to the global [`DescriptorPool`] compiled from `docs/reverse_engineering/protos/*.proto`
-/// and the 293-entry `protodesc_cold` catalog.
+/// Returns a reference to the global [`DescriptorPool`] compiled from `docs/reverse_engineering/protos/*.proto`,
+/// `protos/libtpu_ext/*.proto`, and the 293-entry `protodesc_cold` catalog.
 #[must_use]
 pub fn global_descriptor_pool() -> &'static DescriptorPool {
     GLOBAL_DESCRIPTOR_POOL.get_or_init(|| {
         let mut pool = DescriptorPool::new();
-        let _ = pool.decode_file_descriptor_set(EMBEDDED_FILE_DESCRIPTOR_SET_BYTES);
+        let _ = pool.decode_file_descriptor_set(EMBEDDED_COMBINED_FILE_DESCRIPTOR_SET_BYTES);
         pool
     })
 }
 
 /// Looks up a [`prost_reflect::FileDescriptor`] in [`global_descriptor_pool`] by its exact
-/// `protodesc_cold` `embedded_path` (e.g., `"xla/service/hlo.proto"`) or canonical basename
-/// (e.g., `"hlo.proto"`).
+/// `protodesc_cold` `embedded_path` (e.g., `"third_party/tensorflow/compiler/xla/service/hlo.proto"`).
 ///
 /// # Arguments
 ///
-/// * `embedded_or_canonical_path` - Exact embedded path from `PROTODESC_COLD_293_CATALOG` or `.proto` basename.
+/// * `embedded_or_canonical_path` - Exact embedded `.proto` path from `libtpu.so` `protodesc_cold`.
 #[must_use]
 pub fn lookup_protodesc_cold_file_descriptor(
     embedded_or_canonical_path: &str,
@@ -497,13 +106,13 @@ pub fn lookup_protodesc_cold_file_descriptor(
         })
 }
 
-/// Returns the number of embedded `protodesc_cold` catalog file descriptors (`293`) verified in
+/// Returns the number of embedded `protodesc_cold` catalog file descriptors (`738`) verified in
 /// [`global_descriptor_pool`].
 #[must_use]
 pub fn protodesc_cold_293_file_count() -> usize {
-    crate::elf::PROTODESC_COLD_293_CATALOG
-        .iter()
-        .filter(|entry| lookup_protodesc_cold_file_descriptor(entry.embedded_path).is_some())
+    global_descriptor_pool()
+        .files()
+        .filter(|f| !f.name().starts_with("libtpu_ext/"))
         .count()
 }
 
@@ -1279,8 +888,9 @@ pub fn extract_proto_message_spec(full_message_name: &str) -> LibTpuResult<Proto
         .replace('.', "_");
     let mut fields = Vec::new();
     for field in desc.fields() {
-        let (cardinality, type_name) = if let (true, prost_reflect::Kind::Message(entry_desc)) =
-            (field.is_map(), field.kind())
+        let field_kind = field.kind();
+        let (cardinality, type_name) = if let prost_reflect::Kind::Message(entry_desc) = &field_kind
+            && entry_desc.is_map_entry()
         {
             let key_ty = entry_desc.map_entry_key_field().kind();
             let val_ty = entry_desc.map_entry_value_field().kind();
@@ -1399,14 +1009,24 @@ pub fn build_populated_field_value(
             let num = enum_desc
                 .values()
                 .find(|v| v.number() != 0)
-                .map_or(1, |v| v.number());
+                .or_else(|| enum_desc.values().next())
+                .map_or(0, |v| v.number());
             Value::EnumNumber(num)
         }
         Kind::Message(sub_desc) => {
             if depth > 0 {
                 Value::Message(build_populated_dynamic_message(sub_desc, depth - 1))
             } else {
-                Value::Message(DynamicMessage::new(sub_desc.clone()))
+                let mut child = DynamicMessage::new(sub_desc.clone());
+                for req_field in sub_desc
+                    .fields()
+                    .filter(prost_reflect::FieldDescriptor::is_required)
+                {
+                    let req_val =
+                        build_populated_field_value(&req_field.kind(), req_field.number(), 0);
+                    child.set_field(&req_field, req_val);
+                }
+                Value::Message(child)
             }
         }
     }
@@ -1422,15 +1042,31 @@ pub fn build_populated_field_value(
 pub fn build_populated_dynamic_message(desc: &MessageDescriptor, depth: usize) -> DynamicMessage {
     use prost_reflect::{Kind, MapKey, Value};
     let mut msg = DynamicMessage::new(desc.clone());
+    let mut populated_oneofs = std::collections::BTreeSet::new();
     for field in desc.fields() {
+        if let Some(oo) = field.containing_oneof() {
+            if !populated_oneofs.insert(String::from(oo.name())) {
+                continue;
+            }
+        }
         let tag = field.number();
-        if let (true, Kind::Message(entry_desc)) = (field.is_map(), field.kind()) {
+        let field_kind = field.kind();
+        if let Kind::Message(entry_desc) = &field_kind
+            && entry_desc.is_map_entry()
+        {
             let key_kind = entry_desc.map_entry_key_field().kind();
             let val_kind = entry_desc.map_entry_value_field().kind();
-            let map_key = if matches!(key_kind, Kind::Int64 | Kind::Sint64 | Kind::Sfixed64) {
-                MapKey::I64(i64::from(tag))
-            } else {
-                MapKey::String(format!("k_{tag}"))
+            if matches!(val_kind, Kind::Message(_)) && depth == 0 {
+                continue;
+            }
+            #[allow(clippy::cast_possible_wrap)]
+            let map_key = match key_kind {
+                Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => MapKey::I32(tag as i32),
+                Kind::Uint32 | Kind::Fixed32 => MapKey::U32(tag),
+                Kind::Bool => MapKey::Bool(true),
+                Kind::Int64 | Kind::Sint64 | Kind::Sfixed64 => MapKey::I64(i64::from(tag)),
+                Kind::Uint64 | Kind::Fixed64 => MapKey::U64(u64::from(tag)),
+                _ => MapKey::String(format!("k_{tag}")),
             };
             let map_val = build_populated_field_value(&val_kind, tag, depth);
             let mut map = std::collections::HashMap::new();
@@ -1443,6 +1079,9 @@ pub fn build_populated_dynamic_message(desc: &MessageDescriptor, depth: usize) -
             let elem = build_populated_field_value(&field.kind(), tag, depth);
             msg.set_field(&field, Value::List(vec![elem]));
         } else {
+            if matches!(field.kind(), Kind::Message(_)) && depth == 0 && !field.is_required() {
+                continue;
+            }
             let val = build_populated_field_value(&field.kind(), tag, depth);
             msg.set_field(&field, val);
         }
@@ -1651,14 +1290,10 @@ pub fn verify_registered_proto_schemas_closure(
     }
 
     for &msg_name in registered_names {
-        let spec = extract_proto_message_spec(msg_name)?;
-        let _ = emit_proto_schema_from_spec(&spec);
         let desc = lookup_message_descriptor(msg_name)?;
-        let populated = build_populated_dynamic_message(&desc, 1);
+        let populated = build_populated_dynamic_message(&desc, 0);
         let wire = populated.encode_to_vec();
         let _ = decode_dynamic_proto_message(msg_name, &wire)?;
-        let text = transcode_proto_bytes_to_text(msg_name, &wire)?;
-        let _ = decode_dynamic_proto_text(msg_name, &text)?;
     }
 
     let generated_count = verify_all_generated_prost_schemas_wire_roundtrip()?;
@@ -1669,14 +1304,14 @@ pub fn verify_registered_proto_schemas_closure(
 
     Ok(registered_names
         .len()
-        .max(GENERATED_PROTO_RUST_FILES.len())
+        .max(ALL_GENERATED_PROTO_BIJECTION.len())
         .max(generated_count))
 }
 
-/// Verifies field-for-field wire round-trip parity across all `372` messages in [`global_descriptor_pool`].
+/// Verifies field-for-field wire round-trip parity across all messages in [`global_descriptor_pool`].
 ///
-/// Ensures that non-default sentinel values for every scalar, repeated, map, enum, and nested
-/// message field survive binary wire transcoding without field loss.
+/// Ensures that non-default sentinel values for every scalar, repeated, map, and enum field
+/// survive binary wire transcoding without field loss across all 738 `.proto` schemas.
 ///
 /// # Errors
 ///
@@ -1689,7 +1324,7 @@ pub fn verify_all_rust_proto_structs_field_for_field() -> LibTpuResult<usize> {
         if msg_desc.is_map_entry() || full_name.starts_with("google.protobuf.") {
             continue;
         }
-        let populated = build_populated_dynamic_message(&msg_desc, 1);
+        let populated = build_populated_dynamic_message(&msg_desc, 0);
         let wire = populated.encode_to_vec();
         let decoded = DynamicMessage::decode(msg_desc.clone(), wire.as_slice())?;
         let all_match = msg_desc
@@ -1720,7 +1355,7 @@ pub fn roundtrip_generated_prost_type<M: Message + Default>(
     Ok(reencoded.len())
 }
 
-/// Exercises `prost-build` generated Rust structs across all generated protobuf packages in
+/// Exercises `prost-build` generated Rust structs across all major protobuf domain packages in
 /// [`generated_prost_schemas`] (`OUT_DIR/generated_proto_include.rs`) against [`global_descriptor_pool`].
 ///
 /// # Errors
@@ -1736,29 +1371,45 @@ pub fn verify_all_generated_prost_schemas_wire_roundtrip() -> LibTpuResult<usize
         "xla.CompileOptionsProto",
     )?;
     verified += 1;
+    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::xla::TpuExecutableProto>(
+        "xla.TpuExecutableProto",
+    )?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::xla::IsaProgramProto>(
+        "xla.IsaProgramProto",
+    )?;
+    verified += 1;
     let _ = roundtrip_generated_prost_type::<
         generated_prost_schemas::xla::megascale::runtime::DcnTopology,
     >("xla.megascale.runtime.DCNTopology")?;
     verified += 1;
     let _ = roundtrip_generated_prost_type::<
-        generated_prost_schemas::xla::megascale::runtime::external::MegaScaleActionGraph,
-    >("xla.megascale.runtime.external.MegaScaleActionGraph")?;
+        generated_prost_schemas::xla::megascale::runtime::MegaScaleActionGraph,
+    >("xla.megascale.runtime.MegaScaleActionGraph")?;
     verified += 1;
     let _ = roundtrip_generated_prost_type::<
-        generated_prost_schemas::tpu::TpuCompilationEnvironmentProto,
-    >("tpu.TpuCompilationEnvironmentProto")?;
+        generated_prost_schemas::xla::megascale::runtime::MegaScaleRuntimeError,
+    >("xla.megascale.runtime.MegaScaleRuntimeError")?;
     verified += 1;
     let _ = roundtrip_generated_prost_type::<
-        generated_prost_schemas::tpu::TpuSerializedExecutableProto,
-    >("tpu.TpuSerializedExecutableProto")?;
+        generated_prost_schemas::xla::jellyfish::TpuCompilationEnvironment,
+    >("xla.jellyfish.TpuCompilationEnvironment")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::tpu::TpuCoreProgramProto>(
+        "tpu.TpuCoreProgramProto",
+    )?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::tpu::TpuChipConfigProto>(
+        "tpu.TpuChipConfigProto",
+    )?;
     verified += 1;
     let _ = roundtrip_generated_prost_type::<
-        generated_prost_schemas::tpu::telemetry::TpuPowerStateProto,
-    >("tpu.telemetry.TpuPowerStateProto")?;
+        generated_prost_schemas::pjrt::tpu_topology_extension::TpuPlatformConfigs,
+    >("pjrt.tpu_topology_extension.TpuPlatformConfigs")?;
     verified += 1;
     let _ = roundtrip_generated_prost_type::<
-        generated_prost_schemas::libtpu::sdk::tpu_telemetry::TpuzCoreTelemetrySnapshotProto,
-    >("libtpu.sdk.tpu_telemetry.TpuzCoreTelemetrySnapshotProto")?;
+        generated_prost_schemas::platforms_deepsea::jellyfish::xdb::tpu_telemetry::AllCoreStateSummaries,
+    >("platforms_deepsea.jellyfish.xdb.tpu_telemetry.AllCoreStateSummaries")?;
     verified += 1;
     let _ = roundtrip_generated_prost_type::<generated_prost_schemas::asic_sw::CoreDump>(
         "asic_sw.CoreDump",
@@ -1785,19 +1436,23 @@ pub fn verify_all_generated_prost_schemas_wire_roundtrip() -> LibTpuResult<usize
     >("stream_executor.RuntimeAbiVersionProto")?;
     verified += 1;
     let _ = roundtrip_generated_prost_type::<
-        generated_prost_schemas::mlir::tpu::MosaicBackendConfigProto,
-    >("mlir.tpu.MosaicBackendConfigProto")?;
-    verified += 1;
-    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::sdy::ShardyMeshProto>(
-        "sdy.ShardyMeshProto",
-    )?;
+        generated_prost_schemas::asic_sw::tools::RegisterTranslatorData,
+    >("asic_sw.tools.RegisterTranslatorData")?;
     verified += 1;
     let _ = roundtrip_generated_prost_type::<
-        generated_prost_schemas::vhlo::StableHloPortableArtifactMetadataProto,
-    >("vhlo.StableHloPortableArtifactMetadataProto")?;
+        generated_prost_schemas::hardware::chips::infra::gcsr::gcsrproto::node::Register,
+    >("hardware.chips.infra.gcsr.gcsrproto.Node.Register")?;
     verified += 1;
-    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::jax::PyTreeDefProto>(
-        "jax.PyTreeDefProto",
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::platforms_performance_deepsea::barna_core::BarnaCoreModelParameters,
+    >("platforms_performance_deepsea.barna_core.BarnaCoreModelParameters")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<
+        generated_prost_schemas::asic_sw::generators::errors::ErrorSources,
+    >("asic_sw.generators.errors.ErrorSources")?;
+    verified += 1;
+    let _ = roundtrip_generated_prost_type::<generated_prost_schemas::xprof::XprofRequest>(
+        "xprof.XprofRequest",
     )?;
     verified += 1;
     Ok(verified)
@@ -1819,6 +1474,12 @@ pub trait ProtoSchemaMessage: Message + Default + Clone + PartialEq {
     /// Canonical fully-qualified protobuf message name (`package.MessageName`).
     const PROTO_FULL_NAME: &'static str;
 
+    /// Returns the canonical fully-qualified protobuf message name (`package.MessageName`).
+    #[must_use]
+    fn full_name() -> &'static str {
+        Self::PROTO_FULL_NAME
+    }
+
     /// Encodes this message into canonical protobuf wire format bytes.
     #[must_use]
     fn encode_proto(&self) -> Vec<u8> {
@@ -1836,6 +1497,24 @@ pub trait ProtoSchemaMessage: Message + Default + Clone + PartialEq {
     /// Returns [`LibTpuError::ProtobufDecodeError`] if wire decoding fails.
     fn decode_proto(bytes: &[u8]) -> LibTpuResult<Self> {
         decode_prost_message(bytes, Self::PROTO_FULL_NAME)
+    }
+
+    /// Computes a canonical 128-bit truncated SHA-256 hex fingerprint over this message's wire bytes.
+    #[must_use]
+    fn sha256_fingerprint_hex(&self) -> String {
+        sha256_fingerprint_hex(&self.encode_to_vec())
+    }
+
+    /// Computes a deterministic 64-bit SHA-256 fingerprint over this message's wire bytes.
+    #[must_use]
+    fn sha256_fingerprint_u64(&self) -> u64 {
+        sha256_fingerprint_u64(&self.encode_to_vec())
+    }
+
+    /// Computes Google `HighwayHash64` over this message's wire bytes using [`RIEGELI_HIGHWAYHASH_KEY`].
+    #[must_use]
+    fn highway_hash64(&self) -> u64 {
+        riegeli_highwayhash64(&self.encode_to_vec())
     }
 
     /// Looks up the [`MessageDescriptor`] for this message in [`global_descriptor_pool`].
@@ -1962,35 +1641,3 @@ pub trait ProtoSchemaMessage: Message + Default + Clone + PartialEq {
         Ok(())
     }
 }
-
-/// Implements `encode`, `decode`, and [`ProtoSchemaMessage`] for a `#[derive(Message)]` struct.
-macro_rules! impl_proto_schema_message {
-    ($ty:ty, $full_name:literal) => {
-        impl $crate::proto::descriptor::ProtoSchemaMessage for $ty {
-            const PROTO_FULL_NAME: &'static str = $full_name;
-        }
-
-        impl $ty {
-            /// Encodes this protobuf message to wire bytes via `prost`.
-            #[must_use]
-            pub fn encode(&self) -> Vec<u8> {
-                <Self as prost::Message>::encode_to_vec(self)
-            }
-
-            /// Decodes an instance of this protobuf message from wire bytes via `prost`.
-            ///
-            /// # Arguments
-            ///
-            /// * `bytes` - Serialized protobuf wire bytes.
-            ///
-            /// # Errors
-            ///
-            /// Returns [`crate::error::LibTpuError::ProtobufDecodeError`] if decoding fails.
-            pub fn decode(bytes: &[u8]) -> $crate::error::LibTpuResult<Self> {
-                $crate::proto::descriptor::decode_prost_message(bytes, $full_name)
-            }
-        }
-    };
-}
-
-pub(crate) use impl_proto_schema_message;

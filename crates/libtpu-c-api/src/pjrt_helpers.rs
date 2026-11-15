@@ -67,6 +67,25 @@ pub fn pjrt_slot_dispatch_count() -> u64 {
     PJRT_SLOT_DISPATCH_COUNT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Executes `f` inside [`std::panic::catch_unwind`], returning `fallback` if a panic occurs
+/// so an unwinding panic can never cross an `extern "C"` ABI boundary.
+///
+/// # Arguments
+///
+/// * `fallback` - Value returned if `f` panics.
+/// * `f` - Closure executing the FFI entrypoint body.
+#[inline]
+pub(crate) fn ffi_catch_unwind<T, F: FnOnce() -> T>(fallback: T, f: F) -> T {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(fallback)
+}
+
+/// Allocates a [`PJRT_Error`] representing a caught FFI boundary panic (`InternalError`).
+pub(crate) fn ffi_panic_pjrt_error() -> *mut PJRT_Error {
+    box_pjrt_error(LibTpuError::InternalError {
+        context: String::from("Rust panic caught at C ABI boundary"),
+    })
+}
+
 /// Validates `struct_size` of a PJRT argument struct (`PJRT_CheckMatchingStructSizes`).
 ///
 /// # Arguments
@@ -80,20 +99,22 @@ pub fn pjrt_slot_dispatch_count() -> u64 {
 pub unsafe extern "C" fn PJRT_CheckMatchingStructSizes(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
-    if raw_args.is_null() {
-        return box_pjrt_error(LibTpuError::NullPointer { parameter: "args" });
-    }
-    // SAFETY: `raw_args` is non-null and starts with `usize struct_size`.
-    let actual_size = unsafe { *raw_args.cast::<usize>() };
-    if actual_size < size_of::<usize>() {
-        return box_pjrt_error(LibTpuError::InvalidStructSize {
-            struct_name: "PJRT_Args",
-            expected_min: size_of::<usize>(),
-            actual: actual_size,
-        });
-    }
-    PJRT_SLOT_DISPATCH_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    ptr::null_mut()
+    ffi_catch_unwind(ptr::null_mut(), || {
+        if raw_args.is_null() {
+            return box_pjrt_error(LibTpuError::NullPointer { parameter: "args" });
+        }
+        // SAFETY: `raw_args` is non-null and starts with `usize struct_size`.
+        let actual_size = unsafe { *raw_args.cast::<usize>() };
+        if actual_size < size_of::<usize>() {
+            return box_pjrt_error(LibTpuError::InvalidStructSize {
+                struct_name: "PJRT_Args",
+                expected_min: size_of::<usize>(),
+                actual: actual_size,
+            });
+        }
+        PJRT_SLOT_DISPATCH_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        ptr::null_mut()
+    })
 }
 
 /// Invokes a strongly-typed `unsafe fn(&mut T)` from a type-erased reference.
@@ -129,18 +150,20 @@ unsafe fn invoke_typed_pjrt_void_handler<T>(
 /// # Safety
 ///
 /// `raw_args` must be null or point to a valid `T`.
-unsafe fn dispatch_erased_pjrt_void_args(
+pub(crate) unsafe fn dispatch_erased_pjrt_void_args(
     raw_args: *mut std::ffi::c_void,
     handler_ref: *const std::ffi::c_void,
     invoker: unsafe fn(*mut std::ffi::c_void, *const std::ffi::c_void),
 ) {
-    if !raw_args.is_null() {
-        PJRT_SLOT_DISPATCH_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        // SAFETY: `raw_args` is non-null.
-        unsafe {
-            invoker(raw_args, handler_ref);
+    ffi_catch_unwind((), || {
+        if !raw_args.is_null() {
+            PJRT_SLOT_DISPATCH_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // SAFETY: `raw_args` is non-null.
+            unsafe {
+                invoker(raw_args, handler_ref);
+            }
         }
-    }
+    });
 }
 
 /// Validates `raw_args != null` and dispatches to a strongly-typed `&mut T` void handler.
@@ -191,37 +214,64 @@ unsafe fn invoke_typed_pjrt_handler<T>(
 ///
 /// * `raw_args` - Raw pointer to the `PJRT_*_Args` structure.
 /// * `expected_size` - Minimum required `struct_size` in bytes.
+/// * `struct_name` - Static name of the `PJRT_*_Args` structure for diagnostics.
 /// * `handler_ref` - Type-erased pointer to the strongly-typed callback.
 /// * `invoker` - Monomorphized trampoline invoking the strongly-typed callback.
 ///
 /// # Safety
 ///
 /// `raw_args` must be null or point to a `PJRT_*_Args` structure of at least `expected_size` bytes.
-unsafe fn dispatch_erased_pjrt_args(
+pub(crate) unsafe fn dispatch_erased_pjrt_args(
     raw_args: *mut std::ffi::c_void,
     expected_size: usize,
+    struct_name: &'static str,
     handler_ref: *const std::ffi::c_void,
     invoker: unsafe fn(*mut std::ffi::c_void, *const std::ffi::c_void) -> Result<(), LibTpuError>,
 ) -> *mut PJRT_Error {
-    PJRT_SLOT_DISPATCH_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // SAFETY: `PJRT_CheckMatchingStructSizes` checks for null and validates `struct_size >= 8`.
-    let err = unsafe { PJRT_CheckMatchingStructSizes(raw_args) };
-    if !err.is_null() {
-        return err;
-    }
-    // SAFETY: `raw_args` is non-null and starts with `struct_size: usize`.
-    let actual_size = unsafe { *raw_args.cast::<usize>() };
-    if actual_size < expected_size {
-        return box_pjrt_error(LibTpuError::InvalidStructSize {
-            struct_name: "PJRT_Args",
-            expected_min: expected_size,
-            actual: actual_size,
-        });
-    }
-    // SAFETY: `raw_args` is non-null and has at least `expected_size` bytes.
-    match unsafe { invoker(raw_args, handler_ref) } {
-        Ok(()) => ptr::null_mut(),
-        Err(e) => box_pjrt_error(e),
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        PJRT_SLOT_DISPATCH_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // SAFETY: `PJRT_CheckMatchingStructSizes` checks for null and validates `struct_size >= 8`.
+        let err = unsafe { PJRT_CheckMatchingStructSizes(raw_args) };
+        if !err.is_null() {
+            return err;
+        }
+        // SAFETY: `raw_args` is non-null and starts with `struct_size: usize`.
+        let actual_size = unsafe { *raw_args.cast::<usize>() };
+        maybe_trace_pjrt_dispatch(
+            std::env::var_os("LIBTPU_TRACE_PJRT").is_some(),
+            struct_name,
+            actual_size,
+        );
+        if actual_size < expected_size {
+            return box_pjrt_error(LibTpuError::InvalidStructSize {
+                struct_name,
+                expected_min: expected_size,
+                actual: actual_size,
+            });
+        }
+        // SAFETY: `raw_args` is non-null and has at least `expected_size` bytes.
+        match unsafe { invoker(raw_args, handler_ref) } {
+            Ok(()) => ptr::null_mut(),
+            Err(e) => box_pjrt_error(e),
+        }
+    }))
+    .unwrap_or_else(|_| ffi_panic_pjrt_error())
+}
+
+/// Emits a diagnostic trace line to stderr when `trace_enabled` (`LIBTPU_TRACE_PJRT`) is active.
+///
+/// # Arguments
+///
+/// * `trace_enabled` - Whether `LIBTPU_TRACE_PJRT` is set in the process environment.
+/// * `struct_name` - Rust type name of the dispatched `PJRT_*_Args` structure.
+/// * `actual_size` - Caller-supplied `struct_size` byte count.
+pub(crate) fn maybe_trace_pjrt_dispatch(
+    trace_enabled: bool,
+    struct_name: &str,
+    actual_size: usize,
+) {
+    if trace_enabled {
+        eprintln!("[PJRT] {struct_name} (sz={actual_size})");
     }
 }
 
@@ -245,7 +295,8 @@ pub(crate) unsafe fn dispatch_typed_pjrt_args<T: crate::pjrt_types::PjrtArgsStru
     unsafe {
         dispatch_erased_pjrt_args(
             raw_args,
-            T::MIN_STRUCT_SIZE,
+            T::effective_min_struct_size(),
+            std::any::type_name::<T>(),
             handler_ref,
             invoke_typed_pjrt_handler::<T>,
         )
@@ -262,14 +313,16 @@ pub(crate) unsafe fn dispatch_typed_pjrt_args<T: crate::pjrt_types::PjrtArgsStru
 /// * `holder` - Opaque [`crate::pjrt_types::PjrtSerializedArtifact`] pointer.
 #[unsafe(no_mangle)]
 pub extern "C" fn pjrt_serialized_artifact_deleter(holder: *mut std::ffi::c_void) {
-    if !holder.is_null() {
-        // SAFETY: `holder` was allocated via `Box::into_raw(Box::new(PjrtSerializedArtifact { .. }))`.
-        unsafe {
-            drop(Box::from_raw(
-                holder.cast::<crate::pjrt_types::PjrtSerializedArtifact>(),
-            ));
+    crate::pjrt_helpers::ffi_catch_unwind((), || {
+        if !holder.is_null() {
+            // SAFETY: `holder` was allocated via `Box::into_raw(Box::new(PjrtSerializedArtifact { .. }))`.
+            unsafe {
+                drop(Box::from_raw(
+                    holder.cast::<crate::pjrt_types::PjrtSerializedArtifact>(),
+                ));
+            }
         }
-    }
+    });
 }
 
 /// Backwards-compatible alias for [`pjrt_serialized_artifact_deleter`].
@@ -279,7 +332,9 @@ pub extern "C" fn pjrt_serialized_artifact_deleter(holder: *mut std::ffi::c_void
 /// * `holder` - Opaque serialized artifact holder pointer.
 #[unsafe(no_mangle)]
 pub extern "C" fn pjrt_serialized_noop_deleter(holder: *mut std::ffi::c_void) {
-    pjrt_serialized_artifact_deleter(holder);
+    crate::pjrt_helpers::ffi_catch_unwind((), || {
+        pjrt_serialized_artifact_deleter(holder);
+    });
 }
 
 /// Allocates a heap-owned [`crate::pjrt_types::PjrtSerializedArtifact`] tuple.
@@ -324,6 +379,8 @@ pub(crate) fn box_topology_description(
     Box::into_raw(Box::new(PJRT_TopologyDescription {
         inner: core_topo,
         desc_ptrs,
+        is_subslice: std::sync::atomic::AtomicBool::new(false),
+        ext_arena: parking_lot::Mutex::new(Vec::new()),
     }))
 }
 
@@ -543,7 +600,7 @@ pub(crate) static GLOBAL_PLUGIN_ATTRIBUTES: [crate::pjrt_types::PJRT_NamedValue;
         extension_start: ptr::null_mut(),
         name: c"supports_cross_host_transfers".as_ptr(),
         name_size: 29,
-        value_type_and_pad: 3,
+        value_type_and_pad: 4, // PJRT_NamedValue_kBool
         value_payload: 1,
         value_size: 1,
     },
@@ -551,3 +608,55 @@ pub(crate) static GLOBAL_PLUGIN_ATTRIBUTES: [crate::pjrt_types::PJRT_NamedValue;
 
 // SAFETY: `GLOBAL_PLUGIN_ATTRIBUTES` contains only static `'static` C-string pointers and integer constants.
 unsafe impl Sync for crate::pjrt_types::PJRT_NamedValue {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    unsafe fn unwind_pjrt_invoker(
+        _raw: *mut std::ffi::c_void,
+        _h: *const std::ffi::c_void,
+    ) -> Result<(), LibTpuError> {
+        std::panic::resume_unwind(Box::new("simulated_pjrt_unwind"))
+    }
+
+    unsafe fn unwind_void_invoker(_raw: *mut std::ffi::c_void, _h: *const std::ffi::c_void) {
+        std::panic::resume_unwind(Box::new("simulated_void_unwind"))
+    }
+
+    #[test]
+    fn test_ffi_catch_unwind_and_trampoline_panic_containment() {
+        let caught = ffi_catch_unwind(42_i32, || -> i32 {
+            std::panic::resume_unwind(Box::new("simulated_ffi_panic"))
+        });
+        assert_eq!(caught, 42);
+        maybe_trace_pjrt_dispatch(false, "TestArgs", 8);
+        maybe_trace_pjrt_dispatch(true, "TestArgs", 8);
+
+        let mut dummy_args: usize = size_of::<usize>();
+        let raw_ptr = ptr::addr_of_mut!(dummy_args).cast::<std::ffi::c_void>();
+        // SAFETY: `raw_ptr` points to a valid `usize` (`struct_size == 8`).
+        unsafe {
+            let err_pjrt = dispatch_erased_pjrt_args(
+                raw_ptr,
+                size_of::<usize>(),
+                "TestArgs",
+                ptr::null(),
+                unwind_pjrt_invoker,
+            );
+            assert!(!err_pjrt.is_null());
+            drop(Box::from_raw(err_pjrt));
+
+            dispatch_erased_pjrt_void_args(raw_ptr, ptr::null(), unwind_void_invoker);
+
+            let err_ext = crate::extensions::dispatch_erased_extension_args(
+                raw_ptr,
+                size_of::<usize>(),
+                ptr::null(),
+                unwind_void_invoker,
+            );
+            assert!(!err_ext.is_null());
+            drop(Box::from_raw(err_ext));
+        }
+    }
+}

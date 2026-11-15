@@ -1,0 +1,32 @@
+syntax = "proto3";
+package xla.jellyfish;
+import "platforms/xla/tools/learned_cost_model/api/learned_cost_model_client_options.proto";
+enum LearnedCostModelMode {
+  LEARNED_COST_MODEL_MODE_INVALID = 0;
+  LEARNED_COST_MODEL_MODE_ONLY_ML_PREDICTION = 1;
+  LEARNED_COST_MODEL_MODE_ONLY_DB = 2;
+  LEARNED_COST_MODEL_MODE_DB_WITH_FALLBACK_TO_ML_PREDICTION = 3;
+  LEARNED_COST_MODEL_MODE_ONLY_DATA_COLLECTION = 4;
+}
+enum DbQueryType {
+  DB_QUERY_TYPE_NONE = 0;
+  DB_QUERY_TYPE_REPLAY_PREDICITIONS = 1;
+  DB_QUERY_TYPE_GROUND_TRUTH = 2;
+}
+enum MLOutputValidationStrategy {
+  ML_OUTPUT_VALIDATION_STRATEGY_NONE = 0;
+  ML_OUTPUT_VALIDATION_STRATEGY_NEVER_TRUST = 1;
+  ML_OUTPUT_VALIDATION_STRATEGY_ALWAYS_TRUST = 2;
+  ML_OUTPUT_VALIDATION_STRATEGY_NO_NEGATIVE_CYCLES = 3;
+}
+message EmitterLearnedCostModelOptions {
+  bool enable_learned_cost_model = 1;
+  .xla.jellyfish.LearnedCostModelClientOptions learned_cost_model_client_options = 2;
+  int64 max_num_considered_windows = 3;
+  bool dump_fusion_data_proto = 4;
+  string db_path = 5;
+  .xla.jellyfish.DbQueryType db_query_type = 6;
+  .xla.jellyfish.LearnedCostModelMode cost_model_mode = 7;
+  .xla.jellyfish.MLOutputValidationStrategy ml_output_validation_strategy = 8;
+  string dump_fusion_data_proto_dir = 9;
+}

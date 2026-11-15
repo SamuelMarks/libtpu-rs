@@ -1,0 +1,14 @@
+syntax = "proto3";
+package tensorflow.tpu;
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+import "third_party/tensorflow/compiler/xla/tsl/protobuf/error_codes.proto";
+message CompilationResultProto {
+  enum ErrorCode {
+    UNKNOWN = 0;
+    OUT_OF_MEMORY = 1;
+  }
+  .tensorflow.error.Code status_code = 1;
+  string status_error_message = 2;
+  repeated .xla.HloProto hlo_protos = 3;
+  .tensorflow.tpu.CompilationResultProto.ErrorCode error_code = 4;
+}

@@ -1,0 +1,190 @@
+syntax = "proto3";
+
+package libtpu.ext.deepsea;
+
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+
+// Serialized executable container envelope used by VM execution and serialization.
+message TpuSerializedExecutableProto {
+  string name = 1;
+  string fingerprint = 2;
+  int32 num_replicas = 3;
+  int32 num_partitions = 4;
+  repeated int64 instruction_opcodes = 5;
+  repeated .xla.ShapeProto output_shapes = 6;
+  bytes compile_options_bytes = 7;
+  bytes hlo_module_bytes = 8;
+}
+
+// Host command dispatch envelope (INFEED, OUTFEED, HOST_CALLBACK, SEND, RECV).
+message HostCommandEnvelopeProto {
+  int32 opcode = 1;
+  uint64 continuation_id = 2;
+  uint64 handler_id = 3;
+  bytes payload = 4;
+  int64 channel_id = 5;
+  int32 core_id = 6;
+  uint32 completion_sync_flag = 7;
+  string handler_name = 8;
+}
+
+// SparseCore DMA gather/scatter descriptor for compiler passes.
+message SparseCoreDmaDescriptorProto {
+  uint32 descriptor_id = 1;
+  uint64 hbm_base_offset = 2;
+  uint32 spmem_offset = 3;
+  uint32 transfer_bytes = 4;
+  uint32 sync_flag_id = 5;
+  bool is_scatter_write = 6;
+}
+
+// BarnaCore channel configuration summary.
+message BarnaCoreChannelConfigProto {
+  uint32 channel_id = 1;
+  uint32 sparse_core_index = 2;
+  uint32 max_unique_ids_per_partition = 3;
+  uint32 max_ids_per_partition = 4;
+  string table_name = 5;
+}
+
+// SparseCore compiled program summary.
+message SparseCoreProgramProto {
+  uint32 sparse_core_id = 1;
+  bytes instruction_stream = 2;
+  uint32 spmem_scratchpad_bytes = 3;
+  repeated SparseCoreDmaDescriptorProto dma_descriptors = 4;
+  int32 optimizer_opcode = 5;
+  uint32 tec_bundle_count = 6;
+  bytes scs_control_stream = 7;
+  uint32 tile_spmem_size_bytes = 8;
+}
+
+// BarnaCore / SparseCore executable container summary.
+message BarnaCoreExecutableProto {
+  string executable_name = 1;
+  uint32 sparse_core_version = 2;
+  repeated BarnaCoreChannelConfigProto channels = 3;
+  repeated SparseCoreProgramProto programs = 4;
+  uint64 table_hbm_total_bytes = 5;
+}
+
+// SparseCore V3 tile execution schedule entry.
+message SparseCoreTileExecutionScheduleProto {
+  uint32 tile_id = 1;
+  uint32 tec_start_pc = 2;
+  uint32 tec_bundle_count = 3;
+  uint32 spmem_base_offset = 4;
+  uint32 spmem_size_bytes = 5;
+}
+
+// SparseCore V3 executable configuration summary.
+message SparseCoreV3ExecutableConfigProto {
+  string executable_name = 1;
+  uint32 num_sparse_cores = 2;
+  uint32 tiles_per_sparse_core = 3;
+  bool hw_coo_sort_enabled = 4;
+  repeated SparseCoreTileExecutionScheduleProto tile_schedules = 5;
+}
+
+// LLO scheduled micro-operation descriptor.
+message LloScheduledInstructionProto {
+  uint32 bundle_pc = 1;
+  uint32 functional_unit = 2;
+  uint32 opcode = 3;
+  uint32 predicate_reg = 4;
+  uint32 stall_cycles = 5;
+  string hlo_instruction_name = 6;
+}
+
+// LLO VLIW bundle schedule summary.
+message LloBundleScheduleProto {
+  string schedule_name = 1;
+  uint32 total_cycles = 2;
+  uint32 initiation_interval_mii = 3;
+  repeated LloScheduledInstructionProto scheduled_instructions = 4;
+}
+
+// LLO Modulo Pipeline stage assignment entry.
+message LloModuloStageProto {
+  uint32 stage_index = 1;
+  uint32 rotating_predicate_reg = 2;
+  uint32 start_cycle = 3;
+  uint32 end_cycle = 4;
+}
+
+// LLO Swing Modulo Scheduler software pipeline summary.
+message LloSoftwarePipelineScheduleProto {
+  string loop_name = 1;
+  uint32 resource_mii = 2;
+  uint32 recurrence_mii = 3;
+  uint32 achieved_ii = 4;
+  repeated LloModuloStageProto stages = 5;
+}
+
+// LLO virtual-to-physical register live interval.
+message LloLiveIntervalProto {
+  uint32 virtual_reg_id = 1;
+  uint32 reg_class = 2;
+  uint32 def_pc = 3;
+  uint32 last_use_pc = 4;
+  uint32 assigned_phys_reg = 5;
+  bool spilled = 6;
+}
+
+// LLO spill slot allocation in VMEM or SMEM.
+message LloSpillSlotProto {
+  uint32 virtual_reg_id = 1;
+  uint32 memory_space = 2;
+  uint64 byte_offset = 3;
+  uint32 byte_size = 4;
+}
+
+// LLO register allocator assignment summary.
+message LloRegisterAllocationProto {
+  string computation_name = 1;
+  uint32 max_live_vregs = 2;
+  uint32 max_live_sregs = 3;
+  repeated LloLiveIntervalProto live_intervals = 4;
+  repeated LloSpillSlotProto spill_slots = 5;
+}
+
+// ICI torus hop routing entry.
+message IciRouteHopProto {
+  uint32 src_chip_id = 1;
+  uint32 dst_chip_id = 2;
+  uint32 egress_link_port = 3;
+  uint32 virtual_channel = 4;
+  int32 axis_delta = 5;
+  bool is_wrap_around = 6;
+}
+
+// ICI 2D/3D mesh/torus routing table.
+message IciRoutingTableProto {
+  string topology_name = 1;
+  uint32 torus_dimension = 2;
+  bool is_twisted_torus = 3;
+  repeated IciRouteHopProto route_hops = 4;
+  uint32 semaphore_pool_size = 5;
+}
+
+// VLIW bundle slot-width encoding specification.
+message VliwBundleEncodingSpecProto {
+  string isa_family = 1;
+  uint32 bundle_byte_width = 2;
+  uint32 scalar_slots = 3;
+  uint32 vector_slots = 4;
+  uint32 matrix_slots = 5;
+  uint32 xlu_slots = 6;
+  uint32 dma_slots = 7;
+  bool supports_dual_word_imm_ext = 8;
+}
+
+// DMA descriptor ring CSR configuration.
+message DmaDescriptorRingConfigProto {
+  uint32 ring_id = 1;
+  uint32 ring_capacity_entries = 2;
+  uint64 head_csr_offset = 3;
+  uint64 tail_csr_offset = 4;
+  uint32 sync_flag_base_id = 5;
+  bool iommu_scatter_gather_enabled = 6;
+}

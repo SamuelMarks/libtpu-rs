@@ -1,0 +1,36 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.glc.isa;
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_dma.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_immediates.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_scalar_alu.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_vector_alu.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_vector_extended.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_vector_load.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_vector_misc.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_vector_result.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_vector_scalar.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_vector_store.proto";
+message TensorCoreBundle {
+  oneof scalar_instruction {
+    .asic_sw.deepsea.gxc.glc.isa.ScalarSubBundle scalar_alu = 1;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreDma dma = 4;
+  }
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreImmediates immediates = 2;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorScalar vector_scalar = 3;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorAlu vector_alu_0 = 5;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorAlu vector_alu_1 = 6;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorAlu vector_alu_2 = 7;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorAlu vector_alu_3 = 8;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorStore vector_store = 9;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorLoad vector_load_0 = 10;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorLoad vector_load_1 = 11;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorMisc vector_misc = 12;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended vector_extended_0 = 13;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorExtended vector_extended_1 = 14;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorResult vector_result_0 = 15;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreVectorResult vector_result_1 = 16;
+}
+message ScalarSubBundle {
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreScalarAlu scalar_alu_0 = 1;
+  optional .asic_sw.deepsea.gxc.glc.isa.TensorCoreScalarAlu scalar_alu_1 = 2;
+}

@@ -1,0 +1,398 @@
+syntax = "proto2";
+package xprof;
+import "perftools/accelerators/xprof/contrib/llo_debug/llo_debug.proto";
+import "perftools/accelerators/xprof/device_type.proto";
+import "perftools/accelerators/xprof/gcu_info.proto";
+import "perftools/accelerators/xprof/xprofilez/tpu/jfprof.proto";
+import "platforms/deepsea/jellyfish/barna_core/proto/sync_flag_usage.proto";
+import "platforms/deepsea/jellyfish/xdb/debugger.proto";
+import "platforms/xla/sparse_core/llvm/proto/sparsecore_percale.proto";
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+import "third_party/tensorflow/tsl/profiler/protobuf/profiler_service_monitor_result.proto";
+import "third_party/tensorflow/tsl/profiler/protobuf/xplane.proto";
+import "util/task/status.proto";
+enum Mode {
+  f30f04 = 0;
+  PROGRAMMATIC = 1;
+  END2END = 2;
+  PPROF = 4;
+  MONITOR = 5;
+  CLOUD = 6;
+  AUTOGRAPPLER = 8;
+}
+message XprofRequest {
+  reserved 3;
+  reserved 8;
+  reserved 18;
+  reserved 24;
+  reserved 30;
+  reserved 31;
+  reserved 34;
+  reserved 35;
+  reserved "custom_perf_counter";
+  enum ServiceKind {
+    ACTIVITY_TRACING = 1;
+    DEFAULT_PROFILE = 2;
+    CUSTOM_PROFILE = 4;
+    CONTINUOUS_PROFILE = 5;
+    AGGREGATED_TRACING = 7;
+    ICI_PROFILE = 8;
+    HOST_CPU_PROFILE = 9;
+    HOST_CPU_PERF_COUNTERS = 10;
+    PYTHON_CPU_TRACER = 11;
+    TF_STREAMZ = 12;
+    TASK_ENVIRONMENT = 13;
+    KERNEL_TRACER = 14;
+    MEGASCALE_TRACING = 15;
+    GBMC_SENSOR_COLLECTOR = 16;
+    MEGASCALE_TOPOLOGY = 17;
+    SUBPROCESS_PROFILE = 18;
+    NCCL_ML_OPS = 19;
+    GRPC_EVENTS = 20;
+    MPU = 21;
+    XOS_CLIENT = 22;
+  }
+  enum TcMallocProfile {
+    TCMALLOC_PROFILE_NONE = 0;
+    TCMALLOC_PROFILE_HEAP = 1;
+    TCMALLOC_PROFILE_PEAKHEAP = 2;
+    TCMALLOC_PROFILE_EVENT_TRACE = 3;
+  }
+  enum CounterIndexSet {
+    EMPTY = 0;
+    TC_COMPUTATION = 1;
+    TC_MEMORY = 2;
+    SC_ACTIVITY = 3;
+    SC_MEMORY = 4;
+    HBM = 5;
+  }
+  message TraceOptions {
+    reserved 1 to 9;
+    reserved 13;
+    reserved 14;
+    reserved 17;
+    reserved 37;
+    reserved "use_cupti_activity_api";
+    enum TraceMode {
+      TRACE_COMPUTE = 0;
+      TRACE_COMPUTE_AND_DMA = 1;
+      TRACE_ALL = 2;
+      TRACE_ONLY_STEPS = 3;
+      TRACE_ONLY_XLA = 4;
+      TRACE_ONLY_HBM = 5;
+      TRACE_ONLY_ICI = 6;
+      TRACE_PPROF = 7;
+      TRACE_COMPUTE_AND_SYNC = 8;
+      TRACE_ONLY_HOST = 10;
+      TRACE_XLA_BENCHMARK = 11;
+      TRACE_ONLY_BARNACORE = 12;
+      TRACE_COMPUTE_AND_DMA_LITE = 13;
+      TRACE_XLA_AND_SYNC = 14;
+      TRACE_COMPUTE_AND_SC_TASK = 15;
+      TRACE_COMPUTE_AND_DMA_WITH_SC_STREAM = 16;
+    }
+    enum KernelTraceMode {
+      KERNEL_TRACE_OFF = 0;
+      KERNEL_TRACE_THREAD_SWITCHES = 1;
+      KERNEL_TRACE_SYSCALLS = 2;
+    }
+    enum PowerTraceMode {
+      POWER_TRACE_NONE = 0;
+      POWER_TRACE_NORMAL = 1;
+      POWER_TRACE_SPI = 2;
+    }
+    optional .xprof.XprofRequest.TraceOptions.TraceMode trace_mode = 10 [default = TRACE_COMPUTE];
+    optional uint32 kernel_trace_mode = 11 [default = 0];
+    optional uint64 power_trace_mode = 22 [default = 0];
+    optional .xprof.XprofRequest.TraceOptions.PowerTraceMode power_trace_level = 47 [default = POWER_TRACE_NONE];
+    optional bool perf_counters = 12;
+    optional bool trace_concurrent_kernels = 15 [default = true];
+    optional bool enable_python_tracer = 18 [default = false];
+    optional bool enable_tfstreamz_collector = 19 [default = false];
+    optional bool sync_devices_before_stop = 20 [default = false];
+    optional bool enable_nvtx_tracking = 21 [default = false];
+    optional bool enable_megascale_tracing = 28 [default = true];
+    optional bool enable_fw_throttle_event = 29 [default = false];
+    optional bool enable_fw_power_level_event = 30 [default = false];
+    optional bool enable_fw_thermal_event = 31 [default = false];
+    optional bool enable_gbmc_sensor_tracing = 32 [default = false];
+    optional bool enable_cupti_activity_graph_trace = 33;
+    optional bool enable_fw_pcie_utilization_event = 34 [default = false];
+    optional bool enable_fw_dvfs_event = 49 [default = true];
+    optional int32 num_chips_to_profile_per_task = 35 [default = 0];
+    optional bool enable_megascale_topology = 36 [default = false];
+    optional uint64 host_traceme_filter_mask = 38;
+    optional uint32 num_tensor_cores_to_trace = 39 [default = 2];
+    optional uint64 num_sparse_cores_to_trace = 40 [default = 4];
+    optional uint64 num_sparse_core_tiles_to_trace = 41 [default = 4294967295];
+    optional bool enable_periodic_counter_sampling = 42 [default = false];
+    optional uint32 tc_watched_sync_flag_number = 43 [default = 4294967295];
+    optional uint32 tc_watched_sync_flag_mask = 44 [default = 4294967295];
+    optional uint32 max_trace_buffers = 45;
+    optional bool disable_cupti_overhead_tracing = 46 [default = false];
+    optional bool enable_nccl_ml_ops = 48 [default = false];
+    optional int32 max_gpu_ondevice_tracing_instances = 50 [default = 0];
+    repeated string gbmc_sensor_names = 51;
+    optional bool enable_activity_hardware_tracing = 52 [default = false];
+    optional bool enable_circular_buffer_tracing = 53 [default = false];
+    optional bool tpu_sc_dma = 54 [default = false];
+    optional bool enable_continuous_profiling = 56 [default = false];
+    optional bool strip_long_op_names = 58 [default = false];
+    optional bool skip_cupti_finalize = 59 [default = false];
+    optional bool enable_source_location_in_traceme_encode = 55 [default = true];
+    optional bool enable_kernel_profiling = 57 [default = false];
+  }
+  message TpuFilterOptions {
+    optional uint32 mask_filter = 2 [default = 4294967295];
+    optional uint32 trace_lower = 3 [default = 0];
+    optional uint32 trace_upper = 4 [default = 4294967295];
+    optional uint32 tracemark_lower = 5 [default = 0];
+    optional uint32 tracemark_upper = 6 [default = 4294967295];
+  }
+  message CpuPerfCounterRequest {
+    message PerfEventConfig {
+      optional uint64 config = 1;
+      optional uint32 type = 2;
+      optional string name = 3;
+    }
+    repeated string profile_events = 1;
+    repeated .xprof.XprofRequest.CpuPerfCounterRequest.PerfEventConfig perf_event_configs = 3;
+    optional int64 perf_event_interval_ms = 2;
+  }
+  message GpuProfileOptions {
+    optional uint64 max_callback_api_events = 1 [default = 0];
+    optional uint64 max_activity_api_events = 2 [default = 0];
+    optional uint64 max_annotation_strings = 3 [default = 0];
+    optional bool dump_graph_nope_mapping = 4 [default = false];
+    repeated string pm_sample_counters = 5;
+    optional uint64 pm_sample_interval_us = 6 [default = 500];
+    optional string pm_sample_config_path = 7;
+    optional int64 pm_sample_buffer_size_per_gpu_mb = 8 [default = 64];
+    optional uint64 pm_sample_max_counter_samples = 9 [default = 500];
+    optional uint32 pm_sample_devices_per_decode_thread = 10 [default = 8];
+  }
+  message HloProtoOptions {
+    optional bool exclude_if_available_in_xsymbol = 1 [default = false];
+  }
+  message PeriodicCounterSamplingOptions {
+    oneof sampling_method {
+      int32 interval_us = 1 [default = 10000];
+      bool is_external_trigger = 2 [default = false];
+    }
+    optional int32 scaling = 3 [default = 0];
+    optional int32 counter_size_bits = 4 [default = 3];
+    repeated int32 indices = 5;
+  }
+  optional .xprof.XprofRequest.ServiceKind service_kind = 1 [default = ACTIVITY_TRACING];
+  optional .xprof.DeviceType device_type = 7;
+  optional uint32 profiling_duration_ms = 6 [default = 1000];
+  optional uint32 tracemark_lower = 4;
+  optional uint32 tracemark_upper = 5;
+  optional .xprof.XprofRequest.TpuFilterOptions tc_options = 46;
+  optional .xprof.XprofRequest.TpuFilterOptions sc_options = 47;
+  optional uint32 continuous_profile_frequency_hz = 9 [default = 100];
+  optional bool continuous_profile_for_ici = 19 [default = false];
+  optional .xprof.Mode mode = 10 [default = PROGRAMMATIC];
+  optional .xprof.XprofRequest.TraceOptions trace_options = 11;
+  optional bool host_cpu_profile = 12 [default = false];
+  optional int32 host_trace_level = 13 [default = 1];
+  optional bool enable_source_location_in_traceme_encode = 43 [default = true];
+  optional string server_url = 14;
+  optional string bns_address = 23;
+  optional uint64 response_max_bytes = 15 [default = 2147483647];
+  optional uint64 profiling_start_time_ns = 16;
+  optional uint64 response_delay_time_ms = 27 [default = 0];
+  optional uint64 session_id = 17;
+  optional .xprof.XprofRequest.CpuPerfCounterRequest cpu_perf_counter_request = 20;
+  optional bool pprof_debug_xprof_session = 21 [default = false];
+  optional bool include_symbols = 22 [default = true];
+  optional bool gcu_info = 25 [default = false];
+  optional .xprof.XprofRequest.TcMallocProfile tcmalloc_profile = 26 [default = TCMALLOC_PROFILE_NONE];
+  optional uint32 gbmc_profile_interval_ms = 28 [default = 50];
+  optional .xprof.XprofRequest.GpuProfileOptions gpu_profile_options = 29;
+  optional .xprof.XprofRequest.HloProtoOptions hlo_proto_options = 32;
+  optional .xprof.XprofRequest.PeriodicCounterSamplingOptions tc_perf_counter_sampling_options = 37;
+  optional .xprof.XprofRequest.PeriodicCounterSamplingOptions scs_perf_counter_sampling_options = 38;
+  optional .xprof.XprofRequest.PeriodicCounterSamplingOptions sctc_perf_counter_sampling_options = 39;
+  optional .xprof.XprofRequest.PeriodicCounterSamplingOptions sctd_perf_counter_sampling_options = 40;
+  optional .xprof.XprofRequest.PeriodicCounterSamplingOptions cmn_perf_counter_sampling_options = 41;
+  optional .xprof.XprofRequest.PeriodicCounterSamplingOptions icr_perf_counter_sampling_options = 42;
+  repeated .xprof.XprofRequest.CounterIndexSet perf_counter_sets = 44;
+}
+message StartProfilingRequest {
+  optional .xprof.XprofRequest request = 1;
+}
+message StartProfilingResponse {
+}
+message StopProfilingRequest {
+}
+message StopProfilingResponse {
+  optional .xprof.XprofResponse response = 1;
+}
+message PollActiveSessionSnapshotRequest {
+}
+message PollActiveSessionSnapshotResponse {
+  optional .xprof.XprofResponse response = 1;
+}
+message GpuProgram {
+  optional .xla.HloProto hlo_proto = 1;
+}
+message XprofResponse {
+  reserved 2;
+  reserved 6;
+  reserved 1;
+  reserved 4;
+  reserved 13;
+  reserved 14;
+  reserved 15;
+  reserved 28;
+  reserved "traces";
+  message PerfCounterValue {
+    reserved 6;
+    reserved 2;
+    reserved "register_id";
+    oneof id {
+      string name = 1;
+      uint64 counter_id = 7;
+    }
+    oneof value {
+      uint64 uint64_value = 3;
+      int64 int64_value = 4;
+      double double_value = 5;
+    }
+  }
+  message ProfileRecord {
+    reserved 6;
+    reserved "kernel_info";
+    optional uint32 kernel_id = 1;
+    optional string kernel_name = 2;
+    optional uint64 start_time = 3;
+    optional uint64 end_time = 4;
+    repeated .xprof.XprofResponse.PerfCounterValue perf_counter_values = 5;
+    optional string kernel_annotation = 7;
+  }
+  message DeviceProfileRecords {
+    reserved 5;
+    reserved 6;
+    reserved 7;
+    optional uint32 device_id = 1;
+    repeated .xprof.XprofResponse.ProfileRecord kernels = 2;
+    optional string hardware_id = 3;
+    optional int32 global_chip_id = 4;
+  }
+  message UserTrace {
+    reserved 5;
+    reserved 6;
+    message Metadata {
+      oneof metadata_key {
+        string key_name = 1;
+        int64 key_name_index = 2;
+      }
+      oneof metadata_value {
+        string value_name = 3;
+        int64 value_name_index = 4;
+      }
+    }
+    oneof user_trace_name {
+      string name = 1;
+      int64 name_index = 7;
+    }
+    oneof user_trace_start_time {
+      uint64 start_time = 2;
+      uint64 start_time_offset = 8;
+    }
+    oneof user_trace_end_time {
+      uint64 end_time = 3;
+      uint64 duration = 9;
+    }
+    oneof user_trace_thread {
+      uint32 thread_id = 4;
+      uint32 thread_index = 10;
+    }
+    repeated .xprof.XprofResponse.UserTrace.Metadata metadata = 11;
+  }
+  message DroppedTrace {
+    optional string resource = 1;
+    optional uint64 num_entries = 2;
+  }
+  message DroppedTraces {
+    optional uint32 device_id = 1;
+    repeated .xprof.XprofResponse.DroppedTrace dropped_traces = 2;
+  }
+  message ThreadSwitches {
+    repeated uint32 thread_ids = 1;
+    repeated uint64 times = 2;
+  }
+  message ScDebugDumpProto {
+    map<uint64, .xla.sparsecore.proto.Module> sc_modules = 1;
+  }
+  optional .xprof.XprofRequest request = 23;
+  optional .util.StatusProto status = 25;
+  repeated .xprof.XprofResponse.DeviceProfileRecords profile_records = 3;
+  optional uint64 profiling_start_walltime = 5;
+  repeated .xprof.XprofResponse.UserTrace user_traces = 7;
+  repeated string user_trace_names = 19;
+  repeated uint32 user_trace_thread_ids = 21;
+  map<uint32, string> thread_names = 16;
+  map<uint32, string> foreign_thread_names = 22;
+  optional string hostname = 8;
+  optional int32 pid = 39;
+  optional .xprof.DeviceType device_type = 9;
+  repeated .xprof.tpu.JfTrace jf_traces = 10;
+  map<int64, .platforms_deepsea.jellyfish.xdb.CompilerMetadata> jf_programs = 18;
+  map<int64, .xprof.GpuProgram> gpu_programs = 34;
+  map<int64, .platforms_deepsea.jellyfish.barna_core.SyncFlagUsage> jf_barna_core_sync_flags = 26;
+  repeated .xprof.XprofResponse.DroppedTraces dropped_trace_records = 11;
+  optional uint64 profiling_stop_walltime = 12 [default = 18446744073709551615];
+  optional bytes host_cpu_profile = 17;
+  optional bytes heapz_profile = 37;
+  optional bytes threadz_profile = 42;
+  optional bytes contentionz_profile = 43;
+  optional bytes tcmalloc_event_trace_profile = 45;
+  repeated .xprof.XprofResponse.ThreadSwitches cpu_thread_switches = 20;
+  optional bool is_compressed = 24;
+  optional uint64 session_id = 27;
+  optional .tensorflow.profiler.XPlane host_perf_event_results = 29;
+  optional .tensorflow.profiler.XPlane xprof_profiler_debug_times = 30;
+  optional .tensorflow.profiler.XPlane host_perf_uncore_results = 31;
+  optional int32 host_id = 32;
+  optional .tensorflow.profiler.XSpace space = 36;
+  repeated .tensorflow.profiler.XPlane planes = 33;
+  optional .xprof.GcuInfo gcu_info = 35;
+  optional uint64 response_delayed_time_ms = 38;
+  repeated string tags = 40;
+  optional .xprof.tpu.llo_debug.LloDebugDumpProto llo_debug_dump = 41;
+  optional .xprof.XprofResponse.ScDebugDumpProto sc_debug_dump = 44;
+}
+message TerminateEnd2EndRequest {
+}
+message TerminateEnd2EndResponse {
+  optional .util.StatusProto status = 1;
+}
+message XprofMonitorRequest {
+  optional uint32 profiling_duration_ms = 1 [default = 1000];
+  optional int32 monitoring_level = 2 [default = 1];
+  optional bool for_cloud = 3 [default = false];
+  optional bool timestamp = 4 [default = false];
+}
+message XprofMonitorResponse {
+  reserved 2;
+  reserved 3;
+  reserved 4;
+  reserved 5;
+  reserved 6;
+  reserved 7;
+  reserved 8;
+  reserved 9;
+  optional string capture_data = 1;
+  optional .tensorflow.ProfilerServiceMonitorResult monitor_result = 10;
+}
+service XprofService {
+  rpc GetXprofService(.xprof.XprofRequest) returns (.xprof.XprofResponse);
+  rpc GetXprofStream(.xprof.XprofRequest) returns (stream .xprof.XprofResponse);
+  rpc XprofMonitoring(.xprof.XprofMonitorRequest) returns (.xprof.XprofMonitorResponse);
+  rpc TerminateEnd2EndTracing(.xprof.TerminateEnd2EndRequest) returns (.xprof.TerminateEnd2EndResponse);
+  rpc StartProfiling(.xprof.StartProfilingRequest) returns (.xprof.StartProfilingResponse);
+  rpc StopProfiling(.xprof.StopProfilingRequest) returns (.xprof.StopProfilingResponse);
+  rpc PollActiveSessionSnapshot(.xprof.PollActiveSessionSnapshotRequest) returns (.xprof.PollActiveSessionSnapshotResponse);
+}

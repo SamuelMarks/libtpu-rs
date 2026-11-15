@@ -1,0 +1,14 @@
+syntax = "proto3";
+package accel_ssw.deepsea.slice_builder.proto;
+import "platforms/deepsea/software/superpod/routing/common/proto/topology.proto";
+enum ToroidalRouteCacheType {
+  CACHE_UNKNOWN_TYPE = 0;
+  CACHE_TWISTED_TORUS = 1;
+  CACHE_ICI_RESILIENCY_PUFFERFISH = 2;
+  CACHE_ICI_RESILIENCY_VIPERFISH = 3;
+  CACHE_ICI_RESILIENCY_6acc60406 = 4;
+}
+message ToroidalRouteCacheConfigs {
+  .accel_ssw.deepsea.slice_builder.proto.ToroidalRouteCacheType route_cache_type = 1;
+  repeated .superpod.routing.proto.Topology topologies = 2;
+}

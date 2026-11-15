@@ -20,13 +20,41 @@ import struct
 import sys
 import urllib.request
 import zipfile
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Protocol, cast
 
 from elftools.common.exceptions import ELFError
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
+
+
+class _ElfSymbolProto(Protocol):
+    """Typed protocol over `pyelftools` `Symbol`."""
+
+    name: str
+    entry: Mapping[str, Mapping[str, str] | str | int]
+
+
+class _ElfSectionProto(Protocol):
+    """Typed protocol over `pyelftools` `Section`."""
+
+    name: str
+    header: Mapping[str, str | int]
+
+
+class _ElfSymbolTableProto(Protocol):
+    """Typed protocol over `pyelftools` `SymbolTableSection`."""
+
+    iter_symbols: Callable[[], Iterable[_ElfSymbolProto]]
+
+
+class _ElfFileProto(Protocol):
+    """Typed protocol over `pyelftools` `ELFFile`."""
+
+    iter_sections: Callable[[], Iterable[_ElfSectionProto]]
+
 
 ELF_MAGIC = b"\x7fELF"
 ELFCLASS64 = 2
@@ -573,8 +601,8 @@ def parse_elf64_sections_and_dynsym(
         raise ValueError(f"Unsupported ELF class ({ei_class}) or endianness ({ei_data})")
 
     try:
-        elf_cls: Any = ELFFile
-        elf = elf_cls(io.BytesIO(elf_bytes))
+        elf_ctor = cast(Callable[[io.BytesIO], _ElfFileProto], ELFFile)
+        elf = elf_ctor(io.BytesIO(elf_bytes))
         sections: list[ElfSectionHeader] = []
         exported_symbols: list[ElfExportedSymbol] = []
 
@@ -611,9 +639,9 @@ def parse_elf64_sections_and_dynsym(
                 )
             )
             if isinstance(sec, SymbolTableSection):
-                sym_sec: Any = sec
-                for sym in sym_sec.iter_symbols():
-                    st_info_dict = sym.entry["st_info"]
+                sym_tbl = cast(_ElfSymbolTableProto, sec)
+                for sym in sym_tbl.iter_symbols():
+                    st_info_dict = cast(Mapping[str, str], sym.entry["st_info"])
                     st_bind = st_info_dict["bind"]
                     st_type = st_info_dict["type"]
                     st_shndx = sym.entry["st_shndx"]
@@ -627,8 +655,8 @@ def parse_elf64_sections_and_dynsym(
                         exported_symbols.append(
                             ElfExportedSymbol(
                                 name=sym.name,
-                                vaddr=int(sym.entry["st_value"]),
-                                size=int(sym.entry["st_size"]),
+                                vaddr=int(cast(int, sym.entry["st_value"])),
+                                size=int(cast(int, sym.entry["st_size"])),
                                 st_info=(bind_num << 4) | STT_FUNC,
                             )
                         )
@@ -753,25 +781,22 @@ def validate_golden_manifests(repo_root: Path) -> list[str]:
 
     proto_dir = re_dir / "protos"
     expected_protos = (
-        "compile_options.proto",
-        "deepsea_executable.proto",
-        "emitter_learned_cost_model_options.proto",
-        "hlo.proto",
-        "host_command_opcodes.proto",
-        "isa_program.proto",
-        "megascale.proto",
-        "memory_scheduler.proto",
-        "memory_space_assignment.proto",
-        "runtime_config.proto",
-        "target_arguments.proto",
-        "tpu_compilation_environment.proto",
-        "tpu_embedding_configuration.proto",
-        "tpu_executable.proto",
-        "tpu_runtime.proto",
-        "tpu_topology.proto",
-        "tpu_version.proto",
-        "xla_data.proto",
-        "xplane.proto",
+        "third_party/tensorflow/compiler/xla/pjrt/proto/compile_options.proto",
+        "platforms/xla/service/jellyfish/deepsea_executable.proto",
+        "platforms/xla/service/jellyfish/lowering/emitter_learned_cost_model_options.proto",
+        "third_party/tensorflow/compiler/xla/service/hlo.proto",
+        "platforms/asic_sw/tools/common/registers_memfile/encoded_gcsr.proto",
+        "learning/45eac/tpu/runtime/host_commands/host_command_opcodes.proto",
+        "platforms/xla/service/jellyfish/isa_program.proto",
+        "platforms/xla/megascale/runtime/common/runtime_config.proto",
+        "platforms/xla/service/jellyfish/memory_space_assignment/memory_space_assignment.proto",
+        "platforms/xla/service/jellyfish/target_arguments.proto",
+        "platforms/xla/service/jellyfish/tpu_compilation_environment.proto",
+        "third_party/tensorflow/core/protobuf/tpu/tpu_embedding_configuration.proto",
+        "learning/45eac/research/pjrt/tpu_executable.proto",
+        "learning/45eac/tpu/runtime/topology/tpu_topology_args.proto",
+        "third_party/tensorflow/compiler/xla/xla_data.proto",
+        "third_party/tensorflow/tsl/profiler/protobuf/xplane.proto",
     )
     for proto_name in expected_protos:
         if not (proto_dir / proto_name).exists():
@@ -786,16 +811,285 @@ def validate_golden_manifests(repo_root: Path) -> list[str]:
         csr_map = json.loads(csr_map_path.read_text(encoding="utf-8"))
         if (
             not proto_desc.get("topologically_closed")
-            or proto_desc.get("proto_files_count") != 293
-            or len(proto_desc.get("descriptors", [])) < 84
+            or proto_desc.get("proto_files_count") != 738
+            or len(proto_desc.get("descriptors", [])) != 738
         ):
             errors.append("golden_proto_descriptors.json: incomplete descriptor closure")
         if not {"V2", "V3", "V4", "V4Lite", "V5e", "V5p", "V6e", "V7x"}.issubset(
             set(csr_map.get("generations", {}).keys())
+        ) or any(
+            reg.get("offset") in {"0x00001000", "0x00005000", "0x00009000", "0x0000a000"}
+            or "bar" not in reg
+            or "reset_value" not in reg
+            or not reg.get("bitfields")
+            for gen_data in csr_map.get("generations", {}).values()
+            for reg in gen_data.get("registers", [])
         ):
             errors.append("csr_register_map.json: missing TPU generation CSR maps")
 
     return errors
+
+
+def _vaddr_to_elf_offset(sections: list[ElfSectionHeader], vaddr: int) -> int | None:
+    """Translates an ELF64 virtual address to its backing file offset via `SHF_ALLOC` sections.
+
+    Args:
+        sections: Parsed `ElfSectionHeader` descriptors.
+        vaddr: Virtual address to translate.
+
+    Returns:
+        File byte offset when mapped, or `None` if unmapped / `SHT_NOBITS`.
+    """
+    for sec in sections:
+        if (
+            sec.sh_addr > 0
+            and sec.sh_size > 0
+            and sec.sh_type != 8
+            and sec.sh_addr <= vaddr < sec.sh_addr + sec.sh_size
+        ):
+            return sec.sh_offset + (vaddr - sec.sh_addr)
+    return None
+
+
+def extract_descriptor_table_protos(elf_bytes: bytes) -> list[dict[str, object]]:
+    """Extracts exact wire-encoded `FileDescriptorProto` slices via `.rela.dyn` `DescriptorTable`s.
+
+    Args:
+        elf_bytes: Raw ELF64 shared object byte buffer.
+
+    Returns:
+        Sorted list of descriptor records (`name`, `table_vaddr`, `descriptor_vaddr`, `size`).
+    """
+    sections, _ = parse_elf64_sections_and_dynsym(elf_bytes)
+    pdesc = next((s for s in sections if s.name == "protodesc_cold"), None)
+    if pdesc is None:
+        return []
+    pdesc_end = pdesc.sh_addr + pdesc.sh_size
+    by_name: dict[str, dict[str, object]] = {}
+
+    for reloc in resolve_elf64_rela_relocations(elf_bytes):
+        target = reloc.addend
+        if pdesc.sh_addr <= target < pdesc_end and reloc.offset >= 8:
+            tbl_off = _vaddr_to_elf_offset(sections, reloc.offset - 8)
+            blob_off = _vaddr_to_elf_offset(sections, target)
+            if tbl_off is not None and blob_off is not None and tbl_off + 8 <= len(elf_bytes):
+                flags_u32, desc_size = struct.unpack_from("<II", elf_bytes, tbl_off)
+                if flags_u32 == 0 and desc_size >= 8 and blob_off + desc_size <= len(elf_bytes):
+                    wire = elf_bytes[blob_off : blob_off + desc_size]
+                    if wire[0] == 0x0A:
+                        pos = 1
+                        str_len = 0
+                        shift = 0
+                        while pos < len(wire):
+                            byte = wire[pos]
+                            pos += 1
+                            str_len |= (byte & 0x7F) << shift
+                            if (byte & 0x80) == 0:
+                                break
+                            shift += 7
+                        if str_len > 0 and pos + str_len <= len(wire):
+                            proto_name = wire[pos : pos + str_len].decode("utf-8", errors="replace")
+                            if proto_name.endswith(".proto"):
+                                by_name[proto_name] = {
+                                    "name": proto_name,
+                                    "table_vaddr": f"0x{reloc.offset - 8:08x}",
+                                    "descriptor_vaddr": f"0x{target:08x}",
+                                    "size": desc_size,
+                                    "sha256": hashlib.sha256(wire).hexdigest(),
+                                }
+
+    return [by_name[k] for k in sorted(by_name)]
+
+
+def extract_filewrapper_toc_entries(elf_bytes: bytes) -> list[dict[str, object]]:
+    """Extracts all `FileToc` embedded resources from `filewrapper_toc` and verifies MD5 digests.
+
+    Args:
+        elf_bytes: Raw ELF64 shared object byte buffer.
+
+    Returns:
+        List of `FileToc` entry dictionaries (`name`, `size`, `md5`, `md5_verified`).
+    """
+    sections, _ = parse_elf64_sections_and_dynsym(elf_bytes)
+    ftoc = next((s for s in sections if s.name == "filewrapper_toc"), None)
+    if ftoc is None:
+        return []
+    relocs = {r.offset: r.addend for r in resolve_elf64_rela_relocations(elf_bytes)}
+    results: list[dict[str, object]] = []
+
+    for slot_delta in range(0, ftoc.sh_size, 8):
+        cur = relocs.get(ftoc.sh_addr + slot_delta, 0)
+        while cur > 0:
+            name_va = relocs.get(cur, 0)
+            data_va = relocs.get(cur + 8, 0)
+            cur_off = _vaddr_to_elf_offset(sections, cur)
+            cur += 40
+            if name_va <= 0 or data_va <= 0 or cur_off is None or cur_off + 40 > len(elf_bytes):
+                break
+            sz = int(struct.unpack_from("<Q", elf_bytes, cur_off + 16)[0])
+            expected_md5 = elf_bytes[cur_off + 24 : cur_off + 40]
+            name_off = _vaddr_to_elf_offset(sections, name_va)
+            data_off = _vaddr_to_elf_offset(sections, data_va)
+            if name_off is not None and data_off is not None and data_off + sz <= len(elf_bytes):
+                nul = elf_bytes.find(b"\x00", name_off)
+                if nul > name_off:
+                    entry_name = elf_bytes[name_off:nul].decode("utf-8", errors="replace")
+                    payload = elf_bytes[data_off : data_off + sz]
+                    actual_md5 = hashlib.md5(payload).digest()
+                    verified = (expected_md5 == (b"\x00" * 16)) or (actual_md5 == expected_md5)
+                    results.append(
+                        {
+                            "name": entry_name,
+                            "size": sz,
+                            "md5": expected_md5.hex(),
+                            "md5_verified": verified,
+                        }
+                    )
+    return results
+
+
+def _classify_static_csr_shard_symbol(sym_name: str) -> str | None:
+    """Classifies a mangled `PerformanceCounterNameToString` shard symbol into an ASIC family.
+
+    Args:
+        sym_name: Mangled C++ symbol name from `.symtab`.
+
+    Returns:
+        Canonical ASIC family code (`"jxc"`, `"pfc"`, `"plc"`, `"vlc"`, `"vfc"`, `"glc"`, `"gfc"`),
+        or `None` if `sym_name` is not a numbered shard function.
+    """
+    ens_pos = sym_name.find("ENS")
+    if (
+        "PerformanceCounterNameToString" not in sym_name
+        or ens_pos <= 0
+        or not sym_name[ens_pos - 1].isdigit()
+    ):
+        return None
+    for tag, fam in (
+        ("3jxc", "jxc"),
+        ("3pfc", "pfc"),
+        ("3plc", "plc"),
+        ("3vlc", "vlc"),
+        ("3vfc", "vfc"),
+        ("3glc", "glc"),
+        ("3gfc", "gfc"),
+    ):
+        if tag in sym_name:
+            return fam
+    return None
+
+
+def extract_static_csr_maps(elf_bytes: bytes) -> dict[str, list[dict[str, object]]]:
+    """Extracts static `.lrodata` CSR register tables across all 7 ASIC families (`jxc`–`gfc`).
+
+    Args:
+        elf_bytes: Raw ELF64 shared object byte buffer.
+
+    Returns:
+        Dictionary mapping ASIC family code to sorted lists of hardware CSR descriptors.
+    """
+    sections, _ = parse_elf64_sections_and_dynsym(elf_bytes)
+    symtab = next((s for s in sections if s.name == ".symtab"), None)
+    strtab_sec = next((s for s in sections if s.name == ".strtab"), None)
+    if symtab is None or strtab_sec is None:
+        return {}
+
+    strtab = elf_bytes[strtab_sec.sh_offset : strtab_sec.sh_offset + strtab_sec.sh_size]
+    shards_by_fam: dict[str, list[tuple[int, int]]] = {}
+    for off in range(symtab.sh_offset, symtab.sh_offset + symtab.sh_size, 24):
+        st_name, st_info, _, _, st_value, st_size = struct.unpack_from("<IBBHQQ", elf_bytes, off)
+        if (st_info & 0xF) == 2 and st_value > 0 and st_size > 0 and st_name < len(strtab):
+            nul = strtab.find(b"\x00", st_name)
+            sym_name = strtab[st_name : nul if nul >= 0 else len(strtab)].decode(
+                "utf-8", errors="replace"
+            )
+            fam = _classify_static_csr_shard_symbol(sym_name)
+            if fam is not None:
+                shards_by_fam.setdefault(fam, []).append((st_value, st_size))
+
+    out: dict[str, list[dict[str, object]]] = {}
+    for fam, shards in sorted(shards_by_fam.items()):
+        entries: list[dict[str, object]] = []
+        for fva, fsz in sorted(shards):
+            code_off = _vaddr_to_elf_offset(sections, fva)
+            code = (
+                elf_bytes[code_off : code_off + fsz]
+                if code_off is not None and code_off + fsz <= len(elf_bytes)
+                else b""
+            )
+            got_va = 0
+            ranges_va = rel_va = pool_va = single_base = None
+            num_ranges = single_count = 0
+            for idx in range(max(0, len(code) - 11)):
+                cur_va = fva + idx
+                if code[idx : idx + 3] == b"\x48\x8d\x35":
+                    got_va = cur_va + 7 + int(struct.unpack_from("<i", code, idx + 3)[0])
+                elif code[idx : idx + 3] == b"\x4c\x8d\x05":
+                    ranges_va = cur_va + 7 + int(struct.unpack_from("<i", code, idx + 3)[0])
+                    if code[idx + 7] == 0xBA:
+                        num_ranges = int(struct.unpack_from("<I", code, idx + 8)[0])
+                elif code[idx : idx + 3] == b"\x48\x8d\x15":
+                    rel_va = cur_va + 7 + int(struct.unpack_from("<i", code, idx + 3)[0])
+                elif code[idx : idx + 2] == b"\x48\xba":
+                    rel_va = (got_va + int(struct.unpack_from("<q", code, idx + 2)[0])) & (
+                        (1 << 64) - 1
+                    )
+                elif code[idx : idx + 2] in (b"\x48\xb9", b"\x48\xb8"):
+                    pool_va = (got_va + int(struct.unpack_from("<q", code, idx + 2)[0])) & (
+                        (1 << 64) - 1
+                    )
+                elif code[idx : idx + 3] == b"\x48\x8d\x87":
+                    single_base = -int(struct.unpack_from("<i", code, idx + 3)[0])
+                elif code[idx : idx + 2] == b"\x48\x3d" and single_count == 0:
+                    span_plus_1 = int(struct.unpack_from("<I", code, idx + 2)[0])
+                    single_count = ((span_plus_1 - 1) // 8) + 1
+
+            rel_off = _vaddr_to_elf_offset(sections, rel_va) if rel_va is not None else None
+            pool_off = _vaddr_to_elf_offset(sections, pool_va) if pool_va is not None else None
+            ranges_off = (
+                _vaddr_to_elf_offset(sections, ranges_va) if ranges_va is not None else None
+            )
+            if ranges_off is not None and rel_off is not None and pool_off is not None:
+                for r_idx in range(num_ranges):
+                    base_off, stride, str_base, cnt, rel_idx, _ = struct.unpack_from(
+                        "<QIIHHI", elf_bytes, ranges_off + r_idx * 24
+                    )
+                    for k in range(cnt):
+                        s0, s1 = struct.unpack_from("<HH", elf_bytes, rel_off + (rel_idx + k) * 2)
+                        if s0 < s1:
+                            cname = elf_bytes[
+                                pool_off + str_base + s0 : pool_off + str_base + s1
+                            ].decode("utf-8", errors="replace")
+                            csr_off = base_off + k * stride
+                            is_bar2 = fam in ("jxc", "pfc", "plc") or csr_off >= 0x80000000
+                            bar_idx = 2 if is_bar2 else 0
+                            entries.append(
+                                {
+                                    "name": cname,
+                                    "bar": bar_idx,
+                                    "offset": f"0x{csr_off:08x}",
+                                    "width_bits": 64,
+                                }
+                            )
+            elif single_base is not None and rel_off is not None and pool_off is not None:
+                for k in range(single_count):
+                    s0, s1 = struct.unpack_from("<HH", elf_bytes, rel_off + k * 2)
+                    if s0 < s1:
+                        cname = elf_bytes[pool_off + s0 : pool_off + s1].decode(
+                            "utf-8", errors="replace"
+                        )
+                        csr_off = single_base + k * 8
+                        bar_idx = 2 if fam in ("jxc", "pfc", "plc") or csr_off >= 0x80000000 else 0
+                        entries.append(
+                            {
+                                "name": cname,
+                                "bar": bar_idx,
+                                "offset": f"0x{csr_off:08x}",
+                                "width_bits": 64,
+                            }
+                        )
+        out[fam] = sorted(entries, key=lambda d: (int(str(d["offset"]), 16), str(d["name"])))
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -847,5 +1141,5 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())

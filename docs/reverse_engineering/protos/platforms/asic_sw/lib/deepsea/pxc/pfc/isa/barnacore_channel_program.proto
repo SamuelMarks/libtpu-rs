@@ -1,0 +1,6 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.pfc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_bundle.proto";
+message BarnaCoreChannelProgram {
+  repeated .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelBundle bundles = 1;
+}

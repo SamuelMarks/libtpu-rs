@@ -1,0 +1,9 @@
+syntax = "proto2";
+package mlir.interpreter;
+message MlirCompilationTraceEntry {
+  optional string after_pass = 1;
+  optional string mlir_module = 2;
+}
+message MlirCompilationTrace {
+  repeated .mlir.interpreter.MlirCompilationTraceEntry passes = 1;
+}

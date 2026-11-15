@@ -1,0 +1,235 @@
+syntax = "proto3";
+package tensorflow.tpu;
+import "google/protobuf/wrappers.proto";
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+message ClippingLimits {
+  .google.protobuf.FloatValue lower = 1;
+  .google.protobuf.FloatValue upper = 2;
+}
+message SimulatedQuantization {
+  bool enabled = 1;
+  .tensorflow.tpu.ClippingLimits clipping_limits = 2;
+  int32 num_buckets = 3;
+}
+message OptimizerDynamicInput {
+  int32 tag = 1;
+}
+message LearningRate {
+  oneof learning_rate {
+    float constant = 1;
+    .tensorflow.tpu.OptimizerDynamicInput dynamic = 2;
+  }
+}
+message AdagradParameters {
+  reserved 1;
+  reserved "initial_accumulator";
+}
+message AdagradMomentumParameters {
+  float momentum = 1;
+  bool use_nesterov = 2;
+  float exponent = 3;
+  float beta2 = 4;
+  float epsilon = 5;
+}
+message BoundedAdagradParameters {
+  bool update_accumulator_first = 1;
+  float max_var_update = 2;
+  float max_accumulator = 3;
+}
+message FrequencyAwareAdagradParameters {
+  float l1_regularization_strength = 1;
+  float l2_regularization_strength = 2;
+  float probability_exponent = 4;
+  float max_lr_multiplier = 3;
+  float accumulator_decay = 5;
+  float initial_accumulator_value = 6;
+  .tensorflow.tpu.OptimizerDynamicInput step_counter = 7;
+}
+message StochasticGradientDescentParameters {
+}
+message FtrlParameters {
+  reserved 4;
+  reserved 5;
+  reserved "initial_accum";
+  reserved "initial_linear";
+  float l1 = 1;
+  float l2 = 2;
+  float lr_power = 3;
+  float beta = 7;
+  bool multiply_linear_by_lr = 6;
+  bool allow_zero_accumulator = 8;
+}
+message AdamParameters {
+  reserved 6;
+  reserved 7;
+  reserved "initial_m";
+  reserved "initial_v";
+  float beta1 = 3;
+  float beta2 = 4;
+  float epsilon = 5;
+  bool use_non_lazy_adam = 8;
+  bool use_sum_inside_sqrt = 10;
+}
+message MomentumParameters {
+  reserved 3;
+  reserved "initial_accum";
+  float momentum = 1;
+  bool use_nesterov = 2;
+}
+message LionParameters {
+  float beta1 = 1;
+  float beta2 = 2;
+  bool use_non_lazy_lion = 3;
+}
+message RmsPropParameters {
+  reserved 4;
+  reserved 5;
+  reserved "initial_ms";
+  reserved "initial_mom";
+  float rho = 1;
+  float momentum = 2;
+  float epsilon = 3;
+}
+message CenteredRmsPropParameters {
+  reserved 4;
+  reserved 5;
+  reserved 6;
+  reserved "initial_ms";
+  reserved "initial_mom";
+  reserved "initial_mg";
+  float rho = 1;
+  float momentum = 2;
+  float epsilon = 3;
+}
+message MdlAdagradLightParameters {
+  reserved 13;
+  reserved 14;
+  reserved 15;
+  reserved "initial_accumulator";
+  reserved "initial_weight";
+  reserved "initial_benefit";
+  float l2 = 1;
+  float lr_power = 2;
+  float min_servable_mdl_benefit = 3;
+  float mdl_mix_in_margin = 4;
+  float mdl_benefit_rampup_coeff = 5;
+  float mdl_min_weight = 6;
+  float benefit_revisit_scale = 7;
+  float max_event_benefit = 8;
+  float max_total_benefit = 9;
+  float mdl_hard_limit = 10;
+  bool hard_limit_min_benefit = 11;
+  bool mdl_regularize = 12;
+}
+message AdadeltaParameters {
+  reserved 3;
+  reserved 4;
+  reserved "initial_accumulator";
+  reserved "initial_update";
+  float rho = 1;
+  float epsilon = 2;
+}
+message ProximalAdagradParameters {
+  reserved 3;
+  reserved "initial_accumulator";
+  float l1 = 1;
+  float l2 = 2;
+}
+message OnlineYogiParameters {
+  reserved 6;
+  reserved 7;
+  float l1 = 1;
+  float l2 = 2;
+  float beta2 = 3;
+}
+message ProximalYogiParameters {
+  reserved 8;
+  reserved 9;
+  float l1 = 1;
+  float l2 = 2;
+  float beta1 = 3;
+  float beta2 = 4;
+  float epsilon = 5;
+}
+message FrequencyEstimatorParameters {
+  float tau = 1;
+  float max_delta = 2;
+  float outlier_threshold = 3;
+  float weight_exponent = 4;
+}
+message UserDefinedProgramParameters {
+  reserved 2;
+  .xla.HloModuleProto program = 1;
+}
+message AssignParameters {
+}
+message GradientAccumulationStatus {
+  enum Status {
+    UNSPECIFIED = 0;
+    ENABLED = 1;
+    DISABLED = 2;
+  }
+}
+message LowDimensionalPackingStatus {
+  enum Status {
+    UNSPECIFIED = 0;
+    ENABLED = 1;
+    DISABLED = 2;
+  }
+}
+message HotIdReplicationConfiguration {
+  enum Status {
+    UNSPECIFIED = 0;
+    ENABLED = 1;
+    DISABLED = 2;
+    MIGRATION_ONLY = 3;
+  }
+  .tensorflow.tpu.HotIdReplicationConfiguration.Status status = 1;
+}
+message OptimizationParameters {
+  reserved 1;
+  reserved 15;
+  oneof parameters {
+    .tensorflow.tpu.AdagradParameters adagrad = 3;
+    .tensorflow.tpu.AdagradMomentumParameters adagrad_momentum = 26;
+    .tensorflow.tpu.BoundedAdagradParameters bounded_adagrad = 19;
+    .tensorflow.tpu.FrequencyAwareAdagradParameters frequency_aware_adagrad = 30;
+    .tensorflow.tpu.StochasticGradientDescentParameters stochastic_gradient_descent = 4;
+    .tensorflow.tpu.FtrlParameters ftrl = 5;
+    .tensorflow.tpu.AdamParameters adam = 6;
+    .tensorflow.tpu.MomentumParameters momentum = 8;
+    .tensorflow.tpu.LionParameters lion = 29;
+    .tensorflow.tpu.RmsPropParameters rms_prop = 9;
+    .tensorflow.tpu.CenteredRmsPropParameters centered_rms_prop = 10;
+    .tensorflow.tpu.MdlAdagradLightParameters mdl_adagrad_light = 11;
+    .tensorflow.tpu.AdadeltaParameters adadelta = 12;
+    .tensorflow.tpu.ProximalAdagradParameters proximal_adagrad = 14;
+    .tensorflow.tpu.OnlineYogiParameters online_yogi = 20;
+    .tensorflow.tpu.ProximalYogiParameters proximal_yogi = 21;
+    .tensorflow.tpu.FrequencyEstimatorParameters frequency_estimator = 23;
+    .tensorflow.tpu.UserDefinedProgramParameters user_defined_program = 24;
+    .tensorflow.tpu.AssignParameters assign = 25;
+  }
+  .tensorflow.tpu.LearningRate learning_rate = 13;
+  .tensorflow.tpu.ClippingLimits clipping_limits = 2;
+  .tensorflow.tpu.ClippingLimits gradient_clipping_limits = 7;
+  float weight_decay_factor = 16;
+  bool multiply_weight_decay_factor_by_learning_rate = 22;
+  .tensorflow.tpu.SimulatedQuantization simulated_quantization = 27;
+  .tensorflow.tpu.GradientAccumulationStatus.Status gradient_accumulation_status = 17;
+  .tensorflow.tpu.LowDimensionalPackingStatus.Status low_dimensional_packing_status = 28;
+  .tensorflow.tpu.HotIdReplicationConfiguration hot_id_replication_configuration = 18;
+}
+message StateVariableSpecification {
+  message UserDefined {
+    reserved 1;
+  }
+  message FillWithConstant {
+    double initial_value = 1;
+  }
+  oneof usage {
+    .tensorflow.tpu.StateVariableSpecification.UserDefined user_defined = 2;
+    .tensorflow.tpu.StateVariableSpecification.FillWithConstant fill_with_constant = 3;
+  }
+  string name = 1;
+}

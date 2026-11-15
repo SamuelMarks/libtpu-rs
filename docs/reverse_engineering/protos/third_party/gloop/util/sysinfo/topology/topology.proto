@@ -1,0 +1,63 @@
+syntax = "proto3";
+package util.sysinfo.topology;
+message CpuInfo {
+  message Parent {
+    string level = 1;
+    int64 id = 2;
+  }
+  message Sibling {
+    string level = 1;
+    repeated uint64 cpu_mask = 2;
+  }
+  int64 id = 1;
+  repeated .util.sysinfo.topology.CpuInfo.Parent parent = 2;
+  repeated .util.sysinfo.topology.CpuInfo.Sibling sibling = 3;
+}
+message LevelInfo {
+  enum Mode {
+    CPUID = 0;
+    CHILDMAP = 1;
+    PARENTMAP = 2;
+    SIBLINGSMAP = 3;
+  }
+  message Child {
+    int64 id = 1;
+    repeated uint64 cpu_mask = 2;
+  }
+  .util.sysinfo.topology.LevelInfo.Mode mode = 1;
+  string name = 2;
+  repeated .util.sysinfo.topology.LevelInfo.Child child = 3;
+}
+message MemInfo {
+  int64 id = 1;
+  int64 node = 2;
+  int64 size_kb = 3;
+}
+message CacheInfo {
+  string type = 1;
+  int32 level = 2;
+  int32 size_kb = 3;
+}
+message TopologyInfo {
+  message Distance {
+    message Set {
+      repeated uint64 cpu_mask = 1;
+    }
+    int64 id = 1;
+    repeated .util.sysinfo.topology.TopologyInfo.Distance.Set distance = 2;
+  }
+  message MaxPhysNodeDistance {
+    message Map {
+      int64 id = 1;
+      int64 distance = 2;
+    }
+    int64 id = 1;
+    repeated .util.sysinfo.topology.TopologyInfo.MaxPhysNodeDistance.Map distance = 2;
+  }
+  repeated .util.sysinfo.topology.LevelInfo level = 1;
+  repeated .util.sysinfo.topology.CpuInfo cpu = 2;
+  repeated .util.sysinfo.topology.MemInfo mem = 3;
+  repeated .util.sysinfo.topology.CacheInfo cache = 4;
+  repeated .util.sysinfo.topology.TopologyInfo.Distance distance = 5;
+  repeated .util.sysinfo.topology.TopologyInfo.MaxPhysNodeDistance maxphysnode_distance = 6;
+}

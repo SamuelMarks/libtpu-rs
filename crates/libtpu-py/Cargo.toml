@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-readme.workspace = true
+readme = "../../README.md"
 description.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -14,8 +14,15 @@ categories.workspace = true
 name = "libtpu_py"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["abi3-py39"]
+abi3-py39 = ["pyo3/abi3-py39"]
+abi3-py310 = ["pyo3/abi3-py39"]
+extension-module = ["pyo3/extension-module"]
+
 [dependencies]
 libtpu-core.workspace = true
+pyo3.workspace = true
 
 [lints]
 workspace = true

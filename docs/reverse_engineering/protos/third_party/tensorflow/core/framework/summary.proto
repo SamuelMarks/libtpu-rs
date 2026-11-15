@@ -1,0 +1,52 @@
+syntax = "proto3";
+package tensorflow;
+import public "third_party/tensorflow/compiler/xla/tsl/protobuf/histogram.proto";
+import "third_party/tensorflow/core/framework/tensor.proto";
+enum DataClass {
+  DATA_CLASS_UNKNOWN = 0;
+  DATA_CLASS_SCALAR = 1;
+  DATA_CLASS_TENSOR = 2;
+  DATA_CLASS_BLOB_SEQUENCE = 3;
+}
+message SummaryDescription {
+  string type_hint = 1;
+}
+message SummaryMetadata {
+  message PluginData {
+    string plugin_name = 1;
+    bytes content = 2;
+  }
+  .tensorflow.SummaryMetadata.PluginData plugin_data = 1;
+  string display_name = 2;
+  string summary_description = 3;
+  .tensorflow.DataClass data_class = 4;
+}
+message Summary {
+  message Image {
+    int32 height = 1;
+    int32 width = 2;
+    int32 colorspace = 3;
+    bytes encoded_image_string = 4;
+  }
+  message Audio {
+    float sample_rate = 1;
+    int64 num_channels = 2;
+    int64 length_frames = 3;
+    bytes encoded_audio_string = 4;
+    string content_type = 5;
+  }
+  message Value {
+    oneof value {
+      float simple_value = 2;
+      bytes obsolete_old_style_histogram = 3;
+      .tensorflow.Summary.Image image = 4;
+      .tensorflow.HistogramProto histo = 5;
+      .tensorflow.Summary.Audio audio = 6;
+      .tensorflow.TensorProto tensor = 8;
+    }
+    string node_name = 7;
+    string tag = 1;
+    .tensorflow.SummaryMetadata metadata = 9;
+  }
+  repeated .tensorflow.Summary.Value value = 1;
+}

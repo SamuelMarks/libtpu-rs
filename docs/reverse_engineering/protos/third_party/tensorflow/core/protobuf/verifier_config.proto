@@ -1,0 +1,11 @@
+syntax = "proto3";
+package tensorflow;
+message VerifierConfig {
+  enum Toggle {
+    DEFAULT = 0;
+    ON = 1;
+    OFF = 2;
+  }
+  int64 verification_timeout_in_ms = 1;
+  .tensorflow.VerifierConfig.Toggle structure_verifier = 2;
+}

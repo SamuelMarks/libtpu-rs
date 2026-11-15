@@ -1,0 +1,8 @@
+syntax = "proto3";
+package coroner.collection;
+enum AugmentedDataWireFormat {
+  AUGMENTED_DATA_WIRE_FORMAT_UNSPECIFIED = 0;
+  RAW = 1;
+  RECORDIO = 2;
+  RECORDIO_PROTOBUILDER = 3;
+}

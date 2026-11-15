@@ -1,0 +1,82 @@
+syntax = "proto3";
+package xla.ffi;
+message ScalarProto {
+  oneof value {
+    bool b = 1;
+    int32 i8 = 2;
+    int32 i16 = 3;
+    int32 i32 = 4;
+    int64 i64 = 5;
+    uint32 u8 = 6;
+    uint32 u16 = 7;
+    uint32 u32 = 8;
+    uint64 u64 = 9;
+    float f32 = 10;
+    double f64 = 11;
+  }
+}
+message ArrayProto {
+  message Int8ArrayProto {
+    repeated int32 values = 1;
+  }
+  message Int16ArrayProto {
+    repeated int32 values = 1;
+  }
+  message Int32ArrayProto {
+    repeated int32 values = 1;
+  }
+  message Int64ArrayProto {
+    repeated int64 values = 1;
+  }
+  message Uint8ArrayProto {
+    repeated uint32 values = 1;
+  }
+  message Uint16ArrayProto {
+    repeated uint32 values = 1;
+  }
+  message Uint32ArrayProto {
+    repeated uint32 values = 1;
+  }
+  message Uint64ArrayProto {
+    repeated uint64 values = 1;
+  }
+  message FloatArrayProto {
+    repeated float values = 1;
+  }
+  message DoubleArrayProto {
+    repeated double values = 1;
+  }
+  oneof value {
+    .xla.ffi.ArrayProto.Int8ArrayProto i8 = 1;
+    .xla.ffi.ArrayProto.Int16ArrayProto i16 = 2;
+    .xla.ffi.ArrayProto.Int32ArrayProto i32 = 3;
+    .xla.ffi.ArrayProto.Int64ArrayProto i64 = 4;
+    .xla.ffi.ArrayProto.Uint8ArrayProto u8 = 5;
+    .xla.ffi.ArrayProto.Uint16ArrayProto u16 = 6;
+    .xla.ffi.ArrayProto.Uint32ArrayProto u32 = 7;
+    .xla.ffi.ArrayProto.Uint64ArrayProto u64 = 8;
+    .xla.ffi.ArrayProto.FloatArrayProto f32 = 9;
+    .xla.ffi.ArrayProto.DoubleArrayProto f64 = 10;
+  }
+}
+message FlatAttributeProto {
+  oneof value {
+    .xla.ffi.ScalarProto scalar = 1;
+    .xla.ffi.ArrayProto array = 2;
+    bytes str = 3;
+  }
+}
+message FlatAttributesMapProto {
+  map<string, .xla.ffi.FlatAttributeProto> attrs = 1;
+}
+message AttributeProto {
+  oneof value {
+    .xla.ffi.ScalarProto scalar = 1;
+    .xla.ffi.ArrayProto array = 2;
+    bytes str = 3;
+    .xla.ffi.AttributesMapProto dict = 4;
+  }
+}
+message AttributesMapProto {
+  map<string, .xla.ffi.AttributeProto> attrs = 1;
+}

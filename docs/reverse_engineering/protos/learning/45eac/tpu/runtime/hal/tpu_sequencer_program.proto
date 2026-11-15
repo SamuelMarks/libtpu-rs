@@ -1,0 +1,51 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "learning/45eac/tpu/runtime/tpu_platform_type.proto";
+import "learning/45eac/tpu/runtime/tpu_runtime_abi.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/sparsecore/sparsecore_scs_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/sparsecore/sparsecore_tac_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/sparsecore/sparsecore_tec_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_program.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_program.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_program.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_sequencer_program.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/common/isa/tensorcore_program.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_scs_program.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_tac_program.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_tec_program.proto";
+import "platforms/deepsea/jellyfish/isa/barnacore_isa.proto";
+import "platforms/deepsea/jellyfish/isa/tensorcore_isa.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_scs_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_tec_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_program.proto";
+message TpuSequencerProgramProto {
+  message CodeSegmentRegion {
+    .tpu.TpuSegmentMemoryTypeProto memory_type = 1;
+    int64 byte_offset_in_segment = 2;
+    int64 byte_count = 3;
+  }
+  oneof entry_point {
+    .platforms_deepsea.jellyfish.isa.Program jellyfish = 7;
+    .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerProgram jellyfish_barna_core_address_handler = 8;
+    .asic_sw.deepsea.pxc.isa.TensorCoreProgram pufferfish_tensor_core = 9;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreSequencerProgram pufferfish_barna_core_sequencer = 10;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelProgram pufferfish_barna_core_address_handler = 11;
+    .asic_sw.deepsea.vxc.isa.TensorCoreProgram viperfish_tensor_core = 12;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreScsProgram viperfish_sparse_core_scs = 13;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTacProgram viperfish_sparse_core_tac = 14;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecProgram viperfish_sparse_core_tec = 15;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreProgram ghostlite_tensor_core = 17;
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreScsProgram ghostlite_sparse_core_scs = 18;
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreTacProgram ghostlite_sparse_core_tac = 19;
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreTecProgram ghostlite_sparse_core_tec = 20;
+    .asic_sw.deepsea.gxc.gfc.isa.TensorCoreProgram c_6acc60406_tensor_core = 21;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScsProgram c_6acc60406_sparse_core_scs = 22;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecProgram c_6acc60406_sparse_core_tec = 23;
+    .tpu.TpuSequencerProgramProto.CodeSegmentRegion code_segment_region = 16;
+  }
+  .tpu.TpuCoreProgramAbiProto abi = 31;
+  .tpu.TpuPlatformTypeProto platform_type = 2;
+  .tpu.TpuSequencerTypeProto sequencer_type = 3;
+  bytes fingerprint = 4;
+}

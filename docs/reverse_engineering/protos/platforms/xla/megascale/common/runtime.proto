@@ -1,0 +1,28 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+import "learning/45eac/tpu/runtime/topology/tpu_topology_args.proto";
+message PerSliceTpuDimensionsProto {
+  int32 slice_id = 1;
+  int32 x = 2;
+  int32 y = 3;
+  int32 z = 4;
+}
+message Topology {
+  repeated .xla.megascale.runtime.PerSliceTpuDimensionsProto slices = 1;
+}
+message SliceInfo {
+  reserved 2;
+  int32 slice_id = 1;
+  .tpu.TpuTopologyArgsProto tpu_topology_args = 3;
+}
+message MultiSliceTopologyAndLocationProto {
+  int32 local_slice_id = 1;
+  int32 local_host_id = 2;
+  repeated .xla.megascale.runtime.SliceInfo slice_info = 3;
+  int64 incarnation_id = 4;
+}
+message MegascaleRuntimeOptions {
+  optional bool abort_on_errors = 1;
+  optional bool abort_on_hangs = 2;
+  optional bool debug_dump_on_error = 3;
+}

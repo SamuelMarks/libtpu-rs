@@ -1,0 +1,30 @@
+syntax = "proto3";
+package xla;
+message SplitProtoManifest {
+  string result_proto_type = 1;
+  repeated .xla.Record records = 2;
+}
+message Record {
+  message ProtoMergeRecord {
+  }
+  message FieldOverrideRecord {
+    enum FieldDescriptorType {
+      TYPE_UNKNOWN = 0;
+      TYPE_STRING = 1;
+    }
+    message FieldPathPart {
+      oneof index {
+        int64 repeated_field_index = 2;
+        string string_map_key = 3;
+        int64 int_map_key = 4;
+      }
+      int32 field_number = 1;
+    }
+    repeated .xla.Record.FieldOverrideRecord.FieldPathPart field_path = 1;
+    .xla.Record.FieldOverrideRecord.FieldDescriptorType field_type = 2;
+  }
+  oneof record_type {
+    .xla.Record.ProtoMergeRecord proto_merge_record = 2;
+    .xla.Record.FieldOverrideRecord field_override_record = 3;
+  }
+}

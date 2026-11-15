@@ -1,0 +1,40 @@
+syntax = "proto3";
+package xla.cpu;
+import "third_party/tensorflow/compiler/xla/backends/cpu/runtime/thunk.proto";
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+import "third_party/tensorflow/compiler/xla/xla.proto";
+message SymbolProto {
+  enum FunctionTypeId {
+    UNKNOWN = 0;
+    KERNEL = 1;
+    COMPARATOR = 2;
+  }
+  .xla.cpu.SymbolProto.FunctionTypeId function_type_id = 1;
+  string name = 2;
+}
+message ObjFileProto {
+  bytes contents = 1;
+  string name = 2;
+}
+message TargetMachineOptionsProto {
+  string triple = 1;
+  string cpu = 2;
+  string features = 3;
+}
+message CompilationResultProto {
+  reserved 4;
+  enum ObjFileKind {
+    UNKNOWN = 0;
+    CLASSIC = 1;
+    KERNELS = 2;
+  }
+  .xla.HloModuleProtoWithConfig hlo_module = 1;
+  .xla.BufferAssignmentProto buffer_assignment = 2;
+  string entry_function_name = 3;
+  .xla.cpu.CompilationResultProto.ObjFileKind obj_files_kind = 5;
+  .xla.cpu.ThunkSequenceProto thunk_sequence = 6;
+  repeated .xla.cpu.SymbolProto compiled_symbols = 7;
+  repeated .xla.cpu.ObjFileProto object_files = 8;
+  .xla.cpu.TargetMachineOptionsProto target_machine_options = 9;
+  string data_layout = 10;
+}

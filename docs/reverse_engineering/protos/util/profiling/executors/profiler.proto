@@ -1,0 +1,51 @@
+syntax = "proto3";
+package util_profiling;
+message AutoTuningProfile {
+  message GlobalStats {
+    int64 sum_total_usec = 1;
+    int64 sum_run_usec = 2;
+    int64 sum_wasted_usec = 5;
+    int64 highprio_wakeup_delay_usec = 3;
+    int64 lowprio_wakeup_delay_usec = 4;
+  }
+  message TeamStats {
+    repeated int64 tasks = 1;
+    int64 no_blocking_poller_events = 2;
+    int64 max_delay_between_polls_usec = 3;
+    int64 polls = 4;
+    uint64 num_blocking_pollers = 5;
+    uint32 num_threads = 6;
+    uint32 suicide_budget = 7;
+    int32 min_steal_level = 8;
+    int32 max_steal_level = 9;
+    int64 remote_node_steal_delay_usec = 10;
+    int64 local_node_steal_delay_usec = 11;
+  }
+  message GlobalActions {
+    int64 highprio_wakeup_delay_usec = 1;
+    int64 lowprio_wakeup_delay_usec = 2;
+  }
+  message TeamActions {
+    int32 delta_num_threads = 1;
+    int32 min_steal_level = 2;
+    int32 max_steal_level = 3;
+    int64 max_delay_between_polls_usec = 4;
+    int64 remote_node_steal_delay_usec = 5;
+    int64 local_node_steal_delay_usec = 6;
+  }
+  message Epoch {
+    int64 timestamp_us = 1;
+    .util_profiling.AutoTuningProfile.GlobalStats global_stats = 2;
+    repeated .util_profiling.AutoTuningProfile.TeamStats team_stats = 3;
+    .util_profiling.AutoTuningProfile.GlobalActions global_actions = 4;
+    repeated .util_profiling.AutoTuningProfile.TeamActions team_actions = 5;
+    int64 max_sleep_usec = 6;
+    int64 silence_usec = 7;
+  }
+  message AutoTunerData {
+    string thread_prefix = 1;
+    string autosizer_name = 2;
+    repeated .util_profiling.AutoTuningProfile.Epoch epochs = 3;
+  }
+  repeated .util_profiling.AutoTuningProfile.AutoTunerData autotuner_data = 1;
+}

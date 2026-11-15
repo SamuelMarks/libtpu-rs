@@ -1,0 +1,27 @@
+syntax = "proto3";
+package xla;
+import "google/protobuf/any.proto";
+message CompiledMemoryStatsProto {
+  reserved 6;
+  reserved 12;
+  int64 generated_code_size_in_bytes = 1;
+  int64 argument_size_in_bytes = 2;
+  int64 output_size_in_bytes = 3;
+  int64 alias_size_in_bytes = 4;
+  int64 temp_size_in_bytes = 5;
+  int64 peak_memory_in_bytes = 14;
+  int64 total_size_in_bytes = 15;
+  int64 total_allocation_bytes = 16;
+  int64 indefinite_allocations = 17;
+  int64 peak_unpadded_heap_bytes = 18;
+  int64 host_generated_code_size_in_bytes = 7;
+  int64 host_argument_size_in_bytes = 8;
+  int64 host_output_size_in_bytes = 9;
+  int64 host_alias_size_in_bytes = 10;
+  int64 host_temp_size_in_bytes = 11;
+  bytes serialized_buffer_assignment = 13;
+}
+message PjRtExecutableMetadata {
+  optional .xla.CompiledMemoryStatsProto compiled_memory_stats = 1;
+  optional .google.protobuf.Any platform_specific_metadata = 2;
+}

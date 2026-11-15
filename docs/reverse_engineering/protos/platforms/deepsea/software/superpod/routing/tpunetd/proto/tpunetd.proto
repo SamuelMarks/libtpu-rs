@@ -1,0 +1,274 @@
+syntax = "proto2";
+package superpod.tpunetd;
+import "google/protobuf/duration.proto";
+import "platforms/accel_ssw/deepsea/common/proto/local_topology.proto";
+import "platforms/accel_ssw/deepsea/common/proto/routing_entry.proto";
+import "platforms/accel_ssw/deepsea/slice_builder/proto/ici_dump.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+import "platforms/asic_sw/proto/core_dump.proto";
+import "platforms/asic_sw/proto/deepsea/common/gtc_config.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/chip_coordinate.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/ici_network_config.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/topology.proto";
+import "platforms/deepsea/software/superpod/routing/tpunetd/proto/common.proto";
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+import "third_party/platforms_ml_tpu_software/common/proto/capabilities.proto";
+message CreateNetworkRequest {
+  message DevicePaths {
+    repeated string chips = 1;
+  }
+  message ChipLocations {
+    repeated .asic_sw.proto.ChipLocation chips = 1;
+  }
+  oneof chip_list {
+    .superpod.tpunetd.CreateNetworkRequest.DevicePaths device_paths = 6;
+    .superpod.tpunetd.CreateNetworkRequest.ChipLocations chip_locations = 7;
+  }
+  optional .superpod.tpunetd.NetworkContextId id = 1;
+  optional string prod_user = 2;
+  optional string locus_type = 3;
+  optional .superpod.tpunetd.NetworkSliceVersion slice_version = 4;
+  optional string runtime_arguments = 5;
+}
+message CreateNetworkResponse {
+}
+message DeleteNetworkRequest {
+  optional .superpod.tpunetd.NetworkContextId id = 1;
+}
+message DeleteNetworkResponse {
+}
+message ListNetworksRequest {
+}
+message ListNetworksResponse {
+  repeated .superpod.tpunetd.NetworkContextId ids = 1;
+}
+message GrantSessionPermissionRequest {
+  optional .superpod.tpunetd.NetworkContextId id = 1;
+  optional string prod_user = 2;
+}
+message GrantSessionPermissionResponse {
+}
+message StartSessionRequest {
+  enum StartSessionPhase {
+    START_SESSION_PHASE_UNSPECIFIED = 0;
+    START_SESSION_PHASE_PRE_ENABLE_DL_UP = 1;
+    START_SESSION_PHASE_ENABLE_DL_UP = 2;
+  }
+  optional .superpod.tpunetd.NetworkContextId id = 1;
+  repeated .asic_sw.proto.ChipLocation chip_locations = 2;
+  optional .superpod.routing.proto.Topology topology = 3;
+  optional .superpod.tpunetd.StartSessionRequest.StartSessionPhase phase = 4;
+}
+message StartSessionResponse {
+}
+message StopSessionRequest {
+  optional .superpod.tpunetd.NetworkContextId id = 1;
+  repeated .asic_sw.proto.ChipLocation chip_locations = 2;
+  optional .superpod.routing.proto.Topology topology = 3;
+}
+message StopSessionResponse {
+}
+message StatSessionRequest {
+  optional .superpod.tpunetd.NetworkContextId id = 1;
+  repeated .asic_sw.proto.ChipLocation chip_locations = 2;
+  optional .superpod.routing.proto.Topology topology = 3;
+}
+message StatSessionResponse {
+  optional .ml_tpu_software.TpunetdCapability capability = 1;
+  optional int32 status_code = 2;
+  optional string status_message = 3;
+}
+message CheckSessionHealthRequest {
+  optional .superpod.tpunetd.NetworkContextId id = 1;
+  repeated .asic_sw.proto.ChipLocation chip_locations = 2;
+}
+message CheckSessionHealthResponse {
+  repeated .asic_sw.proto.ChipLocation failed_chips = 1;
+  repeated .asic_sw.proto.ChipLocation zero_id_chips = 2;
+}
+message GetCoreDumpRequest {
+  optional .superpod.tpunetd.NetworkContextId id = 1;
+  optional .google.protobuf.Duration timeout = 2;
+  optional .superpod.tpunetd.CoreDumpType core_dump_type = 3;
+  repeated .asic_sw.proto.ChipLocation chip_locations = 4;
+  optional .superpod.routing.proto.Topology topology = 5;
+}
+message GetCoreDumpResponse {
+  optional .accel_ssw.deepsea.slice_builder.proto.IciDump ici_dump = 1;
+  repeated .asic_sw.proto.ChipCoreDump core_dumps = 2;
+  optional .superpod.routing.proto.ChipCoordinateMapping coordinate_mappings = 3;
+}
+message GetChipCoordinatesRequest {
+  repeated .asic_sw.proto.ChipLocation chip_locations = 1;
+}
+message GetChipCoordinatesResponse {
+  optional .superpod.routing.proto.ChipCoordinateMapping coordinate_mappings = 1;
+}
+message UpdateTopologyRequest {
+  message PeersInLocus {
+    repeated string peers = 1;
+  }
+  map<string, .superpod.tpunetd.UpdateTopologyRequest.PeersInLocus> peers_in_locus = 1;
+  optional string hostname_override = 2;
+}
+message UpdateTopologyResponse {
+}
+message GetLocalTopologyRequest {
+  reserved 3;
+  optional .google.protobuf.Duration timeout = 1;
+  optional bool ignore_external_ici_ports = 2;
+  repeated .asic_sw.proto.ChipLocation chip_locations = 4;
+}
+message GetLocalTopologyResponse {
+  repeated .accel_ssw.deepsea.proto.LocalTopology info = 1;
+}
+message SetGlobalChipIdRequest {
+  message ChipLocationToId {
+    optional .asic_sw.proto.ChipLocation location = 1;
+    optional int32 global_id = 2;
+  }
+  repeated .superpod.tpunetd.SetGlobalChipIdRequest.ChipLocationToId ids = 1;
+}
+message SetGlobalChipIdResponse {
+}
+message SetRoutingTableRequest {
+  message ChipRoutingTable {
+    reserved 5;
+    optional .asic_sw.proto.ChipLocation location = 1;
+    optional .accel_ssw.deepsea.proto.RoutingTable chip_egress_routing_table = 2;
+    optional .accel_ssw.deepsea.proto.RoutingTable chip_egress_next_hop_routing_table = 3;
+    map<int32, .accel_ssw.deepsea.proto.RoutingTable> link_next_hop_routing_tables = 4;
+  }
+  repeated .superpod.tpunetd.SetRoutingTableRequest.ChipRoutingTable table_sets = 1;
+}
+message SetRoutingTableResponse {
+}
+message SetGtcConfigurationRequest {
+  message ChipGtcConfiguration {
+    optional .asic_sw.proto.ChipLocation location = 1;
+    optional .asic_sw.proto.deepsea.GtcConfigurationData config = 2;
+    optional bool single_chip_mode = 3;
+  }
+  repeated .superpod.tpunetd.SetGtcConfigurationRequest.ChipGtcConfiguration gtc_configurations = 1;
+}
+message SetGtcConfigurationResponse {
+}
+message EnableIciDataLinkRequest {
+  message IciDataLinkConfiguration {
+    optional .asic_sw.proto.ChipLocation location = 1;
+    repeated uint32 links = 2 [packed = true];
+  }
+  repeated .superpod.tpunetd.EnableIciDataLinkRequest.IciDataLinkConfiguration ici_configurations = 1;
+}
+message EnableIciDataLinkResponse {
+}
+message WaitForDataLinkUpRequest {
+  message ChipDataLinkUpTimeout {
+    optional .asic_sw.proto.ChipLocation location = 1;
+    optional .google.protobuf.Duration timeout = 2;
+  }
+  repeated .superpod.tpunetd.WaitForDataLinkUpRequest.ChipDataLinkUpTimeout timeouts = 1;
+}
+message WaitForDataLinkUpResponse {
+}
+message ClearGlobalGtcRequest {
+  message ChipGlobalGtcWaitDuration {
+    optional .asic_sw.proto.ChipLocation location = 1;
+    optional .google.protobuf.Duration clear_wait_duration = 2;
+  }
+  repeated .superpod.tpunetd.ClearGlobalGtcRequest.ChipGlobalGtcWaitDuration clear_wait_durations = 1;
+}
+message ClearGlobalGtcResponse {
+}
+message WaitForGtcResetRequest {
+  message ChipGtcResetTimeout {
+    optional .asic_sw.proto.ChipLocation location = 1;
+    optional .google.protobuf.Duration timeout = 2;
+  }
+  repeated .superpod.tpunetd.WaitForGtcResetRequest.ChipGtcResetTimeout timeouts = 1;
+}
+message WaitForGtcResetResponse {
+}
+message ResetIciNetworkRequest {
+  repeated .asic_sw.proto.ChipLocation locations = 1;
+}
+message ResetIciNetworkResponse {
+}
+message SetChipCoordinatesRequest {
+  repeated .superpod.routing.proto.ChipLocationToCoordinate chip_mapping = 1;
+}
+message SetChipCoordinatesResponse {
+}
+message ConfigureIciRequest {
+  reserved 13;
+  reserved "perform_reset_request";
+  oneof request {
+    .superpod.tpunetd.GetLocalTopologyRequest get_local_topology_request = 2;
+    .superpod.tpunetd.SetGlobalChipIdRequest set_global_chip_id_request = 3;
+    .superpod.tpunetd.SetRoutingTableRequest set_routing_table_request = 4;
+    .superpod.tpunetd.SetGtcConfigurationRequest set_gtc_configuration_request = 5;
+    .superpod.tpunetd.EnableIciDataLinkRequest enable_ici_data_link_request = 6;
+    .superpod.tpunetd.WaitForDataLinkUpRequest wait_for_data_link_up_request = 7;
+    .superpod.tpunetd.ClearGlobalGtcRequest clear_global_gtc_request = 8;
+    .superpod.tpunetd.WaitForGtcResetRequest wait_for_gtc_request = 9;
+    .superpod.tpunetd.ResetIciNetworkRequest reset_ici_request = 10;
+    .superpod.tpunetd.RestartDriverRequest restart_driver_request = 11;
+    .superpod.tpunetd.SetChipCoordinatesRequest set_chip_coordinates_request = 12;
+  }
+}
+message ConfigureIciResponse {
+  reserved 13;
+  reserved "perform_reset_response";
+  oneof response {
+    .superpod.tpunetd.GetLocalTopologyResponse get_local_topology_response = 2;
+    .superpod.tpunetd.SetGlobalChipIdResponse set_global_chip_id_response = 3;
+    .superpod.tpunetd.SetRoutingTableResponse set_routing_table_response = 4;
+    .superpod.tpunetd.SetGtcConfigurationResponse set_gtc_configuration_response = 5;
+    .superpod.tpunetd.EnableIciDataLinkResponse enable_ici_data_link_response = 6;
+    .superpod.tpunetd.WaitForDataLinkUpResponse wait_for_data_link_up_response = 7;
+    .superpod.tpunetd.ClearGlobalGtcResponse clear_global_gtc_response = 8;
+    .superpod.tpunetd.WaitForGtcResetResponse wait_for_gtc_response = 9;
+    .superpod.tpunetd.ResetIciNetworkResponse reset_ici_response = 10;
+    .superpod.tpunetd.RestartDriverResponse restart_driver_response = 11;
+    .superpod.tpunetd.SetChipCoordinatesResponse set_chip_coordinates_response = 12;
+  }
+}
+message RestartDriverRequest {
+  reserved 1;
+  repeated .asic_sw.proto.ChipLocation chip_locations = 2;
+}
+message RestartDriverResponse {
+}
+message UpdateIciNetworkConfigurationRequest {
+  reserved 4;
+  repeated .superpod.routing.proto.IciNetworkConfig ici_network_configs = 1;
+  optional bool is_enabled = 2;
+  optional .superpod.routing.proto.IciNetworkConfig active_ici_network_config = 3;
+}
+message UpdateIciNetworkConfigurationResponse {
+}
+message SyncCapabilitiesRequest {
+}
+message SyncCapabilitiesResponse {
+  repeated .ml_tpu_software.TpunetdCapability capabilities = 1 [packed = true];
+}
+service NetworkConfig {
+  rpc CreateNetwork(.superpod.tpunetd.CreateNetworkRequest) returns (.superpod.tpunetd.CreateNetworkResponse);
+  rpc DeleteNetwork(.superpod.tpunetd.DeleteNetworkRequest) returns (.superpod.tpunetd.DeleteNetworkResponse);
+  rpc ListNetworks(.superpod.tpunetd.ListNetworksRequest) returns (.superpod.tpunetd.ListNetworksResponse);
+}
+service SessionControl {
+  rpc GrantSessionPermission(.superpod.tpunetd.GrantSessionPermissionRequest) returns (.superpod.tpunetd.GrantSessionPermissionResponse);
+  rpc StartSession(.superpod.tpunetd.StartSessionRequest) returns (.superpod.tpunetd.StartSessionResponse);
+  rpc StopSession(.superpod.tpunetd.StopSessionRequest) returns (.superpod.tpunetd.StopSessionResponse);
+  rpc StatSession(.superpod.tpunetd.StatSessionRequest) returns (.superpod.tpunetd.StatSessionResponse);
+  rpc CheckSessionHealth(.superpod.tpunetd.CheckSessionHealthRequest) returns (.superpod.tpunetd.CheckSessionHealthResponse);
+  rpc GetCoreDump(.superpod.tpunetd.GetCoreDumpRequest) returns (.superpod.tpunetd.GetCoreDumpResponse);
+  rpc GetChipCoordinates(.superpod.tpunetd.GetChipCoordinatesRequest) returns (.superpod.tpunetd.GetChipCoordinatesResponse);
+}
+service NetworkBuild {
+  rpc UpdateTopology(.superpod.tpunetd.UpdateTopologyRequest) returns (.superpod.tpunetd.UpdateTopologyResponse);
+  rpc ConfigureIci(.superpod.tpunetd.ConfigureIciRequest) returns (.superpod.tpunetd.ConfigureIciResponse);
+  rpc UpdateIciNetworkConfiguration(.superpod.tpunetd.UpdateIciNetworkConfigurationRequest) returns (.superpod.tpunetd.UpdateIciNetworkConfigurationResponse);
+  rpc SyncCapabilities(.superpod.tpunetd.SyncCapabilitiesRequest) returns (.superpod.tpunetd.SyncCapabilitiesResponse);
+}

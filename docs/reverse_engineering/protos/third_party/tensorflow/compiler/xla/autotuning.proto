@@ -1,0 +1,104 @@
+syntax = "proto3";
+package xla;
+import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
+import "third_party/tensorflow/compiler/xla/stream_executor/gpu/blas_lt_matmul_algorithm.proto";
+import "third_party/tensorflow/compiler/xla/tsl/protobuf/dnn.proto";
+message CudnnVersion {
+  reserved 1;
+  reserved 2;
+  reserved 3;
+  reserved "major";
+  reserved "minor";
+  reserved "patch";
+  int32 major_version = 4;
+  int32 minor_version = 5;
+  int32 patch_version = 6;
+}
+message ComputeCapability {
+  reserved 1;
+  reserved 2;
+  reserved "major";
+  reserved "minor";
+  int32 major_version = 3;
+  int32 minor_version = 4;
+}
+message AutotuneResult {
+  enum FailureKind {
+    UNKNOWN = 0;
+    REDZONE_MODIFIED = 1;
+    WRONG_RESULT = 2;
+    DISQUALIFIED = 3;
+  }
+  message FailureResult {
+    oneof key {
+      .xla.AutotuneResult.ConvKey reference_conv = 11;
+      .xla.AutotuneResult.GemmKey reference_gemm = 12;
+      .xla.AutotuneResult.CudaConvPlanKey reference_cuda_conv_plan = 14;
+      .stream_executor.dnn.AlgorithmProto reference_algorithm = 15;
+    }
+    .xla.AutotuneResult.FailureKind kind = 1;
+    string msg = 2;
+    int64 buffer_address = 13;
+  }
+  message ConvKey {
+    int64 algorithm = 1;
+    bool tensor_ops_enabled = 2;
+  }
+  message GemmKey {
+    int64 algorithm = 1;
+    int64 autotune_workspace_size = 2;
+    bool unfuse_fp8_output = 3;
+    .stream_executor.gpu.BlasLtMatmulAlgorithmProto algorithm_proto = 4;
+  }
+  message CudaConvPlanKey {
+    string exec_plan_id = 1;
+  }
+  message TritonGemmKey {
+    int64 block_m = 1;
+    int64 block_n = 2;
+    int64 block_k = 3;
+    int64 split_k = 4;
+    int64 num_stages = 5;
+    int64 num_warps = 6;
+    int64 num_ctas = 7;
+    bool is_tma_allowed = 8;
+    bool is_warp_specialization_allowed = 9;
+    int64 waves_per_eu = 10;
+    int64 group_size = 11;
+    int64 mfma_size = 12;
+  }
+  message CustomKernelFusionKey {
+    int64 kernel_index = 1;
+  }
+  message BackendConfigKey {
+    string name = 1;
+    .google.protobuf.Any config = 2;
+  }
+  oneof key {
+    .xla.AutotuneResult.ConvKey conv = 5;
+    .xla.AutotuneResult.GemmKey gemm = 6;
+    .xla.AutotuneResult.TritonGemmKey triton = 17;
+    .xla.AutotuneResult.CudaConvPlanKey cuda_conv_plan = 15;
+    .xla.AutotuneResult.CustomKernelFusionKey custom_kernel_fusion = 18;
+    .stream_executor.dnn.AlgorithmProto algorithm = 16;
+    .xla.AutotuneResult.BackendConfigKey other = 19;
+  }
+  int64 scratch_bytes = 8;
+  .google.protobuf.Duration run_time = 9;
+  .xla.AutotuneResult.FailureResult failure = 7;
+}
+message TritonGemmConfigsProto {
+  repeated .xla.AutotuneResult.TritonGemmKey config = 1;
+}
+message AutotuningLog {
+  .google.protobuf.Any instr = 1;
+  repeated .xla.AutotuneResult results = 2;
+  .xla.CudnnVersion cudnn_version = 3;
+  .xla.ComputeCapability compute_capability = 4;
+  string device_pci_bus_id = 5;
+  string blas_version = 6;
+  string fusion_name = 7;
+  int64 fusion_count = 8;
+  string selected_backend = 9;
+}

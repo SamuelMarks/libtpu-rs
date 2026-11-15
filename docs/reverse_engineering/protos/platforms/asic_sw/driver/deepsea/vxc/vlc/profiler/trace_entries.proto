@@ -1,0 +1,634 @@
+syntax = "proto2";
+package asic_sw.driver.deepsea.vxc.vlc.profiler;
+message TraceHeader {
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceEntries.TracePointId trace_point_id = 1;
+  optional uint32 trace_point_block_id = 2;
+  optional uint64 timestamp = 3;
+}
+message TraceIdHeader {
+  enum TraceIdHeaderCoreIdValues {
+    CORE_ID_RESERVEDCORESELF = 0;
+    CORE_ID_NONCORE = 1;
+    CORE_ID_TC0 = 2;
+    CORE_ID_RESERVEDCORE0 = 3;
+    CORE_ID_RESERVEDCORE1 = 4;
+    CORE_ID_RESERVEDCORE2 = 5;
+    CORE_ID_RESERVEDCORE3 = 6;
+    CORE_ID_RESERVEDCORE4 = 7;
+  }
+  optional uint32 transaction_id = 1;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader.TraceIdHeaderCoreIdValues core_id = 2;
+  optional uint32 chip_id = 3;
+}
+message OciDescriptorCommon {
+  enum DmaTypeValues {
+    DMA_TYPE_LOCALORHOST = 0;
+    DMA_TYPE_REMOTEUNICAST = 1;
+  }
+  enum SrcMemMemIdValues {
+    SRC_MEM_MEM_ID_HBM_TCVMEM = 0;
+    SRC_MEM_MEM_ID_HOST_TCSMEM = 1;
+    SRC_MEM_MEM_ID_NONCORERESERVEDMEM0_TCIMEM = 2;
+    SRC_MEM_MEM_ID_NONCORERESERVEDMEM0_TCRESERVEDMEM = 3;
+  }
+  enum SrcMemCoreIdValues {
+    SRC_MEM_CORE_ID_RESERVEDCORESELF = 0;
+    SRC_MEM_CORE_ID_NONCORE = 1;
+    SRC_MEM_CORE_ID_TC0 = 2;
+    SRC_MEM_CORE_ID_RESERVEDCORE0 = 3;
+    SRC_MEM_CORE_ID_RESERVEDCORE1 = 4;
+    SRC_MEM_CORE_ID_RESERVEDCORE2 = 5;
+    SRC_MEM_CORE_ID_RESERVEDCORE3 = 6;
+    SRC_MEM_CORE_ID_RESERVEDCORE4 = 7;
+  }
+  enum SrcOpcodeValues {
+    SRC_OPCODE_READ = 0;
+    SRC_OPCODE_RESERVED = 1;
+    SRC_OPCODE_INSTRUCTIONMEMSET = 2;
+    SRC_OPCODE_DATAMEMSET = 3;
+  }
+  enum DstMemMemIdValues {
+    DST_MEM_MEM_ID_HBM_TCVMEM = 0;
+    DST_MEM_MEM_ID_HOST_TCSMEM = 1;
+    DST_MEM_MEM_ID_NONCORERESERVEDMEM0_TCIMEM = 2;
+    DST_MEM_MEM_ID_NONCORERESERVEDMEM0_TCRESERVEDMEM = 3;
+  }
+  enum DstMemCoreIdValues {
+    DST_MEM_CORE_ID_RESERVEDCORESELF = 0;
+    DST_MEM_CORE_ID_NONCORE = 1;
+    DST_MEM_CORE_ID_TC0 = 2;
+    DST_MEM_CORE_ID_RESERVEDCORE0 = 3;
+    DST_MEM_CORE_ID_RESERVEDCORE1 = 4;
+    DST_MEM_CORE_ID_RESERVEDCORE2 = 5;
+    DST_MEM_CORE_ID_RESERVEDCORE3 = 6;
+    DST_MEM_CORE_ID_RESERVEDCORE4 = 7;
+  }
+  enum DstOpcodeValues {
+    DST_OPCODE_WRITE = 0;
+    DST_OPCODE_RESERVED = 1;
+    DST_OPCODE_WRITESPECIAL0 = 2;
+    DST_OPCODE_WRITESPECIAL1 = 3;
+  }
+  enum SrcSyncFlagCoreIdValues {
+    SRC_SYNC_FLAG_CORE_ID_RESERVEDCORESELF = 0;
+    SRC_SYNC_FLAG_CORE_ID_NONCORE = 1;
+    SRC_SYNC_FLAG_CORE_ID_TC0 = 2;
+    SRC_SYNC_FLAG_CORE_ID_RESERVEDCORE0 = 3;
+    SRC_SYNC_FLAG_CORE_ID_RESERVEDCORE1 = 4;
+    SRC_SYNC_FLAG_CORE_ID_RESERVEDCORE2 = 5;
+    SRC_SYNC_FLAG_CORE_ID_RESERVEDCORE3 = 6;
+    SRC_SYNC_FLAG_CORE_ID_RESERVEDCORE4 = 7;
+  }
+  enum DstSyncFlag0CoreIdValues {
+    DST_SYNC_FLAG_0_CORE_ID_RESERVEDCORESELF = 0;
+    DST_SYNC_FLAG_0_CORE_ID_NONCORE = 1;
+    DST_SYNC_FLAG_0_CORE_ID_TC0 = 2;
+    DST_SYNC_FLAG_0_CORE_ID_RESERVEDCORE0 = 3;
+    DST_SYNC_FLAG_0_CORE_ID_RESERVEDCORE1 = 4;
+    DST_SYNC_FLAG_0_CORE_ID_RESERVEDCORE2 = 5;
+    DST_SYNC_FLAG_0_CORE_ID_RESERVEDCORE3 = 6;
+    DST_SYNC_FLAG_0_CORE_ID_RESERVEDCORE4 = 7;
+  }
+  enum DstSyncFlag1CoreIdValues {
+    DST_SYNC_FLAG_1_CORE_ID_RESERVEDCORESELF = 0;
+    DST_SYNC_FLAG_1_CORE_ID_NONCORE = 1;
+    DST_SYNC_FLAG_1_CORE_ID_TC0 = 2;
+    DST_SYNC_FLAG_1_CORE_ID_RESERVEDCORE0 = 3;
+    DST_SYNC_FLAG_1_CORE_ID_RESERVEDCORE1 = 4;
+    DST_SYNC_FLAG_1_CORE_ID_RESERVEDCORE2 = 5;
+    DST_SYNC_FLAG_1_CORE_ID_RESERVEDCORE3 = 6;
+    DST_SYNC_FLAG_1_CORE_ID_RESERVEDCORE4 = 7;
+  }
+  enum ThreadSelectValues {
+    THREAD_SELECT_THREAD0 = 0;
+    THREAD_SELECT_THREAD1 = 1;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon.DmaTypeValues dma_type = 2;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon.SrcMemMemIdValues src_mem_mem_id = 3;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon.SrcMemCoreIdValues src_mem_core_id = 4;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon.SrcOpcodeValues src_opcode = 5;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon.DstMemMemIdValues dst_mem_mem_id = 6;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon.DstMemCoreIdValues dst_mem_core_id = 7;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon.DstOpcodeValues dst_opcode = 8;
+  optional uint32 src_sync_flag_id = 9;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon.SrcSyncFlagCoreIdValues src_sync_flag_core_id = 10;
+  optional uint32 dst_sync_flag_0_id = 11;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon.DstSyncFlag0CoreIdValues dst_sync_flag_0_core_id = 12;
+  optional uint32 dst_sync_flag_1_id = 13;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon.DstSyncFlag1CoreIdValues dst_sync_flag_1_core_id = 14;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon.ThreadSelectValues thread_select = 15;
+  optional uint32 program_counter = 16;
+  optional uint32 length = 17;
+}
+message HdeHostRequest {
+  enum ThreadIdValues {
+    THREAD_ID_HOST2CHIP_0 = 0;
+    THREAD_ID_HOST2CHIP_1 = 1;
+    THREAD_ID_HOST2CHIP_2 = 2;
+    THREAD_ID_RESERVED0 = 3;
+    THREAD_ID_CHIP2HOST_0 = 4;
+    THREAD_ID_CHIP2HOST_1 = 5;
+    THREAD_ID_CHIP2HOST_2 = 6;
+    THREAD_ID_RESERVED1 = 7;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.HdeHostRequest.ThreadIdValues thread_id = 2;
+  optional uint64 address = 3;
+  optional uint32 size_units_of_32B = 4;
+  optional uint32 thread_tracking_id = 5;
+}
+message HdeHostResponse {
+  enum ThreadIdValues {
+    THREAD_ID_HOST2CHIP_0 = 0;
+    THREAD_ID_HOST2CHIP_1 = 1;
+    THREAD_ID_HOST2CHIP_2 = 2;
+    THREAD_ID_RESERVED0 = 3;
+    THREAD_ID_CHIP2HOST_0 = 4;
+    THREAD_ID_CHIP2HOST_1 = 5;
+    THREAD_ID_CHIP2HOST_2 = 6;
+    THREAD_ID_RESERVED1 = 7;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.HdeHostResponse.ThreadIdValues thread_id = 2;
+  optional uint32 thread_tracking_id = 3;
+}
+message OciCommon {
+  enum NodeTypeValues {
+    NODE_TYPE_TCS = 0;
+    NODE_TYPE_VDQ = 1;
+    NODE_TYPE_HBMQ = 2;
+    NODE_TYPE_HDE = 3;
+    NODE_TYPE_ICR = 4;
+    NODE_TYPE_QNM = 5;
+    NODE_TYPE_MGR = 6;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header_cmd0 = 1;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header_cmd1 = 2;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header_cmd2 = 3;
+  optional uint32 index_valid = 4;
+  optional uint32 id_index0 = 5;
+  optional uint32 id_index1 = 6;
+  optional uint32 id_index2 = 7;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciCommon.NodeTypeValues node_type = 8;
+}
+message OciMessage {
+  enum MsgTypeValues {
+    MSG_TYPE_PRIVATE = 0;
+    MSG_TYPE_PUBLIC = 1;
+  }
+  enum OpcodeValues {
+    OPCODE_WRITE_NO_DONE = 0;
+    OPCODE_WRITE_WITH_DONE = 1;
+    OPCODE_INC_NO_DONE = 2;
+    OPCODE_INC_WITH_DONE = 3;
+  }
+  enum NodeTypeValues {
+    NODE_TYPE_TCS = 0;
+    NODE_TYPE_VDQ = 1;
+    NODE_TYPE_HBMQ = 2;
+    NODE_TYPE_HDE = 3;
+    NODE_TYPE_ICR = 4;
+    NODE_TYPE_QNM = 5;
+    NODE_TYPE_MGR = 6;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 msg_data = 2;
+  optional bool done = 3;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage.MsgTypeValues msg_type = 4;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage.OpcodeValues opcode = 5;
+  optional uint64 addr = 6;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage.NodeTypeValues node_type = 7;
+}
+message OciGeneric {
+  enum NodeTypeValues {
+    NODE_TYPE_TCS = 0;
+    NODE_TYPE_VDQ = 1;
+    NODE_TYPE_HBMQ = 2;
+    NODE_TYPE_HDE = 3;
+    NODE_TYPE_ICR = 4;
+    NODE_TYPE_QNM = 5;
+    NODE_TYPE_MGR = 6;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciGeneric.NodeTypeValues node_type = 2;
+}
+message OciWriteReq {
+  enum ReqOriginValues {
+    REQ_ORIGIN_DMA = 0;
+    REQ_ORIGIN_OCI = 1;
+  }
+  enum NodeTypeValues {
+    NODE_TYPE_TCS = 0;
+    NODE_TYPE_VDQ = 1;
+    NODE_TYPE_HBMQ = 2;
+    NODE_TYPE_HDE = 3;
+    NODE_TYPE_ICR = 4;
+    NODE_TYPE_QNM = 5;
+    NODE_TYPE_MGR = 6;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciWriteReq.ReqOriginValues req_origin = 2;
+  optional uint32 req_id = 3;
+  optional uint32 src_cmd_id = 4;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.OciWriteReq.NodeTypeValues node_type = 5;
+}
+message IciPacket {
+  enum RouterLinkPortIdValues {
+    ROUTER_LINK_PORT_ID_LINK0 = 0;
+    ROUTER_LINK_PORT_ID_LINK1 = 1;
+    ROUTER_LINK_PORT_ID_LINK2 = 2;
+    ROUTER_LINK_PORT_ID_LINK3 = 3;
+    ROUTER_LINK_PORT_ID_LINK4 = 4;
+    ROUTER_LINK_PORT_ID_LINK5 = 5;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.IciPacket.RouterLinkPortIdValues router_link_port_id = 2;
+  optional uint32 virtual_channel = 3;
+  optional uint32 link_targets = 4;
+  optional bool local_ingress_target = 5;
+  optional bool multicast = 6;
+  optional uint32 dst_chip_id = 7;
+  optional bool first_packet_in_dma = 8;
+  optional bool last_packet_in_dma = 9;
+}
+message TcsExternalSyncFlagUpdate {
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 updated_sync_flag_value = 2;
+  optional bool updated_sync_flag_done = 3;
+  optional uint32 sync_flag_number = 4;
+  optional uint32 program_counter = 5;
+  optional bool successful_sync_unblock = 6;
+  optional bool successful_sync = 7;
+  optional bool last_sync_for_dma = 8;
+  optional bool last_sync_was_add = 9;
+  optional bool was_csr_update = 10;
+  optional bool trace_bit_set = 11;
+}
+message TcsInternal {
+  optional uint32 data_field = 1;
+  optional bool done_bit = 2;
+  optional uint32 sync_flag_number = 3;
+  optional uint32 program_counter = 4;
+  optional bool sfence_end = 5;
+  optional bool sfence_start = 6;
+}
+message OciDescriptorStrideSrc {
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 src_stride_0 = 2;
+  optional uint32 src_stride_1 = 3;
+  optional uint32 src_stride_2 = 4;
+  optional uint32 src_stride_3 = 5;
+}
+message OciDescriptorStrideDst {
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 dst_stride_0 = 2;
+  optional uint32 dst_stride_1 = 3;
+  optional uint32 dst_stride_2 = 4;
+  optional uint32 dst_stride_3 = 5;
+}
+message OciDescriptorStrideSteps {
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 steps_per_stride_1 = 2;
+  optional uint32 steps_per_stride_2 = 3;
+  optional uint32 steps_per_stride_3 = 4;
+  optional uint32 steps_per_stride_4 = 5;
+}
+message OciDescriptorAddressMisc {
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 src_mem_start_offset = 2;
+  optional uint32 dst_mem_start_offset = 3;
+  optional uint32 host_upper_iova = 4;
+}
+message ThrottleTcsState {
+  enum PacketTypeValues {
+    PACKET_TYPE_ELECTRICAL_THROTTLE = 1;
+    PACKET_TYPE_THERMAL_THROTTLE = 2;
+    PACKET_TYPE_THROTTLING_STATISTICS = 4;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleTcsState.PacketTypeValues packet_type = 1;
+  optional uint32 num_electrical_throttles = 2;
+  optional uint32 num_thermal_throttles = 3;
+  optional uint32 thermal_total_throttles = 4;
+  optional uint32 thermal_max_throttle = 5;
+  optional uint32 thermal_min_throttle = 6;
+}
+message ThrottleCycleSkipThermalEvent {
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 throttle = 2;
+}
+message ThrottleCycleSkipExternalBrakeEvent {
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional bool external_brake_event = 2;
+}
+message ThrottleCycleSkipExternalThrottleEvent {
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 throttle = 2;
+}
+message ThrottleCycleSkipElectricalBrakeEvent {
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional bool electrical_brake_event = 2;
+}
+message ThrottleCycleSkipElectricalDroopEvent {
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 throttle = 2;
+}
+message ThrottleCycleSkipThrottleArbitration {
+  enum FinalThrottleSourceValues {
+    FINAL_THROTTLE_SOURCE_THERMAL = 0;
+    FINAL_THROTTLE_SOURCE_EXTERNAL_BRAKE = 1;
+    FINAL_THROTTLE_SOURCE_EXTERNAL_THROTTLE = 2;
+    FINAL_THROTTLE_SOURCE_ELECTRICAL_LDIDT_BRAKE = 3;
+    FINAL_THROTTLE_SOURCE_ELECTRICAL_LDIDT_DROOP = 4;
+    FINAL_THROTTLE_SOURCE_SOFTWARE = 5;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional uint32 final_throttle_value = 2;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleCycleSkipThrottleArbitration.FinalThrottleSourceValues final_throttle_source = 3;
+}
+message VdqTransaction {
+  enum AccessTypeValues {
+    ACCESS_TYPE_READ = 0;
+    ACCESS_TYPE_WRITE = 1;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.VdqTransaction.AccessTypeValues access_type = 2;
+  optional uint32 vmem_address_offset = 3;
+}
+message ThrottleEvent {
+  enum PowerRailValues {
+    POWER_RAIL_UNSPECIFIED = 0;
+    POWER_RAIL_VDD_CORE = 1;
+    POWER_RAIL_HBM = 2;
+  }
+  enum CoreTypeValues {
+    CORE_TYPE_UNSPECIFIED = 0;
+    CORE_TYPE_TENSOR_CORE = 1;
+    CORE_TYPE_SPARSE_CORE = 2;
+    CORE_TYPE_UNCORE = 3;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleEvent.PowerRailValues power_rail = 1;
+  optional uint32 die_index = 2;
+  optional uint32 throttle_level = 3;
+  optional uint32 max_throttle_level = 4;
+  optional uint32 min_throttle_level = 5;
+  optional uint32 reserved_0 = 6;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleEvent.CoreTypeValues core_type = 7;
+  optional uint32 core_index = 8;
+  optional uint64 reserved_1 = 9;
+}
+message PowerLevelEvent {
+  enum PowerRailValues {
+    POWER_RAIL_UNSPECIFIED = 0;
+    POWER_RAIL_VDD_CORE = 1;
+    POWER_RAIL_HBM = 2;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.PowerLevelEvent.PowerRailValues power_rail = 1;
+  optional uint32 die_index = 2;
+  optional uint32 power_level_index = 3;
+  optional uint64 accumulated_energy_nj = 4;
+  optional uint32 timescale_us = 5;
+  optional uint32 num_samples = 6;
+  optional uint32 reserved_0 = 7;
+}
+message ThermalEvent {
+  enum DomainValues {
+    DOMAIN_UNSPECIFIED = 0;
+    DOMAIN_HBM = 1;
+    DOMAIN_COMPUTE = 2;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.ThermalEvent.DomainValues domain = 1;
+  optional uint32 max_temp_celsius = 2;
+  optional uint32 die_index = 3;
+  optional uint32 reserved_0 = 4;
+  optional uint64 reserved_1 = 5;
+}
+message PcieUtilizationEvent {
+  enum RequestTypeValues {
+    REQUEST_TYPE_UNSPECIFIED = 0;
+    REQUEST_TYPE_READ_IN_32B = 1;
+    REQUEST_TYPE_WRITE_IN_32B = 2;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.PcieUtilizationEvent.RequestTypeValues request_type = 1;
+  optional uint32 index = 2;
+  optional uint64 host_req = 3;
+  optional uint64 reserved_0 = 4;
+}
+message DvfsEvent {
+  enum DomainValues {
+    DOMAIN_UNSPECIFIED = 0;
+    DOMAIN_VCORE = 1;
+    DOMAIN_TC = 2;
+    DOMAIN_SC = 3;
+    DOMAIN_CMN = 4;
+    DOMAIN_HBM = 5;
+  }
+  enum EventValues {
+    EVENT_UNSPECIFIED = 0;
+    EVENT_PSTATE_REQUEST_RECEIVED = 1;
+    EVENT_PSTATE_REQUEST_COMPLETED = 2;
+    EVENT_PSTATE_REQUEST_DROPPED = 3;
+    EVENT_TSTATE_REQUEST_RECEIVED = 4;
+    EVENT_TSTATE_REQUEST_COMPLETED = 5;
+    EVENT_TSTATE_REQUEST_DROPPED = 6;
+  }
+  enum RequestorValues {
+    REQUESTOR_UNSPECIFIED = 0;
+    REQUESTOR_XLA = 1;
+    REQUESTOR_HOST = 2;
+    REQUESTOR_THERMAL = 3;
+    REQUESTOR_FIRMWARE = 4;
+    REQUESTOR_PTDP = 5;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.DvfsEvent.DomainValues domain = 1;
+  optional uint32 die_index = 2;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.DvfsEvent.EventValues event = 3;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.DvfsEvent.RequestorValues requestor = 4;
+  optional uint32 value = 5;
+  optional uint32 reserved_0 = 6;
+  optional uint64 reserved_1 = 7;
+}
+message MgrFwEvent {
+  oneof fw_entry {
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleEvent throttle_event = 3;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.PowerLevelEvent power_level_event = 4;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.ThermalEvent thermal_event = 5;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.PcieUtilizationEvent pcie_utilization_event = 6;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.DvfsEvent dvfs_event = 7;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceIdHeader trace_id_header = 1;
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceEntries.FwTracePointId fw_trace_point_id = 2;
+}
+message TraceEntry {
+  oneof entry {
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon oci_descriptor_common_received_by_host2chip_0 = 2;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon oci_descriptor_common_received_by_host2chip_1 = 3;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon oci_descriptor_common_received_by_host2chip_2 = 4;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon oci_descriptor_common_received_by_chip2host_0 = 5;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon oci_descriptor_common_received_by_chip2host_1 = 6;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon oci_descriptor_common_received_by_chip2host_2 = 7;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.HdeHostRequest hde_host_request_write = 8;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.HdeHostResponse hde_host_response_write = 9;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.HdeHostRequest hde_host_request_read = 10;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.HdeHostResponse hde_host_response_read = 11;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciCommon oci_common_hde_write_request = 12;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciCommon oci_common_hde_read_request = 13;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage oci_message_sent_by_hde = 14;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon oci_descriptor_common_desc_at_qnm = 15;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciGeneric oci_generic_desc_enqueued_at_engine = 16;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciCommon oci_common_read_cmd_issued_from_engine = 17;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciCommon oci_common_mem_read_req_from_engine = 18;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage oci_message_msg_issued_from_engine = 19;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage oci_message_msg_issued_from_qnm = 20;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciCommon oci_common_write_cmd_accepted_at_mn = 21;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciWriteReq oci_write_req_mem_write_req_issued_from_engine = 22;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.IciPacket ici_packet_packet_received_on_link_input = 23;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.IciPacket ici_packet_packet_transmitted_on_link_output = 24;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.IciPacket ici_packet_packet_queued_for_link_transmission = 25;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.IciPacket ici_packet_control_packet_injected_by_icr_dma_bridge = 26;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.IciPacket ici_packet_data_packet_injected_by_icr_dma_bridge = 27;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.IciPacket ici_packet_control_packet_received_by_icr_dma_bridge = 28;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.IciPacket ici_packet_data_packet_received_by_icr_dma_bridge = 29;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.IciPacket ici_packet_control_packet_queued_for_local_ingress = 30;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.IciPacket ici_packet_data_packet_queued_for_local_ingress = 31;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon oci_descriptor_common_enqueued_in_icr_egress_dma = 32;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage oci_message_generated_in_icr_egress_dma = 33;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage oci_message_generated_in_icr_ingress_dma = 34;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage oci_message_packet_sent_to_oci = 35;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage oci_message_packet_received_in_icr = 36;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciCommon oci_common_oci_write_command = 37;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciCommon oci_common_oci_read_command = 38;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.TcsExternalSyncFlagUpdate tcs_external_sync_flag_update_dma_done = 39;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.TcsInternal tcs_internal_set_sync_flag = 40;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.TcsInternal tcs_internal_add_sync_flag = 41;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.TcsInternal tcs_internal_core_interrupt = 42;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.TcsInternal tcs_internal_set_tracemark = 43;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.TcsInternal tcs_internal_trace_instruction = 44;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.TcsInternal tcs_internal_unsuccessful_sync_attempt = 45;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.TcsInternal tcs_internal_successful_sync_attempt = 46;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.TcsInternal tcs_internal_read_sync_flag = 47;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.TcsInternal tcs_internal_scalar_fence_start = 48;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.TcsInternal tcs_internal_scalar_fence_end = 49;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon oci_descriptor_common_issued_from_tcs = 50;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorStrideSrc oci_descriptor_stride_src_issued_from_tcs = 51;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorStrideDst oci_descriptor_stride_dst_issued_from_tcs = 52;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorStrideSteps oci_descriptor_stride_steps_issued_from_tcs = 53;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorAddressMisc oci_descriptor_address_misc_issued_from_tcs = 54;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage oci_message_issued_from_tcs = 55;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciCommon oci_common_completed_in_tcs = 56;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleTcsState throttle_tcs_state_tcs_thermal_and_electrical_throttle_state = 57;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleCycleSkipThermalEvent throttle_cycle_skip_thermal_event_cycle_skip_thermal = 58;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleCycleSkipExternalBrakeEvent throttle_cycle_skip_external_brake_event_cycle_skip_ext_brake = 59;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleCycleSkipExternalThrottleEvent throttle_cycle_skip_external_throttle_event_cycle_skip_ext_throttle = 60;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleCycleSkipElectricalBrakeEvent throttle_cycle_skip_electrical_brake_event_cycle_skip_ldidt_brake = 61;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleCycleSkipElectricalDroopEvent throttle_cycle_skip_electrical_droop_event_cycle_skip_ldidt_droop = 62;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.ThrottleCycleSkipThrottleArbitration throttle_cycle_skip_throttle_arbitration_cycle_skip_arbitration = 63;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.VdqTransaction vdq_transaction_read_req_chan0 = 64;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.VdqTransaction vdq_transaction_read_req_chan1 = 65;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.VdqTransaction vdq_transaction_read_resp_chan0 = 66;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.VdqTransaction vdq_transaction_read_resp_chan1 = 67;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.VdqTransaction vdq_transaction_write_req_chan0 = 68;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.VdqTransaction vdq_transaction_write_req_chan1 = 69;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.VdqTransaction vdq_transaction_write_resp_chan0 = 70;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.VdqTransaction vdq_transaction_write_resp_chan1 = 71;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.MgrFwEvent mgr_fw_event = 72;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorCommon oci_descriptor_common_issued_from_mgr = 73;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorStrideSrc oci_descriptor_stride_src_issued_from_mgr = 74;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorStrideDst oci_descriptor_stride_dst_issued_from_mgr = 75;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorStrideSteps oci_descriptor_stride_steps_issued_from_mgr = 76;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciDescriptorAddressMisc oci_descriptor_address_misc_issued_from_mgr = 77;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage oci_message_issued_from_mgr = 78;
+    .asic_sw.driver.deepsea.vxc.vlc.profiler.OciMessage oci_message_received_by_mgr = 79;
+  }
+  optional .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceHeader trace_header = 1;
+}
+message TraceEntries {
+  enum TracePointId {
+    OCI_DESCRIPTOR_COMMON_RECEIVED_BY_HOST2CHIP_0 = 0;
+    OCI_DESCRIPTOR_COMMON_RECEIVED_BY_HOST2CHIP_1 = 1;
+    OCI_DESCRIPTOR_COMMON_RECEIVED_BY_HOST2CHIP_2 = 2;
+    OCI_DESCRIPTOR_COMMON_RECEIVED_BY_CHIP2HOST_0 = 3;
+    OCI_DESCRIPTOR_COMMON_RECEIVED_BY_CHIP2HOST_1 = 4;
+    OCI_DESCRIPTOR_COMMON_RECEIVED_BY_CHIP2HOST_2 = 5;
+    HDE_HOST_REQUEST_WRITE = 6;
+    HDE_HOST_RESPONSE_WRITE = 7;
+    HDE_HOST_REQUEST_READ = 8;
+    HDE_HOST_RESPONSE_READ = 9;
+    OCI_COMMON_HDE_WRITE_REQUEST = 10;
+    OCI_COMMON_HDE_READ_REQUEST = 11;
+    OCI_MESSAGE_SENT_BY_HDE = 12;
+    OCI_DESCRIPTOR_COMMON_DESC_AT_QNM = 20;
+    OCI_GENERIC_DESC_ENQUEUED_AT_ENGINE = 21;
+    OCI_COMMON_READ_CMD_ISSUED_FROM_ENGINE = 22;
+    OCI_COMMON_MEM_READ_REQ_FROM_ENGINE = 23;
+    OCI_MESSAGE_MSG_ISSUED_FROM_ENGINE = 24;
+    OCI_MESSAGE_MSG_ISSUED_FROM_QNM = 25;
+    OCI_COMMON_WRITE_CMD_ACCEPTED_AT_MN = 26;
+    OCI_WRITE_REQ_MEM_WRITE_REQ_ISSUED_FROM_ENGINE = 27;
+    ICI_PACKET_PACKET_RECEIVED_ON_LINK_INPUT = 40;
+    ICI_PACKET_PACKET_TRANSMITTED_ON_LINK_OUTPUT = 41;
+    ICI_PACKET_PACKET_QUEUED_FOR_LINK_TRANSMISSION = 42;
+    ICI_PACKET_CONTROL_PACKET_INJECTED_BY_ICR_DMA_BRIDGE = 43;
+    ICI_PACKET_DATA_PACKET_INJECTED_BY_ICR_DMA_BRIDGE = 44;
+    ICI_PACKET_CONTROL_PACKET_RECEIVED_BY_ICR_DMA_BRIDGE = 45;
+    ICI_PACKET_DATA_PACKET_RECEIVED_BY_ICR_DMA_BRIDGE = 46;
+    ICI_PACKET_CONTROL_PACKET_QUEUED_FOR_LOCAL_INGRESS = 47;
+    ICI_PACKET_DATA_PACKET_QUEUED_FOR_LOCAL_INGRESS = 48;
+    OCI_DESCRIPTOR_COMMON_ENQUEUED_IN_ICR_EGRESS_DMA = 49;
+    OCI_MESSAGE_GENERATED_IN_ICR_EGRESS_DMA = 50;
+    OCI_MESSAGE_GENERATED_IN_ICR_INGRESS_DMA = 51;
+    OCI_MESSAGE_PACKET_SENT_TO_OCI = 52;
+    OCI_MESSAGE_PACKET_RECEIVED_IN_ICR = 53;
+    OCI_COMMON_OCI_WRITE_COMMAND = 54;
+    OCI_COMMON_OCI_READ_COMMAND = 55;
+    TCS_EXTERNAL_SYNC_FLAG_UPDATE_DMA_DONE = 80;
+    TCS_INTERNAL_SET_SYNC_FLAG = 81;
+    TCS_INTERNAL_ADD_SYNC_FLAG = 82;
+    TCS_INTERNAL_CORE_INTERRUPT = 83;
+    TCS_INTERNAL_SET_TRACEMARK = 84;
+    TCS_INTERNAL_TRACE_INSTRUCTION = 85;
+    TCS_INTERNAL_UNSUCCESSFUL_SYNC_ATTEMPT = 86;
+    TCS_INTERNAL_SUCCESSFUL_SYNC_ATTEMPT = 87;
+    TCS_INTERNAL_READ_SYNC_FLAG = 88;
+    TCS_INTERNAL_SCALAR_FENCE_START = 89;
+    TCS_INTERNAL_SCALAR_FENCE_END = 90;
+    OCI_DESCRIPTOR_COMMON_ISSUED_FROM_TCS = 91;
+    OCI_DESCRIPTOR_STRIDE_SRC_ISSUED_FROM_TCS = 92;
+    OCI_DESCRIPTOR_STRIDE_DST_ISSUED_FROM_TCS = 93;
+    OCI_DESCRIPTOR_STRIDE_STEPS_ISSUED_FROM_TCS = 94;
+    OCI_DESCRIPTOR_ADDRESS_MISC_ISSUED_FROM_TCS = 95;
+    OCI_MESSAGE_ISSUED_FROM_TCS = 96;
+    OCI_COMMON_COMPLETED_IN_TCS = 97;
+    THROTTLE_TCS_STATE_TCS_THERMAL_AND_ELECTRICAL_THROTTLE_STATE = 98;
+    THROTTLE_CYCLE_SKIP_THERMAL_EVENT_CYCLE_SKIP_THERMAL = 99;
+    THROTTLE_CYCLE_SKIP_EXTERNAL_BRAKE_EVENT_CYCLE_SKIP_EXT_BRAKE = 100;
+    THROTTLE_CYCLE_SKIP_EXTERNAL_THROTTLE_EVENT_CYCLE_SKIP_EXT_THROTTLE = 101;
+    THROTTLE_CYCLE_SKIP_ELECTRICAL_BRAKE_EVENT_CYCLE_SKIP_LDIDT_BRAKE = 102;
+    THROTTLE_CYCLE_SKIP_ELECTRICAL_DROOP_EVENT_CYCLE_SKIP_LDIDT_DROOP = 103;
+    THROTTLE_CYCLE_SKIP_THROTTLE_ARBITRATION_CYCLE_SKIP_ARBITRATION = 104;
+    VDQ_TRANSACTION_READ_REQ_CHAN0 = 142;
+    VDQ_TRANSACTION_READ_REQ_CHAN1 = 143;
+    VDQ_TRANSACTION_READ_RESP_CHAN0 = 144;
+    VDQ_TRANSACTION_READ_RESP_CHAN1 = 145;
+    VDQ_TRANSACTION_WRITE_REQ_CHAN0 = 146;
+    VDQ_TRANSACTION_WRITE_REQ_CHAN1 = 147;
+    VDQ_TRANSACTION_WRITE_RESP_CHAN0 = 148;
+    VDQ_TRANSACTION_WRITE_RESP_CHAN1 = 149;
+    MGR_FW_EVENT = 160;
+    OCI_DESCRIPTOR_COMMON_ISSUED_FROM_MGR = 161;
+    OCI_DESCRIPTOR_STRIDE_SRC_ISSUED_FROM_MGR = 162;
+    OCI_DESCRIPTOR_STRIDE_DST_ISSUED_FROM_MGR = 163;
+    OCI_DESCRIPTOR_STRIDE_STEPS_ISSUED_FROM_MGR = 164;
+    OCI_DESCRIPTOR_ADDRESS_MISC_ISSUED_FROM_MGR = 165;
+    OCI_MESSAGE_ISSUED_FROM_MGR = 166;
+    OCI_MESSAGE_RECEIVED_BY_MGR = 167;
+  }
+  enum FwTracePointId {
+    THROTTLE_EVENT = 0;
+    POWER_LEVEL_EVENT = 1;
+    THERMAL_EVENT = 2;
+    PCIE_UTILIZATION_EVENT = 3;
+    DVFS_EVENT = 4;
+  }
+  repeated .asic_sw.driver.deepsea.vxc.vlc.profiler.TraceEntry entry = 1;
+}

@@ -1,0 +1,85 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.glc.isa;
+import "platforms/asic_sw/lib/deepsea/common/isa/common_encodings.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/common/dma_encodings.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/common_encodings.proto";
+message SparseCoreDma {
+  message SimpleDma {
+    optional .asic_sw.deepsea.isa.ScalarY dest_sync_flags = 1;
+    optional uint32 dma_sreg_source_offset = 2;
+    optional .asic_sw.deepsea.isa.ScalarY dma_length = 3;
+    optional bool thread_select = 4;
+    optional bool trace_en = 5;
+    optional .asic_sw.deepsea.gxc.DmaDestOpcode dst_opcode = 6;
+    optional .asic_sw.deepsea.gxc.DmaCoreId dst_mem_core_id = 7;
+    optional .asic_sw.deepsea.gxc.DmaMemoryId dst_mem_mem_id = 8;
+    optional .asic_sw.deepsea.gxc.SyncMode sync_mode = 9;
+    optional bool relaxed_ordering_or_thread_select_1 = 10;
+    optional .asic_sw.deepsea.gxc.DmaCoreId src_mem_core_id = 11;
+    optional .asic_sw.deepsea.gxc.DmaMemoryId src_mem_mem_id = 12;
+    optional uint32 dma_sreg_dest_offset = 13;
+    optional bool source_in_vreg = 14;
+    optional bool dest_in_vreg = 15;
+    optional bool upper_host_addr_valid = 16 [default = true];
+    optional uint32 upper_host_addr = 17;
+  }
+  message SingleStridedDma {
+    optional uint32 dma_sreg_source_offset = 1;
+    optional .asic_sw.deepsea.isa.ScalarY dma_length = 2;
+    optional bool thread_select = 3;
+    optional bool trace_en = 4;
+    optional .asic_sw.deepsea.gxc.DmaDestOpcode dst_opcode = 5;
+    optional .asic_sw.deepsea.gxc.DmaCoreId dst_mem_core_id = 6;
+    optional .asic_sw.deepsea.gxc.DmaMemoryId dst_mem_mem_id = 7;
+    optional .asic_sw.deepsea.gxc.SyncMode sync_mode = 8;
+    optional bool relaxed_ordering_or_thread_select_1 = 9;
+    optional .asic_sw.deepsea.gxc.DmaCoreId src_mem_core_id = 10;
+    optional .asic_sw.deepsea.gxc.DmaMemoryId src_mem_mem_id = 11;
+    optional uint32 dma_sreg_dest_offset = 12;
+    optional .asic_sw.deepsea.isa.ScalarY dest_sync_flags = 13;
+    optional uint32 inner_vector_length = 14;
+    optional bool source_stride_valid = 15 [default = true];
+    optional uint32 source_stride = 16;
+    optional bool destination_stride_valid = 17 [default = true];
+    optional uint32 destination_stride = 18;
+    optional bool elements_per_stride_valid = 19 [default = true];
+    optional uint32 elements_per_stride = 20;
+    optional bool upper_host_addr_valid = 21 [default = true];
+    optional uint32 upper_host_addr = 22;
+  }
+  message GeneralDma {
+    optional uint32 dma_sreg_source_offset = 1;
+    optional .asic_sw.deepsea.isa.ScalarY dma_length = 2;
+    optional bool thread_select = 3;
+    optional bool trace_en = 4;
+    optional .asic_sw.deepsea.gxc.DmaDestOpcode dst_opcode = 5;
+    optional .asic_sw.deepsea.gxc.DmaCoreId dst_mem_core_id = 6;
+    optional .asic_sw.deepsea.gxc.DmaMemoryId dst_mem_mem_id = 7;
+    optional .asic_sw.deepsea.gxc.SyncMode sync_mode = 8;
+    optional bool relaxed_ordering_or_thread_select_1 = 9;
+    optional .asic_sw.deepsea.gxc.DmaCoreId src_mem_core_id = 10;
+    optional .asic_sw.deepsea.gxc.DmaMemoryId src_mem_mem_id = 11;
+    optional uint32 dma_sreg_dest_offset = 12;
+    optional bool source_in_vreg = 13;
+    optional bool dest_in_vreg = 14;
+    optional uint32 nondefault_stride_dimensions = 15;
+    optional bool source_sync_flag_number_valid = 16 [default = true];
+    optional uint32 source_sync_flag_number = 17;
+    optional bool dest_sync_flags_valid = 18 [default = true];
+    optional uint32 dest_sync_flags_vs1 = 19;
+    optional bool destination_id_valid = 20 [default = true];
+    optional uint32 destination_id = 21;
+    optional bool upper_host_addr_valid = 22 [default = true];
+    optional uint32 upper_host_addr = 23;
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreDma.SimpleDma simple_dma = 6;
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreDma.SingleStridedDma single_strided_dma = 7;
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreDma.GeneralDma general_dma = 8;
+  }
+  optional .asic_sw.deepsea.gxc.glc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional bool predication_inversion = 2;
+  optional uint32 latency = 3 [default = 1];
+  map<string, uint32> resource_usage = 4;
+  optional uint32 bit_width = 5;
+}

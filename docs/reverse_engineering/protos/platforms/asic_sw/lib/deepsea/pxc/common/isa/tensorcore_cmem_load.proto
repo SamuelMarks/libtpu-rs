@@ -1,0 +1,29 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/shared_isa_base.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_isa_base.proto";
+message TensorCoreCmemLoad {
+  message Noop {
+  }
+  message CmemLoad {
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 1;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 2;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 3;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm2 = 8;
+    optional uint32 imm3 = 9;
+    optional uint32 imm4 = 10;
+    optional uint32 imm5 = 11;
+  }
+  oneof inst {
+    .asic_sw.deepsea.pxc.isa.TensorCoreCmemLoad.Noop noop = 5;
+    .asic_sw.deepsea.pxc.isa.TensorCoreCmemLoad.CmemLoad cmem_load = 6;
+  }
+  optional .asic_sw.deepsea.pxc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional uint32 latency = 2;
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

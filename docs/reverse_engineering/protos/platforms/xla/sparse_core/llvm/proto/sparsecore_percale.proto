@@ -1,0 +1,71 @@
+syntax = "proto3";
+package xla.sparsecore.proto;
+import "perftools/accelerators/xprof/contrib/llo_debug/source_map.proto";
+import "platforms/xla/service/jellyfish/target_arguments.proto";
+message Module {
+  .xla.TargetArgumentsProto target_arguments = 1;
+  int32 hlo_instruction_name = 2;
+  int32 hlo_module_name = 3;
+  int64 hlo_module_id = 4;
+  repeated .xla.sparsecore.proto.Program programs = 5;
+  repeated .xla.sparsecore.proto.Constant interned_constants = 6;
+  .xprof.tpu.llo_debug.SourceMapProto source_map = 7;
+  repeated string interned_strings = 8;
+}
+message Program {
+  enum CoreType {
+    CORE_TYPE_UNSPECIFIED = 0;
+    CORE_TYPE_SCS = 1;
+    CORE_TYPE_TEC = 2;
+  }
+  .xla.sparsecore.proto.Program.CoreType core_type = 1;
+  repeated .xla.sparsecore.proto.BasicBlock basic_blocks = 2;
+  repeated .xla.sparsecore.proto.Loop loops = 3;
+  repeated .xla.sparsecore.proto.Conditional conditionals = 4;
+}
+message BasicBlock {
+  repeated .xla.sparsecore.proto.Instruction instructions = 1;
+}
+message Loop {
+  repeated int32 body_basic_block_handles = 1;
+  int32 header_basic_block_handle = 2;
+  repeated int32 entering_basic_block_handles = 3;
+  repeated int32 exiting_basic_block_handles = 4;
+  repeated int32 exit_basic_block_handles = 5;
+  repeated int32 latch_basic_block_handles = 6;
+  int64 lower_bound = 7;
+  int64 upper_bound = 8;
+  int64 stride = 9;
+  int32 parent_loop_index = 10;
+}
+message Conditional {
+  int32 predicate_basic_block_handle = 1;
+  int32 conditional_basic_block_handle = 2;
+  int32 true_branch_basic_block_handle = 3;
+  int32 false_branch_basic_block_handle = 4;
+}
+message Operand {
+  oneof value {
+    int32 constant_handle = 1;
+    int32 basic_block_handle = 2;
+    int32 preg_no = 3;
+    int32 sreg_no = 4;
+    int32 vreg_no = 5;
+    int32 vmask_no = 6;
+    int32 dreg_no = 7;
+    int32 fsreg_no = 8;
+  }
+  bool is_def = 9;
+}
+message Instruction {
+  int32 opcode_handle = 1;
+  repeated .xla.sparsecore.proto.Operand operands = 2;
+  int32 source_map_index = 3;
+  repeated .xla.sparsecore.proto.Instruction bundled_instructions = 4;
+  bool is_spill = 5;
+  bool is_fill = 6;
+  int32 slot = 7;
+}
+message Constant {
+  uint64 bits_u64 = 1;
+}

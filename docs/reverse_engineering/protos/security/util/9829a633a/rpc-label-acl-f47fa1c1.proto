@@ -1,0 +1,18 @@
+syntax = "proto2";
+package security;
+import "n2a/p4r2d3/bridge/proto/message_set.proto";
+import "security/f47fa1c1/proto/f47fa1c1.proto";
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+message RpcLabelAclRestriction {
+  optional string mdb_owner_name = 1;
+  optional string rpc_service_name = 2;
+  optional string rpc_method_name = 3;
+  extend .proto2.bridge.MessageSet {
+    optional .security.RpcLabelAclRestriction message_set_extension = 21047049;
+  }
+}
+message RpcAllowLocalhostOnlyRestriction {
+  extend .proto2.bridge.MessageSet {
+    optional .security.RpcAllowLocalhostOnlyRestriction message_set_extension = 424557456;
+  }
+}

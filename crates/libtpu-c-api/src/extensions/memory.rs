@@ -1,7 +1,7 @@
 //! PJRT Host Memory Allocator, Metadata, Memory Descriptions, Layouts, and Raw Buffer entrypoints.
 
 use super::args::*;
-use super::{dispatch_typed_extension_args, extension_state};
+use super::dispatch_typed_extension_args;
 use crate::pjrt_helpers::{box_serialized_artifact, pjrt_serialized_artifact_deleter};
 use crate::pjrt_types::{
     PJRT_Error, PJRT_Layouts_MemoryLayout, PJRT_MemoryDescription, PJRT_RawBuffer,
@@ -56,7 +56,9 @@ static MEMORY_DESCRIPTION_HANDLES: SyncMemoryDescriptionHandles = SyncMemoryDesc
 /// `holder` must be null or a pointer returned by [`PJRT_HostMemoryAllocator_Allocate`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pjrt_host_memory_deleter(holder: *mut std::ffi::c_void) {
-    pjrt_serialized_artifact_deleter(holder);
+    crate::pjrt_helpers::ffi_catch_unwind((), || {
+        pjrt_serialized_artifact_deleter(holder);
+    });
 }
 
 /// Strongly-typed handler for [`PJRT_HostMemoryAllocator_Allocate`].
@@ -153,11 +155,12 @@ pub unsafe extern "C" fn PJRT_HostMemoryAllocator_Get(
 ///
 /// `args` must be a valid [`PJRT_Metadata_Get_Args`].
 unsafe fn handle_executable_metadata_get(args: &mut PJRT_Metadata_Get_Args) {
+    use libtpu_core::proto::ProtoSchemaMessage as _;
     let (stats_proto, platform_meta) = if (args.handle as usize) > 0x10000 {
         // SAFETY: `args.handle` is a valid `PJRT_Executable*`.
         let exec = unsafe { &*args.handle.cast::<crate::pjrt_types::PJRT_Executable>() };
         let ms = &exec.inner.program.memory_stats;
-        let ba_bytes = exec.inner.program.buffer_assignment_proto.encode();
+        let ba_bytes = exec.inner.program.buffer_assignment_proto.encode_proto();
         let total_size = ms
             .generated_code_size_in_bytes
             .saturating_add(ms.argument_size_in_bytes)
@@ -173,7 +176,7 @@ unsafe fn handle_executable_metadata_get(args: &mut PJRT_Metadata_Get_Args) {
             .to_tpu_executable_proto()
             .target_arguments
             .unwrap_or_default()
-            .encode();
+            .encode_proto();
         (
             libtpu_core::proto::CompiledMemoryStatsProto {
                 generated_code_size_in_bytes: ms.generated_code_size_in_bytes,
@@ -220,9 +223,14 @@ unsafe fn handle_executable_metadata_get(args: &mut PJRT_Metadata_Get_Args) {
     };
     let encoded = libtpu_core::proto::PjRtExecutableMetadataProto {
         compiled_memory_stats: Some(stats_proto),
-        platform_specific_metadata: platform_meta,
+        platform_specific_metadata: (!platform_meta.is_empty()).then(|| {
+            libtpu_core::proto::ProtobufAny {
+                type_url: String::from("type.googleapis.com/xla.TargetArgumentsProto"),
+                value: platform_meta,
+            }
+        }),
     }
-    .encode();
+    .encode_proto();
     let (_, _, holder) = box_serialized_artifact(encoded);
     args.metadata_out = holder as usize;
 }
@@ -491,8 +499,11 @@ unsafe fn handle_layouts_serialize(args: &mut PJRT_Layouts_MemoryLayout_Serializ
         element_size_in_bits: 32,
         dynamic_shape_metadata_prefix_bytes: 0,
         ..libtpu_core::proto::LayoutProto::default()
-    }
-    .encode();
+    };
+    let encoded =
+        <libtpu_core::proto::LayoutProto as libtpu_core::proto::ProtoSchemaMessage>::encode_proto(
+            &encoded,
+        );
     let (ptr, len, holder) = box_serialized_artifact(encoded);
     args.serialized_bytes = ptr;
     args.serialized_bytes_size = len;
@@ -714,8 +725,6 @@ pub unsafe extern "C" fn PJRT_Layouts_Executable_GetParameterLayouts(
 ///
 /// `args` must be a valid [`PJRT_RawBuffer_CreateViewOfDeviceBuffer_Args`].
 unsafe fn handle_raw_buffer_create(args: &mut PJRT_RawBuffer_CreateViewOfDeviceBuffer_Args) {
-    let mut st = extension_state().lock();
-    st.raw_buffers = st.raw_buffers.saturating_add(1);
     let (buf_ptr, addr, byte_size, mem_ptr) = if !args.buffer.is_null() {
         // SAFETY: `buffer` is a valid `PJRT_Buffer*`.
         let buf = unsafe { &*args.buffer.cast::<crate::pjrt_types::PJRT_Buffer>() };
@@ -780,8 +789,6 @@ unsafe fn handle_raw_buffer_destroy(args: &mut PJRT_RawBuffer_Destroy_Args) {
             drop(Box::from_raw(args.raw_buffer.cast::<PJRT_RawBuffer>()));
         }
     }
-    let mut st = extension_state().lock();
-    st.raw_buffers = st.raw_buffers.saturating_sub(1);
     args.raw_buffer = ptr::null_mut();
 }
 

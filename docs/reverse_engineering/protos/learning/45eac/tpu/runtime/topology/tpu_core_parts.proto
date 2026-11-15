@@ -1,0 +1,61 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/topology/tpu_memory_parts.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_sequencer_parts.proto";
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+enum TpuBarnaCoreHbmAddressModeProto {
+  TPU_BARNA_CORE_HBM_ADDRESS_INVALID = 0;
+  TPU_BARNA_CORE_HBM_ADDRESS_MODE_PER_CHANNEL = 1;
+  TPU_BARNA_CORE_HBM_ADDRESS_MODE_STACK_CONTIGUOUS = 2;
+  TPU_BARNA_CORE_HBM_ADDRESS_MODE_STACK_INTERLEAVED = 3;
+}
+enum TpuBarnaCoreForwardPassModeProto {
+  TPU_BARNA_CORE_FORWARD_PASS_MODE_INVALID = 0;
+  TPU_BARNA_CORE_FORWARD_PASS_MODE_DEDUP = 1;
+  TPU_BARNA_CORE_FORWARD_PASS_MODE_NO_DEDUP = 2;
+}
+message TpuCorePartsProto {
+  message Sequencer {
+    .tpu.TpuSequencerTypeProto type = 1;
+    .tpu.TpuSequencerPartsProto parts = 2;
+    int32 count = 3;
+  }
+  message Memory {
+    .tpu.TpuMemoryTypeProto type = 1;
+    .tpu.TpuMemoryPartsProto parts = 2;
+    int32 count = 3;
+  }
+  message BarnaCore {
+    int32 duplicate_hash_map_size = 1;
+    int32 address_map_size = 2;
+    int32 linked_list_size = 3;
+    int32 max_feature_partitions = 4;
+    int32 max_partition_row_size = 5;
+    int32 tile_width = 6;
+    int32 max_batch_size = 7;
+    int32 max_duplicates_per_embedding_id = 8;
+    repeated .tpu.TpuBarnaCoreHbmAddressModeProto hbm_address_modes = 9;
+    repeated int32 hbm_channel_to_barna_core_channel = 10;
+    repeated .tpu.TpuBarnaCoreForwardPassModeProto forward_pass_modes = 11;
+    int32 hmf_chunk_word_count = 12;
+    int32 token_id_offset_bit_count = 14;
+    int32 min_circular_buffer_byte_count = 15;
+    int32 hbm_stack_count = 16;
+    int32 max_supported_auxiliary_parameter_count = 17;
+  }
+  message SparseCore {
+    int32 dreg_word_count = 1;
+    int32 dreg_bytes_per_word = 2;
+    int32 tile_hbm_bandwidth_bytes_per_cycle = 3;
+    int32 stream_granule_size = 4;
+  }
+  .tpu.TpuVersionProto version = 1;
+  .tpu.TpuCoreTypeProto type = 2;
+  repeated .tpu.TpuCorePartsProto.Sequencer sequencers = 3;
+  repeated .tpu.TpuCorePartsProto.Memory memories = 4;
+  int32 frequency_mhz = 5;
+  int32 host_interrupt_count = 6;
+  .tpu.TpuCorePartsProto.BarnaCore barna_core = 7;
+  .tpu.TpuCorePartsProto.SparseCore sparse_core = 8;
+}

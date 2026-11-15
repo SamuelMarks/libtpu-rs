@@ -1,0 +1,371 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/shared_isa_base.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_isa_base.proto";
+message TensorCoreVectorStore {
+  message Noop {
+  }
+  message CmemStore {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message CmemStoreNoOffset {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm2 = 8;
+    optional uint32 imm3 = 9;
+    optional uint32 imm4 = 10;
+    optional uint32 imm5 = 11;
+  }
+  message VmemStore {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemStoreNoOffset {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm2 = 8;
+    optional uint32 imm3 = 9;
+    optional uint32 imm4 = 10;
+    optional uint32 imm5 = 11;
+  }
+  message VmemStoreVmsk0 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemStoreVmsk1 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemStoreVmsk2 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemStoreVmsk3 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemStoreVmsk4 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemStoreVmsk5 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemStoreVmsk6 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemStoreVmsk7 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemStoreIndexed {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional bool iar = 6;
+    optional uint32 vs0 = 7;
+    optional uint32 vs1 = 8;
+    optional uint32 vs2 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VmemStoreIndexedNoOffset {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 4;
+    optional bool iar = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VmemStoreIndexedVmsk0 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional bool iar = 6;
+    optional uint32 vs0 = 7;
+    optional uint32 vs1 = 8;
+    optional uint32 vs2 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VmemStoreIndexedVmsk1 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional bool iar = 6;
+    optional uint32 vs0 = 7;
+    optional uint32 vs1 = 8;
+    optional uint32 vs2 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VmemStoreIndexedVmsk2 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional bool iar = 6;
+    optional uint32 vs0 = 7;
+    optional uint32 vs1 = 8;
+    optional uint32 vs2 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VmemStoreIndexedVmsk3 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional bool iar = 6;
+    optional uint32 vs0 = 7;
+    optional uint32 vs1 = 8;
+    optional uint32 vs2 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VmemStoreIndexedVmsk4 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional bool iar = 6;
+    optional uint32 vs0 = 7;
+    optional uint32 vs1 = 8;
+    optional uint32 vs2 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VmemStoreIndexedVmsk5 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional bool iar = 6;
+    optional uint32 vs0 = 7;
+    optional uint32 vs1 = 8;
+    optional uint32 vs2 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VmemStoreIndexedVmsk6 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional bool iar = 6;
+    optional uint32 vs0 = 7;
+    optional uint32 vs1 = 8;
+    optional uint32 vs2 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VmemStoreIndexedVmsk7 {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.pxc.isa.SublaneMask sublane_mask = 2;
+    optional .asic_sw.deepsea.pxc.isa.BaseAddress base_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.Offset offset = 4;
+    optional .asic_sw.deepsea.pxc.isa.Stride stride = 5;
+    optional bool iar = 6;
+    optional uint32 vs0 = 7;
+    optional uint32 vs1 = 8;
+    optional uint32 vs2 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message SetIarLane {
+    optional uint32 vsrc = 1;
+    optional bool iar = 2;
+  }
+  message SetIarSublane {
+    optional uint32 vsrc = 1;
+    optional bool iar = 2;
+  }
+  message SetIarRaw {
+    optional uint32 vsrc = 1;
+    optional bool iar = 2;
+  }
+  message PushV2s {
+    optional uint32 source_vreg = 1;
+  }
+  oneof inst {
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.Noop noop = 5;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.CmemStore cmem_store = 6;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.CmemStoreNoOffset cmem_store_no_offset = 7;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStore vmem_store = 8;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreNoOffset vmem_store_no_offset = 9;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreVmsk0 vmem_store_vmsk0 = 10;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreVmsk1 vmem_store_vmsk1 = 11;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreVmsk2 vmem_store_vmsk2 = 12;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreVmsk3 vmem_store_vmsk3 = 13;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreVmsk4 vmem_store_vmsk4 = 14;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreVmsk5 vmem_store_vmsk5 = 15;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreVmsk6 vmem_store_vmsk6 = 16;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreVmsk7 vmem_store_vmsk7 = 17;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreIndexed vmem_store_indexed = 18;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreIndexedNoOffset vmem_store_indexed_no_offset = 19;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreIndexedVmsk0 vmem_store_indexed_vmsk0 = 20;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreIndexedVmsk1 vmem_store_indexed_vmsk1 = 21;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreIndexedVmsk2 vmem_store_indexed_vmsk2 = 22;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreIndexedVmsk3 vmem_store_indexed_vmsk3 = 23;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreIndexedVmsk4 vmem_store_indexed_vmsk4 = 24;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreIndexedVmsk5 vmem_store_indexed_vmsk5 = 25;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreIndexedVmsk6 vmem_store_indexed_vmsk6 = 26;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.VmemStoreIndexedVmsk7 vmem_store_indexed_vmsk7 = 27;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.SetIarLane set_iar_lane = 28;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.SetIarSublane set_iar_sublane = 29;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.SetIarRaw set_iar_raw = 30;
+    .asic_sw.deepsea.pxc.isa.TensorCoreVectorStore.PushV2s push_v2s = 31;
+  }
+  optional .asic_sw.deepsea.pxc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional uint32 latency = 2 [default = 1];
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

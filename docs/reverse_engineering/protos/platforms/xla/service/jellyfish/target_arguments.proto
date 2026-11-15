@@ -1,0 +1,13 @@
+syntax = "proto2";
+package xla;
+import "learning/45eac/tpu/runtime/topology/tpu_configured_properties.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_topology_args.proto";
+import "platforms/xla/megascale/common/runtime.proto";
+message TargetArgumentsProto {
+  reserved 1;
+  optional .tpu.TpuTopologyArgsProto tpu_topology_args = 6;
+  optional .tpu.TpuConfiguredPropertiesProto configured_properties = 2;
+  optional int64 replica_count = 3;
+  optional int64 reserved_hbm_usage_bytes = 4;
+  optional .xla.megascale.runtime.MultiSliceTopologyAndLocationProto multislice_topology = 5;
+}

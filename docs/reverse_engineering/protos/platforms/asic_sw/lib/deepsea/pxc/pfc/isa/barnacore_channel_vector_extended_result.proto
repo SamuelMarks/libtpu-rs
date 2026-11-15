@@ -1,0 +1,29 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.pfc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_isa_base.proto";
+message BarnaCoreChannelVectorExtendedResult {
+  message Noop {
+  }
+  message VectorExtendedResult {
+    enum VectorExtendedResult {
+      VECTOR_EXTENDED_RESULT_V0_DEST = 0;
+      VECTOR_EXTENDED_RESULT_V1_DEST = 1;
+      VECTOR_EXTENDED_RESULT_VLD_DEST = 2;
+    }
+    optional .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorExtendedResult.VectorExtendedResult.VectorExtendedResult dest = 1;
+    optional uint32 v0_dst = 2;
+    optional uint32 v0_pipeline_stage = 3;
+    optional uint32 v1_dst = 4;
+    optional uint32 v1_pipeline_stage = 5;
+    optional uint32 vld_dst = 6;
+    optional uint32 vld_pipeline_stage = 7;
+  }
+  oneof inst {
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorExtendedResult.Noop noop = 5;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorExtendedResult.VectorExtendedResult vector_extended_result = 6;
+  }
+  optional .asic_sw.deepsea.pxc.pfc.isa.BarnacoreChannelPredication predication = 1 [default = BARNACORE_CHANNEL_PREDICATION_NEVER];
+  optional uint32 latency = 2;
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

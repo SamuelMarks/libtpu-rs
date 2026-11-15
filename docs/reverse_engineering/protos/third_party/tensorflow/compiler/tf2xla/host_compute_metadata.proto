@@ -1,0 +1,17 @@
+syntax = "proto3";
+package tensorflow.tf2xla;
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+message TensorMetadata {
+  .tensorflow.DataType type = 1;
+  .tensorflow.TensorShapeProto shape = 2;
+  int64 channel_id = 3;
+}
+message HostTransferMetadata {
+  string key = 1;
+  repeated .tensorflow.tf2xla.TensorMetadata metadata = 2;
+}
+message HostComputeMetadata {
+  repeated .tensorflow.tf2xla.HostTransferMetadata device_to_host = 1;
+  repeated .tensorflow.tf2xla.HostTransferMetadata host_to_device = 2;
+}

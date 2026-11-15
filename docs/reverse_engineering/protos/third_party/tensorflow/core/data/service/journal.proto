@@ -1,0 +1,113 @@
+syntax = "proto3";
+package tensorflow.data;
+import "third_party/tensorflow/core/data/service/common.proto";
+import "third_party/tensorflow/core/protobuf/data_service.proto";
+message Update {
+  reserved 13;
+  oneof update_type {
+    .tensorflow.data.RegisterDatasetUpdate register_dataset = 1;
+    .tensorflow.data.RegisterWorkerUpdate register_worker = 5;
+    .tensorflow.data.CreateJobUpdate create_job = 14;
+    .tensorflow.data.CreateIterationUpdate create_iteration = 2;
+    .tensorflow.data.ProduceSplitUpdate produce_split = 8;
+    .tensorflow.data.AcquireIterationClientUpdate acquire_iteration_client = 6;
+    .tensorflow.data.ReleaseIterationClientUpdate release_iteration_client = 7;
+    .tensorflow.data.GarbageCollectIterationUpdate garbage_collect_iteration = 12;
+    .tensorflow.data.RemoveTaskUpdate remove_task = 11;
+    .tensorflow.data.CreatePendingTaskUpdate create_pending_task = 9;
+    .tensorflow.data.ClientHeartbeatUpdate client_heartbeat = 10;
+    .tensorflow.data.CreateTaskUpdate create_task = 3;
+    .tensorflow.data.FinishTaskUpdate finish_task = 4;
+    .tensorflow.data.SnapshotUpdate snapshot = 15;
+    .tensorflow.data.CompressionDisabledAtRuntimeUpdate compression_disabled_at_runtime = 16;
+  }
+}
+message RegisterDatasetUpdate {
+  string dataset_id = 1;
+  uint64 fingerprint = 2;
+  .tensorflow.data.DataServiceMetadata metadata = 3;
+  bool dedupe_by_dataset_id = 4;
+}
+message RegisterWorkerUpdate {
+  reserved 2;
+  string worker_address = 1;
+  repeated .tensorflow.data.DataTransferServerInfo transfer_servers = 5;
+  repeated string worker_tags = 3;
+  int64 worker_uid = 4;
+}
+message CreateJobUpdate {
+  oneof optional_num_consumers {
+    int64 num_consumers = 6;
+  }
+  int64 job_id = 1;
+  string job_name = 2;
+  string dataset_id = 3;
+  .tensorflow.data.ProcessingModeDef processing_mode_def = 4;
+  .tensorflow.data.TargetWorkers target_workers = 7;
+  bool use_cross_trainer_cache = 8;
+}
+message CreateIterationUpdate {
+  int64 iteration_id = 1;
+  int64 job_id = 2;
+  int64 repetition = 3;
+  int64 num_split_providers = 4;
+}
+message ProduceSplitUpdate {
+  int64 iteration_id = 1;
+  int64 repetition = 2;
+  int64 split_provider_index = 4;
+  bool finished = 3;
+}
+message AcquireIterationClientUpdate {
+  int64 iteration_id = 1;
+  int64 iteration_client_id = 2;
+}
+message ReleaseIterationClientUpdate {
+  int64 iteration_client_id = 1;
+  int64 time_micros = 2;
+}
+message GarbageCollectIterationUpdate {
+  int64 iteration_id = 1;
+}
+message RemoveTaskUpdate {
+  int64 task_id = 1;
+}
+message TaskRejected {
+  int64 new_target_round = 1;
+}
+message ClientHeartbeatUpdate {
+  int64 iteration_client_id = 1;
+  bool task_accepted = 2;
+  .tensorflow.data.TaskRejected task_rejected = 3;
+}
+message CreatePendingTaskUpdate {
+  reserved 4;
+  int64 task_id = 1;
+  int64 iteration_id = 2;
+  string worker_address = 3;
+  repeated .tensorflow.data.DataTransferServerInfo transfer_servers = 8;
+  repeated string worker_tags = 6;
+  int64 worker_uid = 7;
+  int64 starting_round = 5;
+}
+message CreateTaskUpdate {
+  reserved 3;
+  reserved 5;
+  reserved 6;
+  int64 task_id = 1;
+  int64 iteration_id = 2;
+  string worker_address = 4;
+  repeated .tensorflow.data.DataTransferServerInfo transfer_servers = 9;
+  repeated string worker_tags = 7;
+  int64 worker_uid = 8;
+}
+message FinishTaskUpdate {
+  int64 task_id = 1;
+}
+message SnapshotUpdate {
+  string path = 1;
+}
+message CompressionDisabledAtRuntimeUpdate {
+  string dataset_id = 1;
+  bool compression_disabled = 2;
+}

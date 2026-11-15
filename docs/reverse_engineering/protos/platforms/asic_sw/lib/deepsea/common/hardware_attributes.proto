@@ -1,0 +1,20 @@
+syntax = "proto3";
+package asic_sw.deepsea;
+enum Core {
+  CORE_UNSPECIFIED = 0;
+  TENSORCORE = 1;
+  SPARSECORE = 2;
+  BARNACORE = 3;
+  NONCORE = 4;
+}
+enum Memory {
+  MEMORY_UNSPECIFIED = 0;
+  HBM = 1;
+  CMEM = 2;
+  IMEM = 3;
+  SMEM = 4;
+  VMEM = 5;
+  HOST_MEMORY = 6;
+  SPMEM = 7;
+  TIMEM = 8;
+}

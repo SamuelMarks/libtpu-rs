@@ -1,0 +1,10 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/example/feature.proto";
+message Example {
+  .tensorflow.Features features = 1;
+}
+message SequenceExample {
+  .tensorflow.Features context = 1;
+  .tensorflow.FeatureLists feature_lists = 2;
+}

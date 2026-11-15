@@ -177,6 +177,7 @@ def test_coverage_calculators(tmp_path: Path) -> None:
         f"/// Docs.{NL}/// # Arguments{NL}/// * `x` - X value.{NL}"
         f"pub fn documented(&self, x: (i32, i32), y: i32, (a, b): (u8, u8)) {{}}{NL}"
         f"/// Docs.{NL}pub fn no_args() {{}}{NL}"
+        f"impl Trait for Demo {{{NL}    fn tr(&self, z: i32) {{ if z > 0 {{}} }}{NL}}}{NL}"
         f"/// Malformed.{NL}pub fn missing_paren{NL}",
         encoding="utf-8",
     )
@@ -190,8 +191,15 @@ def test_coverage_calculators(tmp_path: Path) -> None:
         f"    def m(self, a: int, *var: int, **kw: int) -> None:{NL}"
         f'        """Method.{NL}{NL}        Args:{NL}'
         f"            a: A.{NL}            *var: V.{NL}"
-        f'            **kw: K.{NL}        """{NL}{NL}'
+        f'            **kw: K.{NL}        """{NL}'
+        f"        return None{NL}{NL}"
         f'def fn(b: int) -> None:{NL}    """Fn doc."""{NL}',
+        encoding="utf-8",
+    )
+    py_tests_dir = tmp_path / "python" / "tests"
+    py_tests_dir.mkdir(parents=True)
+    (py_tests_dir / "test_sample.py").write_text(
+        f'"""Sample test doc."""{NL}def test_ok() -> None:{NL}    """Ok."""{NL}    assert True{NL}',
         encoding="utf-8",
     )
     scripts_dir = tmp_path / "scripts"
@@ -201,7 +209,7 @@ def test_coverage_calculators(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     py_docs, py_total = pc.calculate_python_doc_coverage(tmp_path)
-    assert (py_docs, py_total) == (7, 11)
+    assert (py_docs, py_total) == (9, 13)
 
     xml_dir = tmp_path / "cpp" / "build" / "doxygen" / "xml"
     xml_dir.mkdir(parents=True)
@@ -280,6 +288,26 @@ def test_coverage_calculators(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
+    (cov_dir / "py_coverage.json").write_text(
+        json.dumps(
+            {
+                "totals": {
+                    "num_statements": 10,
+                    "covered_lines": 10,
+                    "num_branches": 4,
+                    "covered_branches": 4,
+                    "percent_covered": 100.0,
+                },
+                "files": {
+                    "python/libtpu/mod.py": {"executed_lines": list(range(1, 25))},
+                    "python/libtpu/missing.py": {"executed_lines": []},
+                    "scripts/helper.py": {"executed_lines": []},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert pc.calculate_test_coverage(tmp_path, force_run=False) < 100.0
     (cov_dir / "py_coverage.json").write_text(
         json.dumps({"totals": {"percent_covered": 100.0}}),
         encoding="utf-8",
@@ -367,8 +395,10 @@ def test_coverage_calculators(tmp_path: Path) -> None:
         )
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=out, stderr="")
 
+    (cpp_build / "test_libtpu_999.profraw").write_text("stale", encoding="utf-8")
     with patch.object(pc, "run_command", side_effect=fake_cpp_cov):
         assert pc.calculate_cpp_test_coverage(tmp_path, force_run=True) == 100.0
+    (cpp_build / "test_libtpu_c11").write_text("bin_c11", encoding="utf-8")
     (cpp_build / "test_libtpu.profraw").write_text("prof", encoding="utf-8")
     with (
         patch.object(pc, "run_command", side_effect=fake_cpp_cov),
@@ -420,7 +450,9 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
         tmp_path: Temporary directory fixture provided by pytest.
     """
     (tmp_path / "cpp" / "src").mkdir(parents=True)
-    (tmp_path / "cpp" / "src" / "sample.cpp").write_text(f"int x = 0;{NL}", encoding="utf-8")
+    (tmp_path / "cpp" / "src" / "sample.cpp").write_text(
+        f"/** @file sample.cpp */{NL}int x = 0;{NL}", encoding="utf-8"
+    )
 
     with patch.object(pc, "run_command") as mock_run:
         assert pc.hook_fmt(tmp_path, check_only=False) == 0
@@ -465,9 +497,12 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
         assert mock_test.call_count == 5
 
     (tmp_path / "cpp" / "build" / "CMakeCache.txt").write_text("", encoding="utf-8")
+    stale_prof = tmp_path / "cpp" / "build" / "test_libtpu_stale.profraw"
+    stale_prof.write_text("", encoding="utf-8")
     with patch.object(pc, "run_command") as mock_test_existing:
         assert pc.hook_test(tmp_path) == 0
-        assert mock_test_existing.call_count == 3
+        assert mock_test_existing.call_count == 4
+        assert not stale_prof.exists()
 
     (tmp_path / "README.md").write_text(
         f"# Title{NL}{NL}"
@@ -582,7 +617,14 @@ def test_abi_compatibility_hook(tmp_path: Path) -> None:
     ]
     c_src = tmp_path / "crates" / "libtpu-c-api" / "src"
     c_src.mkdir(parents=True, exist_ok=True)
-    (c_src / "lib.rs").write_text("// empty .unwrap()", encoding="utf-8")
+    (c_src / "lib.rs").write_text(
+        "// empty .unwrap()\n"
+        "#[cfg_attr(coverage_nightly, coverage(" + "off))]\n"
+        "pub enum ExtraError { A }\n"
+        "pub struct ExtraStructError;\n",
+        encoding="utf-8",
+    )
+    (c_src / "handles.rs").write_text("pub struct PJRT_Error;\n", encoding="utf-8")
     h_dir = tmp_path / "cpp" / "src"
     h_dir.mkdir(parents=True, exist_ok=True)
     (h_dir / "libtpu.h").write_text("/* empty */", encoding="utf-8")
@@ -592,8 +634,8 @@ def test_abi_compatibility_hook(tmp_path: Path) -> None:
     assert pc.verify_rust_and_c_abi_sources(tmp_path) != []
     core_src = tmp_path / "crates" / "libtpu-core" / "src"
     core_src.mkdir(parents=True, exist_ok=True)
-    (core_src / "error.rs").write_text("// missing enum", encoding="utf-8")
-    (tmp_path / "Cargo.toml").write_text("anyhow = '1.0'", encoding="utf-8")
+    (core_src / "error.rs").write_text("pub enum BadOnlyError {}\n", encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_text("miette = '1.0'", encoding="utf-8")
     src_errs = pc.verify_rust_and_c_abi_sources(tmp_path)
     assert any("missing from crates/libtpu-c-api/src" in e for e in src_errs)
     assert any("missing from cpp/src/libtpu.h" in e for e in src_errs)
@@ -603,6 +645,9 @@ def test_abi_compatibility_hook(tmp_path: Path) -> None:
     assert any("Forbidden dependency anyhow/thiserror" in e for e in src_errs)
     assert any("LibTpuError in error.rs must derive" in e for e in src_errs)
     assert any("Forbidden .unwrap()" in e for e in src_errs)
+    assert any("Secondary error enum 'ExtraError'" in e for e in src_errs)
+    assert any("Secondary error struct 'ExtraStructError'" in e for e in src_errs)
+    assert any("Unguarded coverage(off)" in e for e in src_errs)
 
     # Test hook_abi source error branch
     assert pc.hook_abi(tmp_path) == 1
@@ -702,6 +747,7 @@ def test_abi_compatibility_hook(tmp_path: Path) -> None:
     p_dir.mkdir(parents=True, exist_ok=True)
     r_dir.mkdir(parents=True, exist_ok=True)
     (p_dir / "sample.proto").write_text(
+        "// Sample schema\n\n"
         'syntax = "proto3";\n'
         "message NoPkgMsg {\n"
         "  int32 a = 1;\n"
@@ -718,17 +764,48 @@ def test_abi_compatibility_hook(tmp_path: Path) -> None:
     )
     (r_dir / "sample.rs").write_text(
         "#[derive(Clone, Message)]\n"
+        "pub struct ManualBad { pub x: i32 }\n"
+        "pub struct HandWrittenProto { pub y: i32 }\n"
+        "pub enum HandWrittenEnumProto { Zero = 0 }\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "crates" / "libtpu-core" / "build.rs").write_text(
+        "const SYNTHETIC_DEPENDENCY_PROTOS: usize = 0;\n", encoding="utf-8"
+    )
+    (r_dir / "descriptor.rs").write_text("// no out_dir\n", encoding="utf-8")
+
+    # Without target/debug/build/libtpu-core-*/out -> reports missing OUT_DIR + manual derive
+    no_out_r2p = pc.verify_rust_to_proto_1to1(tmp_path)
+    no_out_p2r = pc.verify_proto_to_rust_1to1(tmp_path)
+    assert any("Forbidden manual #[derive" in e for e in no_out_r2p)
+    assert any("Missing prost-build OUT_DIR" in e for e in no_out_r2p)
+    assert any("Missing prost-build OUT_DIR" in e for e in no_out_p2r)
+    assert any("Forbidden inline SYNTHETIC_DEPENDENCY_PROTOS" in e for e in no_out_p2r)
+    assert any("prost-build output in OUT_DIR is not included" in e for e in no_out_p2r)
+
+    # Populate synthetic OUT_DIR to test unregistered, enum mismatch, and tag drift
+    out_dir = tmp_path / "target" / "debug" / "build" / "libtpu-core-abc" / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "generated_proto_include.rs").write_text("// skipped\n", encoding="utf-8")
+    (out_dir / "generated_proto_traits.rs").write_text(
+        "pub const ALL_GENERATED_PROTO_BIJECTION: &[(&str, &str)] = &[\n"
+        '    ("demo.NonExistent", "generated_prost_schemas::demo::MissingTargetProto"),\n'
+        '    ("demo.DemoMsg", "generated_prost_schemas::demo::DemoMsgProto"),\n'
+        "];\n",
+        encoding="utf-8",
+    )
+    (out_dir / "demo.rs").write_text(
+        "#[derive(Clone, ::prost::Message)]\n"
         "pub struct UnregisteredProto {\n"
         '    #[prost(int32, tag = "1")]\n'
         "    pub x: i32,\n"
         "}\n"
-        "#[derive(Clone, Message)]\n"
+        "#[derive(Clone, ::prost::Message)]\n"
         "pub struct MissingTargetProto {\n"
         '    #[prost(int32, tag = "1")]\n'
         "    pub x: i32,\n"
         "}\n"
-        'impl_proto_schema_message!(MissingTargetProto, "demo.NonExistent");\n'
-        "#[derive(Clone, Message)]\n"
+        "#[derive(Clone, ::prost::Message)]\n"
         "pub struct DemoMsgProto {\n"
         '    #[prost(int32, tag = "1")]\n'
         "    pub x: i32,\n"
@@ -738,24 +815,17 @@ def test_abi_compatibility_hook(tmp_path: Path) -> None:
         "    pub oneof_field: Option<i32>,\n"
         "    #[prost(skip)]\n"
         "    pub skipped: i32,\n"
-        "}\n"
-        'impl_proto_schema_message!(DemoMsgProto, "demo.DemoMsg");\n',
+        "}\n",
         encoding="utf-8",
-    )
-    (tmp_path / "crates" / "libtpu-core" / "build.rs").write_text(
-        "const SYNTHETIC_DEPENDENCY_PROTOS: usize = 0;\n", encoding="utf-8"
-    )
-    (tmp_path / "crates" / "libtpu-core" / "src" / "proto.rs").write_text(
-        "// no out_dir\n", encoding="utf-8"
     )
     r2p_errs = pc.verify_rust_to_proto_1to1(tmp_path)
     p2r_errs = pc.verify_proto_to_rust_1to1(tmp_path)
     assert any("Unregistered prost::Message struct(s)" in e for e in r2p_errs)
+    assert any("Protobuf enum count mismatch" in e for e in r2p_errs)
     assert any("targets missing .proto message" in e for e in r2p_errs)
     assert any("has extra field tags [50, 99]" in e for e in r2p_errs)
+    assert any(".proto message(s) missing corresponding Rust struct" in e for e in p2r_errs)
     assert any("omitted from Rust struct DemoMsgProto" in e for e in p2r_errs)
-    assert any("Forbidden inline SYNTHETIC_DEPENDENCY_PROTOS" in e for e in p2r_errs)
-    assert any("prost-build output in OUT_DIR is not included" in e for e in p2r_errs)
 
 
 def test_github_actions_workflows_present_and_complete() -> None:
@@ -1261,3 +1331,58 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     assert any("expected 138 extension_functions" in e for e in mismatch_errs)
     assert any("incomplete descriptor closure" in e for e in mismatch_errs)
     assert any("missing TPU generation CSR maps" in e for e in mismatch_errs)
+
+
+def test_verify_workspace_ast_invariants(tmp_path: Path) -> None:
+    """Tests `verify_workspace_ast_invariants` on clean repo and synthetic violations.
+
+    Args:
+        tmp_path: Temporary directory fixture provided by pytest.
+    """
+    assert pc.verify_workspace_ast_invariants(pc.get_repo_root()) == []
+    assert pc.verify_workspace_ast_invariants(tmp_path / "nonexistent_ws") == []
+
+    (tmp_path / "Cargo.toml").write_text('[dependencies]\nanyhow = "1"\n', encoding="utf-8")
+    crate_src = tmp_path / "crates" / "bad" / "src"
+    crate_src.mkdir(parents=True)
+    (tmp_path / "crates" / "bad" / "Cargo.toml").write_text(
+        '[package]\nname = "bad"\n', encoding="utf-8"
+    )
+    bad_rs = (
+        "// comment .unwrap()\n"
+        "#[allow(" + "dead_code)]\n"
+        "#[cfg_attr(coverage_nightly, coverage(" + "off))]\n"
+        "pub enum SecondaryError { A }\n"
+        "pub struct SecondaryStructError;\n"
+        "pub fn f() { let x = Some(1).unwrap(); }\n"
+        "#[cfg(test)]\n"
+        "mod tests {}\n"
+    )
+    (crate_src / "lib.rs").write_text(bad_rs, encoding="utf-8")
+    clean_rs = "//! Clean module.\npub enum LibTpuError { OkVariant }\n"
+    (crate_src / "error.rs").write_text(clean_rs, encoding="utf-8")
+    (crate_src / "handles.rs").write_text(
+        "//! Handles.\npub struct PJRT_Error;\n", encoding="utf-8"
+    )
+
+    cpp_dir = tmp_path / "cpp" / "src"
+    cpp_dir.mkdir(parents=True)
+    (cpp_dir / "bad.h").write_text("int x;\n", encoding="utf-8")
+    (cpp_dir / "good.hpp").write_text("/** @file good.hpp */\nint y;\n", encoding="utf-8")
+
+    py_dir = tmp_path / "python"
+    py_dir.mkdir(parents=True)
+    (py_dir / "bad.py").write_text("x = 1  # pragma:" + " no cover\n", encoding="utf-8")
+    (py_dir / "good.py").write_text('"""Doc."""\nx = 2\n', encoding="utf-8")
+
+    errs = pc.verify_workspace_ast_invariants(tmp_path)
+    assert any("banned dependency 'anyhow'" in e for e in errs)
+    assert any("missing `//!` file doc header" in e for e in errs)
+    assert any("forbidden allow(dead_code)" in e for e in errs)
+    assert any("forbidden coverage(off)" in e for e in errs)
+    assert any("secondary error enum 'SecondaryError'" in e for e in errs)
+    assert any("secondary error struct 'SecondaryStructError'" in e for e in errs)
+    assert any("unwrap" in e for e in errs)
+    assert any("missing Doxygen `@file` header" in e for e in errs)
+    assert any("forbidden pragma no cover" in e for e in errs)
+    assert pc.hook_clippy(tmp_path) == 1

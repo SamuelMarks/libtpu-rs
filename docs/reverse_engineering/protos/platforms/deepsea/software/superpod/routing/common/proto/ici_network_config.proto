@@ -1,0 +1,53 @@
+syntax = "proto2";
+package superpod.routing.proto;
+import "google/protobuf/duration.proto";
+import "platforms/accel_ssw/deepsea/common/proto/local_topology.proto";
+import "platforms/accel_ssw/deepsea/common/proto/routing_entry.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+import "platforms/asic_sw/proto/deepsea/common/gtc_config.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/chip_coordinate.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/topology.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/tpu_type.proto";
+message ChipLocationToIciConfig {
+  message PerLinksRoutingTable {
+    optional .accel_ssw.deepsea.proto.RoutingTable table = 1;
+    repeated uint32 links = 2 [packed = true];
+    repeated uint32 egress_links = 3 [packed = true];
+  }
+  optional .asic_sw.proto.ChipLocation chip_location = 1;
+  optional int32 global_id = 2;
+  optional .accel_ssw.deepsea.proto.RoutingTable chip_egress_routing_table = 3;
+  optional .accel_ssw.deepsea.proto.RoutingTable chip_egress_next_hop_routing_table = 4;
+  map<int32, .accel_ssw.deepsea.proto.RoutingTable> link_next_hop_routing_tables = 5;
+  repeated .superpod.routing.proto.ChipLocationToIciConfig.PerLinksRoutingTable per_links_routing_tables = 9;
+  optional .asic_sw.proto.deepsea.GtcConfigurationData gtc_config = 6;
+  optional bool single_chip_mode = 7;
+  repeated uint32 links = 8 [packed = true];
+  optional .superpod.routing.proto.ChipCoordinate coordinate = 10;
+}
+message ChipLocationToCompressedIciConfig {
+  optional .asic_sw.proto.ChipLocation chip_location = 1;
+  optional string compressed_chip_config = 2;
+}
+message IciNetworkConfig {
+  optional int32 num_machines = 12;
+  optional .superpod.routing.proto.Topology topology = 1;
+  repeated .accel_ssw.deepsea.proto.LocalTopology expected_links = 2;
+  optional string network_id = 4;
+  optional bool is_static_slice = 5;
+  optional .google.protobuf.Duration wait_for_data_link_up_timeout = 6;
+  optional .google.protobuf.Duration clear_wait_timeout = 7;
+  optional .google.protobuf.Duration wait_for_gtc_reset_timeout = 8;
+  repeated .superpod.routing.proto.ChipLocationToIciConfig configs = 3;
+  optional bool deferred_programming = 11;
+  repeated .superpod.routing.proto.ChipLocationToCompressedIciConfig compressed_configs = 9;
+  repeated .asic_sw.proto.ChipLocation chips_to_reset = 10;
+  optional bool allow_softslicing = 13 [default = true];
+}
+message IciNetworkConfigs {
+  optional .superpod.routing.proto.TpuType tpu_type = 1;
+  repeated .superpod.routing.proto.IciNetworkConfig configs = 2;
+}
+message ActiveIciNetworkConfigs {
+  repeated .superpod.routing.proto.IciNetworkConfig configs = 1;
+}

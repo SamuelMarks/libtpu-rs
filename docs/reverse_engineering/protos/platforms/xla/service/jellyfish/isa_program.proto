@@ -1,0 +1,199 @@
+syntax = "proto3";
+package xla;
+import "learning/45eac/tpu/runtime/host_commands/host_command_opcodes.proto";
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "learning/45eac/tpu/runtime/tpu_runtime_abi.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/sparsecore/sparsecore_scs_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/sparsecore/sparsecore_tac_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/sparsecore/sparsecore_tec_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/glc/isa/tensorcore/tensorcore_program.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_program.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_program.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_sequencer_program.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/common/isa/tensorcore_program.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_scs_program.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_tac_program.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_tec_program.proto";
+import "platforms/deepsea/jellyfish/xdb/program_memory_allocator.proto";
+import "platforms/xla/megascale/common/megascale_info.proto";
+import "platforms/xla/service/jellyfish/llo_program_shared_registry.proto";
+import "platforms/xla/service/jellyfish/transfer_stats.proto";
+import "third_party/tensorflow/compiler/xla/core/host_offloading/host_offloading_executable.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_scs_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_tec_program.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_program.proto";
+import "platforms/deepsea/jellyfish/isa/barnacore_isa.proto";
+import "platforms/deepsea/jellyfish/isa/tensorcore_isa.proto";
+enum MemorySpaceProto {
+  NONE = 0;
+  HBM = 1;
+  VMEM = 2;
+  SMEM = 3;
+  SFLAG = 4;
+  IMEM = 5;
+  BARNA_CORE_BMEM = 6;
+  BARNA_CORE_SMEM = 7;
+  BARNA_CORE_SFLAG = 8;
+  BARNA_CORE_IMEM = 9;
+  HIB = 10;
+  CMEM = 11;
+  SPARSE_CORE_SEQUENCER_SFLAG = 12;
+  HOST = 13;
+  SPARSE_CORE_SEQUENCER_SMEM = 14;
+  SPARSE_CORE_PRIVATE_STACK_HBM = 15;
+  PINNED_HBM = 16;
+  SPARSE_CORE_TILE_SFLAG = 17;
+  SPARSE_CORE_TILE_SMEM = 18;
+  VIEW = 19;
+  SPARSE_CORE_TILE_SPMEM = 21;
+}
+enum LoadableSegmentPayloadProto {
+  PAYLOAD_NONE = 0;
+  PAYLOAD_DATA = 1;
+  PAYLOAD_OVERLAYS = 2;
+}
+message LloAddressProto {
+  reserved 2;
+  reserved 3;
+  .xla.MemorySpaceProto space = 1;
+  int64 offset = 4;
+}
+message LoadableSegmentProto {
+  .xla.LloAddressProto address = 1;
+  bytes data = 2;
+  .xla.LoadableSegmentPayloadProto payload = 3;
+  bytes data_hash = 4;
+  bool is_compressed = 5;
+}
+message UninitializedSegmentProto {
+  int64 size_in_bytes = 1;
+  .xla.MemorySpaceProto space = 2;
+}
+message HloProfileInformation {
+  string computation = 1;
+  string instruction = 2;
+  string short_text = 3;
+  string category = 4;
+  double flop_count = 5;
+  int64 hbm_offset = 6;
+  int64 cycles = 7;
+  int64 bytes_accessed = 8;
+  float optimal_seconds = 9;
+  bool is_entry_computation = 10;
+}
+message HostTransferProto {
+  reserved 4;
+  reserved 7;
+  reserved 8;
+  enum TransferDirection {
+    NONE = 0;
+    DEVICE_TO_HOST = 1;
+    HOST_TO_DEVICE = 2;
+  }
+  .tpu.HostCommandOpcodeProto host_command_opcode = 15;
+  int64 channel = 1;
+  .xla.HostTransferProto.TransferDirection direction = 2;
+  string key = 3;
+  .xla.ShapeProto shape = 5;
+  int64 buffer_offset = 6;
+  string host_handler_name = 9;
+  .xla.megascale.runtime.MegaScaleInfoProto megascale_info = 10;
+  int32 done_sflag = 11;
+  repeated int64 aggregated_channel_ids = 12;
+  optional int32 heap_buffer_index = 13;
+  optional int64 multi_recv_count = 14;
+}
+message HostExecutionProto {
+  message Buffer {
+    .xla.ShapeProto shape = 1;
+    int64 buffer_offset = 2;
+    optional int32 heap_buffer_index = 3;
+    optional bool is_direct_device_buffer = 4;
+  }
+  int64 id = 1;
+  repeated .xla.HostExecutionProto.Buffer buffers = 2;
+  repeated int32 done_sflags = 3;
+  .xla.HostOffloadingExecutableProto executable = 4;
+}
+message ProgramRelocation {
+  int64 bundle = 1;
+  int32 slot = 2;
+  int32 kind = 3;
+  int32 memory_space = 4;
+  int32 memory_sub_space = 5;
+}
+message CallTargetInfo {
+  reserved 4;
+  reserved "adjustments";
+  oneof allocator_snapshot {
+    .platforms_deepsea.jellyfish.xdb.ProgramMemoryAllocator allocator = 6;
+    int32 allocator_snapshot_index = 9;
+  }
+  int64 bundle_number = 1;
+  string call_target = 2;
+  bool must_inline = 3;
+  int32 removed_delay_slots = 5;
+  .platforms_deepsea.jellyfish.xdb.MemorySizes allocation_offset_adjustment_bytes = 7;
+  string call_instruction_annotation = 8;
+}
+message IsaProgramProto {
+  reserved 5;
+  reserved 6;
+  reserved 7;
+  reserved 13;
+  reserved 16;
+  reserved 17;
+  reserved 37;
+  reserved 43;
+  reserved 45;
+  reserved "tensor_core_outfeed_span_kib";
+  reserved "chip_version";
+  reserved "compiler_metadata";
+  reserved "deepsea_version";
+  reserved "metadata_fingerprint";
+  reserved "dynamic_segments";
+  reserved "abi_version";
+  reserved "alignments";
+  reserved "peak_memory_usage";
+  oneof isa_programs {
+    .platforms_deepsea.jellyfish.isa.Program deepsea_program = 2;
+    .platforms_deepsea.jellyfish.isa.BarnaCoreAddressHandlerProgram barna_core_address_handler_program = 10;
+    .asic_sw.deepsea.pxc.isa.TensorCoreProgram pufferfish_tensorcore_program = 12;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreSequencerProgram pufferfish_barnacore_sequencer_program = 19;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelProgram pufferfish_barna_core_channel_program = 21;
+    .asic_sw.deepsea.vxc.isa.TensorCoreProgram viperfish_tensorcore_program = 22;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreScsProgram viperfish_sparse_core_scs_program = 26;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTacProgram viperfish_sparse_core_tac_program = 27;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecProgram viperfish_sparse_core_tec_program = 28;
+    .asic_sw.deepsea.gxc.glc.isa.TensorCoreProgram ghostlite_tensorcore_program = 25;
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreScsProgram ghostlite_sparse_core_scs_program = 30;
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreTacProgram ghostlite_sparse_core_tac_program = 31;
+    .asic_sw.deepsea.gxc.glc.isa.SparseCoreTecProgram ghostlite_sparse_core_tec_program = 32;
+    .asic_sw.deepsea.gxc.gfc.isa.TensorCoreProgram c_6acc60406_tensorcore_program = 29;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScsProgram c_6acc60406_sparse_core_scs_program = 48;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecProgram c_6acc60406_sparse_core_tec_program = 49;
+  }
+  repeated .xla.LoadableSegmentProto loadable_segments = 3;
+  repeated .xla.UninitializedSegmentProto uninitialized_segments = 4;
+  int64 initial_overlay_size = 8;
+  int64 overlay_count = 15;
+  .tpu.TpuCoreTypeProto core_type = 14;
+  repeated .xla.HostTransferProto host_transfers = 11;
+  repeated .xla.HostExecutionProto host_executions = 34;
+  .xla.TransferStatsProto transfer_stats = 44;
+  bytes program_fingerprint = 9;
+  map<int64, int64> branch_target_map = 18;
+  repeated .xla.ProgramRelocation relocations = 38;
+  .xla.LloProgramSharedRegistryOffsetTable program_shared_registry = 47;
+  repeated .xla.CallTargetInfo call_targets = 41;
+  repeated .platforms_deepsea.jellyfish.xdb.ProgramMemoryAllocator allocator_snapshots = 60;
+  .platforms_deepsea.jellyfish.xdb.ProgramMemoryAllocator memory_requirement = 46;
+  string program_name = 42;
+  int64 compilation_id = 20;
+  int64 scs_start_bundle = 23;
+  int64 tile_start_bundle = 24;
+  map<int64, int64> intrinsic_bundles = 33;
+  .tpu.TpuCoreProgramAbiProto abi = 39;
+  bool oom_during_compilation = 61;
+}

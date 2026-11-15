@@ -1,0 +1,7 @@
+syntax = "proto3";
+package tpu;
+enum TpuRoutingStrategyProto {
+  ROUTING_DEFAULT = 0;
+  ROUTING_MESH = 1;
+  ROUTING_NHOP = 2;
+}

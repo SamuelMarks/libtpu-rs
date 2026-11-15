@@ -1,0 +1,437 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.gfc.isa;
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_common_encodings.proto";
+import "platforms/asic_sw/lib/deepsea/common/isa/common_encodings.proto";
+message SparseCoreScalarMisc {
+  message CompareIntegerEq {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 x = 3;
+  }
+  message CompareIntegerNe {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 x = 3;
+  }
+  message CompareSignedIntegerGt {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 x = 3;
+  }
+  message CompareSignedIntegerGte {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 x = 3;
+  }
+  message CompareSignedIntegerLt {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 x = 3;
+  }
+  message CompareSignedIntegerLte {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 x = 3;
+  }
+  message CompareUnsignedIntegerGt {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 x = 3;
+  }
+  message CompareUnsignedIntegerGte {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 x = 3;
+  }
+  message CompareUnsignedIntegerLt {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 x = 3;
+  }
+  message CompareUnsignedIntegerLte {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 x = 3;
+  }
+  message CarryOutFromIntegerUnsigned {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 x = 3;
+  }
+  message PredicateOr {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicationOr px = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicationOr py = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 3;
+  }
+  message CoreInterrupt {
+    optional .asic_sw.deepsea.isa.ScalarY y = 1;
+  }
+  message SyncDone {
+    optional uint32 x = 1;
+  }
+  message SyncEqual {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncNotEqual {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncGreater {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncGreaterOrEqual {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncLess {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncNotDone {
+    optional uint32 x = 1;
+  }
+  message SyncEqualOrDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncNotEqualOrDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncGreaterOrDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncGreaterOrEqualOrDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncLessOrDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncWatchDone {
+    optional uint32 x = 1;
+  }
+  message SyncWatchEqual {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncWatchNotEqual {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncWatchGreater {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncWatchGreaterOrEqual {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncWatchLess {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncWatchNotDone {
+    optional uint32 x = 1;
+  }
+  message SyncWatchEqualOrDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncWatchNotEqualOrDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncWatchGreaterOrDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncWatchGreaterOrEqualOrDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncWatchLessOrDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SyncWatchWait {
+    optional uint32 dest = 1;
+  }
+  message SyncWatchWaitSelect {
+    optional .asic_sw.deepsea.isa.ScalarY y = 1;
+    optional uint32 dest = 2;
+  }
+  message SyncWatchEnd {
+  }
+  message SyncWatchEndSelect {
+    optional .asic_sw.deepsea.isa.ScalarY y = 1;
+  }
+  message ReadSyncStateValue {
+    optional uint32 dest = 1;
+  }
+  message ReadSyncStateDone {
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecorePredicateDest pdst = 1;
+  }
+  message SetSyncFlag {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SetSyncDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AddSyncFlag {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message ReadSyncFlag {
+    optional .asic_sw.deepsea.isa.ScalarY y = 1;
+    optional uint32 dest = 2;
+  }
+  message ReadSyncDone {
+    optional .asic_sw.deepsea.isa.ScalarY y = 1;
+    optional uint32 dest = 2;
+  }
+  message ReadSyncPublicAccess {
+    optional .asic_sw.deepsea.isa.ScalarY y = 1;
+    optional uint32 dest = 2;
+  }
+  message AtomicTileWrite {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AtomicTileAdd {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AtomicTileWriteSetDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AtomicTileAddSetDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AtomicTileWriteSetDoneInverted {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AtomicTileAddSetDoneInverted {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AtomicRemoteWrite {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AtomicRemoteAdd {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AtomicRemoteWriteSetDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AtomicRemoteAddSetDone {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AtomicRemoteWriteSetDoneInverted {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message AtomicRemoteAddSetDoneInverted {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SmemFetchAndAdd {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message SyncBarrier {
+    optional uint32 barrier = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message IntegerAdd {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message IntegerAddWithOverflowCheck {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message IntegerSubtractYX {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message IntegerSubtractYXWithOverflowCheck {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message BitwiseAnd {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message BitwiseOr {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message BitwiseXor {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message LogicalShiftLeftXByYPlaces {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message ArithmeticShiftLeftXByYPlacesCheckOverflow {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message LogicalShiftRightXByYPlaces {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message ArithmeticShiftRightXByYPlaces {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message MaxOfTwoUnsignedIntValues {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message MinOfTwoUnsignedIntValues {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+    optional uint32 dest = 3;
+  }
+  message MoveY {
+    optional .asic_sw.deepsea.isa.ScalarY y = 1;
+    optional uint32 dest = 2;
+  }
+  message CountLeadingZeros {
+    optional .asic_sw.deepsea.isa.ScalarY y = 1;
+    optional uint32 dest = 2;
+  }
+  message SetTracemark {
+    optional .asic_sw.deepsea.isa.ScalarY y = 1;
+  }
+  message Trace {
+    optional .asic_sw.deepsea.isa.ScalarY y = 1;
+  }
+  message SetSyncFlagPublicAccess {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.isa.ScalarY y = 2;
+  }
+  message SetPOrTState {
+    optional .asic_sw.deepsea.isa.ScalarY y = 1;
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CompareIntegerEq compare_integer_eq = 8;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CompareIntegerNe compare_integer_ne = 9;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CompareSignedIntegerGt compare_signed_integer_gt = 10;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CompareSignedIntegerGte compare_signed_integer_gte = 11;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CompareSignedIntegerLt compare_signed_integer_lt = 12;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CompareSignedIntegerLte compare_signed_integer_lte = 13;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CompareUnsignedIntegerGt compare_unsigned_integer_gt = 14;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CompareUnsignedIntegerGte compare_unsigned_integer_gte = 15;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CompareUnsignedIntegerLt compare_unsigned_integer_lt = 16;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CompareUnsignedIntegerLte compare_unsigned_integer_lte = 17;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CarryOutFromIntegerUnsigned carry_out_from_integer_unsigned = 18;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.PredicateOr predicate_or = 19;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CoreInterrupt core_interrupt = 20;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncDone sync_done = 21;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncEqual sync_equal = 22;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncNotEqual sync_not_equal = 23;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncGreater sync_greater = 24;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncGreaterOrEqual sync_greater_or_equal = 25;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncLess sync_less = 26;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncNotDone sync_not_done = 27;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncEqualOrDone sync_equal_or_done = 28;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncNotEqualOrDone sync_not_equal_or_done = 29;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncGreaterOrDone sync_greater_or_done = 30;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncGreaterOrEqualOrDone sync_greater_or_equal_or_done = 31;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncLessOrDone sync_less_or_done = 32;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchDone sync_watch_done = 33;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchEqual sync_watch_equal = 34;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchNotEqual sync_watch_not_equal = 35;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchGreater sync_watch_greater = 36;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchGreaterOrEqual sync_watch_greater_or_equal = 37;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchLess sync_watch_less = 38;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchNotDone sync_watch_not_done = 39;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchEqualOrDone sync_watch_equal_or_done = 40;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchNotEqualOrDone sync_watch_not_equal_or_done = 41;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchGreaterOrDone sync_watch_greater_or_done = 42;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchGreaterOrEqualOrDone sync_watch_greater_or_equal_or_done = 43;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchLessOrDone sync_watch_less_or_done = 44;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchWait sync_watch_wait = 45;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchWaitSelect sync_watch_wait_select = 46;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchEnd sync_watch_end = 47;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncWatchEndSelect sync_watch_end_select = 48;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.ReadSyncStateValue read_sync_state_value = 49;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.ReadSyncStateDone read_sync_state_done = 50;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SetSyncFlag set_sync_flag = 51;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SetSyncDone set_sync_done = 52;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AddSyncFlag add_sync_flag = 53;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.ReadSyncFlag read_sync_flag = 54;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.ReadSyncDone read_sync_done = 55;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.ReadSyncPublicAccess read_sync_public_access = 56;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicTileWrite atomic_tile_write = 57;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicTileAdd atomic_tile_add = 58;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicTileWriteSetDone atomic_tile_write_set_done = 59;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicTileAddSetDone atomic_tile_add_set_done = 60;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicTileWriteSetDoneInverted atomic_tile_write_set_done_inverted = 61;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicTileAddSetDoneInverted atomic_tile_add_set_done_inverted = 62;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicRemoteWrite atomic_remote_write = 63;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicRemoteAdd atomic_remote_add = 64;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicRemoteWriteSetDone atomic_remote_write_set_done = 65;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicRemoteAddSetDone atomic_remote_add_set_done = 66;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicRemoteWriteSetDoneInverted atomic_remote_write_set_done_inverted = 67;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.AtomicRemoteAddSetDoneInverted atomic_remote_add_set_done_inverted = 68;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SmemFetchAndAdd smem_fetch_and_add = 69;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SyncBarrier sync_barrier = 70;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.IntegerAdd integer_add = 71;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.IntegerAddWithOverflowCheck integer_add_with_overflow_check = 72;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.IntegerSubtractYX integer_subtract_y_x = 73;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.IntegerSubtractYXWithOverflowCheck integer_subtract_y_x_with_overflow_check = 74;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.BitwiseAnd bitwise_and = 75;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.BitwiseOr bitwise_or = 76;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.BitwiseXor bitwise_xor = 77;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.LogicalShiftLeftXByYPlaces logical_shift_left_x_by_y_places = 78;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.ArithmeticShiftLeftXByYPlacesCheckOverflow arithmetic_shift_left_x_by_y_places_check_overflow = 79;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.LogicalShiftRightXByYPlaces logical_shift_right_x_by_y_places = 80;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.ArithmeticShiftRightXByYPlaces arithmetic_shift_right_x_by_y_places = 81;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.MaxOfTwoUnsignedIntValues max_of_two_unsigned_int_values = 82;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.MinOfTwoUnsignedIntValues min_of_two_unsigned_int_values = 83;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.MoveY move_y = 84;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.CountLeadingZeros count_leading_zeros = 85;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SetTracemark set_tracemark = 86;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.Trace trace = 87;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SetSyncFlagPublicAccess set_sync_flag_public_access = 88;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreScalarMisc.SetPOrTState set_p_or_t_state = 89;
+  }
+  optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreNormalPredication normal_predication = 1 [default = SPARSECORE_NORMAL_PREDICATION_ALWAYS];
+  optional bool normal_predication_inversion = 2;
+  optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreRotatePredication rotate_predication = 3 [default = SPARSECORE_ROTATE_PREDICATION_PREG7_IS_1];
+  optional bool is_rotate_predication = 4;
+  optional uint32 latency = 5 [default = 1];
+  map<string, uint32> resource_usage = 6;
+  optional uint32 bit_width = 7;
+}

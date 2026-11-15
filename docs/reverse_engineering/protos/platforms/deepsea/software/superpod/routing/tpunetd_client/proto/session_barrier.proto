@@ -1,0 +1,16 @@
+syntax = "proto2";
+package superpod.tpunetd_client.proto;
+message NotifyRequest {
+  optional string barrier_id = 1;
+}
+message NotifyResponse {
+}
+message WaitForReadyRequest {
+  optional string barrier_id = 1;
+}
+message WaitForReadyResponse {
+}
+service TpuNetworkSessionBarrier {
+  rpc WaitForReady(.superpod.tpunetd_client.proto.WaitForReadyRequest) returns (.superpod.tpunetd_client.proto.WaitForReadyResponse);
+  rpc Notify(.superpod.tpunetd_client.proto.NotifyRequest) returns (.superpod.tpunetd_client.proto.NotifyResponse);
+}

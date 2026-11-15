@@ -1,0 +1,197 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.barna_core;
+import "platforms/deepsea/jellyfish/barna_core/proto/hbm_buffers_config.proto";
+import "platforms/deepsea/jellyfish/barna_core/proto/tpu_batch_strategy.proto";
+import "third_party/tensorflow/compiler/xla/tpu/protobuf/optimization_parameters.proto";
+import "third_party/tensorflow/compiler/xla/tpu/protobuf/tpu_embedding_configuration.proto";
+message BarnaCoreDataStructureSize {
+  message Local {
+    message ForwardPass {
+      optional int32 dense_activations = 1;
+      optional int32 partitioned_barna_core_ids = 2;
+      optional int32 padding_buffer = 3;
+    }
+    message BackwardPass {
+      optional int32 padding_buffer = 1;
+    }
+    optional int64 ack_buffer = 1;
+    optional int64 deduplication_data = 3;
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreDataStructureSize.Local.ForwardPass forward_pass = 2;
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreDataStructureSize.Local.BackwardPass backward_pass = 4;
+  }
+  message Remote {
+    message ForwardPass {
+      optional int32 barna_core_ids = 1;
+      optional int32 deduplicated_barna_core_ids = 4;
+      optional int32 inference_parameters = 2;
+      optional int32 sparse_activations = 3;
+    }
+    message BackwardPass {
+      optional int32 reduced_gradients = 1;
+      optional int32 reduced_channel_gradients = 2;
+      optional int32 training_parameters = 3;
+      optional int32 learning_rates = 4;
+    }
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreDataStructureSize.Remote.ForwardPass forward_pass = 1;
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreDataStructureSize.Remote.BackwardPass backward_pass = 2;
+  }
+  optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreDataStructureSize.Local local = 1;
+  optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreDataStructureSize.Remote remote = 2;
+}
+message BarnaCoreVmemAddress {
+  message Local {
+    message ForwardPass {
+      optional int32 stacked_sparse_activations = 1;
+      optional int32 stacked_barna_core_ids = 2;
+      optional int32 dense_activations = 3;
+      optional int32 padding_buffer = 4;
+    }
+    message BackwardPass {
+      optional int32 padding_buffer = 1;
+    }
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreVmemAddress.Local.ForwardPass forward_pass = 1;
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreVmemAddress.Local.BackwardPass backward_pass = 2;
+  }
+  message Remote {
+    message ForwardPass {
+      optional int32 stacked_maybe_deduplicated_barna_core_ids = 1;
+      optional int32 stacked_inference_parameters = 2;
+      optional int32 stacked_sparse_activations = 3;
+    }
+    message BackwardPass {
+      optional int32 stacked_reduced_gradients = 1;
+      optional int32 reduced_channel_gradients = 2;
+      optional int32 training_parameters = 3;
+      optional int32 learning_rates = 4;
+    }
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreVmemAddress.Remote.ForwardPass forward_pass = 1;
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreVmemAddress.Remote.BackwardPass backward_pass = 2;
+  }
+  optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreVmemAddress.Local local = 1;
+  optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreVmemAddress.Remote remote = 2;
+}
+message BarnaCoreHbmOffset {
+  message Local {
+    message ForwardPass {
+      optional int64 partitioned_barna_core_ids = 1;
+      optional int64 assembled_sparse_activations = 2;
+      optional int64 assembled_dense_activations = 3;
+      optional int64 partial_activations_scratchpad = 4;
+    }
+    message BackwardPass {
+      optional int64 assembled_gradients = 1;
+      optional int64 learning_rates = 2;
+    }
+    optional int64 ack_buffer = 1;
+    optional int64 deduplication_data = 4;
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreHbmOffset.Local.ForwardPass forward_pass = 2;
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreHbmOffset.Local.BackwardPass backward_pass = 3;
+  }
+  message Remote {
+    message ForwardPass {
+      optional int64 assembled_maybe_deduplicated_barna_core_ids = 1;
+    }
+    message BackwardPass {
+      optional int64 assembled_reduced_gradients = 1;
+    }
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreHbmOffset.Remote.ForwardPass forward_pass = 1;
+    optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreHbmOffset.Remote.BackwardPass backward_pass = 2;
+  }
+  optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreHbmOffset.Local local = 1;
+  optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreHbmOffset.Remote remote = 2;
+}
+message SyncFlagRange {
+  optional int32 base = 1;
+  optional int32 count = 2;
+}
+message GlobalSyncFlags {
+  message TensorCore {
+    optional .platforms_deepsea.jellyfish.barna_core.SyncFlagRange dense_activations = 1;
+    optional .platforms_deepsea.jellyfish.barna_core.SyncFlagRange deduplication_data = 2;
+    optional .platforms_deepsea.jellyfish.barna_core.SyncFlagRange gradients_ack = 3;
+  }
+  message BarnaCore {
+    optional .platforms_deepsea.jellyfish.barna_core.SyncFlagRange dense_activations_ack = 1;
+    optional .platforms_deepsea.jellyfish.barna_core.SyncFlagRange deduplication_data_ack = 2;
+    optional .platforms_deepsea.jellyfish.barna_core.SyncFlagRange gradients = 3;
+    optional .platforms_deepsea.jellyfish.barna_core.SyncFlagRange learning_rates = 4;
+  }
+  optional .platforms_deepsea.jellyfish.barna_core.GlobalSyncFlags.TensorCore tensor_core = 1;
+  optional .platforms_deepsea.jellyfish.barna_core.GlobalSyncFlags.BarnaCore barna_core = 2;
+}
+message SoftwareDeduplication {
+  optional bool enabled = 1;
+  optional int32 tensor_core_transfer_dma_count = 2;
+}
+message AddressHandlerMetadata {
+  message ProgramCounters {
+    optional int64 start = 1 [default = 0];
+    optional int64 end = 2 [default = 0];
+  }
+  message Jellyfish {
+    repeated .platforms_deepsea.jellyfish.barna_core.AddressHandlerMetadata.ProgramCounters for_channel = 1;
+  }
+  message Pufferfish {
+    repeated .platforms_deepsea.jellyfish.barna_core.AddressHandlerMetadata.ProgramCounters for_tpu_table = 1;
+  }
+  message ForRow {
+    oneof version {
+      .platforms_deepsea.jellyfish.barna_core.AddressHandlerMetadata.Jellyfish jellyfish = 1;
+      .platforms_deepsea.jellyfish.barna_core.AddressHandlerMetadata.Pufferfish pufferfish = 2;
+    }
+  }
+  repeated .platforms_deepsea.jellyfish.barna_core.AddressHandlerMetadata.ForRow for_row = 1;
+}
+message FsmProgramConfig {
+  message OptimizationParametersForRow {
+    message Jellyfish {
+      repeated .tensorflow.tpu.OptimizationParameters for_channel = 1;
+    }
+    message Pufferfish {
+      message ForTable {
+        optional .tensorflow.tpu.OptimizationParameters params = 1;
+        optional int32 learning_rate_line = 2;
+        map<int32, int32> hyper_parameter_lines = 3;
+      }
+      repeated .platforms_deepsea.jellyfish.barna_core.FsmProgramConfig.OptimizationParametersForRow.Pufferfish.ForTable for_table = 2;
+    }
+    oneof version {
+      .platforms_deepsea.jellyfish.barna_core.FsmProgramConfig.OptimizationParametersForRow.Jellyfish jellyfish = 1;
+      .platforms_deepsea.jellyfish.barna_core.FsmProgramConfig.OptimizationParametersForRow.Pufferfish pufferfish = 2;
+    }
+  }
+  optional int32 input_batch_size = 1;
+  repeated int32 tpu_sample_counts_per_input_sample = 2;
+  optional int32 max_size_bytes_per_input_sample = 3;
+  optional .platforms_deepsea.jellyfish.barna_core.proto.TpuBatchStrategy tpu_batch_strategy = 4;
+  optional int32 tpu_sample_count_granularity = 5;
+  optional bool pipeline_execution_with_tensor_core = 6 [default = false];
+  optional .tensorflow.tpu.TPUEmbeddingConfiguration.Mode default_mode = 7 [default = TRAINING];
+  optional int32 num_barna_cores_per_partition_column = 8;
+  optional int32 num_barna_cores_per_partition_row = 9;
+  optional int32 num_barna_cores_per_hbm_access_group = 10;
+  optional int32 scatter_group_count = 11;
+  optional int32 scatter_group_count_in_vmem = 12;
+  optional int32 barna_core_count_per_scatter_group = 13;
+  optional bool pipeline_backward_pass_stages = 14 [default = false];
+  optional int32 backward_pass_slot_count = 15;
+  optional .tensorflow.tpu.TPUEmbeddingConfiguration.ShardingStrategy sharding_strategy = 16 [default = MOD];
+  optional .platforms_deepsea.jellyfish.barna_core.GlobalSyncFlags global_sync_flags = 17;
+  optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreDataStructureSize structure_size = 18;
+  optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreVmemAddress vmem_address = 19;
+  optional .platforms_deepsea.jellyfish.barna_core.HbmBuffersConfig hbm_buffers_config = 20;
+  optional .platforms_deepsea.jellyfish.barna_core.BarnaCoreHbmOffset hbm_offset = 21;
+  optional int32 sparse_reduce_buffer_count_in_vmem = 22;
+  optional int32 local_gather_buffer_count_in_vmem = 23;
+  repeated .platforms_deepsea.jellyfish.barna_core.FsmProgramConfig.OptimizationParametersForRow optimization_parameters = 24;
+  optional int32 global_max_auxiliary_parameter_count = 25 [default = 0];
+  repeated int32 max_auxiliary_parameter_counts_by_row = 26;
+  map<int32, .platforms_deepsea.jellyfish.barna_core.AddressHandlerMetadata> address_handler_metadata = 27;
+  optional bool enable_gradient_accumulation = 28 [default = false];
+  optional bool enable_input_batch_densification = 29 [default = false];
+  optional bool uses_dynamic_inputs_in_optimizers = 30 [default = false];
+  optional .platforms_deepsea.jellyfish.barna_core.SoftwareDeduplication software_deduplication = 31;
+  optional int32 barna_clump_size = 32;
+  optional int32 barna_clump_count_per_tensor_core = 33;
+  optional int32 barna_clump_count_per_column = 34;
+}

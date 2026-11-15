@@ -1,0 +1,15 @@
+syntax = "proto2";
+package berg;
+message AppClass {
+  enum Type {
+    option allow_alias = true;
+    LATENCY_TOLERANT_SECONDARY = 0;
+    LATENCY_TOLERANT_PRIMARY = 1;
+    LATENCY_SENSITIVE_SECONDARY = 2;
+    LATENCY_SENSITIVE_CRITICAL = 3;
+    LATENCY_OPTIMIZED = 4;
+    BEST_EFFORT = 0;
+    PRODUCTION_BATCH = 1;
+  }
+  required .berg.AppClass.Type type = 1;
+}

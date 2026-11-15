@@ -1,0 +1,12 @@
+syntax = "proto3";
+package platforms_deepsea.jellyfish.barna_core;
+import "platforms/deepsea/jellyfish/barna_core/proto/embedding_partitions_proto.proto";
+message CommonConfiguration {
+  reserved 2;
+  reserved 3;
+  reserved 5;
+  .platforms_deepsea.jellyfish.barna_core.EmbeddingPartitionsProto embedding_partitions = 1;
+  map<int32, int64> intermediate_data_size_bytes = 6;
+  int64 primary_segment_size_bytes = 7;
+  int64 replica_segment_size_bytes = 8;
+}

@@ -1,6 +1,74 @@
 """Type stubs for `libtpu.sdk.diagnostics`."""
 
 import os
+from typing import TypedDict
+
+class CompilerMetadataReport(TypedDict):
+    """Sanitized compiler metadata dictionary returned by `read_compiler_metadata`."""
+
+    program_id: int
+    replica_count: int
+    num_cores_per_replica: int
+    is_haltless: bool
+    executable_size: int
+    optimized_hlo_instruction_count: int
+    module_name: str
+    executable_fingerprint: str
+
+class _StallSummariesOptional(TypedDict, total=False):
+    """Optional `artifact_metadata` field for `StallSummariesReport`."""
+
+    artifact_metadata: dict[str, object]
+
+class StallSummariesReport(_StallSummariesOptional):
+    """Stall summary dictionary returned by `read_stall_summaries`."""
+
+    core_states: dict[str, dict[str, object]]
+
+class CoreDumpMachineInfo(TypedDict):
+    """Machine metadata block in `CoreDumpReport`."""
+
+    machine_name: str
+    kernel_version: str
+    reason_for_collection: str
+
+class CoreDumpTimestamps(TypedDict):
+    """Timestamp block in `CoreDumpReport`."""
+
+    collection_start_sec: int
+    collection_end_sec: int
+    boot_time_sec: int
+    device_start_sec: int
+
+class CoreDumpHardware(TypedDict):
+    """Hardware power-state block in `CoreDumpReport`."""
+
+    pstate: list[int]
+
+class CoreDumpCoreStateEntry(TypedDict):
+    """Parsed scalar PC core state entry in `CoreDumpReport`."""
+
+    core_type: str
+    core_id: int
+    pc: int
+    hlo_name: str
+
+class CoreDumpAnalyzerReport(TypedDict):
+    """Analyzer report entry in `CoreDumpReport`."""
+
+    analyzer_name: str
+    category: str
+    tag: str
+    message: str
+
+class CoreDumpReport(TypedDict):
+    """Sanitized core dump dictionary returned by `read_core_dump`."""
+
+    machine_info: CoreDumpMachineInfo
+    timestamps: CoreDumpTimestamps
+    hardware: CoreDumpHardware
+    core_states: list[CoreDumpCoreStateEntry]
+    analyzer_reports: list[CoreDumpAnalyzerReport]
 
 def riegeli_highwayhash64(data: bytes) -> int:
     """Computes Google HighwayHash64 over `data` using the canonical Riegeli 256-bit key.
@@ -10,7 +78,7 @@ def riegeli_highwayhash64(data: bytes) -> int:
     """
     ...
 
-def read_compiler_metadata(path: str | os.PathLike[str]) -> dict[str, object]:
+def read_compiler_metadata(path: str | os.PathLike[str]) -> CompilerMetadataReport:
     """Read a `CompilerMetadata` binary proto and extract sanitized fields.
 
     Args:
@@ -18,7 +86,7 @@ def read_compiler_metadata(path: str | os.PathLike[str]) -> dict[str, object]:
     """
     ...
 
-def read_stall_summaries(path: str | os.PathLike[str]) -> dict[str, object]:
+def read_stall_summaries(path: str | os.PathLike[str]) -> StallSummariesReport:
     """Read an `AllCoreStateSummaries` binary proto from disk.
 
     Args:
@@ -26,7 +94,7 @@ def read_stall_summaries(path: str | os.PathLike[str]) -> dict[str, object]:
     """
     ...
 
-def read_core_dump(path: str | os.PathLike[str]) -> dict[str, object]:
+def read_core_dump(path: str | os.PathLike[str]) -> CoreDumpReport:
     """Read and sanitize a TPU core dump from a Riegeli or protobuf file.
 
     Args:

@@ -1,0 +1,8 @@
+syntax = "proto3";
+package xla.jellyfish;
+import "platforms/xla/service/jellyfish/lowering/backend_configs.proto";
+message TpuHloModuleBackendConfig {
+  reserved 1;
+  reserved "is_non_zero_scoped_vmem_offset_allowed";
+  .xla.jellyfish.ScopedMemoryConfig available_post_module_scoped_memory_config = 2;
+}

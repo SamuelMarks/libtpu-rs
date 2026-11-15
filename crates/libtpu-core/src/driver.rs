@@ -9,8 +9,8 @@ use crate::config::TpuInitConfig;
 use crate::error::{LibTpuError, LibTpuResult, PjrtErrorCode};
 use crate::hal::{SimulatedTpuHal, TpuHal};
 use crate::proto::{
-    HloComputationProto, HloInstructionProto, HloModuleProto, ShapeProto, XEventProto, XLineProto,
-    XPlaneProto, XSpaceProto, XStatProto,
+    HloComputationProto, HloInstructionProto, HloModuleProto, ProtoSchemaMessage as _, ShapeProto,
+    XEventProto, XLineProto, XPlaneProto, XSpaceProto, XStatProto,
 };
 use crate::types::{
     ByteSize, CallbackId, ChipCoordinates, DeviceAddress, DeviceId, MemoryKind, TpuGeneration,
@@ -269,7 +269,7 @@ impl TpuCoreProfiler {
                 XEventMetadataProto {
                     id,
                     name: String::from(name),
-                    metadata: String::from("llo.vfc"),
+                    metadata: Vec::from(&b"llo.vfc"[..]),
                     display_name: String::from(display),
                     stats: Vec::new(),
                     child_id: Vec::new(),
@@ -328,10 +328,9 @@ impl TpuCoreProfiler {
             duration_ps,
             events: vec![XEventProto {
                 metadata_id,
-                offset_ps: 0,
                 duration_ps,
-                num_occurrences: 1,
                 stats,
+                data: Some(crate::proto::x_event::Data::OffsetPs(0)),
             }],
         }
     }
@@ -346,52 +345,26 @@ impl TpuCoreProfiler {
         let rec_vmem = self.vmem_bytes.load(Ordering::Relaxed);
         let rec_bundles = self.bundles_retired.load(Ordering::Relaxed);
         let (event_metadata, stat_metadata) = Self::build_xplane_metadata_maps();
-        #[allow(clippy::cast_precision_loss, clippy::cast_possible_wrap)]
         let tc_stats = vec![
             XStatProto {
                 metadata_id: 1,
-                double_value: 0.0,
-                uint64_value: rec_bundles,
-                int64_value: count,
-                str_value: String::from("tpu_execution"),
-                bytes_value: Vec::new(),
-                ref_value: 0,
+                value: Some(crate::proto::x_stat::Value::Uint64Value(rec_bundles)),
             },
             XStatProto {
                 metadata_id: 3,
-                double_value: rec_flops as f64,
-                uint64_value: rec_flops,
-                int64_value: rec_flops as i64,
-                str_value: String::new(),
-                bytes_value: Vec::new(),
-                ref_value: 0,
+                value: Some(crate::proto::x_stat::Value::Uint64Value(rec_flops)),
             },
             XStatProto {
                 metadata_id: 4,
-                double_value: rec_bytes as f64,
-                uint64_value: rec_bytes,
-                int64_value: rec_bytes as i64,
-                str_value: String::new(),
-                bytes_value: Vec::new(),
-                ref_value: 0,
+                value: Some(crate::proto::x_stat::Value::Uint64Value(rec_bytes)),
             },
             XStatProto {
                 metadata_id: 5,
-                double_value: rec_vmem as f64,
-                uint64_value: rec_vmem,
-                int64_value: rec_vmem as i64,
-                str_value: String::new(),
-                bytes_value: Vec::new(),
-                ref_value: 0,
+                value: Some(crate::proto::x_stat::Value::Uint64Value(rec_vmem)),
             },
             XStatProto {
                 metadata_id: 8,
-                double_value: 98.5,
-                uint64_value: 0,
-                int64_value: 98,
-                str_value: String::new(),
-                bytes_value: Vec::new(),
-                ref_value: 0,
+                value: Some(crate::proto::x_stat::Value::DoubleValue(98.5)),
             },
         ];
         let tpu_plane = XPlaneProto {
@@ -408,12 +381,7 @@ impl TpuCoreProfiler {
             stat_metadata,
             stats: vec![XStatProto {
                 metadata_id: 1,
-                double_value: 0.0,
-                uint64_value: 0,
-                int64_value: count,
-                str_value: String::from("recorded_events"),
-                bytes_value: Vec::new(),
-                ref_value: 0,
+                value: Some(crate::proto::x_stat::Value::Int64Value(count)),
             }],
         };
         let cpu_plane = XPlaneProto {
@@ -436,7 +404,7 @@ impl TpuCoreProfiler {
             warnings: Vec::new(),
             hostnames: vec![String::from("tpu-worker-0")],
         };
-        xspace.encode()
+        xspace.encode_proto()
     }
 
     /// Computes a structured [`crate::proto::TpuInputPipelineAnalysisResultProto`] (`tpu_input_pipeline.proto`)
@@ -529,14 +497,15 @@ impl TpuCoreProfiler {
         use crate::proto::{
             GetSnapshotRequestProto, MonitorRequestProto, MonitorResponseProto,
             ProfileRequestProto, ProfileResponseProto, ProfileToolDataProto,
-            ProfilerServiceMonitorResultProto, StopContinuousProfilingRequestProto,
-            StopContinuousProfilingResponseProto, TerminateRequestProto, TerminateResponseProto,
+            ProfilerServiceMonitorResultProto, ProtoSchemaMessage as _,
+            StopContinuousProfilingRequestProto, StopContinuousProfilingResponseProto,
+            TerminateRequestProto, TerminateResponseProto,
         };
         match method_id {
             1 => {
                 let req = ProfileRequestProto::decode(request_bytes)?;
                 let xspace_bytes = self.collect_xspace_bytes();
-                let xspace = XSpaceProto::decode(&xspace_bytes).ok();
+                let xspace = XSpaceProto::decode_proto(&xspace_bytes).ok();
                 let mut tool_data = Vec::with_capacity(req.tools.len().max(1));
                 if req.tools.is_empty() {
                     tool_data.push(ProfileToolDataProto {
@@ -569,17 +538,17 @@ impl TpuCoreProfiler {
                 Ok(MonitorResponseProto {
                     data: String::from("TPU MXU Utilization: 98.5%, Idle: 1.5%"),
                     monitor_result: Some(ProfilerServiceMonitorResultProto {
-                        formatted_result: String::from("TPU MXU Utilization: 98.5%"),
                         device_idle_time_percent: 1.5,
                         matrix_unit_utilization_percent: 98.5,
                         step_time_ms_avg: analysis.step_time_ms_average,
+                        ..ProfilerServiceMonitorResultProto::default()
                     }),
                 }
                 .encode())
             }
             4 => {
                 let _req = GetSnapshotRequestProto::decode(request_bytes)?;
-                let xspace = XSpaceProto::decode(&self.collect_xspace_bytes()).ok();
+                let xspace = XSpaceProto::decode_proto(&self.collect_xspace_bytes()).ok();
                 Ok(ProfileResponseProto {
                     tool_data: vec![ProfileToolDataProto {
                         name: String::from("input_pipeline.pb"),
@@ -634,12 +603,13 @@ impl TpuCoreEmbeddingEngine {
     /// * `config_bytes` - Serialized `TPUEmbeddingConfiguration` bytes.
     pub fn execute_partitioner(&mut self, config_bytes: &[u8]) -> Vec<u8> {
         let mut table_names = Vec::new();
-        if let Ok(cfg) = crate::proto::TpuEmbeddingConfigurationProto::decode(config_bytes) {
+        if let Ok(cfg) = crate::proto::TpuEmbeddingConfigurationProto::decode_proto(config_bytes) {
             for tbl in &cfg.table_descriptor {
                 table_names.push(tbl.name.clone());
-                let count =
-                    usize::try_from((tbl.vocabulary_size.max(1) * tbl.dimension.max(1)).min(4096))
-                        .unwrap_or(16);
+                let count = usize::try_from(
+                    (tbl.vocabulary_size.max(1) * i64::from(tbl.dimension.max(1))).min(4096),
+                )
+                .unwrap_or(16);
                 self.tables
                     .entry(tbl.name.clone())
                     .or_insert_with(|| vec![0_u8; count * 4]);
@@ -665,14 +635,7 @@ impl TpuCoreEmbeddingEngine {
     /// Collates per-host `SparseCore` HBM memory configurations (`TpuEmbeddingEngine_CollateMemory`).
     #[must_use]
     pub fn collate_memory(&self) -> Vec<u8> {
-        let total_bytes: u64 = self
-            .host_memory_configs
-            .iter()
-            .map(|c| u64::try_from(c.len()).unwrap_or(0))
-            .sum::<u64>()
-            .max(4096);
         let mem_proto = crate::proto::TpuEmbeddingMemoryConfigProto {
-            hbm_buffers_bytes: total_bytes,
             num_segments: i32::try_from(self.host_memory_configs.len().max(1)).unwrap_or(1),
             segment_blobs: self.host_memory_configs.clone(),
         };
@@ -686,7 +649,6 @@ impl TpuCoreEmbeddingEngine {
     /// * `host_config` - Serialized host configuration bytes.
     pub fn configure_host(&mut self, host_config: &[u8]) -> Vec<u8> {
         let net_proto = crate::proto::TpuEmbeddingHostNetworkConfigProto {
-            host_id: 0,
             endpoint_address: String::from("127.0.0.1:8471"),
             partition_payload: host_config.to_vec(),
         };
@@ -957,7 +919,7 @@ impl TpuCoreEmbeddingEngine {
             }],
             ..HloModuleProto::default()
         };
-        hlo.encode()
+        hlo.encode_proto()
     }
 
     /// Deduplicates a batch of sparse COO sample `(row_id, embedding_id, weight)` triples into
@@ -1731,7 +1693,8 @@ mod tests {
         assert!(prof.stop().is_ok());
         let xspace_bytes = prof.collect_xspace_bytes();
         assert_ne!(xspace_bytes, [] as [u8; 0]);
-        let decoded_xspace = XSpaceProto::decode(&xspace_bytes);
+        let decoded_xspace =
+            <XSpaceProto as crate::proto::ProtoSchemaMessage>::decode_proto(&xspace_bytes);
         assert!(decoded_xspace.is_ok());
         let inp_analysis = prof.analyze_input_pipeline();
         assert!(inp_analysis.hardware_is_tpu);
@@ -1778,6 +1741,7 @@ mod tests {
                 vocabulary_size: 4,
                 dimension: 4,
                 num_features: 1,
+                optimization_parameters: None,
             }],
             mode: 1,
             batch_size_per_tensor_core: 8,
@@ -1789,7 +1753,10 @@ mod tests {
             feature_descriptor: Vec::new(),
             spmd_sharding: None,
         };
-        assert_ne!(emb.execute_partitioner(&proto_cfg.encode()), [] as [u8; 0]);
+        assert_ne!(
+            emb.execute_partitioner(&crate::proto::ProtoSchemaMessage::encode_proto(&proto_cfg)),
+            [] as [u8; 0]
+        );
         assert!(emb.read_parameters("proto_tbl").is_some());
         let part_out = emb.execute_partitioner(b"cfg");
         assert_ne!(part_out, [] as [u8; 0]);
@@ -1802,7 +1769,9 @@ mod tests {
         emb.enqueue_tensor_batch(1, 8, 8);
         assert_eq!(emb.enqueued_batches.len(), 1);
         let hlo_bytes = emb.generate_xla_computation("recv_activations");
-        assert!(HloModuleProto::decode(&hlo_bytes).is_ok());
+        assert!(
+            <HloModuleProto as crate::proto::ProtoSchemaMessage>::decode_proto(&hlo_bytes).is_ok()
+        );
         for kind in [
             "recv_activations",
             "send_gradients",
@@ -1851,7 +1820,11 @@ mod tests {
             }],
             ..HloModuleProto::default()
         };
-        if let Ok(sc_grad_prog) = CompiledProgram::compile("hlo", &sc_grad_hlo.encode(), b"") {
+        if let Ok(sc_grad_prog) = CompiledProgram::compile(
+            "hlo",
+            &crate::proto::ProtoSchemaMessage::encode_proto(&sc_grad_hlo),
+            b"",
+        ) {
             let tpu_exec = sc_grad_prog.to_tpu_executable_proto();
             assert!(
                 tpu_exec

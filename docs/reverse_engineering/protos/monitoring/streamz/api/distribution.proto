@@ -1,0 +1,37 @@
+syntax = "proto2";
+package streamz;
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+message Distribution {
+  message LinearOptions {
+    optional int32 num_finite_buckets = 1;
+    optional double width = 2;
+    optional double offset = 3 [default = 0];
+  }
+  message ExponentialOptions {
+    optional int32 num_finite_buckets = 1;
+    optional double growth_factor = 2;
+    optional double scale = 3 [default = 1];
+  }
+  message ExplicitOptions {
+    repeated double bound = 1;
+  }
+  message Exemplar {
+    optional double value = 1;
+    optional .google.protobuf.Timestamp timestamp = 2;
+    repeated .google.protobuf.Any attachment = 3;
+  }
+  oneof bucket_options {
+    .streamz.Distribution.LinearOptions linear_buckets = 6;
+    .streamz.Distribution.ExponentialOptions exponential_buckets = 7;
+    .streamz.Distribution.ExplicitOptions explicit_buckets = 8;
+  }
+  optional int64 count = 1;
+  optional double mean = 2;
+  optional double sum_of_squared_deviation = 3;
+  optional double minimum = 4;
+  optional double maximum = 5;
+  repeated int64 bucket_count = 9;
+  repeated .streamz.Distribution.Exemplar exemplar = 10;
+}

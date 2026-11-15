@@ -1,0 +1,5 @@
+syntax = "proto2";
+package xla.jellyfish.annotations;
+message RemoteSyncFlagLocalityAnnotationProto {
+  optional bool is_chip_local = 1;
+}

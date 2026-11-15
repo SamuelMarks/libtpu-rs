@@ -1,0 +1,19 @@
+syntax = "proto3";
+package streamz;
+import "third_party/boundary_proxy/proto_compare/annotation.proto";
+message HierarchicalIsolationRole {
+  enum Category {
+    UNSPECIFIED = 0;
+    GCP_PRODUCT = 1;
+    CONSUMER_RESOURCE_CONTAINER = 2;
+    TARGET_RESOURCE_CONTAINER = 3;
+    INTERNAL_453a9b3_ONLY_STRING_ONLY = 4;
+    AGGREGATION_POLICY_OWNER = 5;
+    HUMAN_USER = 6;
+  }
+  message Level {
+    .streamz.HierarchicalIsolationRole.Category category = 1;
+    string value = 2;
+  }
+  repeated .streamz.HierarchicalIsolationRole.Level level = 1;
+}

@@ -1,0 +1,5 @@
+syntax = "proto2";
+package bamm2;
+message VoidServerCapabilities {
+  optional bool trim = 1 [default = false];
+}

@@ -1,0 +1,13 @@
+syntax = "proto3";
+package tensorflow.tpu;
+import "learning/45eac/tpu/runtime/topology/tpu_topology_args.proto";
+message TPUHostConfiguration {
+  reserved 1;
+  reserved 2;
+  reserved 3;
+  reserved 6;
+  reserved 7;
+  string isa_cache_address = 4;
+  bool system_has_multiple_trays = 5;
+  .tpu.TpuTopologyArgsProto tpu_topology_args = 8;
+}

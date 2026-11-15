@@ -1,0 +1,7 @@
+syntax = "proto3";
+package tensorflow;
+message VersionDef {
+  int32 producer = 1;
+  int32 min_consumer = 2;
+  repeated int32 bad_consumers = 3;
+}

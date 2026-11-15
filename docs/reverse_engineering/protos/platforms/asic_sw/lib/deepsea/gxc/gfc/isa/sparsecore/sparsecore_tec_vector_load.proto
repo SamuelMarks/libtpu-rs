@@ -1,0 +1,59 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.gfc.isa;
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_common_encodings.proto";
+message SparseCoreTecVectorLoad {
+  message TileSpmemLoad {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorBase base_address = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorOffset offset = 3;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorStride stride = 4;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorMask mask = 5;
+  }
+  message TileSpmemLoadCircularBuffer {
+    optional uint32 dest = 1;
+    optional uint32 cbreg = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorStride stride = 5;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemLoadCircularBufferPostUpdate {
+    optional uint32 dest = 1;
+    optional uint32 cbreg = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorStride stride = 5;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemLoadIndexed {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorBase base_address = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorOffset offset = 3;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorStride stride = 4;
+    optional uint32 index = 5;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemLoadIndexedCircularBuffer {
+    optional uint32 dest = 1;
+    optional uint32 cbreg = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorBase base_address = 3;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorStride stride = 5;
+    optional uint32 index = 6;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorMask mask = 7;
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorLoad.TileSpmemLoad tile_spmem_load = 8;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorLoad.TileSpmemLoadCircularBuffer tile_spmem_load_circular_buffer = 9;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorLoad.TileSpmemLoadCircularBufferPostUpdate tile_spmem_load_circular_buffer_post_update = 10;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorLoad.TileSpmemLoadIndexed tile_spmem_load_indexed = 11;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorLoad.TileSpmemLoadIndexedCircularBuffer tile_spmem_load_indexed_circular_buffer = 12;
+  }
+  optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreNormalPredication normal_predication = 1 [default = SPARSECORE_NORMAL_PREDICATION_ALWAYS];
+  optional bool normal_predication_inversion = 2;
+  optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreRotatePredication rotate_predication = 3 [default = SPARSECORE_ROTATE_PREDICATION_PREG7_IS_1];
+  optional bool is_rotate_predication = 4;
+  optional uint32 latency = 5 [default = 1];
+  map<string, uint32> resource_usage = 6;
+  optional uint32 bit_width = 7;
+}

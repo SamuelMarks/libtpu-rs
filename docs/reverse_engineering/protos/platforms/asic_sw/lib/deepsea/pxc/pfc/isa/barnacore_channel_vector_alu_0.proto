@@ -1,0 +1,694 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.pfc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/shared_isa_base.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_isa_base.proto";
+message BarnaCoreChannelVectorAlu0 {
+  message Noop {
+  }
+  message VectorIntAdd {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorIntSub {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorAnd {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorOr {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorXor {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorFloatMul {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorFloatMax {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorFloatMin {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorLaneId {
+    optional uint32 dest = 1;
+  }
+  message VectorSublaneCircularRotateDown {
+    optional uint32 dest = 1;
+    optional uint32 vx = 2;
+  }
+  message VectorRelux {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorMove {
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 1;
+    optional uint32 dest = 2;
+    optional uint32 y_src_vreg = 3;
+    optional uint32 vs0 = 4;
+    optional uint32 vs1 = 5;
+    optional uint32 vs2 = 6;
+    optional uint32 imm0 = 7;
+    optional uint32 imm1 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VectorClampSymmetric {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorPopCount {
+    optional uint32 vx = 1;
+    optional uint32 dest = 2;
+  }
+  message VectorCountLeadingZeros {
+    optional uint32 vx = 1;
+    optional uint32 dest = 2;
+  }
+  message VectorSelectVmsk0 {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorSelectVmsk1 {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorSelectVmsk2 {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorSelectVmsk3 {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorSelectVmsk4 {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorSelectVmsk5 {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorSelectVmsk6 {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorSelectVmsk7 {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorPackAsHalfFloatsInterleaved {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorPackAsHalfFloatsCompressed {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorUnpackHalfFloatsUpper {
+    optional uint32 vx = 1;
+    optional uint32 dest = 2;
+  }
+  message VectorUnpackHalfFloatsLower {
+    optional uint32 vx = 1;
+    optional uint32 dest = 2;
+  }
+  message VectorConvertIntToFloat {
+    optional uint32 vx = 1;
+    optional uint32 dest = 2;
+  }
+  message VectorConvertFloatToInt {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorExtractExponent {
+    optional uint32 vx = 1;
+    optional uint32 dest = 2;
+  }
+  message VectorExtractSignificand {
+    optional uint32 vx = 1;
+    optional uint32 dest = 2;
+  }
+  message VectorComposeFloat {
+    optional uint32 vx = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 dest = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorIntEqual {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorIntNotEqual {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorIntGreater {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorIntGreaterEqual {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorIntLess {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorIntLessEqual {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorIntAddCarryOut {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message CreateSublaneMask {
+    optional uint32 vmdest = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 y_src_vreg = 3;
+    optional uint32 vs0 = 4;
+    optional uint32 vs1 = 5;
+    optional uint32 vs2 = 6;
+    optional uint32 imm0 = 7;
+    optional uint32 imm1 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VectorFloatEqual {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorFloatNotEqual {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorFloatGreater {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorFloatGreaterEqual {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorFloatLess {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorFloatLessEqual {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 3;
+    optional uint32 y_src_vreg = 4;
+    optional uint32 vs0 = 5;
+    optional uint32 vs1 = 6;
+    optional uint32 vs2 = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional uint32 imm4 = 12;
+    optional uint32 imm5 = 13;
+  }
+  message VectorFloatIsInfOrNan {
+    optional uint32 vmdest = 1;
+    optional uint32 vx = 2;
+  }
+  message CreateLaneMask {
+    optional uint32 vmdest = 1;
+    optional .asic_sw.deepsea.pxc.isa.VectorY y_src = 2;
+    optional uint32 y_src_vreg = 3;
+    optional uint32 vs0 = 4;
+    optional uint32 vs1 = 5;
+    optional uint32 vs2 = 6;
+    optional uint32 imm0 = 7;
+    optional uint32 imm1 = 8;
+    optional uint32 imm2 = 9;
+    optional uint32 imm3 = 10;
+    optional uint32 imm4 = 11;
+    optional uint32 imm5 = 12;
+  }
+  message VectorReciprocalSquareRoot {
+    optional uint32 vx = 1;
+  }
+  message VectorPow2 {
+    optional uint32 vx = 1;
+  }
+  message VectorLog2 {
+    optional uint32 vx = 1;
+  }
+  message VectorTanh {
+    optional uint32 vx = 1;
+  }
+  message VectorReciprocal {
+    optional uint32 vx = 1;
+  }
+  message MoveDataUnchanged {
+    optional uint32 vx = 1;
+  }
+  oneof inst {
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.Noop noop = 6;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorIntAdd vector_int_add = 7;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorIntSub vector_int_sub = 8;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorAnd vector_and = 9;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorOr vector_or = 10;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorXor vector_xor = 11;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorFloatMul vector_float_mul = 12;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorFloatMax vector_float_max = 13;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorFloatMin vector_float_min = 14;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorLaneId vector_lane_id = 15;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorSublaneCircularRotateDown vector_sublane_circular_rotate_down = 16;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorRelux vector_relux = 17;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorMove vector_move = 18;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorClampSymmetric vector_clamp_symmetric = 19;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorPopCount vector_pop_count = 20;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorCountLeadingZeros vector_count_leading_zeros = 21;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorSelectVmsk0 vector_select_vmsk0 = 22;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorSelectVmsk1 vector_select_vmsk1 = 23;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorSelectVmsk2 vector_select_vmsk2 = 24;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorSelectVmsk3 vector_select_vmsk3 = 25;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorSelectVmsk4 vector_select_vmsk4 = 26;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorSelectVmsk5 vector_select_vmsk5 = 27;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorSelectVmsk6 vector_select_vmsk6 = 28;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorSelectVmsk7 vector_select_vmsk7 = 29;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorPackAsHalfFloatsInterleaved vector_pack_as_half_floats_interleaved = 30;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorPackAsHalfFloatsCompressed vector_pack_as_half_floats_compressed = 31;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorUnpackHalfFloatsUpper vector_unpack_half_floats_upper = 32;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorUnpackHalfFloatsLower vector_unpack_half_floats_lower = 33;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorConvertIntToFloat vector_convert_int_to_float = 34;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorConvertFloatToInt vector_convert_float_to_int = 35;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorExtractExponent vector_extract_exponent = 36;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorExtractSignificand vector_extract_significand = 37;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorComposeFloat vector_compose_float = 38;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorIntEqual vector_int_equal = 39;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorIntNotEqual vector_int_not_equal = 40;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorIntGreater vector_int_greater = 41;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorIntGreaterEqual vector_int_greater_equal = 42;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorIntLess vector_int_less = 43;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorIntLessEqual vector_int_less_equal = 44;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorIntAddCarryOut vector_int_add_carry_out = 45;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.CreateSublaneMask create_sublane_mask = 46;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorFloatEqual vector_float_equal = 47;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorFloatNotEqual vector_float_not_equal = 48;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorFloatGreater vector_float_greater = 49;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorFloatGreaterEqual vector_float_greater_equal = 50;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorFloatLess vector_float_less = 51;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorFloatLessEqual vector_float_less_equal = 52;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorFloatIsInfOrNan vector_float_is_inf_or_nan = 53;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.CreateLaneMask create_lane_mask = 54;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorReciprocalSquareRoot vector_reciprocal_square_root = 55;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorPow2 vector_pow_2 = 56;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorLog2 vector_log_2 = 57;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorTanh vector_tanh = 58;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.VectorReciprocal vector_reciprocal = 59;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorAlu0.MoveDataUnchanged move_data_unchanged = 60;
+  }
+  optional .asic_sw.deepsea.pxc.pfc.isa.BarnacoreChannelPredication predication = 1 [default = BARNACORE_CHANNEL_PREDICATION_NEVER];
+  optional uint32 pipeline_stage = 2;
+  optional uint32 latency = 3 [default = 1];
+  map<string, uint32> resource_usage = 4;
+  optional uint32 bit_width = 5;
+}

@@ -199,13 +199,14 @@ mod tests {
                 layout: crate::pjrt_types::PJRT_Buffer_MemoryLayout_Output {
                     struct_size: 0,
                     extension_start: ptr::null_mut(),
+                    sub_struct_size: 0,
+                    sub_extension_start: ptr::null_mut(),
                     minor_to_major: ptr::null(),
                     minor_to_major_size: 0,
                     tile_dims: ptr::null(),
                     tile_dim_sizes: ptr::null(),
                     num_tiles: 0,
                     layout_type: 0,
-                    reserved: [0, 0],
                 },
             };
             assert!(PJRT_Buffer_GetMemoryLayout(ptr::addr_of_mut!(bf_gml).cast()).is_null());
@@ -854,6 +855,30 @@ mod tests {
             assert!(!bad_dims_bc_err.is_null());
             drop(Box::from_raw(bad_dims_bc_err));
             assert!(bc_args.out_buffer.is_null());
+
+            let cli_ref = &*client;
+            let first_dev = cli_ref
+                .device_ptrs
+                .first()
+                .copied()
+                .unwrap_or(ptr::null_mut());
+            let mut null_mem_dst_dev = PJRT_Device {
+                inner: (*first_dev).inner.clone(),
+                desc_ptr: ptr::null_mut(),
+                default_memory_ptr: ptr::null_mut(),
+                addressable_memory_ptrs: Vec::new(),
+                hal: std::sync::Arc::clone(&cli_ref.inner.hal),
+            };
+            let mut c2d_null_mem = crate::pjrt_types::PJRT_Buffer_CopyToDevice_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_Buffer_CopyToDevice_Args>(),
+                extension_start: ptr::null_mut(),
+                buffer: buf_in,
+                dst_device: ptr::addr_of_mut!(null_mem_dst_dev),
+                dst_buffer: ptr::null_mut(),
+            };
+            assert!(PJRT_Buffer_CopyToDevice(ptr::addr_of_mut!(c2d_null_mem).cast()).is_null());
+            assert!(!c2d_null_mem.dst_buffer.is_null());
+            libtpu_rs_buffer_destroy(c2d_null_mem.dst_buffer);
 
             let mut del_b_args = crate::pjrt_types::PJRT_Buffer_Destroy_Args {
                 struct_size: size_of::<crate::pjrt_types::PJRT_Buffer_Destroy_Args>(),

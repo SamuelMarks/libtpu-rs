@@ -1,0 +1,16 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+message TpuMemoryPartsProto {
+  .tpu.TpuVersionProto version = 1;
+  .tpu.TpuMemoryTypeProto type = 2;
+  bool holds_instructions = 3;
+  bool supports_dma = 4;
+  int32 bytes_per_word = 5;
+  int64 word_base = 6;
+  int64 word_count = 7;
+  int64 bundle_count = 8;
+  int64 bytes_per_instruction_dma_chunk = 9;
+  int64 bundles_per_instruction_dma_chunk = 10;
+}

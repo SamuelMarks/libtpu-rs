@@ -1,0 +1,6 @@
+syntax = "proto2";
+package asic_sw.proto;
+message BarConfig {
+  optional int32 bar_number = 1;
+  optional int64 bar_size = 2;
+}

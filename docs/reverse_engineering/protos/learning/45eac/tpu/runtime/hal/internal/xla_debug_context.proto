@@ -1,0 +1,13 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "platforms/deepsea/jellyfish/xdb/debugger.proto";
+message CompilerMetadataEntry {
+  .tpu.TpuCoreTypeProto core_type = 1;
+  int32 core_index = 2;
+  uint64 compiler_metadata_key = 3;
+}
+message XlaDebugContextProto {
+  repeated .tpu.CompilerMetadataEntry metadata_entry = 1;
+  map<uint64, .platforms_deepsea.jellyfish.xdb.CompilerMetadata> compiler_metadatas = 2;
+}

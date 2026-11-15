@@ -1,0 +1,12 @@
+syntax = "proto3";
+package tensorflow;
+message TaskDeviceFilters {
+  repeated string device_filters = 1;
+}
+message JobDeviceFilters {
+  string name = 1;
+  map<int32, .tensorflow.TaskDeviceFilters> tasks = 2;
+}
+message ClusterDeviceFilters {
+  repeated .tensorflow.JobDeviceFilters jobs = 1;
+}

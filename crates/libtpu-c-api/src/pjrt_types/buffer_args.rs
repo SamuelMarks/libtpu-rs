@@ -93,6 +93,10 @@ pub struct PJRT_Buffer_MemoryLayout_Output {
     pub struct_size: usize,
     /// Extension pointer (`NULL`).
     pub extension_start: *mut PJRT_Extension_Base,
+    /// Nested `PJRT_Buffer_MemoryLayout_Tiled` / `Strides` `struct_size` (`56` or `32`).
+    pub sub_struct_size: usize,
+    /// Nested `PJRT_Buffer_MemoryLayout_Tiled` / `Strides` `extension_start` (`NULL`).
+    pub sub_extension_start: *mut PJRT_Extension_Base,
     /// Minor-to-major dimension ordering or byte strides pointer.
     pub minor_to_major: *const i64,
     /// Number of minor-to-major dimensions or byte strides.
@@ -105,8 +109,6 @@ pub struct PJRT_Buffer_MemoryLayout_Output {
     pub num_tiles: usize,
     /// Layout type discriminant (`0` = `Tiled`, `1` = `Strides`).
     pub layout_type: usize,
-    /// Reserved layout union padding words.
-    pub reserved: [usize; 2],
 }
 
 /// Argument structure for `PJRT_Buffer_GetMemoryLayout` (`104` bytes).

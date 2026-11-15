@@ -1,7 +1,7 @@
 //! PJRT Profiler (`PJRT_Profiler_Extension`) and `PLUGIN_Profiler_Api` entrypoints.
 
 use super::args::*;
-use super::{dispatch_typed_extension_args, extension_profiler};
+use super::dispatch_typed_extension_args;
 use crate::pjrt_types::{PJRT_Error, PLUGIN_Profiler_Instance, PjrtFn};
 use libtpu_core::driver::TpuCoreProfiler;
 use std::ptr;
@@ -152,9 +152,9 @@ pub unsafe extern "C" fn PLUGIN_Profiler_Error_GetCode(
 ///
 /// `args` must be a valid [`PLUGIN_Profiler_Create_Args`].
 unsafe fn handle_profiler_create(args: &mut PLUGIN_Profiler_Create_Args) {
-    let _ = extension_profiler();
     let instance = Box::into_raw(Box::new(PLUGIN_Profiler_Instance {
         inner: TpuCoreProfiler::new(),
+        last_xspace: parking_lot::Mutex::new(Vec::new().into_boxed_slice()),
     }));
     args.profiler = instance.cast::<std::ffi::c_void>();
 }
@@ -199,7 +199,6 @@ unsafe fn handle_profiler_destroy(args: &mut PLUGIN_Profiler_Destroy_Args) {
             ));
         }
     }
-    let _ = extension_profiler().lock().stop();
     args.profiler = ptr::null_mut();
 }
 
@@ -240,7 +239,6 @@ unsafe fn handle_profiler_start(args: &mut PLUGIN_Profiler_Start_Args) {
         let inst = unsafe { &*args.profiler.cast::<PLUGIN_Profiler_Instance>() };
         let _ = inst.inner.start();
     }
-    let _ = extension_profiler().lock().start();
 }
 
 /// Starts a `PLUGIN_Profiler` session (`PLUGIN_Profiler_Start`).
@@ -275,7 +273,6 @@ unsafe fn handle_profiler_stop(args: &mut PLUGIN_Profiler_Stop_Args) {
         let inst = unsafe { &*args.profiler.cast::<PLUGIN_Profiler_Instance>() };
         let _ = inst.inner.stop();
     }
-    let _ = extension_profiler().lock().stop();
 }
 
 /// Stops a `PLUGIN_Profiler` session (`PLUGIN_Profiler_Stop`).
@@ -311,9 +308,8 @@ unsafe fn handle_profiler_collect_data(args: &mut PLUGIN_Profiler_CollectData_Ar
         let _ = inst.inner.stop();
         inst.inner.collect_xspace_bytes()
     } else {
-        let prof = extension_profiler().lock();
-        let _ = prof.stop();
-        prof.collect_xspace_bytes()
+        let ephemeral = TpuCoreProfiler::new();
+        ephemeral.collect_xspace_bytes()
     };
     let xspace_len = xspace_bytes.len();
     if !args.size_in_bytes.is_null() {
@@ -396,3 +392,169 @@ pub static GLOBAL_PLUGIN_PROFILER_API: PLUGIN_Profiler_Api = PLUGIN_Profiler_Api
     stop: PLUGIN_Profiler_Stop,
     collect_data: PLUGIN_Profiler_CollectData,
 };
+
+/// `profiler_c_api.h` v0.1 (`jaxlib` 0.4.x) `Create` trampoline (`32`-byte args without `extension_start`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to `{ struct_size, options, options_size, profiler_out }`.
+///
+/// # Safety
+///
+/// `raw_args` must be null or point to 4 pointer-sized words.
+unsafe extern "C" fn negotiated_profiler_create(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    crate::ffi_catch_unwind(std::ptr::null_mut(), || {
+        if !raw_args.is_null() {
+            let inst = Box::into_raw(Box::new(PLUGIN_Profiler_Instance {
+                inner: TpuCoreProfiler::new(),
+                last_xspace: parking_lot::Mutex::new(Vec::new().into_boxed_slice()),
+            }));
+            // SAFETY: Offset `+0x18` (word 3) is `PLUGIN_Profiler** profiler` in 32-byte `Create_Args`.
+            unsafe {
+                *raw_args.cast::<usize>().add(3) = inst as usize;
+            }
+        }
+        std::ptr::null_mut()
+    })
+}
+
+/// `profiler_c_api.h` v0.1 (`jaxlib` 0.4.x) `Destroy` trampoline (`16`-byte args `{ struct_size, profiler }`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to `{ struct_size, profiler }`.
+///
+/// # Safety
+///
+/// `raw_args` must be null or point to 2 pointer-sized words where word 1 came from `negotiated_profiler_create`.
+unsafe extern "C" fn negotiated_profiler_destroy(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    crate::ffi_catch_unwind(std::ptr::null_mut(), || {
+        if !raw_args.is_null() {
+            // SAFETY: Word 1 (`+0x08`) is `PLUGIN_Profiler*` in 16-byte `Destroy_Args`.
+            let ptr_val = unsafe { *raw_args.cast::<usize>().add(1) };
+            if ptr_val > 0x1000 {
+                // SAFETY: Reclaiming `Box<PLUGIN_Profiler_Instance>` allocated in `negotiated_profiler_create`.
+                unsafe {
+                    drop(Box::from_raw(ptr_val as *mut PLUGIN_Profiler_Instance));
+                }
+            }
+        }
+        std::ptr::null_mut()
+    })
+}
+
+/// `profiler_c_api.h` v0.1 (`jaxlib` 0.4.x) `Start` trampoline (`16`-byte args `{ struct_size, profiler }`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to `{ struct_size, profiler }`.
+///
+/// # Safety
+///
+/// `raw_args` must be null or point to 2 pointer-sized words.
+unsafe extern "C" fn negotiated_profiler_start(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
+    crate::ffi_catch_unwind(std::ptr::null_mut(), || {
+        if !raw_args.is_null() {
+            // SAFETY: Word 1 (`+0x08`) is `PLUGIN_Profiler*`.
+            let ptr_val = unsafe { *raw_args.cast::<usize>().add(1) };
+            if ptr_val > 0x1000 {
+                // SAFETY: Valid `PLUGIN_Profiler_Instance*`.
+                let inst = unsafe { &*(ptr_val as *const PLUGIN_Profiler_Instance) };
+                let _ = inst.inner.start();
+            }
+        }
+        std::ptr::null_mut()
+    })
+}
+
+/// `profiler_c_api.h` v0.1 (`jaxlib` 0.4.x) `Stop` trampoline (`16`-byte args `{ struct_size, profiler }`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to `{ struct_size, profiler }`.
+///
+/// # Safety
+///
+/// `raw_args` must be null or point to 2 pointer-sized words.
+unsafe extern "C" fn negotiated_profiler_stop(raw_args: *mut std::ffi::c_void) -> *mut PJRT_Error {
+    crate::ffi_catch_unwind(std::ptr::null_mut(), || {
+        if !raw_args.is_null() {
+            // SAFETY: Word 1 (`+0x08`) is `PLUGIN_Profiler*`.
+            let ptr_val = unsafe { *raw_args.cast::<usize>().add(1) };
+            if ptr_val > 0x1000 {
+                // SAFETY: Valid `PLUGIN_Profiler_Instance*`.
+                let inst = unsafe { &*(ptr_val as *const PLUGIN_Profiler_Instance) };
+                let _ = inst.inner.stop();
+            }
+        }
+        std::ptr::null_mut()
+    })
+}
+
+/// `profiler_c_api.h` v0.1 (`jaxlib` 0.4.x) `CollectData` trampoline (`32`-byte args `{ struct_size, profiler, buffer, buffer_size_in_bytes }`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to `{ struct_size, profiler, buffer, buffer_size_in_bytes }`.
+///
+/// # Safety
+///
+/// `raw_args` must be null or point to 4 pointer-sized words.
+unsafe extern "C" fn negotiated_profiler_collect_data(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    crate::ffi_catch_unwind(std::ptr::null_mut(), || {
+        if !raw_args.is_null() {
+            let words = raw_args.cast::<usize>();
+            // SAFETY: Word 1 (`+0x08`) is `PLUGIN_Profiler*`.
+            let ptr_val = unsafe { *words.add(1) };
+            if ptr_val > 0x1000 {
+                // SAFETY: Valid `PLUGIN_Profiler_Instance*`.
+                let inst = unsafe { &*(ptr_val as *const PLUGIN_Profiler_Instance) };
+                let xspace = inst.inner.collect_xspace_bytes().into_boxed_slice();
+                let len = xspace.len();
+                let mut guard = inst.last_xspace.lock();
+                *guard = xspace;
+                let data_ptr = guard.as_ptr() as usize;
+                drop(guard);
+                // SAFETY: Writing `buffer` (`+0x10`) and `buffer_size_in_bytes` (`+0x18`) into 32-byte `CollectData_Args`.
+                unsafe {
+                    *words.add(2) = data_ptr;
+                    *words.add(3) = len;
+                }
+            }
+        }
+        std::ptr::null_mut()
+    })
+}
+
+/// Negotiated `PLUGIN_Profiler_Api` vtable compatible with `jaxlib` 0.4.x `PluginTracer`.
+pub static NEGOTIATED_PLUGIN_PROFILER_API: PLUGIN_Profiler_Api = PLUGIN_Profiler_Api {
+    struct_size: size_of::<PLUGIN_Profiler_Api>(),
+    priv_data: std::ptr::null_mut(),
+    error_destroy: PLUGIN_Profiler_Error_Destroy,
+    error_message: PLUGIN_Profiler_Error_Message,
+    error_get_code: PLUGIN_Profiler_Error_GetCode,
+    create: negotiated_profiler_create,
+    destroy: negotiated_profiler_destroy,
+    start: negotiated_profiler_start,
+    stop: negotiated_profiler_stop,
+    collect_data: negotiated_profiler_collect_data,
+};
+
+/// Negotiated `PJRT_Profiler_Extension` node (`ext_type = 1`) exposed when `LIBTPU_PJRT_API_MINOR_VERSION` < `PJRT_API_MINOR`.
+pub static NEGOTIATED_EXT_PROFILER: super::PJRT_Profiler_Extension =
+    super::PJRT_Profiler_Extension {
+        base: crate::pjrt_types::PJRT_Extension_Base {
+            struct_size: size_of::<super::PJRT_Profiler_Extension>(),
+            ext_type: 1,
+            pad: 0,
+            next: std::ptr::null_mut(),
+        },
+        profiler_api: std::ptr::addr_of!(NEGOTIATED_PLUGIN_PROFILER_API),
+        traceme_context_id: 0x0054_5055_5F58_5350,
+    };

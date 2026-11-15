@@ -1,0 +1,934 @@
+syntax = "proto3";
+package xla;
+import "google/protobuf/any.proto";
+import "third_party/tensorflow/compiler/xla/backends/autotuner/backends.proto";
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message CompilationEnvironmentsProto {
+  repeated .google.protobuf.Any environments = 1;
+}
+message IntRangeInclusive {
+  int64 first = 1;
+  int64 last = 2;
+}
+message ThunkBufferDebugFilter {
+  repeated .xla.IntRangeInclusive thunk_id_ranges = 1;
+  repeated string profile_annotation_regexes = 2;
+}
+message DebugOptions {
+  reserved 5;
+  reserved 63;
+  reserved 80;
+  reserved 93;
+  reserved 94;
+  reserved 98;
+  reserved 117;
+  reserved 130;
+  reserved 133;
+  reserved 134;
+  reserved 139;
+  reserved 141;
+  reserved 143;
+  reserved 152;
+  reserved 156;
+  reserved 158;
+  reserved 160;
+  reserved 161;
+  reserved 162;
+  reserved 165;
+  reserved 167;
+  reserved 168;
+  reserved 169;
+  reserved 171;
+  reserved 172;
+  reserved 173;
+  reserved 176;
+  reserved 177;
+  reserved 178;
+  reserved 179;
+  reserved 180;
+  reserved 183;
+  reserved 184;
+  reserved 191;
+  reserved 192;
+  reserved 193;
+  reserved 194;
+  reserved 195;
+  reserved 196;
+  reserved 197;
+  reserved 198;
+  reserved 199;
+  reserved 200;
+  reserved 201;
+  reserved 202;
+  reserved 204;
+  reserved 206;
+  reserved 207;
+  reserved 211;
+  reserved 214;
+  reserved 217;
+  reserved 218;
+  reserved 220;
+  reserved 221;
+  reserved 226;
+  reserved 227;
+  reserved 229;
+  reserved 230;
+  reserved 231;
+  reserved 233;
+  reserved 234;
+  reserved 235;
+  reserved 238;
+  reserved 239;
+  reserved 241;
+  reserved 242;
+  reserved 243;
+  reserved 249;
+  reserved 263;
+  reserved 264;
+  reserved 266;
+  reserved 270;
+  reserved 271;
+  reserved 275;
+  reserved 276;
+  reserved 278;
+  reserved 279;
+  reserved 281;
+  reserved 282;
+  reserved 286;
+  reserved 298;
+  reserved 299;
+  reserved 300;
+  reserved 302;
+  reserved 303;
+  reserved 309;
+  reserved 313;
+  reserved 314;
+  reserved 319;
+  reserved 320;
+  reserved 325;
+  reserved 326;
+  reserved 332;
+  reserved 346;
+  reserved 352;
+  reserved 354;
+  reserved 355;
+  reserved 358;
+  reserved 361;
+  reserved 367;
+  reserved 369;
+  reserved 371;
+  reserved 376;
+  reserved 385;
+  reserved 388;
+  reserved 389;
+  reserved 394;
+  reserved 396;
+  reserved 398;
+  reserved 402;
+  reserved 413;
+  reserved 420;
+  reserved 423;
+  reserved 430;
+  reserved 435;
+  reserved 443;
+  reserved 446;
+  reserved 450;
+  reserved 456;
+  reserved 458;
+  reserved 464;
+  reserved 477;
+  reserved 480;
+  reserved "hlo_reduce_precision_options";
+  reserved "legacy_command_buffer_custom_call_targets";
+  reserved "xla_allow_get_default_platform";
+  reserved "xla_cpu_dump_unoptimized_hlo_snapshots";
+  reserved "xla_cpu_enable_custom_matmul_tiling";
+  reserved "xla_cpu_enable_experimental_deallocation";
+  reserved "xla_cpu_enable_mlir_fusion_outlining";
+  reserved "xla_cpu_enable_mlir_lowering";
+  reserved "xla_cpu_enable_mlir_tiling_and_fusion";
+  reserved "xla_cpu_matmul_tiling_k_dim";
+  reserved "xla_cpu_matmul_tiling_m_dim";
+  reserved "xla_cpu_matmul_tiling_n_dim";
+  reserved "xla_cpu_sparse_cuda_threads";
+  reserved "xla_cpu_use_fusion_emitters";
+  reserved "xla_cpu_use_thunk_runtime";
+  reserved "xla_cpu_use_xla_runtime";
+  reserved "xla_detailed_logging_and_dumping";
+  reserved "xla_dump_ir";
+  reserved "xla_experimental_exec_time_optimization_effort";
+  reserved "xla_gpu_all_reduce_contiguous";
+  reserved "xla_gpu_allow_all_reduce_kernel";
+  reserved "xla_gpu_asm_extra_flags";
+  reserved "xla_gpu_bef_executable";
+  reserved "xla_gpu_bef_thunk";
+  reserved "xla_gpu_enable_llvm_module_compilation_parallelism";
+  reserved "xla_gpu_collectives_use_persistent_cliques";
+  reserved "xla_gpu_deterministic_reductions";
+  reserved "xla_gpu_disable_multi_streaming";
+  reserved "xla_gpu_dump_hlo_unoptimized_snapshots";
+  reserved "xla_gpu_enable_all_reduce_splitter";
+  reserved "xla_gpu_enable_async_all_gather";
+  reserved "xla_gpu_enable_async_all_reduce";
+  reserved "xla_gpu_enable_async_all_to_all";
+  reserved "xla_gpu_enable_async_collective_broadcast";
+  reserved "xla_gpu_enable_async_collective_permute";
+  reserved "xla_gpu_enable_async_collectives";
+  reserved "xla_gpu_enable_async_reduce_scatter";
+  reserved "xla_gpu_enable_bf16_3way_gemm";
+  reserved "xla_gpu_enable_bf16_6way_gemm";
+  reserved "xla_gpu_enable_command_buffer_va_remapping";
+  reserved "xla_gpu_enable_cuda_graphs";
+  reserved "xla_gpu_enable_cudnn_fmha";
+  reserved "xla_gpu_enable_cudnn_frontend";
+  reserved "xla_gpu_enable_custom_fusions_re";
+  reserved "xla_gpu_enable_custom_fusions";
+  reserved "xla_gpu_enable_dot_strength_reduction";
+  reserved "xla_gpu_enable_experimental_block_size";
+  reserved "xla_gpu_enable_gpu2_hal";
+  reserved "xla_gpu_enable_gpu2_runtime";
+  reserved "xla_gpu_enable_heuristic_pass_configuration";
+  reserved "xla_gpu_enable_libnvjitlink";
+  reserved "xla_gpu_enable_mlir_emitters";
+  reserved "xla_gpu_enable_mlir_lowering";
+  reserved "xla_gpu_enable_nccl_per_stream_comms";
+  reserved "xla_gpu_enable_persistent_temp_buffers";
+  reserved "xla_gpu_enable_pgle_accuracy_checker";
+  reserved "xla_gpu_enable_pipelined_all_gather";
+  reserved "xla_gpu_enable_pipelined_all_reduce";
+  reserved "xla_gpu_enable_pipelined_collectives";
+  reserved "xla_gpu_enable_pipelined_reduce_scatter";
+  reserved "xla_gpu_enable_priority_fusion";
+  reserved "xla_gpu_enable_reduction_epilogue_fusion";
+  reserved "xla_gpu_enable_softmax_fusion";
+  reserved "xla_gpu_enable_split_k_autotuning";
+  reserved "xla_gpu_enable_triton_gemm_int4";
+  reserved "xla_gpu_enable_triton_hopper";
+  reserved "xla_gpu_enable_triton_softmax_fusion";
+  reserved "xla_gpu_enable_triton_softmax_priority_fusion";
+  reserved "xla_gpu_enable_xla_runtime_executable";
+  reserved "xla_gpu_ensure_minor_dot_contraction_dims";
+  reserved "xla_gpu_experimental_aot_compiled_thunks";
+  reserved "xla_gpu_experimental_allow_unroll_factor_eight";
+  reserved "xla_gpu_experimental_enable_command_buffer_on_thunks";
+  reserved "xla_gpu_experimental_enable_dynamic_dot_search_space";
+  reserved "xla_gpu_experimental_enable_nan_counter_on_thunks";
+  reserved "xla_gpu_experimental_enable_split_k_rewrite";
+  reserved "xla_gpu_experimental_enable_tiling_propagation";
+  reserved "xla_gpu_experimental_enable_triton_i4_rewrites";
+  reserved "xla_gpu_experimental_enable_triton_softmax_priority_fusion";
+  reserved "xla_gpu_experimental_enable_triton_tma";
+  reserved "xla_gpu_experimental_ragged_all_to_all_zero_copy";
+  reserved "xla_gpu_experimental_ragged_all_to_all_use_barrier";
+  reserved "xla_gpu_experimental_use_autotuner_pass";
+  reserved "xla_gpu_experimental_use_raft_select_k";
+  reserved "xla_gpu_fused_attention_use_cudnn_rng";
+  reserved "xla_gpu_graph_eviction_timeout_seconds";
+  reserved "xla_gpu_graph_level";
+  reserved "xla_gpu_graph_num_runs_to_instantiate";
+  reserved "xla_gpu_lhs_enable_gpu_async_tracker";
+  reserved "xla_gpu_max_kernel_unroll_factor";
+  reserved "xla_gpu_max_mlir_kernels";
+  reserved "xla_gpu_mlir_emitter_level";
+  reserved "xla_gpu_normalize_layouts";
+  reserved "xla_gpu_redzone_scratch_max_megabytes";
+  reserved "xla_gpu_run_post_layout_collective_pipeliner";
+  reserved "xla_gpu_simplify_all_fp_conversions";
+  reserved "xla_gpu_simplify_gathers";
+  reserved "xla_gpu_simplify_scatters";
+  reserved "xla_gpu_single_wave_autotuning";
+  reserved "xla_gpu_skip_mlir_kernels";
+  reserved "xla_gpu_strict_conv_algorithm_picker";
+  reserved "xla_gpu_triton_fusion_level";
+  reserved "xla_gpu_triton_gemm_disable_reduced_precision_reduction";
+  reserved "xla_gpu_unsafe_fallback_to_driver_on_ptxas_error";
+  reserved "xla_gpu_unsafe_pipelined_loop_annotator";
+  reserved "xla_gpu_unsupported_annotate_with_emitter_loc";
+  reserved "xla_gpu_unsupported_disable_nested_gemm_fusions";
+  reserved "xla_gpu_unsupported_enable_generic_triton_emitter_for_gemms";
+  reserved "xla_gpu_unsupported_force_triton_gemm";
+  reserved "xla_gpu_unsupported_generic_triton_emitter_features";
+  reserved "xla_gpu_use_cudnn_batchnorm";
+  reserved "xla_gpu_use_embeded_device_lib";
+  reserved "xla_gpu_use_horizontal_fusion";
+  reserved "xla_gpu_use_inprocess_lld";
+  reserved "xla_gpu_use_random_streams";
+  reserved "xla_hlo_dump_as_graphdef";
+  reserved "xla_hlo_tfgraph_device_scopes";
+  reserved "xla_ignore_channel_id";
+  reserved "xla_use_shardy";
+  reserved "xla_gpu_experimental_move_gemm_conv_autotuner";
+  reserved "xla_gpu_experimental_enable_nvshmem";
+  reserved "xla_llvm_force_inline_before_split";
+  reserved "xla_gpu_enable_shared_constants";
+  enum CollectiveOpType {
+    NOOP = 0;
+    ALLREDUCE = 1;
+    ALLGATHER = 2;
+    REDUCESCATTER = 3;
+    COLLECTIVEBROADCAST = 4;
+    ALLTOALL = 5;
+    COLLECTIVEPERMUTE = 6;
+    RAGGEDALLTOALL = 7;
+    ALLCOLLECTIVES = 8;
+  }
+  enum CommandBufferCmdType {
+    INVALID = 0;
+    FUSION = 1;
+    CUBLAS = 2;
+    CUDNN = 3;
+    COLLECTIVES = 4;
+    CONDITIONAL = 5;
+    WHILE = 6;
+    CUSTOM_CALL = 7;
+    CUBLASLT = 8;
+    DYNAMIC_SLICE_FUSION = 9;
+    CONVOLUTION = 11;
+    HOST_EXECUTE = 12;
+    COLLECTIVES_KERNEL = 13;
+  }
+  enum CollectiveKernelType {
+    COLLECTIVE_KERNEL_INVALID = 0;
+    COLLECTIVE_KERNEL_ALL_REDUCE = 1;
+    COLLECTIVE_KERNEL_ALL_GATHER = 2;
+    COLLECTIVE_KERNEL_REDUCE_SCATTER = 3;
+    COLLECTIVE_KERNEL_ALL_TO_ALL = 4;
+    COLLECTIVE_KERNEL_ALL_COLLECTIVES = 8;
+  }
+  enum LibNvJitLinkMode {
+    LIB_NV_JIT_LINK_MODE_AUTO = 0;
+    LIB_NV_JIT_LINK_MODE_DISABLED = 1;
+    LIB_NV_JIT_LINK_MODE_ENABLED = 2;
+  }
+  enum PGLEStrictnessLevel {
+    PGLE_STRICTNESS_LEVEL_OFF = 0;
+    PGLE_STRICTNESS_LEVEL_WARN = 1;
+    PGLE_STRICTNESS_LEVEL_ERROR = 2;
+  }
+  enum ShapeChecks {
+    IGNORE = 0;
+    RUNTIME = 1;
+    COMPILE_TIME = 2;
+  }
+  enum WhileLoopUnrolling {
+    WHILE_LOOP_UNROLLING_NO_UNROLL = 0;
+    WHILE_LOOP_UNROLLING_DOUBLE_BUFFER = 1;
+    WHILE_LOOP_UNROLLING_FULL_UNROLL = 2;
+    WHILE_LOOP_UNROLLING_AUTO_UNROLL = 3;
+    WHILE_LOOP_UNROLLING_MANUAL_UNROLL = 4;
+  }
+  enum CpuOptPreset {
+    CPU_OPT_PRESET_DEFAULT = 0;
+    CPU_OPT_PRESET_FAST_RUNTIME = 1;
+    CPU_OPT_PRESET_FAST_COMPILE = 2;
+  }
+  enum CpuSchedulerType {
+    CPU_SCHEDULER_TYPE_DEFAULT = 0;
+    CPU_SCHEDULER_TYPE_MEMORY_OPTIMIZED = 1;
+    CPU_SCHEDULER_TYPE_CONCURRENCY_OPTIMIZED = 2;
+  }
+  enum LibraryFusionType {
+    LIBRARY_FUSION_TYPE_INVALID = 0;
+    LIBRARY_FUSION_TYPE_DOT = 1;
+    LIBRARY_FUSION_TYPE_ELTWISE = 2;
+    LIBRARY_FUSION_TYPE_REDUCE = 3;
+    LIBRARY_FUSION_TYPE_INDIVIDUAL_DOT = 4;
+    LIBRARY_FUSION_TYPE_INDIVIDUAL_CONVOLUTION = 5;
+  }
+  enum XnnGraphFusionMode {
+    XNN_GRAPH_FUSION_MODE_DISABLED = 0;
+    XNN_GRAPH_FUSION_MODE_GREEDY = 1;
+    XNN_GRAPH_FUSION_MODE_GREEDY_SLINKY = 2;
+    XNN_GRAPH_FUSION_MODE_BYPASS_COST_MODEL = 3;
+  }
+  enum CollectivePipeliningMode {
+    COLLECTIVE_PIPELINING_MODE_DEFAULT = 0;
+    COLLECTIVE_PIPELINING_MODE_OFF = 1;
+    COLLECTIVE_PIPELINING_MODE_ON = 2;
+    COLLECTIVE_PIPELINING_MODE_EXPLICIT = 3;
+  }
+  enum CollectivesMode {
+    COLLECTIVES_MODE_INVALID = 0;
+    COLLECTIVES_PRIVATE_MEMORY = 1;
+    COLLECTIVES_SYMMETRIC_MEMORY = 2;
+    COLLECTIVES_PEER_MEMORY = 3;
+  }
+  enum CommandBufferSchedulingMode {
+    SERIALIZE = 0;
+    CONCURRENT = 1;
+    LHS = 2;
+    CONCURRENT_REGIONS = 3;
+  }
+  enum CommandBufferUpdateMode {
+    ALWAYS_UPDATE = 0;
+    SKIP_TEMP = 1;
+    SKIP_PROFILED = 2;
+  }
+  enum CudnnDevicelessCompilationMode {
+    CUDNN_DEVICELESS_COMPILATION_UNSET = 0;
+    CUDNN_DEVICELESS_COMPILATION_DISABLED = 1;
+    CUDNN_DEVICELESS_COMPILATION_AUTO = 2;
+    CUDNN_DEVICELESS_COMPILATION_ALWAYS = 3;
+  }
+  enum DevicelessCubMode {
+    DEVICELESS_CUB_UNSET = 0;
+    DEVICELESS_CUB_DISABLED = 1;
+    DEVICELESS_CUB_WITH_FALLBACK = 2;
+    DEVICELESS_CUB_NO_FALLBACK = 3;
+    DEVICELESS_CUB_FORCE_ON_NO_FALLBACK = 4;
+  }
+  enum PipelineParallelismOptLevel {
+    PIPELINE_PARALLELISM_OPT_LEVEL_DISABLE = 0;
+    PIPELINE_PARALLELISM_OPT_LEVEL_ENABLE = 1;
+  }
+  enum EarlyExitPoint {
+    EARLY_EXIT_POINT_UNSET = 0;
+    EARLY_EXIT_POINT_AFTER_CONFIG_ASSIGNMENT = 1;
+  }
+  enum DeterministicOpsTritonMode {
+    DETERMINISTIC_OPS_TRITON_MODE_UNSET = 0;
+    DETERMINISTIC_OPS_TRITON_MODE_OFF = 1;
+    DETERMINISTIC_OPS_TRITON_MODE_UNCHECKED = 2;
+  }
+  enum StepMarkerLocation {
+    STEP_MARK_AT_ENTRY = 0;
+    STEP_MARK_AT_TOP_LEVEL_WHILE_LOOP = 1;
+    STEP_MARK_AT_SECOND_LEVEL_WHILE_LOOP = 3;
+    STEP_MARK_NONE = 2;
+  }
+  enum PartitioningAlgorithm {
+    PARTITIONING_ALGORITHM_NOOP = 0;
+    PARTITIONING_ALGORITHM_EXP0 = 1;
+    PARTITIONING_ALGORITHM_EXP1 = 2;
+    PARTITIONING_ALGORITHM_EXP2 = 3;
+  }
+  enum DetectionMode {
+    DETECTION_MODE_NONE = 0;
+    DETECTION_MODE_WARNING = 1;
+    DETECTION_MODE_FAIL = 2;
+    DETECTION_MODE_DUMP = 3;
+  }
+  enum AutotuneCacheMode {
+    AUTOTUNE_CACHE_MODE_UNSPECIFIED = 0;
+    AUTOTUNE_CACHE_MODE_UPDATE = 1;
+    AUTOTUNE_CACHE_MODE_READ = 2;
+    AUTOTUNE_CACHE_MODE_WRITE_ONLY = 3;
+  }
+  message CollectiveFilter {
+    .xla.DebugOptions.CollectiveOpType collective = 1;
+    optional int64 max_size_bytes = 2;
+    optional .xla.PrimitiveType op_type = 3;
+  }
+  optional bool xla_allow_h2h_copy_when_automatic_host_compute_offload_disabled = 439;
+  optional bool xla_disable_automatic_host_compute_offload = 408;
+  optional bool xla_dump_compact_gte = 495;
+  optional bool xla_enable_hlo_sharding_v3 = 452;
+  optional bool xla_enable_scoped_logging_timers = 436;
+  optional bool xla_hlo_pass_fix_detect_cycles = 370;
+  optional bool xla_keep_shardings_after_spmd = 419;
+  optional bool xla_sdy_export_all_reduce_scatter = 512;
+  optional bool xla_unsupported_crash_on_hlo_pass_fix_max_iterations = 363;
+  optional bool xla_unsupported_crash_on_hlo_pass_noop_change = 379;
+  optional bool xla_unsupported_crash_on_hlo_pass_silent_hlo_change = 380;
+  optional int32 xla_recognize_reduction_optimization_level = 463;
+  optional int64 xla_while_loop_all_reduce_dus_code_motion_max_size_bytes = 528;
+  optional .xla.DebugOptions.CpuOptPreset xla_cpu_opt_preset = 467;
+  optional int32 xla_cpu_collective_call_terminate_timeout_seconds = 417;
+  optional int32 xla_cpu_collective_call_warn_stuck_seconds = 418;
+  optional int32 xla_cpu_collective_timeout_seconds = 438;
+  optional bool xla_cpu_copy_insertion_use_region_analysis = 337;
+  optional int32 xla_cpu_emitter_verification_level = 395;
+  optional bool xla_cpu_enable_concurrency_optimized_scheduler = 307;
+  optional bool xla_cpu_enable_fast_math = 99;
+  optional bool xla_cpu_enable_fast_min_max = 140;
+  optional bool xla_cpu_enable_platform_dependent_math = 425;
+  optional bool xla_cpu_experimental_enable_tiling_propagation = 489;
+  optional bool xla_cpu_experimental_onednn_custom_call = 412;
+  repeated .xla.DebugOptions.LibraryFusionType xla_cpu_experimental_onednn_fusion_type = 399;
+  repeated .xla.DebugOptions.LibraryFusionType xla_cpu_experimental_xnn_fusion_type = 400;
+  optional .xla.DebugOptions.XnnGraphFusionMode xla_cpu_experimental_xnn_graph_fusion_mode = 365;
+  repeated .xla.DebugOptions.LibraryFusionType xla_cpu_experimental_ynn_fusion_type = 422;
+  optional bool xla_cpu_fast_math_honor_division = 126;
+  optional bool xla_cpu_fast_math_honor_functions = 129;
+  optional bool xla_cpu_fast_math_honor_infs = 121;
+  optional bool xla_cpu_fast_math_honor_nans = 120;
+  optional bool xla_cpu_ftz = 493;
+  optional bool xla_cpu_generate_unique_c_style_kernel_entry_points = 372;
+  optional string xla_cpu_max_isa = 333;
+  optional bool xla_cpu_mock_custom_calls = 548;
+  optional int32 xla_cpu_parallel_codegen_split_count = 323;
+  optional int32 xla_cpu_prefer_vector_width = 308;
+  optional .xla.DebugOptions.CpuSchedulerType xla_cpu_scheduler_type = 448;
+  optional bool xla_cpu_use_new_xtile_lowering = 529;
+  optional bool xla_cpu_use_xnnpack = 359;
+  optional bool xla_enable_fast_math = 335;
+  optional .xla.DebugOptions.CudnnDevicelessCompilationMode xla_gpu_cudnn_deviceless_compilation_mode = 505;
+  optional .xla.DebugOptions.DevicelessCubMode xla_gpu_deviceless_cub_mode = 483;
+  optional .xla.ThunkBufferDebugFilter xla_gpu_experimental_thunk_buffer_debug_filter = 424;
+  repeated .xla.DebugOptions.CollectiveFilter xla_enable_nccl_symmetric_buffers_for_collectives = 503;
+  repeated .xla.autotuner.Backend xla_gpu_experimental_autotune_backends = 442;
+  optional .xla.autotuner.Backend xla_autotuner_preferred_backend = 547;
+  optional bool xla_dump_hlo_unoptimized_snapshots = 405;
+  optional bool xla_enable_enzyme_comms_opt = 429;
+  optional bool xla_gpu_experimental_enable_same_shape_multi_output_fusion = 525;
+  optional string xla_gpu_algorithm_denylist_path = 128;
+  optional int64 xla_gpu_all_gather_combine_threshold_bytes = 212;
+  optional .xla.DebugOptions.CollectivesMode xla_gpu_all_gather_mode = 485;
+  optional int32 xla_gpu_all_reduce_blueconnect_num_devices_per_host = 159;
+  optional int64 xla_gpu_all_reduce_combine_threshold_bytes = 157;
+  optional bool xla_gpu_all_reduce_splitter_ignore_profitability_check = 533;
+  map<string, string> xla_gpu_analytical_latency_estimator_options = 357;
+  optional bool xla_gpu_async_dot = 321;
+  optional int32 xla_gpu_auto_spmd_partitioning_memory_budget_gb = 224;
+  optional float xla_gpu_auto_spmd_partitioning_memory_budget_ratio = 225;
+  optional float xla_gpu_autotune_gemm_rtol = 316;
+  optional int32 xla_gpu_autotune_level = 123;
+  optional int64 xla_gpu_autotune_max_solutions = 288;
+  optional int64 xla_gpu_blas_max_algorithms = 523;
+  optional bool xla_gpu_collect_cost_model_stats = 240;
+  optional int64 xla_gpu_collective_combine_threshold_count = 461;
+  optional string xla_gpu_collective_domain_assignment = 536;
+  optional int32 xla_gpu_collective_inflation_factor = 205;
+  optional int64 xla_gpu_collective_permute_combine_threshold_bytes = 378;
+  optional bool xla_gpu_collective_permute_connected_components = 471;
+  optional int64 xla_gpu_collective_permute_decomposer_threshold = 237;
+  optional .xla.DebugOptions.CollectivesMode xla_gpu_collective_permute_mode = 473;
+  optional string xla_gpu_collectives_implementation = 468;
+  optional .xla.DebugOptions.CommandBufferSchedulingMode xla_gpu_command_buffer_scheduling_mode = 404;
+  optional bool xla_gpu_command_buffer_unroll_loops = 411;
+  optional .xla.DebugOptions.CommandBufferUpdateMode xla_gpu_command_buffer_update_mode = 469;
+  optional bool xla_gpu_copy_insertion_use_region_analysis = 236;
+  optional bool xla_gpu_crash_on_verification_failures = 101;
+  optional bool xla_gpu_cublas_fallback = 247;
+  optional string xla_gpu_cuda_data_dir = 61;
+  optional int32 xla_gpu_cudnn_gemm_fusion_level = 285;
+  optional int32 xla_gpu_cudnn_non_gemm_fusion_level = 510;
+  optional int32 xla_gpu_cudnn_gemm_max_plans = 318;
+  optional bool xla_gpu_default_to_alg_dot_bf16_bf16_f32 = 441;
+  optional bool xla_gpu_deterministic_ops = 148;
+  repeated .xla.DebugOptions.CollectiveOpType xla_gpu_disable_async_collectives = 289;
+  optional bool xla_gpu_disable_gpuasm_optimizations = 103;
+  optional int32 xla_gpu_dot_merger_threshold_mb = 331;
+  optional string xla_gpu_dump_autotune_logs_to = 292;
+  optional string xla_gpu_dump_autotune_results_to = 222;
+  optional bool xla_gpu_dump_autotuned_gemm_fusions = 232;
+  optional bool xla_gpu_dump_autotuned_instructions = 445;
+  optional bool xla_gpu_dump_llvmir = 155;
+  optional string xla_gpu_dump_cost_model_top_k_candidates_to = 540;
+  optional bool xla_gpu_enable_all_gather_combine_by_dim = 254;
+  optional bool xla_gpu_enable_allocator_spatial_partitioning = 494;
+  optional string xla_gpu_memory_fraction_policy = 560;
+  optional bool xla_gpu_enable_analytical_latency_estimator = 255;
+  optional bool xla_gpu_enable_analytical_sol_latency_estimator = 356;
+  optional bool xla_gpu_enable_approx_costly_collectives = 305;
+  repeated .xla.DebugOptions.CollectiveOpType xla_gpu_enable_collectives_command_buffer_filter = 497;
+  repeated .xla.DebugOptions.CommandBufferCmdType xla_gpu_enable_command_buffer = 258;
+  optional bool xla_gpu_enable_command_buffer_telemetry = 564;
+  optional bool xla_gpu_enable_cub_radix_sort = 259;
+  optional bool xla_gpu_enable_cublaslt = 166;
+  optional bool xla_gpu_enable_cudnn_int8x32_convolution_reordering = 189;
+  optional bool xla_gpu_enable_cudnn_layer_norm = 262;
+  optional bool xla_gpu_enable_dus_accumulator_zero_init_elimination = 490;
+  optional bool xla_gpu_enable_dynamic_slice_fusion = 105;
+  optional bool xla_gpu_enable_fast_min_max = 100;
+  optional bool xla_gpu_enable_highest_priority_async_stream = 216;
+  optional bool xla_gpu_enable_host_memory_offloading = 296;
+  optional bool xla_gpu_enable_latency_hiding_scheduler = 186;
+  optional bool xla_gpu_enable_libnvptxcompiler = 269;
+  optional bool xla_gpu_enable_nccl_clique_optimization = 244;
+  optional bool xla_gpu_enable_nccl_comm_splitting = 272;
+  optional bool xla_gpu_enable_nccl_user_buffers = 267;
+  optional bool xla_gpu_enable_nccl_user_buffers_in_default_space = 506;
+  optional bool xla_gpu_enable_pdl = 460;
+  optional bool xla_gpu_enable_pdl_launch = 504;
+  optional bool xla_gpu_enable_pipelined_host_offloading = 440;
+  optional bool xla_gpu_enable_pipelined_p2p = 246;
+  optional bool xla_gpu_enable_reassociation_for_converted_ar = 209;
+  optional bool xla_gpu_enable_reduce_scatter_combine_by_dim = 257;
+  optional bool xla_gpu_enable_scatter_determinism_expander = 345;
+  optional bool xla_gpu_enable_triton_gemm = 188;
+  optional bool xla_gpu_enable_while_loop_double_buffering = 248;
+  optional bool xla_gpu_enable_while_loop_reduce_scatter_code_motion = 203;
+  optional .xla.DebugOptions.WhileLoopUnrolling xla_gpu_enable_while_loop_unrolling = 294;
+  optional bool xla_gpu_exclude_nondeterministic_ops = 297;
+  optional bool xla_gpu_executable_embed_debug_info = 437;
+  optional int32 xla_gpu_executable_num_communication_streams = 487;
+  optional int32 xla_gpu_executable_num_compute_streams = 486;
+  optional int32 xla_gpu_executable_terminate_timeout_seconds = 328;
+  optional int32 xla_gpu_executable_warn_stuck_timeout_seconds = 327;
+  optional int32 xla_gpu_execution_progress_tracking = 457;
+  optional string xla_gpu_execution_terminate_timeout = 451;
+  optional string xla_gpu_device_execution_terminate_timeout = 553;
+  optional bool xla_gpu_exhaustive_tiling_search = 219;
+  optional bool xla_gpu_experimental_all_fusions_with_triton = 444;
+  optional .xla.DebugOptions.AutotuneCacheMode xla_gpu_experimental_autotune_cache_mode = 324;
+  optional bool xla_gpu_experimental_autotune_post_fusion = 481;
+  optional string xla_gpu_experimental_autotuner_cache_dir = 407;
+  optional int64 xla_gpu_experimental_collective_cse_distance_threshold = 374;
+  optional string xla_gpu_experimental_collective_perf_table_path = 377;
+  optional bool xla_gpu_experimental_collective_start_as_early_as_possible = 488;
+  optional .xla.DebugOptions.DeterministicOpsTritonMode xla_gpu_experimental_deterministic_ops_triton = 556;
+  optional bool xla_gpu_experimental_disable_binary_libraries = 329;
+  optional bool xla_gpu_experimental_dump_fdo_profiles = 338;
+  optional bool xla_gpu_experimental_dump_gpu_executable = 427;
+  optional bool xla_gpu_experimental_dynamic_slice_fusion_verify_offsets = 484;
+  optional bool xla_gpu_experimental_enable_dynamic_slice_table_offsets = 552;
+  optional bool xla_gpu_experimental_enable_dynamic_slice_extended_offsets = 555;
+  optional bool xla_gpu_experimental_enable_alltoall_windowed_einsum = 360;
+  optional bool xla_gpu_experimental_enable_buffer_saver_on_thunks = 431;
+  optional bool xla_gpu_experimental_enable_checksum_tracing_on_thunks = 414;
+  optional bool xla_gpu_experimental_enable_collective_multi_streaming = 470;
+  optional bool xla_gpu_experimental_enable_conv_fusion = 455;
+  optional bool xla_gpu_experimental_enable_fusion_autotuner = 409;
+  optional bool xla_gpu_experimental_enable_fusion_block_level_rewriter = 334;
+  optional bool xla_gpu_experimental_enable_heuristic_collective_combining = 366;
+  optional bool xla_gpu_experimental_enable_nccl_symmetric_buffers = 406;
+  optional bool xla_gpu_experimental_emit_collective_reduce = 550;
+  optional bool xla_gpu_experimental_enable_selective_memcpy_overlap = 524;
+  optional bool xla_gpu_experimental_enable_subchannel_dequantisation_fusion = 368;
+  optional bool xla_gpu_experimental_enable_triton_heroless_priority_fusion = 340;
+  optional bool xla_gpu_experimental_enable_triton_warp_specialization = 421;
+  optional int32 xla_gpu_experimental_force_split_k = 472;
+  optional bool xla_gpu_experimental_gemm_fusion_v2 = 475;
+  optional int32 xla_gpu_experimental_max_unroll_factor = 459;
+  optional bool xla_gpu_experimental_nccl_window_symmetric = 561;
+  optional bool xla_gpu_experimental_pack_dot_operands_along_k_dimension = 362;
+  optional int32 xla_gpu_experimental_parallel_async_compute_limit = 465;
+  optional int64 xla_gpu_experimental_scheduler_memory_fencing_threshold_bytes = 526;
+  optional int32 xla_gpu_experimental_scheduler_memory_fencing_slack_windows = 527;
+  optional int32 xla_gpu_experimental_parallel_collective_overlap_limit = 336;
+  optional int32 xla_gpu_experimental_parallel_scale_up_collective_overlap_limit = 538;
+  optional .xla.DebugOptions.PipelineParallelismOptLevel xla_gpu_experimental_pipeline_parallelism_opt_level = 351;
+  optional bool xla_gpu_experimental_stream_annotation = 342;
+  repeated .xla.DebugOptions.CollectiveKernelType xla_gpu_experimental_use_collective_kernels = 516;
+  optional bool xla_gpu_experimental_use_ragged_dot_fusion = 401;
+  optional bool xla_gpu_experimental_use_ragged_dot_grouped_gemm = 501;
+  optional bool xla_gpu_experimental_vmm_disabled = 551;
+  optional bool xla_gpu_fail_ptx_compilation_on_register_spilling = 353;
+  optional bool xla_gpu_filter_kernels_spilling_registers_on_autotuning = 250;
+  optional int32 xla_gpu_first_collective_call_terminate_timeout_seconds = 392;
+  optional int32 xla_gpu_first_collective_call_warn_stuck_timeout_seconds = 391;
+  optional int32 xla_gpu_force_compilation_parallelism = 147;
+  optional bool xla_gpu_force_conv_nchw = 125;
+  optional bool xla_gpu_force_conv_nhwc = 146;
+  optional bool xla_gpu_ftz = 62;
+  optional int32 xla_gpu_fusion_autotune_top_k_configs = 476;
+  optional string xla_gpu_gemm_autotuner_override_file = 434;
+  optional int64 xla_gpu_gemm_rewrite_size_threshold = 283;
+  optional bool xla_gpu_generate_debug_info = 348;
+  optional bool xla_gpu_generate_line_info = 349;
+  optional bool xla_gpu_graph_enable_concurrent_region = 215;
+  optional int32 xla_gpu_graph_min_graph_size = 208;
+  optional string xla_gpu_kernel_cache_file = 306;
+  optional .xla.DebugOptions.LibNvJitLinkMode xla_gpu_libnvjitlink_mode = 343;
+  repeated string xla_gpu_llvm_ir_file = 150;
+  optional int32 xla_gpu_llvm_verification_level = 256;
+  optional string xla_gpu_load_autotune_results_from = 223;
+  optional int32 xla_gpu_memory_limit_slop_factor = 260;
+  optional bool xla_gpu_mock_custom_calls = 245;
+  optional bool xla_gpu_multi_streamed_windowed_einsum = 280;
+  optional bool xla_gpu_native_emitter_tune_unroll_factor_for_loops = 478;
+  optional bool xla_gpu_nccl_async_execution = 393;
+  optional bool xla_gpu_nccl_blocking_communicators = 390;
+  optional int64 xla_gpu_nccl_collective_max_nchannels = 273;
+  optional int64 xla_gpu_nccl_init_max_rank_per_root_ratio = 277;
+  optional int64 xla_gpu_nccl_p2p_max_nchannels = 274;
+  optional bool xla_gpu_nccl_terminate_on_error = 301;
+  optional int64 xla_gpu_nccl_termination_timeout_seconds = 163;
+  optional int64 xla_gpu_operand_bytes_threshold_for_windowed_einsum = 339;
+  optional string xla_gpu_override_gemm_autotuner = 295;
+  optional string xla_gpu_per_fusion_autotune_cache_dir = 310;
+  optional .xla.DebugOptions.PGLEStrictnessLevel xla_gpu_pgle_accuracy_checker = 341;
+  optional string xla_gpu_pgle_profile_file_or_directory_path = 210;
+  optional .xla.DebugOptions.CollectivePipeliningMode xla_gpu_pipeline_all_gather = 517;
+  optional .xla.DebugOptions.CollectivePipeliningMode xla_gpu_pipeline_all_reduce = 518;
+  optional .xla.DebugOptions.CollectivePipeliningMode xla_gpu_pipeline_reduce_scatter = 519;
+  optional bool xla_gpu_print_compilation_stats = 454;
+  repeated string xla_gpu_ptx_compiler_extra_flags = 491;
+  repeated string xla_gpu_ptx_file = 127;
+  optional .xla.DebugOptions.CollectivesMode xla_gpu_ragged_all_to_all_mode = 482;
+  optional int64 xla_gpu_reduce_scatter_combine_threshold_bytes = 213;
+  optional int64 xla_gpu_redzone_padding_bytes = 228;
+  optional bool xla_gpu_require_complete_aot_autotune_results = 284;
+  optional bool xla_gpu_require_exact_blas_lt_algorithm = 563;
+  optional bool xla_gpu_require_exclusive_lock = 347;
+  optional int64 xla_gpu_rocm_max_trace_events = 449;
+  optional .xla.DebugOptions.ShapeChecks xla_gpu_shape_checks = 170;
+  optional bool xla_gpu_shard_autotuning = 304;
+  optional string xla_gpu_target_config_filename = 261;
+  optional string xla_gpu_topology_filename = 554;
+  optional bool xla_gpu_temp_buffer_use_separate_color = 312;
+  optional int64 xla_gpu_threshold_for_windowed_einsum_mib = 265;
+  optional int32 xla_gpu_trace_annotation_level = 530;
+  optional bool xla_gpu_enable_cupti_multi_subscriber = 534;
+  optional bool xla_gpu_triton_gemm_any = 190;
+  optional bool xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found = 138;
+  optional bool xla_gpu_unsupported_enable_all_reduce_decomposer = 384;
+  optional bool xla_gpu_unsupported_enable_ragged_all_to_all_decomposer = 350;
+  optional bool xla_gpu_unsupported_enable_ragged_all_to_all_multi_host_decomposer = 415;
+  optional bool xla_gpu_unsupported_enable_triton_gemm = 322;
+  optional bool xla_gpu_unsupported_enable_triton_multi_output_fusion = 382;
+  optional int64 xla_gpu_unsupported_override_fast_interconnect_slice_size = 416;
+  optional bool xla_gpu_unsupported_use_all_reduce_one_shot_kernel = 387;
+  optional bool xla_gpu_unsupported_use_ragged_all_to_all_one_shot_kernel = 375;
+  optional bool xla_gpu_use_memcpy_local_p2p = 287;
+  optional bool xla_gpu_use_new_autotune_cache_format = 515;
+  optional bool xla_gpu_use_runtime_fusion = 181;
+  optional bool xla_gpu_verify_triton_fusion_numerics = 291;
+  optional bool xla_hlo_graph_addresses = 2;
+  optional bool xla_hlo_profile = 9;
+  repeated string xla_disable_hlo_passes = 30;
+  repeated string xla_enable_hlo_passes_only = 124;
+  optional bool xla_disable_all_hlo_passes = 104;
+  optional string xla_run_hlo_passes_starting_from = 496;
+  optional int32 xla_backend_optimization_level = 31;
+  optional bool xla_embed_ir_in_executable = 33;
+  optional bool xla_eliminate_hlo_implicit_broadcast = 35;
+  optional bool xla_cpu_multi_thread_eigen = 60;
+  optional bool xla_llvm_enable_alias_scope_metadata = 70;
+  optional bool xla_llvm_enable_noalias_metadata = 71;
+  optional bool xla_llvm_enable_invariant_load_metadata = 72;
+  optional bool xla_llvm_disable_expensive_passes = 73;
+  optional bool xla_test_all_output_layouts = 90;
+  optional bool xla_test_all_input_layouts = 91;
+  optional bool xla_hlo_graph_sharding_color = 92;
+  optional bool xla_cpu_use_onednn = 97;
+  optional bool xla_allow_excess_precision = 122;
+  optional int32 xla_force_host_platform_device_count = 102;
+  optional bool xla_hlo_evaluator_use_fast_path = 106;
+  optional bool xla_allow_scalar_index_dynamic_ops = 107;
+  optional .xla.DebugOptions.StepMarkerLocation xla_step_marker_location = 108;
+  optional string xla_dump_to = 109;
+  optional bool xla_flags_reset = 364;
+  optional string xla_dump_hlo_module_re = 110;
+  optional string xla_dump_hlo_pass_re = 111;
+  optional string xla_dump_emitter_re = 433;
+  optional bool xla_dump_hlo_as_text = 112;
+  optional bool xla_dump_hlo_as_proto = 113;
+  optional bool xla_dump_hlo_as_dot = 114;
+  optional bool xla_dump_hlo_as_url = 115;
+  optional bool xla_dump_hlo_as_riegeli = 498;
+  optional bool xla_dump_hlo_as_html = 116;
+  optional bool xla_dump_fusion_visualization = 149;
+  optional bool xla_dump_hlo_snapshots = 118;
+  optional bool xla_dump_include_timestamp = 131;
+  optional bool xla_dump_hlo_to_subfolder = 502;
+  optional int32 xla_dump_max_hlo_modules = 132;
+  optional bool xla_dump_module_metadata = 144;
+  optional bool xla_dump_compress_protos = 151;
+  optional bool xla_dump_hlo_as_long_text = 164;
+  optional bool xla_dump_buffer_assignment_analysis = 466;
+  optional bool xla_dump_enable_mlir_pretty_form = 185;
+  optional bool xla_dump_full_hlo_config = 381;
+  optional bool xla_tpu_detect_nan = 135;
+  optional bool xla_tpu_detect_inf = 136;
+  optional bool xla_cpu_enable_xprof_traceme = 137;
+  optional int32 xla_multiheap_size_constraint_per_heap = 142;
+  optional bool xla_detailed_logging = 252;
+  optional bool xla_enable_dumping = 253;
+  optional bool xla_dump_disable_metadata = 153;
+  optional string xla_dump_hlo_pipeline_re = 154;
+  optional bool xla_cpu_use_acl = 174;
+  optional bool xla_cpu_strict_dot_conv_math = 175;
+  optional bool xla_dump_latency_hiding_schedule = 182;
+  optional .xla.DebugOptions.PartitioningAlgorithm xla_partitioning_algorithm = 187;
+  optional int64 xla_debug_buffer_assignment_show_max = 251;
+  optional .xla.DebugOptions.DetectionMode xla_detect_unstable_reductions = 403;
+  optional .xla.DebugOptions.DetectionMode xla_detect_unstable_reductions_post_optimizations = 432;
+  optional .xla.DebugOptions.DetectionMode xla_gpu_detect_nan = 426;
+  optional .xla.DebugOptions.DetectionMode xla_gpu_detect_inf = 428;
+  optional bool xla_gpu_log_minmax = 453;
+  optional bool xla_gpu_experimental_thunk_buffer_debug_module_outputs = 492;
+  optional bool xla_dump_large_constants = 290;
+  optional int64 xla_reduce_window_rewrite_base_length = 293;
+  optional int64 xla_cmd_buffer_trace_cache_size = 311;
+  optional bool xla_syntax_sugar_async_ops = 315;
+  optional bool xla_enable_command_buffers_during_profiling = 317;
+  optional bool xla_hlo_print_inline_stack_frames = 447;
+  optional bool xla_pjrt_allow_auto_layout_in_hlo = 344;
+  optional bool xla_test_add_command_buffer_mode = 373;
+  optional string xla_gpu_experimental_matmul_perf_table_path = 383;
+  optional bool xla_early_exit_with_layouts = 397;
+  optional .xla.DebugOptions.EarlyExitPoint xla_gpu_experimental_early_exit = 549;
+  optional bool xla_gpu_experimental_scaled_dot_with_triton = 410;
+  optional bool xla_gpu_experimental_ragged_all_to_all_use_barrier_with_nccl = 462;
+  optional bool xla_gpu_enable_gxl_ragged_all_to_all = 513;
+  optional int64 xla_gpu_gxl_scratch_size_bytes = 514;
+  optional bool xla_gpu_experimental_ragged_all_to_all_use_device_kernel = 521;
+  optional bool xla_gpu_allow_ragged_all_to_all_nccl_send_recv_fallback = 532;
+  optional int64 xla_gpu_async_copy_min_bytes = 522;
+  map<string, string> xla_gpu_experimental_cost_model_gemm_tiling_options = 474;
+  optional bool xla_gpu_experimental_cost_model_gemm_tiling_default = 531;
+  optional bool xla_enable_rgv3_materialization = 479;
+  optional bool xla_spmd_enable_dynamic_slice_collective_broadcast = 520;
+  repeated string xla_gpu_hlo_custom_call_allowlist = 537;
+  optional bool xla_compile_all_supported_configs = 539;
+  repeated .xla.DebugOptions.CollectiveOpType xla_gpu_unsupported_use_cross_host_one_shot_kernel = 541;
+  optional int64 xla_deduplicate_backend_configs_min_size = 542;
+  optional string xla_force_config = 543;
+  optional string xla_candidate_configs_file = 544;
+  optional bool xla_gpu_enable_persistent_symmetric_memory = 545;
+  optional bool xla_gpu_experimental_enable_raft_for_stable_topk = 546;
+  optional bool xla_gpu_experimental_enable_tensor_ir = 557;
+  optional bool xla_gpu_experimental_enable_reduction_dimension_tiling = 558;
+  optional bool xla_autotune_cache_require_strict_codegen_match = 559;
+  optional bool xla_gpu_experimental_enable_triton_scan = 562;
+  optional bool xla_gpu_experimental_enable_horizontal_fusion = 565;
+  map<string, string> xla_backend_extra_options = 500;
+  optional bool xla_enable_hlo_modules_upload = 535;
+}
+message GpuCompilationEnvironment {
+  int64 dummy_flag = 1;
+}
+message ShardableValueUpdatePairProto {
+  int64 input_parameter_number = 1;
+  repeated int64 parameter_shape_index = 2;
+  repeated int64 output_shape_index = 3;
+}
+message ExecutionOptions {
+  reserved 13;
+  reserved "broadcast_replicated_parameters_via_collectives";
+  enum EffortLevel {
+    EFFORT_UNKNOWN = 0;
+    EFFORT_O0 = 9;
+    EFFORT_O1 = 19;
+    EFFORT_O2 = 29;
+    EFFORT_O3 = 39;
+  }
+  .xla.ShapeProto shape_with_output_layout = 2;
+  uint64 seed = 3;
+  .xla.DebugOptions debug_options = 4;
+  repeated .xla.DeviceHandle device_handles = 5;
+  int32 num_replicas = 6;
+  .xla.DeviceAssignmentProto device_assignment = 7;
+  bool alias_passthrough_params = 8;
+  int32 num_partitions = 9;
+  int32 launch_id = 10;
+  bool use_spmd_partitioning = 11;
+  bool use_auto_spmd_partitioning = 15;
+  repeated int64 auto_spmd_partitioning_mesh_shape = 16;
+  repeated int64 auto_spmd_partitioning_mesh_ids = 17;
+  float exec_time_optimization_effort = 25;
+  float memory_fitting_effort = 26;
+  .xla.ExecutionOptions.EffortLevel optimization_level = 27;
+  .xla.ExecutionOptions.EffortLevel memory_fitting_level = 28;
+  bool deduplicate_hlo = 12;
+  repeated bool allow_spmd_sharding_propagation_to_parameters = 23;
+  repeated bool allow_spmd_sharding_propagation_to_output = 14;
+  repeated bool param_requires_broadcast_via_collectives = 18;
+  bool allow_separate_sharding_programs = 19;
+  repeated .xla.ShardableValueUpdatePairProto shardable_value_update_pairs = 20;
+  bytes fdo_profile = 21;
+  int64 device_memory_size = 22;
+  bool use_shardy_partitioner = 24;
+}
+message HloModuleConfigProto {
+  reserved 26;
+  reserved "flag_config";
+  enum FusionConfigCollection {
+    OFF = 0;
+    PER_EDGE = 1;
+    PER_NODE = 2;
+  }
+  message BoolList {
+    repeated bool vals = 1;
+  }
+  message Int64List {
+    repeated int64 vals = 1;
+  }
+  message Int64ListList {
+    repeated .xla.HloModuleConfigProto.Int64List lists = 1;
+  }
+  .xla.ProgramShapeProto entry_computation_layout = 1;
+  uint64 seed = 2;
+  int32 launch_id = 3;
+  int64 replica_count = 4;
+  int64 num_partitions = 5;
+  repeated bool param_requires_broadcast_via_collectives = 6;
+  bool use_spmd_partitioning = 7;
+  bool use_auto_spmd_partitioning = 8;
+  repeated int64 auto_spmd_partitioning_mesh_shape = 9;
+  repeated int64 auto_spmd_partitioning_mesh_ids = 10;
+  float exec_time_optimization_effort = 36;
+  float memory_fitting_effort = 37;
+  .xla.ExecutionOptions.EffortLevel optimization_level = 39;
+  .xla.ExecutionOptions.EffortLevel memory_fitting_level = 40;
+  bool deduplicate_hlo = 11;
+  int64 intra_op_parallelism_threads = 12;
+  string device_type = 13;
+  .xla.DebugOptions debug_options = 14;
+  .xla.DeviceAssignmentProto static_device_assignment = 15;
+  .xla.DeviceAssignmentProto pre_simulation_device_assignment = 35;
+  bool allow_separate_sharding_programs = 30;
+  repeated .xla.ShardableValueUpdatePairProto shardable_value_update_pairs = 16;
+  bool alias_passthrough_params = 17;
+  bool content_aware_computation_sorting = 18;
+  .xla.HloModuleConfigProto.FusionConfigCollection fusion_config_collection = 19;
+  repeated .xla.HloModuleConfigProto.BoolList fusion_config = 20;
+  map<string, .xla.HloModuleConfigProto.Int64List> dot_config = 21;
+  repeated .xla.HloModuleConfigProto.Int64ListList layout_config = 22;
+  repeated uint64 memory_space_assignment_config = 23;
+  repeated .xla.HloModuleConfigProto.BoolList phase_ordering_config = 24;
+  int32 phase_index = 25;
+  repeated bool allow_spmd_sharding_propagation_to_parameters = 33;
+  repeated bool allow_spmd_sharding_propagation_to_output = 27;
+  map<string, int64> analysis_allowance_map = 28;
+  .xla.PrecisionConfig.Precision matrix_unit_operand_precision = 29;
+  bytes fdo_profile = 31;
+  int64 device_memory_size = 32;
+  bool use_shardy_partitioner = 34;
+  .xla.ShardingConfigProto sharding_config = 38;
+  .xla.ScheduleConfigProto schedule_config = 41;
+  int64 partition_size = 42;
+  int64 page_size_kib = 43;
+}
+message HloModuleProtoWithConfig {
+  .xla.HloModuleProto hlo_module = 1;
+  .xla.HloModuleConfigProto config = 2;
+}
+message ScheduleProto {
+  message Instruction {
+    int64 id = 1;
+    double start_timestamp_cycles = 2;
+    double end_timestamp_cycles = 3;
+    int64 memory_usage_after = 5;
+    int64 peak_memory_after = 6;
+  }
+  message SchedulerStatisticsProto {
+    double all_gather_wasted_cycles = 1;
+    double all_reduce_wasted_cycles = 2;
+    double collective_broadcast_wasted_cycles = 3;
+    double collective_permute_wasted_cycles = 4;
+    double all_to_all_wasted_cycles = 5;
+    double ragged_all_to_all_wasted_cycles = 6;
+    double reduce_scatter_wasted_cycles = 7;
+    double send_wasted_cycles = 8;
+    double recv_wasted_cycles = 9;
+    double call_wasted_cycles = 10;
+    double total_wasted_cycles = 11;
+    double total_cycles = 12;
+    int64 memory_pressure_peak = 13;
+  }
+  message ComputationScheduleProto {
+    int64 computation_id = 1;
+    repeated .xla.ScheduleProto.Instruction instructions = 2;
+    .xla.ScheduleProto.SchedulerStatisticsProto scheduler_statistics = 3;
+    int64 cycles_per_microsecond = 4;
+  }
+  .xla.HloModuleProto hlo_module = 1;
+  repeated .xla.ScheduleProto.ComputationScheduleProto computation_schedules = 2;
+}
+message NodeShardingConfigProto {
+  .xla.OpSharding sharding = 1;
+  repeated .xla.NodeShardingConfigProto nodes = 2;
+}
+message ShardingConfigProto {
+  repeated .xla.NodeShardingConfigProto nodes = 1;
+}
+message ScheduleConfigProto {
+  message Instruction {
+    string name = 1;
+  }
+  repeated .xla.ScheduleConfigProto.Instruction sequence = 1;
+}

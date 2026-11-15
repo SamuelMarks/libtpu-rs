@@ -1,0 +1,121 @@
+syntax = "proto2";
+package tensorflow.profiler;
+message TensorEventDetail {
+  enum TensorEventOwner {
+    UNKNOWN = 0;
+    REQUEST = 1;
+    BATCH = 2;
+  }
+  optional int32 tensor_pattern_index = 1;
+  optional .tensorflow.profiler.TensorEventDetail.TensorEventOwner owner = 2;
+  optional uint64 linearize_delinearize_time_ps = 3;
+}
+message RequestDetail {
+  reserved 3;
+  reserved 4;
+  reserved 9;
+  optional int64 request_id = 10 [default = -1];
+  optional int32 model_id_index = 8 [default = -1];
+  optional uint64 start_time_ps = 1 [default = 0];
+  optional uint64 end_time_ps = 2 [default = 0];
+  optional uint64 device_time_ps = 7 [default = 0];
+  optional uint64 write_to_device_time_ps = 5 [default = 0];
+  optional uint64 read_from_device_time_ps = 6 [default = 0];
+  optional uint64 batching_request_delay_ps = 12 [default = 0];
+  repeated int64 related_batch_ids = 11;
+  optional int32 batching_request_size = 13;
+  optional uint64 host_preprocessing_ps = 14;
+  optional uint64 host_batch_formation_ps = 15;
+  optional uint64 host_runtime_ps = 16;
+  optional uint64 host_postprocessing_ps = 17;
+  repeated .tensorflow.profiler.TensorEventDetail tensor_event_details = 18;
+  optional int32 host_id = 19;
+  optional double percentile = 20;
+  optional double idle_time_ps = 21;
+}
+message BatchDetail {
+  optional int64 batch_id = 1 [default = -1];
+  optional uint64 start_time_ps = 2 [default = 0];
+  optional uint64 end_time_ps = 3 [default = 0];
+  optional uint64 batch_delay_ps = 5 [default = 0];
+  repeated int64 related_request_ids = 4;
+  optional int32 padding_amount = 6;
+  optional int32 batch_size_after_padding = 7;
+  optional int32 model_id_index = 8 [default = -1];
+  optional .tensorflow.profiler.TensorEventDetail tensor_event_detail = 9;
+  optional int32 host_id = 10;
+  optional double percentile = 11;
+  optional uint64 device_time_ps = 12 [default = 0];
+  repeated uint64 program_ids = 13;
+  optional double batching_efficiency = 14;
+}
+message PerHostInferenceStats {
+  reserved 1;
+  reserved 2;
+  reserved 4;
+  reserved 6;
+  repeated .tensorflow.profiler.RequestDetail request_details = 3;
+  repeated .tensorflow.profiler.BatchDetail batch_details = 5;
+}
+message TensorTransferAggregatedResult {
+  message TensorPatternResult {
+    message PercentileTime {
+      optional double percentile = 1;
+      optional uint64 time_ps = 2;
+    }
+    optional int32 tensor_pattern_index = 1;
+    optional uint64 count = 2;
+    repeated .tensorflow.profiler.TensorTransferAggregatedResult.TensorPatternResult.PercentileTime linearize_delinearize_percentile_time = 3;
+  }
+  repeated .tensorflow.profiler.TensorTransferAggregatedResult.TensorPatternResult tensor_pattern_results = 1;
+}
+message PerBatchSizeAggregatedResult {
+  optional int32 batch_size = 1;
+  optional .tensorflow.profiler.RequestDetail aggregated_request_result = 2;
+  optional .tensorflow.profiler.BatchDetail aggregated_batch_result = 3;
+  optional double request_throughput = 4;
+  optional double batch_throughput = 5;
+}
+message PerModelInferenceStats {
+  repeated .tensorflow.profiler.RequestDetail request_details = 1;
+  optional .tensorflow.profiler.RequestDetail aggregated_request_detail = 8;
+  optional double request_throughput = 2;
+  optional double request_average_latency_us = 3;
+  repeated .tensorflow.profiler.BatchDetail batch_details = 4;
+  optional .tensorflow.profiler.BatchDetail aggregated_batch_detail = 9;
+  optional double batch_throughput = 5;
+  optional double batch_average_latency_us = 6;
+  optional .tensorflow.profiler.TensorTransferAggregatedResult tensor_transfer_aggregated_result = 7;
+  repeated .tensorflow.profiler.PerBatchSizeAggregatedResult per_batch_size_aggregated_result = 10;
+}
+message BatchingParameters {
+  optional int64 num_batch_threads = 1;
+  optional int64 batch_timeout_micros = 2;
+  optional int64 max_batch_size = 3;
+  optional int64 max_enqueued_batches = 4;
+  optional string allowed_batch_sizes = 5;
+}
+message ModelIdDatabase {
+  repeated string ids = 1;
+  map<string, int32> id_to_index = 2;
+  map<string, .tensorflow.profiler.BatchingParameters> id_to_batching_params = 3;
+}
+message TensorPatternDatabase {
+  repeated string tensor_pattern = 1;
+}
+message InferenceStats {
+  reserved 1;
+  reserved 2;
+  map<int32, .tensorflow.profiler.PerHostInferenceStats> inference_stats_per_host = 3;
+  map<int32, .tensorflow.profiler.PerModelInferenceStats> inference_stats_per_model = 5;
+  optional .tensorflow.profiler.ModelIdDatabase model_id_db = 4;
+  optional .tensorflow.profiler.TensorPatternDatabase tensor_pattern_db = 6;
+  optional .tensorflow.profiler.SampledInferenceStatsProto sampled_inference_stats = 7;
+}
+message SampledPerModelInferenceStatsProto {
+  repeated .tensorflow.profiler.RequestDetail sampled_requests = 1;
+  repeated .tensorflow.profiler.BatchDetail sampled_batches = 2;
+}
+message SampledInferenceStatsProto {
+  map<int32, .tensorflow.profiler.SampledPerModelInferenceStatsProto> sampled_inference_stats_per_model = 1;
+}

@@ -1,0 +1,17 @@
+syntax = "proto2";
+package security_loas_l2;
+message MachineCertDigest {
+  enum Algorithm {
+    SHA256 = 0;
+  }
+  optional bytes value = 1;
+  optional .security_loas_l2.MachineCertDigest.Algorithm algorithm = 2;
+}
+message ZammSMTLoas3CertDigest {
+  enum Algorithm {
+    NO_ALGORITHM = 0;
+    SHA256 = 100;
+  }
+  optional bytes value = 1;
+  optional .security_loas_l2.ZammSMTLoas3CertDigest.Algorithm algorithm = 2;
+}

@@ -1,0 +1,17 @@
+syntax = "proto3";
+package asic_fw.black_box;
+message DataField {
+  string name = 1;
+  int32 num_bits = 2;
+}
+message DataLayout {
+  repeated .asic_fw.black_box.DataField fields = 1;
+}
+message EventDefinition {
+  oneof data_format {
+    string format = 2;
+    .asic_fw.black_box.DataLayout data_layout = 4;
+  }
+  string name = 1;
+  string description = 3;
+}

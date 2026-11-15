@@ -1,0 +1,10 @@
+syntax = "proto3";
+package tensorflow;
+message MemmappedFileSystemDirectoryElement {
+  uint64 offset = 1;
+  string name = 2;
+  uint64 length = 3;
+}
+message MemmappedFileSystemDirectory {
+  repeated .tensorflow.MemmappedFileSystemDirectoryElement element = 1;
+}

@@ -1,10 +1,32 @@
 //! PJRT TPU Topology (`PJRT_TpuTopology_Extension`) entrypoints.
 
 use super::args::*;
-use super::{dispatch_typed_extension_args, extension_state};
+use super::dispatch_typed_extension_args;
 use crate::pjrt_types::{PJRT_Error, PJRT_TopologyDescription};
 use libtpu_core::config::global_init_config;
 use libtpu_core::hal::TopologySpec;
+use std::sync::atomic::Ordering;
+
+/// Resolves a raw `topology` pointer into an optional [`PJRT_TopologyDescription`] reference
+/// when `ptr` is a valid heap pointer (`> 0x10000`).
+///
+/// # Arguments
+///
+/// * `ptr` - Raw `topology` pointer field from a topology extension args struct.
+///
+/// # Safety
+///
+/// If `ptr as usize > 0x10000`, `ptr` must point to a valid [`PJRT_TopologyDescription`].
+unsafe fn resolve_topology_handle<'a>(
+    ptr: *const std::ffi::c_void,
+) -> Option<&'a PJRT_TopologyDescription> {
+    if (ptr as usize) > 0x10000 {
+        // SAFETY: `ptr` is a non-null heap pointer to `PJRT_TopologyDescription`.
+        unsafe { ptr.cast::<PJRT_TopologyDescription>().as_ref() }
+    } else {
+        None
+    }
+}
 
 /// Resolves a raw `topology` pointer from a `PJRT_TpuTopology_*` argument structure into an
 /// optional [`TopologySpec`] reference when `ptr` is a valid heap pointer (`> 0x10000`).
@@ -17,16 +39,8 @@ use libtpu_core::hal::TopologySpec;
 ///
 /// If `ptr as usize > 0x10000`, `ptr` must point to a valid [`PJRT_TopologyDescription`].
 unsafe fn resolve_topology_spec<'a>(ptr: *const std::ffi::c_void) -> Option<&'a TopologySpec> {
-    if (ptr as usize) > 0x10000 {
-        // SAFETY: `ptr` is a non-null heap pointer to `PJRT_TopologyDescription`.
-        unsafe {
-            ptr.cast::<PJRT_TopologyDescription>()
-                .as_ref()
-                .map(|t| &t.inner.spec)
-        }
-    } else {
-        None
-    }
+    // SAFETY: Caller upholds `ptr` precondition.
+    unsafe { resolve_topology_handle(ptr).map(|t| &t.inner.spec) }
 }
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_Subslice`] and [`PJRT_TpuTopology_ReplaceHostBounds`].
@@ -39,8 +53,10 @@ unsafe fn resolve_topology_spec<'a>(ptr: *const std::ffi::c_void) -> Option<&'a 
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
 unsafe fn handle_tpu_topology_subslice(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let mut st = extension_state().lock();
-    st.is_subslice_topology = true;
+    // SAFETY: `args.topology` is null/sentinel or a valid `PJRT_TopologyDescription*`.
+    if let Some(topo) = unsafe { resolve_topology_handle(args.topology) } {
+        topo.is_subslice.store(true, Ordering::Release);
+    }
     args.out_value = 1;
 }
 
@@ -76,7 +92,9 @@ pub unsafe extern "C" fn PJRT_TpuTopology_Subslice(
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_IsSubsliceTopology_Args`].
 unsafe fn handle_tpu_topology_is_subslice(args: &mut PJRT_TpuTopology_IsSubsliceTopology_Args) {
-    let is_sub = extension_state().lock().is_subslice_topology;
+    // SAFETY: `args.topology` is null/sentinel or a valid `PJRT_TopologyDescription*`.
+    let is_sub = unsafe { resolve_topology_handle(args.topology) }
+        .is_some_and(|t| t.is_subslice.load(Ordering::Acquire));
     args.is_subslice = usize::from(is_sub);
 }
 
@@ -243,11 +261,14 @@ unsafe fn handle_tpu_topology_has_limited_ici(
     args: &mut PJRT_TpuTopology_HasLimitedIciConnectivity_Args,
 ) {
     let tpu_gen = global_init_config().generation;
+    // SAFETY: `args.topology` is null/sentinel or a valid `PJRT_TopologyDescription*`.
+    let is_sub = unsafe { resolve_topology_handle(args.topology) }
+        .is_some_and(|t| t.is_subslice.load(Ordering::Acquire));
     args.has_limited_ici = usize::from(
         matches!(
             tpu_gen,
             libtpu_core::types::TpuGeneration::V5e | libtpu_core::types::TpuGeneration::V6e
-        ) && extension_state().lock().is_subslice_topology,
+        ) && is_sub,
     );
 }
 
@@ -1415,9 +1436,10 @@ pub unsafe extern "C" fn PJRT_TpuTopology_GetDefaultPlatformConfig(
 unsafe fn handle_tpu_topology_compute_subslice_for_devices(
     args: &mut PJRT_TpuTopology_ComputeSubsliceForDevices_Args,
 ) {
-    let mut st = extension_state().lock();
-    st.is_subslice_topology = true;
-    drop(st);
+    // SAFETY: `args.topology` is null/sentinel or a valid `PJRT_TopologyDescription*`.
+    if let Some(topo) = unsafe { resolve_topology_handle(args.topology) } {
+        topo.is_subslice.store(true, Ordering::Release);
+    }
     if !args.subslice_origin_out.is_null() {
         let count = args.num_subslice_dims.min(4);
         for idx in 0..count {

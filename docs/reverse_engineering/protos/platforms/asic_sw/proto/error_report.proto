@@ -1,0 +1,28 @@
+syntax = "proto2";
+package asic_sw.proto;
+import "google/api/inclusion.proto";
+import "platforms/asic_sw/proto/chip_info.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+import "platforms/asic_sw/proto/errors.proto";
+message Error {
+  oneof type {
+    .asic_sw.proto.MemoryEccError ecc_correctable = 1;
+    .asic_sw.proto.MemoryEccError ecc_uncorrectable = 2;
+    .asic_sw.proto.GeneralError user = 3;
+    .asic_sw.proto.GeneralError internal = 4;
+    .asic_sw.proto.GeneralError firmware = 5;
+    .asic_sw.proto.GeneralError pcie = 6;
+    .asic_sw.proto.GeneralError thermal = 7;
+    .asic_sw.proto.GeneralError ici_link_fatal = 8;
+    .asic_sw.proto.GeneralError system_software = 9;
+    .asic_sw.proto.GeneralError system_hardware = 10;
+    .asic_sw.proto.GeneralError network = 11;
+    .asic_sw.proto.GeneralError power = 12;
+  }
+  optional string firmware_version = 13;
+}
+message ErrorReport {
+  optional .asic_sw.proto.ChipLocation chip_location = 1;
+  optional .asic_sw.proto.ChipInfo chip_info = 3;
+  repeated .asic_sw.proto.Error errors = 2;
+}

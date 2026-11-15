@@ -1,0 +1,10 @@
+syntax = "proto3";
+package streamz;
+message CloudRegionRestriction {
+  string region = 1;
+}
+message GeographicRestriction {
+  oneof restriction {
+    .streamz.CloudRegionRestriction cloud_region = 1;
+  }
+}

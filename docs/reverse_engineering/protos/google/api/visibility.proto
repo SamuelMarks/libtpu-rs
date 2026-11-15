@@ -1,0 +1,35 @@
+syntax = "proto2";
+package google.api;
+import "n2a/p4r2d3/proto/descriptor.proto";
+message Visibility {
+  repeated .google.api.VisibilityRule rules = 1;
+}
+message VisibilityRule {
+  reserved 3;
+  enum FailureMode {
+    FAILURE_MODE_UNSPECIFIED = 0;
+    FALLBACK_PUBLIC = 1;
+    FAIL_CLOSED = 2;
+  }
+  optional string selector = 1;
+  optional string restriction = 2;
+  optional .google.api.VisibilityRule.FailureMode failure_mode = 4;
+}
+extend .proto2.EnumOptions {
+  optional .google.api.VisibilityRule enum_visibility = 72295727;
+}
+extend .proto2.EnumValueOptions {
+  optional .google.api.VisibilityRule value_visibility = 72295727;
+}
+extend .proto2.FieldOptions {
+  optional .google.api.VisibilityRule field_visibility = 72295727;
+}
+extend .proto2.MessageOptions {
+  optional .google.api.VisibilityRule message_visibility = 72295727;
+}
+extend .proto2.MethodOptions {
+  optional .google.api.VisibilityRule method_visibility = 72295727;
+}
+extend .proto2.ServiceOptions {
+  optional .google.api.VisibilityRule api_visibility = 72295727;
+}

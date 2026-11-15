@@ -1,0 +1,46 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+import "platforms/xla/megascale/runtime/common/debug_logging.proto";
+message RuntimeStateSummary {
+  reserved 1;
+  reserved 2;
+  reserved 3;
+  .xla.megascale.runtime.RapidEyeInfo rapid_eye_info = 4;
+}
+message MegaScaleRuntimeError {
+  enum ErrorType {
+    NO_ERROR = 0;
+    HANG_DETECTED = 1;
+    UNRECOVERABLE_ERROR = 2;
+    CANCELLED = 3;
+  }
+  enum HangErrorType {
+    HANG_ERROR_UNSPECIFIED = 0;
+    TIMEOUT_ERROR = 1;
+    NO_PROGRESS_ERROR = 2;
+  }
+  enum UnrecoverableErrorType {
+    UNRECOVERABLE_ERROR_UNCLASSIFIED = 0;
+    HOST_TO_DEVICE_ERROR = 1;
+    DEVICE_TO_HOST_ERROR = 2;
+  }
+  .xla.megascale.runtime.MegaScaleRuntimeError.ErrorType error_type = 1;
+  .xla.megascale.runtime.MegaScaleRuntimeError.UnrecoverableErrorType unrecoverable_error_type = 12;
+  .xla.megascale.runtime.MegaScaleRuntimeError.HangErrorType hang_error_type = 14;
+  string error_message = 2;
+  uint64 estimated_start_time_ms = 3;
+  int32 triggering_launch_id = 5;
+  string hostname = 6;
+  string user = 7;
+  string job_name = 8;
+  int32 task_id = 9;
+  int64 task_uid = 10;
+  .xla.megascale.runtime.RuntimeStateSummary runtime_state = 4;
+  fixed64 event_id = 11;
+  fixed64 runtime_error_id = 13;
+}
+message FatalErrorInfo {
+  string fatal_type = 1;
+  string coredump_location = 2;
+  int64 timestamp_nanos = 3;
+}

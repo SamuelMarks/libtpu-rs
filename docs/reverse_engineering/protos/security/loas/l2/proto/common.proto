@@ -1,0 +1,148 @@
+syntax = "proto2";
+package security_loas_l2;
+import "berg/common/app_class.proto";
+import "security/f47fa1c1/proto/core/f47fa1c1_core.proto";
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+enum HandshakeCipher {
+  NO_CIPHER = 0;
+  TEST_CIPHER = 1;
+  CURVE25519_SHA512 = 100;
+  CURVE25519_SHA512_EPHEMERAL = 101;
+  CECPQ2_SHA512 = 102;
+  CECPQ2_SHA512_EPHEMERAL = 103;
+  CURVE25519_SHA512_3DH = 104;
+  CECPQ2_SHA512_3DH = 105;
+  CECPQ2_SHA512_RESUMPTION = 106;
+  CECPQ2_SHA512_RESUMPTION_EPHEMERAL = 107;
+  CECPQ2_SHA512_RESUMPTION_3DH = 108;
+  MLKEM1024_SHA512 = 111;
+  MLKEM1024_SHA512_3DH = 112;
+  MLKEM1024X25519_MLDSA87_SHA512 = 115;
+}
+enum CryptoType {
+  CRYPTO_TYPE_UNDEFINED = 0;
+  CRYPTO_TYPE_MLDSA87 = 1;
+}
+enum PostQuantumCipherAlgorithm {
+  NO_POST_QUANTUM_CIPHER_ALGORITHM = 0;
+  MLKEM1024_POST_QUANTUM_CIPHER_ALGORITHM = 102;
+  HYBRID_MLKEM1024_X25519_POST_QUANTUM_CIPHER_ALGORITHM = 104;
+}
+enum HashType {
+  NO_HASH = 0;
+  TEST_HASH = 1;
+  SHA512 = 100;
+  SHA256 = 101;
+}
+enum CurveType {
+  NO_CURVE = 0;
+  TEST_CURVE = 1;
+  INVALID = 2;
+  CURVE25519 = 100;
+  MLDSA87 = 101;
+  CURVE25519_MLDSA87 = 102;
+}
+enum NextProtocolEnum {
+  NEXT_PROTOCOL_NOT_SET = 0;
+  FAKE_CRYPTO = 1;
+  TEST_PROTOCOL = 2;
+  BETTER_TEST_PROTOCOL = 3;
+  BEST_TEST_PROTOCOL = 4;
+  GOOGLE_SECUREWRAPPER_TEST_PROTOCOL = 5;
+  GOOGLE_SECUREWRAPPER_BETTER_TEST_PROTOCOL = 6;
+  GOOGLE_SECUREWRAPPER_OPPORTUNISTIC_TEST_PROTOCOL = 7;
+  GOOGLE_SECUREWRAPPER_PSP_TEST_PROTOCOL = 8;
+  GOOGLE_SECUREWRAPPER_PSP_FIPS_TEST_PROTOCOL = 9;
+  GOOGLE_SECUREWRAPPER_INLINE_PSP_TEST_PROTOCOL = 10;
+  GOOGLE_SECUREWRAPPER_INLINE_PSP_FIPS_TEST_PROTOCOL = 11;
+  GOOGLE_SECUREWRAPPER_INVALID = 12;
+  GOOGLE_SECUREWRAPPER_AES128GCM = 13;
+  GOOGLE_SECUREWRAPPER_PSP1_AES128GCM = 14;
+  GOOGLE_SECUREWRAPPER_PSP1_FIPS_AES128GCM = 15;
+  GOOGLE_SECUREWRAPPER_INLINE_PSP1_AES128GCM = 16;
+  GOOGLE_SECUREWRAPPER_INLINE_PSP1_FIPS_AES128GCM = 17;
+  GOOGLE_SECUREWRAPPER_AES128CTRVMAC = 18;
+  GOOGLE_SECUREWRAPPER_PSP1_AES128CTRVMAC = 19;
+  GOOGLE_SECUREWRAPPER_PSP1_FIPS_AES128CTRVMAC = 20;
+  GOOGLE_SECUREWRAPPER_INLINE_PSP1_AES128CTRVMAC = 21;
+  GOOGLE_SECUREWRAPPER_INLINE_PSP1_FIPS_AES128CTRVMAC = 22;
+  LOAS_UDS_PASSTHROUGH = 23;
+  GOOGLE_SECUREWRAPPER_AES128GCM_MULTIHOP = 24;
+  GOOGLE_SECUREWRAPPER_AES128GCM_GMAC_INSPECTOR = 25;
+}
+message HandshakeCipherList {
+  repeated .security_loas_l2.HandshakeCipher cipher = 1;
+}
+message Identity {
+  extensions 100 to max;
+  optional bool resumed = 1;
+}
+message AuthenticatedOptions {
+  extensions 100 to max;
+}
+message RpcWireProtocol {
+  optional int32 minor_version = 1 [default = 0];
+  extend .security_loas_l2.AuthenticatedOptions {
+    optional .security_loas_l2.RpcWireProtocol rpc_wire_protocol = 1004;
+  }
+}
+message DirectPathVmNetworkEndpoints {
+  message NetworkEndpoint {
+    optional uint32 vnid = 1;
+    optional int64 network_project_number = 2;
+    repeated string vm_ipv6 = 3;
+    optional string vm_ip = 4;
+    repeated string vm_ip_alias = 5;
+  }
+  repeated .security_loas_l2.DirectPathVmNetworkEndpoints.NetworkEndpoint network_endpoints = 1;
+}
+message Bamm2MessageHash {
+  optional bytes hash = 1;
+  optional string debug_message_name = 2;
+  optional int64 debug_message_size = 3;
+  extend .security_loas_l2.AuthenticatedOptions {
+    optional .security_loas_l2.Bamm2MessageHash bamm2_message_hash = 1007;
+  }
+}
+message SealFrameSize {
+  optional uint32 max_frame_size = 1;
+  extend .security_loas_l2.AuthenticatedOptions {
+    optional .security_loas_l2.SealFrameSize seal_frame_size = 1010;
+  }
+}
+message InstanceIdentityRestrictionf47fa1c1 {
+  optional .f47fa1c1.f47fa1c1 f47fa1c1 = 1;
+  extend .security_loas_l2.AuthenticatedOptions {
+    optional .security_loas_l2.InstanceIdentityRestrictionf47fa1c1 instance_identity_f47fa1c1 = 1011;
+  }
+}
+message UnauthenticatedBorgRuntimeAttributes {
+  optional int32 priority = 1;
+  optional .berg.AppClass.Type app_class = 2;
+  extend .security_loas_l2.AuthenticatedOptions {
+    optional .security_loas_l2.UnauthenticatedBorgRuntimeAttributes unauthenticated_borg_runtime_attributes = 1012;
+  }
+}
+message BuildCl {
+  optional int64 cl = 1;
+  extend .security_loas_l2.AuthenticatedOptions {
+    optional .security_loas_l2.BuildCl build_cl = 1015;
+  }
+}
+message RpcSwitchHandshakeHash {
+  optional bytes digest = 1;
+  optional .security_loas_l2.HashType hash_type = 2;
+  extend .security_loas_l2.AuthenticatedOptions {
+    optional .security_loas_l2.RpcSwitchHandshakeHash rpc_switch_handshake_hash = 1018;
+  }
+}
+message UnauthenticatedBorgCellInfo {
+  optional string cell = 1;
+  optional string virtual_cell = 2;
+  extend .security_loas_l2.AuthenticatedOptions {
+    optional .security_loas_l2.UnauthenticatedBorgCellInfo unauthenticated_borg_cell_info = 1019;
+  }
+}
+extend .security_loas_l2.AuthenticatedOptions {
+  optional .security_loas_l2.DirectPathVmNetworkEndpoints direct_path_vm_network_endpoints = 1006;
+}

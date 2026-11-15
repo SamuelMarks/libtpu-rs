@@ -1,0 +1,60 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+message MegaScaleInfoProto {
+  reserved 5;
+  enum TransferType {
+    UNKNOWN_TRANSFER_TYPE = 0;
+    ALL_TO_ALL = 1;
+    ONE_TO_ONE = 3;
+    REDUCE_SCATTER = 4;
+    ALL_GATHER = 5;
+    ALL_REDUCE = 6;
+    BROADCAST = 7;
+    RAGGED_ALL_TO_ALL = 8;
+  }
+  enum OperationType {
+    UNKNOWN_OPERATION = 0;
+    SUM = 1;
+    MAX = 2;
+    MIN = 3;
+    PRODUCT = 4;
+  }
+  message EndpointGroup {
+    repeated int64 endpoints = 1;
+  }
+  message OneToAllGroup {
+    optional int64 source = 1;
+    repeated int64 destinations = 2;
+  }
+  message Metadata {
+    message CompressionParams {
+      optional bool compress = 1;
+      optional uint32 exponent_bits = 2;
+      optional uint32 mantissa_bits = 3;
+      optional uint64 quantization_block_size = 4;
+    }
+    message RaggedParameters {
+      enum DataType {
+        RAGGED_DATA_TYPE_UNSPECIFIED = 0;
+        DATA = 1;
+        OFFSET = 2;
+        SIZE = 3;
+        INPUT_OFFSET = 4;
+        INPUT_SIZE = 5;
+        OUTPUT_OFFSET = 6;
+        OUTPUT_SIZE = 7;
+      }
+      .xla.megascale.runtime.MegaScaleInfoProto.Metadata.RaggedParameters.DataType data_type = 1;
+      optional uint64 chunk_size = 2;
+    }
+    .xla.megascale.runtime.MegaScaleInfoProto.Metadata.CompressionParams compression_params = 1;
+    optional .xla.megascale.runtime.MegaScaleInfoProto.Metadata.RaggedParameters ragged_parameters = 2;
+  }
+  .xla.megascale.runtime.MegaScaleInfoProto.TransferType transfer_type = 1;
+  repeated .xla.megascale.runtime.MegaScaleInfoProto.EndpointGroup endpoint_groups = 2;
+  repeated .xla.megascale.runtime.MegaScaleInfoProto.OneToAllGroup one_to_all_groups = 3;
+  .xla.megascale.runtime.MegaScaleInfoProto.OperationType reduce_operation = 4;
+  int64 broadcast_source = 6;
+  .xla.megascale.runtime.MegaScaleInfoProto.Metadata metadata = 7;
+  bool is_custom_call = 8;
+}

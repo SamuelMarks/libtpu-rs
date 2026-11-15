@@ -1,0 +1,31 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/attr_value.proto";
+import "third_party/tensorflow/core/framework/node_def.proto";
+import "third_party/tensorflow/core/framework/op_def.proto";
+message FunctionDefLibrary {
+  repeated .tensorflow.FunctionDef function = 1;
+  repeated .tensorflow.GradientDef gradient = 2;
+  repeated .tensorflow.RegisteredGradient registered_gradients = 3;
+}
+message FunctionDef {
+  reserved 2;
+  message ArgAttrs {
+    map<string, .tensorflow.AttrValue> attr = 1;
+  }
+  .tensorflow.OpDef signature = 1;
+  map<string, .tensorflow.AttrValue> attr = 5;
+  map<uint32, .tensorflow.FunctionDef.ArgAttrs> arg_attr = 7;
+  map<uint32, uint32> resource_arg_unique_id = 8;
+  repeated .tensorflow.NodeDef node_def = 3;
+  map<string, string> ret = 4;
+  map<string, string> control_ret = 6;
+}
+message GradientDef {
+  string function_name = 1;
+  string gradient_func = 2;
+}
+message RegisteredGradient {
+  string gradient_func = 1;
+  string registered_op_type = 2;
+}

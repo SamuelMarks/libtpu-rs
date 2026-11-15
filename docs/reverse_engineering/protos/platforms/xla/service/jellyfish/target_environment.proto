@@ -1,0 +1,19 @@
+syntax = "proto3";
+package xla.jellyfish;
+import "third_party/protobuf/cpp_features.proto";
+message TargetEnvironment {
+  reserved 7;
+  reserved 12;
+  reserved 13;
+  reserved "xla_tpu_reserve_recv_ready_sync_flags";
+  int64 xla_jf_max_outfeed_size_kib = 1;
+  bool xla_enable_local_dma_trace = 2;
+  string xla_jf_lsra_pregs = 3;
+  string xla_jf_lsra_sregs = 4;
+  string xla_jf_lsra_vmregs = 5;
+  string xla_jf_lsra_vregs = 6;
+  bool xla_tpu_enforce_limited_ici_routing = 8;
+  bool xla_pf_enable_nd_allreduce = 9;
+  uint64 xla_tpu_override_vmem_size_kib = 10;
+  bool xla_tpu_force_non_queue_host_command = 11;
+}

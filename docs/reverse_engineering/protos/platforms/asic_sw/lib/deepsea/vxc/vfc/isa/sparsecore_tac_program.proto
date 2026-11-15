@@ -1,0 +1,6 @@
+syntax = "proto2";
+package asic_sw.deepsea.vxc.vfc.isa;
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_tac_bundle.proto";
+message SparseCoreTacProgram {
+  repeated .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTacBundle bundles = 1;
+}

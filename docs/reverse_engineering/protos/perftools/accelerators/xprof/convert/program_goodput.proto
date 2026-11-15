@@ -1,0 +1,6 @@
+syntax = "proto3";
+package xprof;
+message ProgramGoodput {
+  uint64 predicted_time_ps = 1;
+  uint64 actual_time_ps = 2;
+}

@@ -1,0 +1,7 @@
+syntax = "proto3";
+package tensorflow.proto_splitter;
+message VersionDef {
+  int32 splitter_version = 1;
+  int32 join_version = 2;
+  repeated int32 bad_consumers = 3;
+}

@@ -11,14 +11,18 @@ use super::*;
 /// # Safety
 ///
 /// `args` must be a valid [`crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args`].
-unsafe fn handle_client_buffer_from_host_buffer(
+pub(super) unsafe fn handle_client_buffer_from_host_buffer(
     args: &mut crate::pjrt_types::PJRT_Client_BufferFromHostBuffer_Args,
 ) -> Result<(), LibTpuError> {
     if !any_null(&[args.client as usize, args.data as usize]) {
         let elem_type = ElementType::from_raw(args.element_type)?;
+        let has_target =
+            !args.device.is_null() || (args.struct_size >= 120 && !args.memory.is_null());
         let dims_slice = if !args.dims.is_null() && args.num_dims > 0 {
             // SAFETY: `args.dims` points to `args.num_dims` `i64` dimensions.
             unsafe { std::slice::from_raw_parts(args.dims, args.num_dims) }
+        } else if has_target {
+            &[][..]
         } else {
             &[4_i64][..]
         };
@@ -28,25 +32,45 @@ unsafe fn handle_client_buffer_from_host_buffer(
         let host_bytes = unsafe { std::slice::from_raw_parts(args.data.cast::<u8>(), byte_len) };
         // SAFETY: `args.client` is valid.
         let client_ref = unsafe { &*args.client };
-        let dev_id = if !args.device.is_null() {
+        let (dev_id, dev_ptr, mem_ptr) = if !args.device.is_null() {
             // SAFETY: `args.device` is a valid `PJRT_Device*`.
-            unsafe { (*args.device).inner.description.spec.device_id }
+            let d_id = unsafe { (*args.device).inner.description.spec.device_id };
+            // SAFETY: `args.device` is valid.
+            let m_ptr = unsafe { (*args.device).default_memory_ptr };
+            (d_id, args.device, m_ptr)
+        } else if args.struct_size >= 96 && !args.memory.is_null() {
+            // SAFETY: `args.memory` is a valid `PJRT_Memory*`.
+            let d_ptr = unsafe {
+                (*args.memory)
+                    .addressable_by_device_ptrs
+                    .first()
+                    .copied()
+                    .unwrap_or(ptr::null_mut())
+            };
+            let d_id = if d_ptr.is_null() {
+                DeviceId(0)
+            } else {
+                // SAFETY: `d_ptr` was checked to be non-null and is a valid `PJRT_Device*`.
+                unsafe { (*d_ptr).inner.description.spec.device_id }
+            };
+            (d_id, d_ptr, args.memory)
         } else {
-            DeviceId(0)
+            let d_ptr = client_ref
+                .device_ptrs
+                .first()
+                .copied()
+                .unwrap_or(ptr::null_mut());
+            let m_ptr = client_ref
+                .memory_ptrs
+                .first()
+                .copied()
+                .unwrap_or(ptr::null_mut());
+            (DeviceId(0), d_ptr, m_ptr)
         };
         let core_buf = client_ref
             .inner
             .buffer_from_host(dev_id, shape, host_bytes)?;
-        let dev_ptr = client_ref
-            .device_ptrs
-            .get(dev_id.0 as usize)
-            .copied()
-            .unwrap_or(ptr::null_mut());
-        let mem_ptr = client_ref
-            .memory_ptrs
-            .first()
-            .copied()
-            .unwrap_or(ptr::null_mut());
+        args.done_with_host_buffer = ptr::null_mut();
         args.out_buffer = Box::into_raw(Box::new(PJRT_Buffer::new(core_buf, dev_ptr, mem_ptr)));
     }
     Ok(())

@@ -1,9 +1,82 @@
 """Type stubs for the `libtpu` Python package."""
 
 import enum
-from collections.abc import Sequence
+import types
+from collections.abc import Mapping, Sequence
+from typing import Protocol, TypeAlias, TypedDict, overload, runtime_checkable
+
+import numpy as np
+import numpy.typing as npt
 
 __version__: str
+
+_NumericScalar: TypeAlias = (
+    np.bool_
+    | np.int8
+    | np.int16
+    | np.int32
+    | np.int64
+    | np.uint8
+    | np.uint16
+    | np.uint32
+    | np.uint64
+    | np.float16
+    | np.float32
+    | np.float64
+    | np.complex64
+    | np.complex128
+)
+TpuArray: TypeAlias = npt.NDArray[_NumericScalar]
+
+class ArrayInterfaceDict(TypedDict):
+    """NumPy `__array_interface__` v3 descriptor dictionary."""
+
+    shape: tuple[int, ...]
+    typestr: str
+    data: tuple[int, bool]
+    version: int
+
+class ExecutableCostAnalysis(TypedDict, total=False):
+    """Cost analysis dictionary returned by `TpuExecutable.cost_analysis()`."""
+
+    flops: float
+    transcendentals: float
+    bytes_accessed: float
+    optimal_seconds: float
+
+@runtime_checkable
+class SupportsDLPack(Protocol):
+    """Protocol for DLPack v1.0 tensor producers implementing `__dlpack__`."""
+
+    def __dlpack__(
+        self,
+        stream: int | None = None,
+        *,
+        max_version: tuple[int, int] | None = None,
+        dl_device: tuple[int, int] | None = None,
+        copy: bool | None = None,
+    ) -> object:
+        """Exports a `"dltensor"` `PyCapsule` wrapping a `DLManagedTensor`.
+
+        Args:
+            stream: Optional stream identifier.
+            max_version: Optional maximum `(major, minor)` DLPack version.
+            dl_device: Optional target `(device_type, device_id)` tuple.
+            copy: Optional copy control flag.
+        """
+        ...
+
+    def __dlpack_device__(self) -> tuple[int, int]:
+        """Returns the `(device_type, device_id)` DLPack device tuple."""
+        ...
+
+class SupportsArrayInterface(Protocol):
+    """Protocol for host array producers exposing `__array_interface__`."""
+
+    @property
+    def __array_interface__(self) -> Mapping[str, object]:
+        """Returns the NumPy `__array_interface__` descriptor mapping."""
+        ...
 
 class TpuError(RuntimeError):
     """Exception raised when an underlying `libtpu` C ABI operation returns a non-OK status.
@@ -97,11 +170,26 @@ def configure_library_path() -> str:
     """Sets `TPU_LIBRARY_PATH` to `get_library_path()` if not already set in `os.environ`."""
     ...
 
-def set_init_args(args: str | Sequence[str]) -> None:
-    """Configures `LIBTPU_INIT_ARGS` and initializes the native `TfTpu_Initialize` runtime.
+@overload
+def set_init_args() -> None:
+    """Clears `LIBTPU_INIT_ARGS` when called with no arguments."""
+    ...
+
+@overload
+def set_init_args(args: Sequence[str], /) -> None:
+    """Configures `LIBTPU_INIT_ARGS` from a sequence of CLI flag strings.
 
     Args:
-        args: CLI flag string or sequence of flags (e.g., `["--tpu_generation=v6e"]`).
+        args: Sequence of CLI flag strings (e.g., `["--tpu_generation=v6e"]`).
+    """
+    ...
+
+@overload
+def set_init_args(*args: str) -> None:
+    """Configures `LIBTPU_INIT_ARGS` from one or more CLI flag strings.
+
+    Args:
+        *args: CLI flag strings (e.g., `"--tpu_generation=v6e"`).
     """
     ...
 
@@ -148,24 +236,59 @@ class TpuBuffer:
         """Transfers the `S32` device buffer contents back to host memory as a list of ints."""
         ...
 
+    def __buffer__(self, flags: int) -> memoryview:
+        """Implements the PEP 688 / PEP 3118 Python buffer protocol over HBM payload bytes.
+
+        Args:
+            flags: PEP 3118 `PyBUF_*` request bitmask.
+        """
+        ...
+
     def to_memoryview(self) -> memoryview:
-        """Returns a read-only `memoryview` over the buffer bytes read from HBM."""
+        """Returns a read-only PEP 3118 `memoryview` over the buffer bytes read from HBM."""
+        ...
+
+    def to_numpy(self) -> TpuArray:
+        """Materializes this `TpuBuffer` as a `numpy.ndarray` (including `ml_dtypes` types)."""
+        ...
+
+    def __array__(
+        self,
+        dtype: npt.DTypeLike | None = None,
+        copy: bool | None = None,
+    ) -> TpuArray:
+        """NumPy array protocol entrypoint supporting `ml_dtypes` (`bfloat16`, `float8`, `int4`).
+
+        Args:
+            dtype: Optional target `numpy.dtype`.
+            copy: Optional NumPy 2.0 copy flag.
+        """
         ...
 
     @property
-    def __array_interface__(self) -> dict[str, object]:
+    def __array_interface__(self) -> ArrayInterfaceDict:
         """Returns the NumPy `__array_interface__` dictionary for this buffer."""
         ...
 
     def __dlpack_device__(self) -> tuple[int, int]:
-        """Returns the DLPack `(device_type, device_id)` tuple (`kDLOneAPI = 14`, `0`)."""
+        """Returns the DLPack `(device_type, device_id)` tuple (`kDLOneAPI = 14`, `device_id`)."""
         ...
 
-    def __dlpack__(self, stream: int | None = None) -> object:
-        """Returns a CPython `PyCapsule` (`"dltensor"`) wrapping the device buffer pointer.
+    def __dlpack__(
+        self,
+        stream: int | None = None,
+        *,
+        max_version: tuple[int, int] | None = None,
+        dl_device: tuple[int, int] | None = None,
+        copy: bool | None = None,
+    ) -> object:
+        """Returns a `CPython` `PyCapsule` (`"dltensor"`) wrapping a heap `DLManagedTensor`.
 
         Args:
             stream: Optional stream identifier.
+            max_version: Optional maximum `(major, minor)` DLPack version supported by consumer.
+            dl_device: Optional target `(device_type, device_id)` requested by consumer.
+            copy: Optional copy control flag.
         """
         ...
 
@@ -308,6 +431,98 @@ class TpuProfiler:
         """
         ...
 
+class TpuDevice:
+    """Strongly-typed Python wrapper over `PJRT_Device*` and `PJRT_DeviceDescription*`."""
+
+    def id(self) -> int:
+        """Returns the global logical device ID via `PJRT_DeviceDescription_Id`."""
+        ...
+
+    def process_index(self) -> int:
+        """Returns the host process index owning this device."""
+        ...
+
+    def device_kind(self) -> str:
+        """Returns the hardware SKU kind string (e.g., `"TPU v5 lite"`)."""
+        ...
+
+    def debug_string(self) -> str:
+        """Returns the diagnostic debug string for this device."""
+        ...
+
+    def to_string(self) -> str:
+        """Returns the canonical display string for this device."""
+        ...
+
+    def is_addressable(self) -> bool:
+        """Returns whether this device is addressable by the local process."""
+        ...
+
+    def local_hardware_id(self) -> int:
+        """Returns the local PCIe/chip hardware ordinal."""
+        ...
+
+    def coords(self) -> tuple[int, int, int]:
+        """Returns the 3D torus `(x, y, z)` chip coordinates."""
+        ...
+
+    def core_on_chip(self) -> int:
+        """Returns the `TensorCore` ordinal on the physical ASIC."""
+        ...
+
+class TpuTopology:
+    """Strongly-typed RAII wrapper over `PJRT_TopologyDescription*`."""
+
+    @classmethod
+    def create(cls, topology_name: str = "v5e-2x2") -> TpuTopology:
+        """Creates an owning `TpuTopology` via `PJRT_TopologyDescription_Create`.
+
+        Args:
+            topology_name: Canonical TPU topology string (e.g., `"v5e-2x2"`).
+        """
+        ...
+
+    @classmethod
+    def deserialize(cls, serialized: bytes) -> TpuTopology:
+        """Deserializes a `TpuTopology` from wire bytes.
+
+        Args:
+            serialized: Wire bytes produced by `TpuTopology.serialize()`.
+        """
+        ...
+
+    def platform_name(self) -> str:
+        """Returns the PJRT platform identifier (`"tpu"`)."""
+        ...
+
+    def platform_version(self) -> str:
+        """Returns the PJRT platform version string."""
+        ...
+
+    def device_count(self) -> int:
+        """Returns the number of device descriptions in this topology."""
+        ...
+
+    def serialize(self) -> bytes:
+        """Serializes this topology into wire bytes."""
+        ...
+
+    def close(self) -> None:
+        """Destroys the underlying `PJRT_TopologyDescription*` when owned."""
+        ...
+
+    def __enter__(self) -> TpuTopology:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(self, *exc_info: object) -> None:
+        """Closes this `TpuTopology` upon exiting a context manager block.
+
+        Args:
+            exc_info: Exception tuple if raised.
+        """
+        ...
+
 class TpuClient:
     """RAII wrapper around a `PJRT_Client` handle."""
 
@@ -317,6 +532,39 @@ class TpuClient:
 
     def device_count(self) -> int:
         """Returns the number of addressable TPU devices managed by this client."""
+        ...
+
+    def devices(self) -> list[TpuDevice]:
+        """Returns all global `TpuDevice` instances known to this client."""
+        ...
+
+    def addressable_devices(self) -> list[TpuDevice]:
+        """Returns locally addressable `TpuDevice` instances managed by this client."""
+        ...
+
+    def lookup_device(self, device_id: int) -> TpuDevice:
+        """Looks up a `TpuDevice` by global logical `device_id`.
+
+        Args:
+            device_id: Global logical TPU device ordinal.
+        """
+        ...
+
+    def topology(self) -> TpuTopology:
+        """Returns the non-owning `TpuTopology` associated with this client."""
+        ...
+
+    def buffer_from_numpy(
+        self,
+        device_id: int,
+        array: npt.ArrayLike | SupportsArrayInterface,
+    ) -> TpuBuffer:
+        """Allocates a `TpuBuffer` on `device_id` from a `numpy.ndarray` (including `ml_dtypes`).
+
+        Args:
+            device_id: Target logical TPU device ordinal.
+            array: Host `numpy.ndarray` or array-like.
+        """
         ...
 
     def buffer_from_bytes(
@@ -780,4 +1028,45 @@ def service_host_command(envelope_bytes: bytes) -> int:
     Args:
         envelope_bytes: Wire-encoded `HostCommandEnvelopeProto` payload bytes.
     """
+    ...
+
+def query_rematerialization_report(executable: TpuExecutable, memory_limit_bytes: int = 256) -> str:
+    """Runs HLO rematerialization and input-output buffer donation alias analysis on `executable`.
+
+    Args:
+        executable: Compiled `TpuExecutable` instance.
+        memory_limit_bytes: Target peak memory budget in bytes (`>= 256`).
+    """
+    ...
+
+def execute_barnacore_program(executable: TpuExecutable, optimizer_algorithm: int = 1) -> int:
+    """Executes the lowered `BarnacoreExecutableProto` `SparseCore` (`SCS`/`TAC`/`TEC`) program.
+
+    Args:
+        executable: Compiled `TpuExecutable` instance.
+        optimizer_algorithm: `SparseCoreOptimizer` ordinal (`0..18`).
+    """
+    ...
+
+def from_dlpack(
+    ext_tensor: SupportsDLPack | object,
+    *,
+    client: TpuClient | None = None,
+    device_id: int = 0,
+) -> TpuBuffer:
+    """Imports an external tensor or `"dltensor"` `PyCapsule` into a `TpuBuffer` via `DLPack` v1.0.
+
+    Args:
+        ext_tensor: Producer object implementing `__dlpack__()` or a raw `"dltensor"` `PyCapsule`.
+        client: Optional existing `TpuClient`.
+        device_id: Destination logical TPU device ID.
+    """
+    ...
+
+def load_native_c_module() -> types.ModuleType:
+    """Loads and returns the native `PyO3` (`abi3`) `libtpu._C` extension module."""
+    ...
+
+def load_native_sdk_module() -> types.ModuleType:
+    """Loads and returns the native `PyO3` (`abi3`) `libtpu/sdk.so` extension module."""
     ...

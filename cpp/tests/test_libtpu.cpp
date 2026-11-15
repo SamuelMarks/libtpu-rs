@@ -147,14 +147,12 @@ int main() {
   // error branches
   const char *mlir_code = "module @add_f32 { stablehlo.add }";
   libtpu::LoadedExecutable exec;
-  libtpu::Status comp_st =
-      client.compile("mlir", reinterpret_cast<const uint8_t *>(mlir_code),
-                     std::strlen(mlir_code), &exec);
+  libtpu::Status comp_st = client.compile("mlir", mlir_code, &exec);
   if (!comp_st.is_ok() || exec.raw() == nullptr) {
     return 9;
   }
 
-  // Error branch on compile (invalid format)
+  // Error branch on compile (invalid format) via pointer + length overload
   libtpu::LoadedExecutable bad_exec;
   libtpu::Status bad_comp_st = client.compile(
       "invalid_format", reinterpret_cast<const uint8_t *>(mlir_code),
@@ -174,7 +172,7 @@ int main() {
     return 100;
   }
   size_t ser_len = 0;
-  uint8_t ser_buf[4096] = {};
+  uint8_t ser_buf[16384] = {};
   uint8_t short_ser_buf[4] = {};
   if (!exec.serialize(ser_buf, sizeof(ser_buf), &ser_len).is_ok() ||
       ser_len == 0 ||
@@ -182,7 +180,7 @@ int main() {
     return 101;
   }
   size_t opt_len = 0;
-  uint8_t opt_buf[256] = {};
+  uint8_t opt_buf[8192] = {};
   if (!exec.optimized_program(opt_buf, sizeof(opt_buf), &opt_len).is_ok() ||
       opt_len == 0 || exec.optimized_program(opt_buf, 1, &opt_len).is_ok()) {
     return 103;
@@ -623,7 +621,7 @@ int main() {
       host_cmd_pb, sizeof(host_cmd_pb), &ack_sync_val);
   const libtpu::Status hc_bad =
       libtpu::service_host_command(nullptr, 0, nullptr);
-  if (catalog_293_cnt != 293 || !mc_ok.is_ok() || mc_bad.is_ok() ||
+  if (catalog_293_cnt != 738 || !mc_ok.is_ok() || mc_bad.is_ok() ||
       asm_imem.empty() || !bad_asm_imem.empty() || dis_llo.empty() ||
       !bad_dis_llo.empty() || !hc_ok.is_ok() || ack_sync_val != 7 ||
       hc_bad.is_ok()) {
@@ -633,8 +631,130 @@ int main() {
   const std::string llo_sched_sum = libtpu::query_llo_schedule_summary(exec);
   const std::string bad_llo_sched_sum =
       libtpu::query_llo_schedule_summary(null_exec);
-  if (llo_sched_sum.empty() || !bad_llo_sched_sum.empty()) {
+  const std::string remat_rep =
+      libtpu::query_rematerialization_report(exec, 256);
+  const std::string bad_remat_rep =
+      libtpu::query_rematerialization_report(null_exec, 256);
+  uint64_t barnacore_ops = 0;
+  const libtpu::Status bc_ok =
+      libtpu::execute_barnacore_program(exec, 1, &barnacore_ops);
+  const libtpu::Status bc_bad =
+      libtpu::execute_barnacore_program(null_exec, 1, nullptr);
+  if (llo_sched_sum.empty() || !bad_llo_sched_sum.empty() ||
+      remat_rep.empty() || !bad_remat_rep.empty() || !bc_ok.is_ok() ||
+      barnacore_ops == 0 || bc_bad.is_ok()) {
     return 36;
+  }
+
+  /* Phase 10: Plugin, DeviceDescription, ExecuteContext, CopyToDeviceStream,
+   * DlPackTensor, aliases, and monadic Result<T> (value_or / map / and_then).
+   */
+  libtpu::Plugin plugin_a;
+  libtpu::Plugin plugin_b(static_cast<libtpu::Plugin &&>(plugin_a));
+  plugin_a = static_cast<libtpu::Plugin &&>(plugin_b);
+  if (plugin_a.raw() == nullptr || plugin_a.attribute_count() == 0) {
+    return 37;
+  }
+
+  libtpu::DeviceDescription dd_a(nullptr);
+  libtpu::DeviceDescription dd_b(
+      static_cast<libtpu::DeviceDescription &&>(dd_a));
+  dd_a = static_cast<libtpu::DeviceDescription &&>(dd_b);
+  if (dd_a.id() != 0 || dd_a.process_index() != 0 || dd_a.kind().empty() ||
+      dd_a.to_string().empty()) {
+    return 38;
+  }
+
+  libtpu::ExecuteContext ectx_a;
+  libtpu::ExecuteContext ectx_b(static_cast<libtpu::ExecuteContext &&>(ectx_a));
+  ectx_a = static_cast<libtpu::ExecuteContext &&>(ectx_b);
+  if (ectx_a.raw() == nullptr) {
+    return 39;
+  }
+
+  const uint8_t stream_bytes[16] = {1, 2, 3, 4, 5, 6, 7, 8,
+                                    9, 0, 1, 2, 3, 4, 5, 6};
+  libtpu::CopyToDeviceStream cstream_a(nullptr);
+  libtpu::CopyToDeviceStream cstream_b(
+      static_cast<libtpu::CopyToDeviceStream &&>(cstream_a));
+  cstream_a = static_cast<libtpu::CopyToDeviceStream &&>(cstream_b);
+  const libtpu::Status add_st =
+      cstream_a.add_chunk(std::span<const uint8_t>(stream_bytes, 16));
+  if (!add_st.is_ok() || cstream_a.total_bytes() <= 0 ||
+      cstream_a.granule_size() <= 0 || cstream_a.current_bytes() < 0) {
+    return 40;
+  }
+
+  libtpu::DlPackTensor dlp_a(b0);
+  libtpu::DlPackTensor dlp_b(static_cast<libtpu::DlPackTensor &&>(dlp_a));
+  dlp_a = static_cast<libtpu::DlPackTensor &&>(dlp_b);
+  if (dlp_a.dlpack_device_type() != 12 || dlp_a.data_address() == 0 ||
+      dlp_a.ndim() != 1 || dlp_a.dtype() != libtpu::DataType::F32) {
+    return 41;
+  }
+
+  libtpu::TopologyDescription topo_alias;
+  libtpu::CollectiveCommunicator comm_alias;
+  libtpu::MegaScaleContext ms_alias;
+  if (topo_alias.chip_bounds_x() <= 0 || comm_alias.to_string().empty() ||
+      ms_alias.num_slices() == 0 ||
+      !libtpu::FfiCustomCallRegistry::register_handler("cpp_ffi_alias",
+                                                       &test_ffi_handler)
+           .is_ok()) {
+    return 42;
+  }
+
+  libtpu::Result<int> r_ok(21);
+  libtpu::Result<int> r_moved(static_cast<libtpu::Result<int> &&>(r_ok));
+  r_ok = static_cast<libtpu::Result<int> &&>(r_moved);
+  const libtpu::Result<int> r_err(
+      libtpu::Status(LibTpuCStatus{3, nullptr}, "bad"));
+  const auto double_fn = [](const int &v) noexcept -> int { return v * 2; };
+  const auto add8_fn = [](const int &v) noexcept -> libtpu::Result<int> {
+    return libtpu::Result<int>(v + 8);
+  };
+  const libtpu::Result<int> r_mapped_ok = r_ok.map(double_fn);
+  const libtpu::Result<int> r_mapped_err = r_err.map(double_fn);
+  const libtpu::Result<int> r_chain_ok = r_mapped_ok.and_then(add8_fn);
+  const libtpu::Result<int> r_chain_err = r_mapped_err.and_then(add8_fn);
+  if (!r_ok.is_ok() || r_ok.status().code() != 0 || r_ok.value() != 21 ||
+      r_ok.value_or(0) != 21 || r_err.value_or(99) != 99 ||
+      r_chain_ok.value() != 50 || r_chain_err.is_ok()) {
+    return 43;
+  }
+
+  constexpr std::string_view kDocMlir =
+      "module @m { func.func public @main(%x: tensor<4xf32>, %y: tensor<4xf32>)"
+      " -> tensor<4xf32> { %0 = stablehlo.multiply %x, %y : tensor<4xf32> "
+      "return %0 : tensor<4xf32> } }";
+  const int64_t doc_dims[1] = {4};
+  const float doc_a[4] = {1.0F, 2.0F, 3.0F, 4.0F};
+  const float doc_b[4] = {5.0F, 6.0F, 7.0F, 8.0F};
+  libtpu::Buffer doc_b0;
+  libtpu::Buffer doc_b1;
+  (void)client.buffer_from_host(0, libtpu::DataType::F32, doc_dims, 1,
+                                reinterpret_cast<const uint8_t *>(doc_a),
+                                sizeof(doc_a), &doc_b0);
+  (void)client.buffer_from_host(0, libtpu::DataType::F32, doc_dims, 1,
+                                reinterpret_cast<const uint8_t *>(doc_b),
+                                sizeof(doc_b), &doc_b1);
+  libtpu::LoadedExecutable doc_exec;
+  libtpu::Buffer doc_out;
+  float doc_host_out[4] = {};
+  if (!client.compile("mlir", kDocMlir, &doc_exec).is_ok() ||
+      !doc_exec.execute_binary(0, doc_b0, doc_b1, &doc_out).is_ok() ||
+      !doc_out
+           .to_host(reinterpret_cast<uint8_t *>(doc_host_out),
+                    sizeof(doc_host_out))
+           .is_ok()) {
+    return 44;
+  }
+  const libtpu::Result<float> doc_scaled =
+      libtpu::Result<float>(doc_host_out[3]).map([](const float &v) noexcept {
+        return v * 2.0F;
+      });
+  if (doc_scaled.value_or(0.0F) != 64.0F) {
+    return 45;
   }
 
   return 0;

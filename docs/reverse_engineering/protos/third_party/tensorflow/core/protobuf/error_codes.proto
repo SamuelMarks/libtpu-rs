@@ -1,0 +1,3 @@
+syntax = "proto3";
+package tensorflow.error.dummy;
+import public "third_party/tensorflow/compiler/xla/tsl/protobuf/error_codes.proto";

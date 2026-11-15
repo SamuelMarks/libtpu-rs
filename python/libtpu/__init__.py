@@ -14,8 +14,27 @@ import os
 import struct
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TypedDict, cast
 
 __version__: str = "0.0.52"
+
+
+class ArrayInterfaceDict(TypedDict):
+    """NumPy `__array_interface__` v3 descriptor dictionary."""
+
+    shape: tuple[int, ...]
+    typestr: str
+    data: tuple[int, bool]
+    version: int
+
+
+class ExecutableCostAnalysis(TypedDict, total=False):
+    """Cost analysis dictionary returned by `TpuExecutable.cost_analysis()`."""
+
+    flops: float
+    transcendentals: float
+    bytes_accessed: float
+    optimal_seconds: float
 
 
 class TpuError(RuntimeError):
@@ -281,13 +300,31 @@ def configure_library_path() -> str:
     return existing
 
 
-def set_init_args(args: str | Sequence[str]) -> None:
-    """Configures `LIBTPU_INIT_ARGS` from a string or sequence of CLI flags.
+def set_init_args(*args: str | Sequence[str]) -> None:
+    """Configures `LIBTPU_INIT_ARGS` from one or more CLI flag strings or a flag sequence.
 
     Args:
-        args: CLI flag string or sequence of flags (e.g., `["--tpu_generation=v6e"]`).
+        *args: Zero or more CLI flag strings (e.g., `"--tpu_generation=v6e"`,
+            `"--tpu_chips_per_host_bounds=2,2,1"`) or a single `Sequence[str]`.
+
+    Raises:
+        TypeError: If non-string items or mixed sequence + variadic arguments are passed.
     """
-    os.environ["LIBTPU_INIT_ARGS"] = args if isinstance(args, str) else " ".join(args)
+    if not args:
+        os.environ["LIBTPU_INIT_ARGS"] = ""
+        return
+    if len(args) == 1 and not isinstance(args[0], str):
+        seq = args[0]
+        if not isinstance(seq, Sequence) or not all(isinstance(item, str) for item in seq):
+            raise TypeError("set_init_args() sequence elements must all be str")
+        os.environ["LIBTPU_INIT_ARGS"] = " ".join(seq)
+        return
+    str_parts: list[str] = []
+    for item in args:
+        if not isinstance(item, str):
+            raise TypeError("Variadic set_init_args(*args) arguments must all be str")
+        str_parts.append(item)
+    os.environ["LIBTPU_INIT_ARGS"] = " ".join(str_parts)
 
 
 def get_init_args() -> list[str]:
@@ -872,17 +909,25 @@ def _check_pjrt_error(lib: ctypes.CDLL, err_ptr: int | None) -> None:
 class TpuBuffer:
     """Strongly-typed wrapper over an on-device `PJRT_Buffer*`."""
 
-    def __init__(self, lib: ctypes.CDLL, handle: ctypes.c_void_p, num_elements: int) -> None:
+    def __init__(
+        self,
+        lib: ctypes.CDLL,
+        handle: ctypes.c_void_p,
+        num_elements: int,
+        device_id: int = 0,
+    ) -> None:
         """Initializes a `TpuBuffer`.
 
         Args:
             lib: Loaded `ctypes.CDLL` instance.
             handle: Opaque `PJRT_Buffer*` pointer.
-            num_elements: Number of 32-bit elements stored in the buffer.
+            num_elements: Number of scalar elements stored in the buffer.
+            device_id: Logical TPU device ID owning this buffer (`0` by default).
         """
         self._lib: ctypes.CDLL = lib
         self._handle: ctypes.c_void_p = handle
         self._num_elements: int = num_elements
+        self._device_id: int = device_id
 
     def shape(self) -> tuple[int, ...]:
         """Returns the logical shape tuple of this buffer via `PJRT_Buffer_Dimensions`.
@@ -924,7 +969,7 @@ class TpuBuffer:
             (ctypes.c_size_t * 10)(),
         )
         self._lib.PJRT_Buffer_GetMemoryLayout(ctypes.byref(ml_args))
-        return int(ml_args.layout_words[6])
+        return int(ml_args.layout_words[8])
 
     def byte_size(self) -> int:
         """Computes the host byte size of this buffer from its `dtype()` and element count.
@@ -994,72 +1039,128 @@ class TpuBuffer:
         code = fmt_map.get(dt, "i")
         return [int(x) for x in struct.unpack(f"<{self._num_elements}{code}", raw_bytes)]
 
+    def __buffer__(self, flags: int) -> memoryview:
+        """Implements the PEP 688 / PEP 3118 Python buffer protocol over HBM payload bytes.
+
+        Args:
+            flags: PEP 3118 `PyBUF_*` request bitmask.
+
+        Returns:
+            Read-only PEP 3118 `memoryview` exported via `libtpu._C`.
+        """
+        _ = flags
+        return self.to_memoryview()
+
     def to_memoryview(self) -> memoryview:
-        """Returns a read-only `memoryview` over the buffer bytes read from HBM.
+        """Returns a read-only PEP 3118 `memoryview` over the buffer bytes via `libtpu._C`.
 
         Returns:
             Read-only `memoryview` of the buffer payload.
         """
-        return memoryview(self.to_bytes())
+        from libtpu._interop import call_native_c
+
+        return cast(memoryview, call_native_c("buffer_view", self.to_bytes()))
+
+    def to_numpy(self) -> object:
+        """Materializes this `TpuBuffer` as a `numpy.ndarray` (including `ml_dtypes` types).
+
+        Returns:
+            `numpy.ndarray` with exact shape and `ml_dtypes` / standard NumPy dtype.
+        """
+        from libtpu._interop import buffer_to_numpy
+
+        return buffer_to_numpy(self)
+
+    def __array__(self, dtype: object = None, copy: bool | None = None) -> object:
+        """NumPy array protocol entrypoint supporting `ml_dtypes` (`bfloat16`, `float8`, `int4`).
+
+        Args:
+            dtype: Optional target `numpy.dtype` to cast the array into.
+            copy: Optional NumPy 2.0 copy flag (`False` raises `ValueError` if host copy required).
+
+        Returns:
+            `numpy.ndarray` with requested or native `ml_dtypes` / NumPy dtype.
+
+        Raises:
+            ValueError: If `copy is False` (device-to-host transfer materializes host memory).
+        """
+        if copy is False:
+            raise ValueError("Unable to avoid device-to-host copy when converting TpuBuffer")
+        from libtpu._interop import buffer_to_numpy
+
+        return buffer_to_numpy(self, requested_dtype=dtype)
 
     @property
-    def __array_interface__(self) -> dict[str, object]:
-        """Returns the NumPy `__array_interface__` dictionary for this buffer.
+    def __array_interface__(self) -> ArrayInterfaceDict:
+        """Returns the NumPy `__array_interface__` v3 dictionary for this buffer.
 
         Returns:
             Dictionary describing `shape`, `typestr`, `data`, and `version`.
         """
+        from libtpu._interop import unpack_subbyte_elements
+
+        dt = self.dtype()
         raw_bytes = self.to_bytes()
+        bits = dt.bit_size()
+        if bits in (2, 4):
+            signed = dt in (DataType.S4, DataType.S2)
+            raw_bytes = unpack_subbyte_elements(raw_bytes, self._num_elements, bits, signed=signed)
         return {
             "version": 3,
             "shape": self.shape(),
-            "typestr": self.dtype().numpy_typestr(),
+            "typestr": dt.numpy_typestr(),
             "data": raw_bytes,
             "readonly": True,
         }
 
     def __dlpack_device__(self) -> tuple[int, int]:
-        """Returns the DLPack `(device_type, device_id)` tuple (`kDLOneAPI = 14`, `0`).
+        """Returns the DLPack `(device_type, device_id)` tuple (`kDLOneAPI = 14`, `device_id`).
 
         Returns:
-            Tuple `(14, 0)` identifying the TPU device.
+            Tuple `(14, device_id)` identifying the TPU device.
         """
-        return (14, 0)
+        return (14, self._device_id)
 
-    def __dlpack__(self, stream: int | None = None) -> object:
-        """Returns a CPython `PyCapsule` (`"dltensor"`) wrapping a DLPack v1.0 `DLManagedTensor`.
+    def __dlpack__(
+        self,
+        stream: int | None = None,
+        *,
+        max_version: tuple[int, int] | None = None,
+        dl_device: tuple[int, int] | None = None,
+        copy: bool | None = None,
+    ) -> object:
+        """Returns a `CPython` `PyCapsule` (`"dltensor"`) wrapping a heap `DLManagedTensor`.
 
         Args:
-            stream: Optional stream identifier (unused on synchronous HBM view).
+            stream: Optional stream identifier.
+            max_version: Optional maximum `(major, minor)` DLPack version supported by consumer.
+            dl_device: Optional target `(device_type, device_id)` requested by consumer.
+            copy: Optional copy control flag (`False` raises `BufferError` on cross-device export).
 
         Returns:
-            `PyCapsule` wrapping a populated `_DLManagedTensor` structure.
+            `"dltensor"` `PyCapsule` backed by `libtpu._C` with automatic deleter.
+
+        Raises:
+            BufferError: If `dl_device` requests CPU (`(1, 0)`) while `copy is False`.
         """
-        _ = stream
-        dims = self.shape()
-        ndim = len(dims)
+        _ = (stream, max_version)
+        from libtpu._interop import call_native_c
+
+        dev_type, dev_id = self.__dlpack_device__()
+        if dl_device is not None:
+            if dl_device != (dev_type, dev_id) and copy is False:
+                raise BufferError("Cross-device DLPack export requires copy=True or copy=None")
+            dev_type, dev_id = dl_device
         dt = self.dtype()
-        shape_arr = (ctypes.c_int64 * max(ndim, 1))(*dims) if ndim > 0 else (ctypes.c_int64 * 1)(1)
-        strides_list: list[int] = [1] * max(ndim, 1)
-        running = 1
-        for ax in range(ndim - 1, -1, -1):
-            strides_list[ax] = running
-            running *= max(dims[ax], 1)
-        strides_arr = (ctypes.c_int64 * max(ndim, 1))(*strides_list)
-        dl_dev = _DLDevice(14, 0)
-        dl_dt = _DLDataType(dt.dlpack_type_code(), max(dt.bit_size(), 8), 1)
-        dl_tensor = _DLTensor(
-            int(self._handle.value or 0),
-            dl_dev,
-            ndim,
-            dl_dt,
-            ctypes.cast(shape_arr, ctypes.POINTER(ctypes.c_int64)),
-            ctypes.cast(strides_arr, ctypes.POINTER(ctypes.c_int64)),
-            0,
+        return call_native_c(
+            "export_dlpack",
+            self.to_bytes(),
+            list(self.shape()),
+            dt.dlpack_type_code(),
+            max(dt.bit_size(), 8),
+            dev_type,
+            dev_id,
         )
-        managed = _DLManagedTensor(dl_tensor, int(self._handle.value or 0), 0)
-        self._dlpack_keepalive: tuple[object, ...] = (shape_arr, strides_arr, managed)
-        return _create_c_api_capsule(ctypes.addressof(managed), "dltensor")
 
     def close(self) -> None:
         """Deletes and frees the underlying `PJRT_Buffer*` via `PJRT_Buffer_Destroy`."""
@@ -1473,6 +1574,69 @@ class TpuClient:
         self._lib.PJRT_Client_AddressableDevices(ctypes.byref(dev_args))
         return int(dev_args.num_devices)
 
+    def devices(self) -> list[TpuDevice]:
+        """Returns all global `TpuDevice` instances known to this `TpuClient`.
+
+        Returns:
+            List of `TpuDevice` wrappers across all processes.
+        """
+        from libtpu._interop import query_client_devices
+
+        return query_client_devices(self._lib, self._handle.value or 0, addressable_only=False)
+
+    def addressable_devices(self) -> list[TpuDevice]:
+        """Returns locally addressable `TpuDevice` instances managed by this `TpuClient`.
+
+        Returns:
+            List of locally addressable `TpuDevice` wrappers.
+        """
+        from libtpu._interop import query_client_devices
+
+        return query_client_devices(self._lib, self._handle.value or 0, addressable_only=True)
+
+    def lookup_device(self, device_id: int) -> TpuDevice:
+        """Looks up a `TpuDevice` by global logical `device_id` via `PJRT_Client_LookupDevice`.
+
+        Args:
+            device_id: Global logical TPU device ordinal.
+
+        Returns:
+            Matching `TpuDevice` instance.
+
+        Raises:
+            TpuError: If `device_id` does not exist.
+        """
+        look_args = _PjrtClientLookupDeviceArgs(
+            ctypes.sizeof(_PjrtClientLookupDeviceArgs), 0, self._handle.value or 0, device_id, 0, 0
+        )
+        err = self._lib.PJRT_Client_LookupDevice(ctypes.byref(look_args))
+        _check_pjrt_error(self._lib, err)
+        return TpuDevice(self._lib, ctypes.c_void_p(int(look_args.device or 0)))
+
+    def topology(self) -> TpuTopology:
+        """Returns the `TpuTopology` associated with this `TpuClient`.
+
+        Returns:
+            Non-owning `TpuTopology` wrapper.
+        """
+        from libtpu._interop import query_client_topology
+
+        return query_client_topology(self._lib, self._handle.value or 0)
+
+    def buffer_from_numpy(self, device_id: int, array: object) -> TpuBuffer:
+        """Allocates a `TpuBuffer` on `device_id` from a `numpy.ndarray` (including `ml_dtypes`).
+
+        Args:
+            device_id: Target logical TPU device ID.
+            array: Host `numpy.ndarray` (`bfloat16`, `float8_*`, `int4`, `float32`, etc.).
+
+        Returns:
+            Allocated `TpuBuffer` on `device_id`.
+        """
+        from libtpu._interop import client_buffer_from_numpy
+
+        return client_buffer_from_numpy(self, device_id, array)
+
     def _buffer_from_packed(
         self,
         device_id: int,
@@ -1522,7 +1686,12 @@ class TpuClient:
         )
         err_h2d = self._lib.PJRT_Client_BufferFromHostBuffer(ctypes.byref(h2d_args))
         _check_pjrt_error(self._lib, err_h2d)
-        return TpuBuffer(self._lib, ctypes.c_void_p(int(h2d_args.out_buffer or 0)), num_elements)
+        return TpuBuffer(
+            self._lib,
+            ctypes.c_void_p(int(h2d_args.out_buffer or 0)),
+            num_elements,
+            device_id=device_id,
+        )
 
     def buffer_from_bytes(
         self,
@@ -1615,7 +1784,10 @@ class TpuClient:
         err_cp = self._lib.PJRT_Buffer_CopyToDevice(ctypes.byref(cp_args))
         _check_pjrt_error(self._lib, err_cp)
         return TpuBuffer(
-            self._lib, ctypes.c_void_p(int(cp_args.dst_buffer or 0)), buffer._num_elements
+            self._lib,
+            ctypes.c_void_p(int(cp_args.dst_buffer or 0)),
+            buffer._num_elements,
+            device_id=dst_device_id,
         )
 
     def compile(self, code: str, fmt: str = "mlir") -> TpuExecutable:
@@ -2785,5 +2957,80 @@ def service_host_command(envelope_bytes: bytes) -> int:
         raise TpuError(int(st.code), "Failed to service HostCommandEnvelopeProto")
     return int(out_ack.value)
 
+
+def query_rematerialization_report(executable: TpuExecutable, memory_limit_bytes: int = 256) -> str:
+    """Runs HLO rematerialization and input-output buffer donation alias analysis on `executable`.
+
+    Args:
+        executable: Compiled `TpuExecutable` instance.
+        memory_limit_bytes: Target peak memory budget in bytes (`>= 256`).
+
+    Returns:
+        Formatted rematerialization and buffer donation summary string.
+    """
+    lib = _load_cdll()
+    lib.libtpu_rs_query_rematerialization_report.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint64,
+        ctypes.c_char_p,
+        ctypes.c_size_t,
+    ]
+    lib.libtpu_rs_query_rematerialization_report.restype = ctypes.c_size_t
+    ptr = executable._handle
+    length = int(lib.libtpu_rs_query_rematerialization_report(ptr, memory_limit_bytes, None, 0))
+    if length == 0:
+        return ""
+    buf = ctypes.create_string_buffer(length + 1)
+    lib.libtpu_rs_query_rematerialization_report(ptr, memory_limit_bytes, buf, length + 1)
+    return buf.value.decode("utf-8")
+
+
+def execute_barnacore_program(executable: TpuExecutable, optimizer_algorithm: int = 1) -> int:
+    """Executes the lowered `BarnacoreExecutableProto` `SparseCore` (`SCS`/`TAC`/`TEC`) program.
+
+    Args:
+        executable: Compiled `TpuExecutable` instance.
+        optimizer_algorithm: `SparseCoreOptimizer` ordinal (`0..18`).
+
+    Returns:
+        Total number of sparse embedding operations executed.
+
+    Raises:
+        TpuError: If `executable` is closed or invalid.
+    """
+    lib = _load_cdll()
+    lib.libtpu_rs_execute_barnacore_program.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int32,
+        ctypes.POINTER(ctypes.c_uint64),
+    ]
+    lib.libtpu_rs_execute_barnacore_program.restype = _LibTpuCStatus
+    out_ops = ctypes.c_uint64(0)
+    st = lib.libtpu_rs_execute_barnacore_program(
+        executable._handle,
+        int(optimizer_algorithm),
+        ctypes.byref(out_ops),
+    )
+    if int(st.code) != 0:
+        lib.libtpu_rs_status_free(st)
+        raise TpuError(int(st.code), "Failed to execute Barnacore SparseCore program")
+    return int(out_ops.value)
+
+
+from libtpu._interop import (  # noqa: E402
+    TpuDevice as TpuDevice,
+)
+from libtpu._interop import (  # noqa: E402
+    TpuTopology as TpuTopology,
+)
+from libtpu._interop import (  # noqa: E402
+    from_dlpack as from_dlpack,
+)
+from libtpu._interop import (  # noqa: E402
+    load_native_c_module as load_native_c_module,
+)
+from libtpu._interop import (  # noqa: E402
+    load_native_sdk_module as load_native_sdk_module,
+)
 
 configure_library_path()

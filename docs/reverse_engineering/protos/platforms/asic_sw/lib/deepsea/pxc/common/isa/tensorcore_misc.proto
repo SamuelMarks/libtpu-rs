@@ -1,0 +1,315 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/shared_isa_base.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_isa_base.proto";
+message TensorCoreMisc {
+  message Noop {
+  }
+  message SetSyncFlag {
+    optional .asic_sw.deepsea.pxc.isa.DoneControl done_control = 1 [default = DONE_CONTROL_UNCHANGED];
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 2;
+    optional uint32 vs0 = 3;
+    optional uint32 vs1 = 4;
+    optional uint32 vs2 = 5;
+    optional int32 imm2 = 6;
+    optional int32 imm3 = 7;
+    optional int32 imm4 = 8;
+    optional int32 imm5 = 9;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 10;
+  }
+  message AddSyncFlag {
+    optional .asic_sw.deepsea.pxc.isa.DoneControl done_control = 1 [default = DONE_CONTROL_UNCHANGED];
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 2;
+    optional uint32 vs0 = 3;
+    optional uint32 vs1 = 4;
+    optional uint32 vs2 = 5;
+    optional int32 imm2 = 6;
+    optional int32 imm3 = 7;
+    optional int32 imm4 = 8;
+    optional int32 imm5 = 9;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 10;
+  }
+  message DelayUntilEqualTo {
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 9;
+  }
+  message DelayUntilNotEqualTo {
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 9;
+  }
+  message DelayUntilGreaterThan {
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 9;
+  }
+  message DelayUntilGreaterEqualTo {
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 9;
+  }
+  message DelayUntilLessThan {
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 9;
+  }
+  message DelayUntilDone {
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 9;
+  }
+  message DelayUntilNotDone {
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 9;
+  }
+  message SetClearPublicAccess {
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 9;
+  }
+  message MoveVmsk {
+    optional uint32 vmsrc1 = 1;
+    optional uint32 vmdest = 2;
+  }
+  message NegateVmsk {
+    optional uint32 vmsrc1 = 1;
+    optional uint32 vmdest = 2;
+  }
+  message AndVmsk {
+    optional uint32 vmsrc1 = 1;
+    optional uint32 vmdest = 2;
+    optional uint32 vmsrc2 = 3;
+  }
+  message OrVmsk {
+    optional uint32 vmsrc1 = 1;
+    optional uint32 vmdest = 2;
+    optional uint32 vmsrc2 = 3;
+  }
+  message XorVmsk {
+    optional uint32 vmsrc1 = 1;
+    optional uint32 vmdest = 2;
+    optional uint32 vmsrc2 = 3;
+  }
+  message ReadSyncFlag {
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+  }
+  message ReadSyncDone {
+    optional .asic_sw.deepsea.pxc.isa.Msc sync_flag_number = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+  }
+  message HostInterrupt {
+    optional .asic_sw.deepsea.pxc.isa.Msc interrupt_number = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+  }
+  message ClearResultFifo {
+    optional .asic_sw.deepsea.pxc.isa.MscClearResult clear_result = 1 [default = MSC_CLEAR_RESULT_CLEAR_CRF];
+  }
+  message DelayFixed {
+    optional uint32 delay_count = 1;
+  }
+  message Delay {
+    optional .asic_sw.deepsea.pxc.isa.Msc delay_count = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+  }
+  message AtomicRemoteWrite {
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 1;
+    optional .asic_sw.deepsea.pxc.isa.Msc dest = 2;
+    optional uint32 vs0 = 3;
+    optional uint32 vs1 = 4;
+    optional uint32 vs2 = 5;
+    optional int32 imm2 = 6;
+    optional int32 imm3 = 7;
+    optional int32 imm4 = 8;
+    optional int32 imm5 = 9;
+  }
+  message AtomicRemoteAdd {
+    optional .asic_sw.deepsea.pxc.isa.Msc dest = 1;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 2;
+    optional uint32 vs0 = 3;
+    optional uint32 vs1 = 4;
+    optional uint32 vs2 = 5;
+    optional int32 imm2 = 6;
+    optional int32 imm3 = 7;
+    optional int32 imm4 = 8;
+    optional int32 imm5 = 9;
+  }
+  message AtomicRemoteWriteSetDone {
+    optional .asic_sw.deepsea.pxc.isa.Msc dest = 1;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 2;
+    optional uint32 vs0 = 3;
+    optional uint32 vs1 = 4;
+    optional uint32 vs2 = 5;
+    optional int32 imm2 = 6;
+    optional int32 imm3 = 7;
+    optional int32 imm4 = 8;
+    optional int32 imm5 = 9;
+  }
+  message AtomicRemoteAddSetDone {
+    optional .asic_sw.deepsea.pxc.isa.Msc dest = 1;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 2;
+    optional uint32 vs0 = 3;
+    optional uint32 vs1 = 4;
+    optional uint32 vs2 = 5;
+    optional int32 imm2 = 6;
+    optional int32 imm3 = 7;
+    optional int32 imm4 = 8;
+    optional int32 imm5 = 9;
+  }
+  message AtomicRemoteWriteSetDoneInverted {
+    optional .asic_sw.deepsea.pxc.isa.Msc dest = 1;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 2;
+    optional uint32 vs0 = 3;
+    optional uint32 vs1 = 4;
+    optional uint32 vs2 = 5;
+    optional int32 imm2 = 6;
+    optional int32 imm3 = 7;
+    optional int32 imm4 = 8;
+    optional int32 imm5 = 9;
+  }
+  message AtomicRemoteAddSetDoneInverted {
+    optional .asic_sw.deepsea.pxc.isa.Msc dest = 1;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 2;
+    optional uint32 vs0 = 3;
+    optional uint32 vs1 = 4;
+    optional uint32 vs2 = 5;
+    optional int32 imm2 = 6;
+    optional int32 imm3 = 7;
+    optional int32 imm4 = 8;
+    optional int32 imm5 = 9;
+  }
+  message SetTracemark {
+    optional .asic_sw.deepsea.pxc.isa.Msc operand = 1;
+    optional uint32 vs0 = 2;
+    optional uint32 vs1 = 3;
+    optional uint32 vs2 = 4;
+    optional int32 imm2 = 5;
+    optional int32 imm3 = 6;
+    optional int32 imm4 = 7;
+    optional int32 imm5 = 8;
+  }
+  message Trace {
+    optional .asic_sw.deepsea.pxc.isa.Msc operand0 = 1;
+    optional .asic_sw.deepsea.pxc.isa.Msc operand1 = 2;
+    optional uint32 vs0 = 3;
+    optional uint32 vs1 = 4;
+    optional uint32 vs2 = 5;
+    optional int32 imm2 = 6;
+    optional int32 imm3 = 7;
+    optional int32 imm4 = 8;
+    optional int32 imm5 = 9;
+  }
+  message CmemFence {
+  }
+  oneof inst {
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.Noop noop = 5;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.SetSyncFlag set_sync_flag = 6;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.AddSyncFlag add_sync_flag = 7;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.DelayUntilEqualTo delay_until_equal_to = 8;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.DelayUntilNotEqualTo delay_until_not_equal_to = 9;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.DelayUntilGreaterThan delay_until_greater_than = 10;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.DelayUntilGreaterEqualTo delay_until_greater_equal_to = 11;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.DelayUntilLessThan delay_until_less_than = 12;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.DelayUntilDone delay_until_done = 13;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.DelayUntilNotDone delay_until_not_done = 14;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.SetClearPublicAccess set_clear_public_access = 15;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.MoveVmsk move_vmsk = 16;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.NegateVmsk negate_vmsk = 17;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.AndVmsk and_vmsk = 18;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.OrVmsk or_vmsk = 19;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.XorVmsk xor_vmsk = 20;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.ReadSyncFlag read_sync_flag = 21;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.ReadSyncDone read_sync_done = 22;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.HostInterrupt host_interrupt = 23;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.ClearResultFifo clear_result_fifo = 24;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.DelayFixed delay_fixed = 25;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.Delay delay = 26;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.AtomicRemoteWrite atomic_remote_write = 27;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.AtomicRemoteAdd atomic_remote_add = 28;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.AtomicRemoteWriteSetDone atomic_remote_write_set_done = 29;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.AtomicRemoteAddSetDone atomic_remote_add_set_done = 30;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.AtomicRemoteWriteSetDoneInverted atomic_remote_write_set_done_inverted = 31;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.AtomicRemoteAddSetDoneInverted atomic_remote_add_set_done_inverted = 32;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.SetTracemark set_tracemark = 33;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.Trace trace = 34;
+    .asic_sw.deepsea.pxc.isa.TensorCoreMisc.CmemFence cmem_fence = 35;
+  }
+  optional .asic_sw.deepsea.pxc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional uint32 latency = 2 [default = 1];
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

@@ -1,0 +1,17 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+message ResourceHandleProto {
+  reserved 7;
+  message DtypeAndShape {
+    .tensorflow.DataType dtype = 1;
+    .tensorflow.TensorShapeProto shape = 2;
+  }
+  string device = 1;
+  string container = 2;
+  string name = 3;
+  uint64 hash_code = 4;
+  string maybe_type_name = 5;
+  repeated .tensorflow.ResourceHandleProto.DtypeAndShape dtypes_and_shapes = 6;
+}

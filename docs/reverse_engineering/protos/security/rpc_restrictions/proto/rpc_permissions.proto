@@ -1,0 +1,22 @@
+syntax = "proto3";
+package security_rpc_restrictions;
+import "security/rpc_restrictions/rpc_restrictions.proto";
+import "security/util/9829a633a/rpc-label-acl-f47fa1c1.proto";
+message Permission {
+  .security_rpc_restrictions.PermissionNonCritical non_critical = 1;
+  .security.RpcLabelAclRestriction service_method = 2;
+  .security.RpcAllowLocalhostOnlyRestriction allow_only_localhost = 3;
+  .security_rpc_restrictions.RequireSameUserOverUDS require_same_user_uds = 4;
+  .security_rpc_restrictions.DirectPathAccessPolicy direct_path_access_policy = 5;
+  .security_rpc_restrictions.RequireSameMultinodeMachine require_same_multinode_machine = 6;
+  .security_rpc_restrictions.RequireServerSecurityRealm require_server_security_realm = 7;
+  .security_rpc_restrictions.RequireZammAcceptedCheck require_zamm_accepted_check = 16;
+  .security_rpc_restrictions.RequireGRPC require_grpc = 17;
+  .security_rpc_restrictions.RequireServerType require_server_type = 18;
+  .security_rpc_restrictions.RequireServerSecurityTags require_server_security_tags = 19;
+  .security_rpc_restrictions.RequireServerJob require_server_job = 20;
+  .security_rpc_restrictions.Requiref47fa1c1Restriction require_f47fa1c1_restriction = 21;
+}
+message PermissionNonCritical {
+  bool report_usage = 1;
+}

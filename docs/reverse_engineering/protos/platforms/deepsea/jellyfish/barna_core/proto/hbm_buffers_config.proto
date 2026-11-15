@@ -1,0 +1,16 @@
+syntax = "proto3";
+package platforms_deepsea.jellyfish.barna_core;
+message HbmBuffersConfig {
+  message BaseAddress {
+    int64 intermediate_data = 1;
+    int64 primary_segment = 2;
+    int64 replica_segment = 3;
+  }
+  message Size {
+    map<int32, int64> intermediate_data = 1;
+    int64 primary_segment = 2;
+    int64 replica_segment = 3;
+  }
+  map<int32, .platforms_deepsea.jellyfish.barna_core.HbmBuffersConfig.BaseAddress> base_addresses = 1;
+  .platforms_deepsea.jellyfish.barna_core.HbmBuffersConfig.Size size = 2;
+}

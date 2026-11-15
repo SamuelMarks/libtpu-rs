@@ -1,0 +1,6 @@
+syntax = "proto2";
+package asic_sw.driver.deepsea;
+enum IciErrorType {
+  ICI_ERROR_UNKNOWN = 0;
+  ICI_ERROR_ROUTING_CHIP_ID_MISMATCH = 1;
+}

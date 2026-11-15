@@ -1,0 +1,44 @@
+syntax = "proto3";
+package asic_sw.proto.deepsea;
+message IciConnectorInfo {
+  enum State {
+    UNKNOWN = 0;
+    OK = 1;
+    CABLE_NOT_PRESENT = 9;
+    WAITING_FOR_CONFIG = 2;
+    CONFIG_INVALID = 3;
+    SWAPPED_CABLE_PAIR = 4;
+    INCONSISTENT_CABLES = 5;
+    DISABLED_IN_CHIP_CONFIG = 6;
+    LINK_NOT_UP = 7;
+    TX_BUFFER_STATE_NOT_NORMAL = 8;
+  }
+  enum MediaType {
+    MEDIA_TYPE_UNDEFINED = 0;
+    MEDIA_TYPE_COPPER_CABLE = 1;
+    MEDIA_TYPE_OPTICS_CABLE = 2;
+  }
+  enum CableType {
+    CABLE_TYPE_UNKNOWN = 0;
+    CABLE_TYPE_STRAIGHT = 1;
+    CABLE_TYPE_Y = 2;
+    CABLE_TYPE_QUAD = 3;
+  }
+  enum ConnectorEnd {
+    CONNECTOR_END_UNKNOWN = 0;
+    CONNECTOR_END_ONE = 1;
+    CONNECTOR_END_TWO = 2;
+  }
+  bool valid = 1;
+  .asic_sw.proto.deepsea.IciConnectorInfo.State state = 2;
+  .asic_sw.proto.deepsea.IciConnectorInfo.MediaType media_type = 3;
+  bytes vendor_oui = 4;
+  string vendor_name = 5;
+  string vendor_part_number = 6;
+  string vendor_revision = 7;
+  string vendor_serial_number = 8;
+  string port_id = 9;
+  .asic_sw.proto.deepsea.IciConnectorInfo.CableType cable_type = 10;
+  .asic_sw.proto.deepsea.IciConnectorInfo.ConnectorEnd connector_end = 11;
+  int32 format_revision = 12;
+}

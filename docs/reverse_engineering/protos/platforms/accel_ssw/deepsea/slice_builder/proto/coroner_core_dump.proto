@@ -1,0 +1,19 @@
+syntax = "proto3";
+package accel_ssw.deepsea.slice_builder.proto;
+import "platforms/accel_ssw/deepsea/common/proto/local_topology.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+import "platforms/asic_sw/proto/core_dump.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/chip_coordinate.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/topology.proto";
+import "util/task/status.proto";
+message CoronerCoreDumpCollection {
+  message ChipCoordinateInfo {
+    .asic_sw.proto.ChipLocation chip_location = 1;
+    .superpod.routing.proto.ChipCoordinate slice_coordinate = 2;
+  }
+  .util.StatusProto dump_status = 1;
+  .superpod.routing.proto.Topology topology = 2;
+  repeated .accel_ssw.deepsea.proto.LocalTopology link_info = 3;
+  repeated .asic_sw.proto.ChipCoreDump core_dumps = 4;
+  repeated .accel_ssw.deepsea.slice_builder.proto.CoronerCoreDumpCollection.ChipCoordinateInfo chip_coordinate_info = 5;
+}

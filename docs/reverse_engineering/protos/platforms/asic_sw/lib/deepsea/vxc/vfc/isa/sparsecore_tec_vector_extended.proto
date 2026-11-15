@@ -1,0 +1,353 @@
+syntax = "proto2";
+package asic_sw.deepsea.vxc.vfc.isa;
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_common_encodings.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/common/isa/common_encodings.proto";
+message SparseCoreTecVectorExtended {
+  message IntegerAddScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message IntegerMinScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message IntegerMaxScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message IntegerMinIndexScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message IntegerMaxIndexScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message FloatAddScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message FloatMinScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message FloatMaxScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message FloatMinIndexScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message FloatMaxIndexScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message SegmentedIntegerAddScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message SegmentedIntegerMinScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message SegmentedIntegerMaxScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message SegmentedIntegerMinIndexScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message SegmentedIntegerMaxIndexScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message SegmentedFloatAddScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message SegmentedFloatMinScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message SegmentedFloatMaxScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message SegmentedFloatMinIndexScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message SegmentedFloatMaxIndexScan {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message SortIntegerAscending {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_two = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 10;
+  }
+  message SortIntegerDescending {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_two = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 10;
+  }
+  message SortFloatAscending {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_two = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 10;
+  }
+  message SortFloatDescending {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_two = 2;
+    optional uint32 vst_source = 3;
+    optional uint32 v0_y_vreg = 4;
+    optional uint32 v0_x = 5;
+    optional uint32 v1_y_vreg = 6;
+    optional uint32 v1_x = 7;
+    optional uint32 v2_y_vreg = 8;
+    optional uint32 v2_x = 9;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 10;
+  }
+  message DuplicateCountInteger {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message DuplicateCountFloat {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message UniquifyInteger {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  message UniquifyFloat {
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVregReadPort source_one = 1;
+    optional uint32 vst_source = 2;
+    optional uint32 v0_y_vreg = 3;
+    optional uint32 v0_x = 4;
+    optional uint32 v1_y_vreg = 5;
+    optional uint32 v1_x = 6;
+    optional uint32 v2_y_vreg = 7;
+    optional uint32 v2_x = 8;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask vmask = 9;
+  }
+  oneof inst {
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.IntegerAddScan integer_add_scan = 6;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.IntegerMinScan integer_min_scan = 7;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.IntegerMaxScan integer_max_scan = 8;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.IntegerMinIndexScan integer_min_index_scan = 9;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.IntegerMaxIndexScan integer_max_index_scan = 10;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.FloatAddScan float_add_scan = 11;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.FloatMinScan float_min_scan = 12;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.FloatMaxScan float_max_scan = 13;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.FloatMinIndexScan float_min_index_scan = 14;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.FloatMaxIndexScan float_max_index_scan = 15;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SegmentedIntegerAddScan segmented_integer_add_scan = 16;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SegmentedIntegerMinScan segmented_integer_min_scan = 17;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SegmentedIntegerMaxScan segmented_integer_max_scan = 18;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SegmentedIntegerMinIndexScan segmented_integer_min_index_scan = 19;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SegmentedIntegerMaxIndexScan segmented_integer_max_index_scan = 20;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SegmentedFloatAddScan segmented_float_add_scan = 21;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SegmentedFloatMinScan segmented_float_min_scan = 22;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SegmentedFloatMaxScan segmented_float_max_scan = 23;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SegmentedFloatMinIndexScan segmented_float_min_index_scan = 24;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SegmentedFloatMaxIndexScan segmented_float_max_index_scan = 25;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SortIntegerAscending sort_integer_ascending = 26;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SortIntegerDescending sort_integer_descending = 27;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SortFloatAscending sort_float_ascending = 28;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.SortFloatDescending sort_float_descending = 29;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.DuplicateCountInteger duplicate_count_integer = 30;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.DuplicateCountFloat duplicate_count_float = 31;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.UniquifyInteger uniquify_integer = 32;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorExtended.UniquifyFloat uniquify_float = 33;
+  }
+  optional .asic_sw.deepsea.vxc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional bool predication_inversion = 2;
+  optional uint32 latency = 3 [default = 1];
+  map<string, uint32> resource_usage = 4;
+  optional uint32 bit_width = 5;
+}

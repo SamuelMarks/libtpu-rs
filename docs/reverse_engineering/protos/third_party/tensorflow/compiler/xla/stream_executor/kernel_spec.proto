@@ -1,0 +1,22 @@
+syntax = "proto3";
+package stream_executor;
+import "third_party/tensorflow/compiler/xla/stream_executor/kernel_args_packing_spec.proto";
+message CudaPtxProto {
+  string data = 1;
+}
+message CudaCubinProto {
+  bytes data = 1;
+}
+message InProcessSymbolProto {
+  string persistent_name = 1;
+}
+message KernelLoaderSpecProto {
+  oneof payload {
+    .stream_executor.CudaPtxProto ptx = 1;
+    .stream_executor.CudaCubinProto cubin = 2;
+    .stream_executor.InProcessSymbolProto in_process_symbol = 6;
+  }
+  int32 arity = 3;
+  string kernel_name = 4;
+  optional .stream_executor.KernelArgsPackingSpecProto kernel_args_packing_spec = 5;
+}

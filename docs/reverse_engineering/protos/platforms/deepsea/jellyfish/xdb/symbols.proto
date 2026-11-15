@@ -1,0 +1,96 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.xdb;
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "platforms/xla/service/jellyfish/metadata/llo_proto_opcode.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message SymbolTable {
+  reserved 3;
+  map<uint64, .platforms_deepsea.jellyfish.xdb.Symbol> symbols = 1;
+  repeated .platforms_deepsea.jellyfish.xdb.EmittedInstructionRange symbol_instruction_ranges = 2;
+  optional bytes compressed_symbol_table = 4;
+}
+message EmittedInstructionRange {
+  optional .tpu.TpuSequencerTypeProto sequencer_type = 4 [default = TPU_SEQUENCER_TYPE_TENSOR_CORE_SEQUENCER];
+  optional int64 start = 1;
+  optional int64 limit = 2;
+  repeated uint64 symbol = 3;
+}
+message PerformanceInfo {
+  reserved 4;
+  message MemoryAccessed {
+    enum MemorySpace {
+      UNKNOWN = 0;
+      HBM = 1;
+      CMEM = 2;
+      VMEM = 3;
+    }
+    optional bool is_read = 1;
+    optional .platforms_deepsea.jellyfish.xdb.PerformanceInfo.MemoryAccessed.MemorySpace memory_space = 2;
+    optional int64 bytes_accessed = 3;
+  }
+  optional int64 flops = 1;
+  optional int64 bytes_accessed = 2;
+  repeated .platforms_deepsea.jellyfish.xdb.PerformanceInfo.MemoryAccessed memory_accessed_breakdown = 3;
+}
+message Symbol {
+  reserved 1;
+  reserved 2;
+  message Root {
+  }
+  message TensorFlowOp {
+    optional string op = 3;
+    optional string source_file = 1;
+    optional int32 source_line = 2;
+  }
+  message HLOComputation {
+    optional string name = 1;
+    optional bool is_fused = 2;
+  }
+  message HLOInstruction {
+    optional string name = 4;
+    optional string deduplicated_name = 8;
+    optional string op = 3;
+    optional string category = 1;
+    optional .platforms_deepsea.jellyfish.xdb.PerformanceInfo performance_info = 2;
+    optional .xla.ShapeProto shape = 5;
+    optional .xla.ConvolutionDimensionNumbers convolution_dimensions = 7;
+    repeated string extra_attributes = 6;
+  }
+  message LLORegion {
+    reserved 2;
+    reserved "module_ordinal";
+    optional int32 ordinal = 1;
+    optional string symbol = 3;
+  }
+  message LLOValue {
+    optional .xla.jellyfish.llo.Opcode opcode = 1;
+    optional int32 compiler_backtrace = 2 [default = -1];
+    optional int32 ordinal = 3;
+  }
+  message BundleSlot {
+    optional string mnemonic = 2;
+    optional string log_msg = 3;
+    optional int32 debug_index = 4;
+    optional bool is_trap = 9;
+    optional int32 compiler_backtrace = 5 [default = -1];
+    optional string compiler_source_file = 6;
+    optional int64 compiler_source_line = 7;
+    optional int64 compiler_source_col = 8;
+  }
+  oneof type {
+    .platforms_deepsea.jellyfish.xdb.Symbol.Root root = 50;
+    .platforms_deepsea.jellyfish.xdb.Symbol.TensorFlowOp tensor_flow_op = 60;
+    .platforms_deepsea.jellyfish.xdb.Symbol.HLOComputation hlo_computation = 65;
+    .platforms_deepsea.jellyfish.xdb.Symbol.HLOInstruction hlo_instruction = 70;
+    .platforms_deepsea.jellyfish.xdb.Symbol.LLORegion llo_region = 75;
+    .platforms_deepsea.jellyfish.xdb.Symbol.LLOValue llo_value = 80;
+    .platforms_deepsea.jellyfish.xdb.Symbol.BundleSlot bundle_slot = 85;
+  }
+  optional string description = 3;
+  optional uint64 id = 33;
+  repeated uint64 parent = 21;
+  repeated uint64 child = 22;
+  repeated .platforms_deepsea.jellyfish.xdb.EmittedInstructionRange child_instructions = 23;
+  repeated uint64 predecessor = 31;
+  repeated uint64 successor = 32;
+}

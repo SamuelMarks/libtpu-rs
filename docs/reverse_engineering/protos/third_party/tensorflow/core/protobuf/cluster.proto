@@ -1,0 +1,9 @@
+syntax = "proto3";
+package tensorflow;
+message JobDef {
+  string name = 1;
+  map<int32, string> tasks = 2;
+}
+message ClusterDef {
+  repeated .tensorflow.JobDef job = 1;
+}

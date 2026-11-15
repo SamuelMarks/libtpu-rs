@@ -1274,6 +1274,68 @@ const _: () = assert!(size_of::<XLA_FFI_Buffer>() == 40);
 const _: () = assert!(size_of::<XLA_FFI_CallFrame>() == 64);
 const _: () = assert!(size_of::<XLA_FFI_Api>() == 56);
 
+/// `#[repr(C)]` argument structure for `PJRT_FFI_TypeID_Register` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_FFI_TypeID_Register_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Pointer to custom type name UTF-8 bytes.
+    pub type_name: *const std::os::raw::c_char,
+    /// Byte length of `type_name`.
+    pub type_name_size: usize,
+    /// Output Pointer or inline `int64_t` registered type ID (`>= 1`).
+    pub type_id: i64,
+}
+
+/// `#[repr(C)]` argument structure for `PJRT_FFI_UserData_Add` (`48` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_FFI_UserData_Add_Args {
+    /// Size of this struct (`48`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Target `PJRT_ExecuteContext*` handle.
+    pub context: *mut std::ffi::c_void,
+    /// Registered type ID (`int64_t`).
+    pub type_id: i64,
+    /// User data opaque pointer.
+    pub data: *mut std::ffi::c_void,
+    /// Optional C deleter invoked when context finishes (`void (*)(void*)`).
+    pub deleter: Option<unsafe extern "C" fn(*mut std::ffi::c_void)>,
+}
+
+/// `#[repr(C)]` argument structure for `PJRT_FFI_Register_Handler` (`64` bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_FFI_Register_Handler_Args {
+    /// Size of this struct (`64`).
+    pub struct_size: usize,
+    /// Optional chained `PJRT_Extension_Base*`.
+    pub extension_start: *mut PJRT_Extension_Base,
+    /// Custom-call target name UTF-8 pointer.
+    pub target_name: *const std::os::raw::c_char,
+    /// Byte length of `target_name`.
+    pub target_name_size: usize,
+    /// Typed `XLA_FFI_Handler` function pointer (`*const c_void`).
+    pub handler: *const std::ffi::c_void,
+    /// Platform name UTF-8 pointer (`"TPU"`).
+    pub platform_name: *const std::os::raw::c_char,
+    /// Byte length of `platform_name`.
+    pub platform_name_size: usize,
+    /// Bitmask of `XLA_FFI_Handler_TraitsBits` (`0` = default).
+    pub traits: u32,
+    /// Reserved alignment padding.
+    pub pad: u32,
+}
+
+const _: () = assert!(size_of::<PJRT_FFI_TypeID_Register_Args>() == 40);
+const _: () = assert!(size_of::<PJRT_FFI_UserData_Add_Args>() == 48);
+const _: () = assert!(size_of::<PJRT_FFI_Register_Handler_Args>() == 64);
+
 /// Dedicated `#[repr(C)]` argument structure for `PJRT_TpuTopology_ProcessCount` (`32` bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]

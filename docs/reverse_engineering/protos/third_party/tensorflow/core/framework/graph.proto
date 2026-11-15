@@ -1,0 +1,13 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/function.proto";
+import "third_party/tensorflow/core/framework/graph_debug_info.proto";
+import "third_party/tensorflow/core/framework/node_def.proto";
+import "third_party/tensorflow/core/framework/versions.proto";
+message GraphDef {
+  repeated .tensorflow.NodeDef node = 1;
+  .tensorflow.VersionDef versions = 4;
+  int32 version = 3;
+  .tensorflow.FunctionDefLibrary library = 2;
+  .tensorflow.GraphDebugInfo debug_info = 5;
+}

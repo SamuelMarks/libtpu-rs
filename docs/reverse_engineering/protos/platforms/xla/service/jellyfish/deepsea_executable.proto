@@ -1,0 +1,10 @@
+syntax = "proto3";
+package xla;
+import "learning/45eac/tpu/runtime/hal/tpu_core_program.proto";
+import "platforms/deepsea/jellyfish/xdb/debugger.proto";
+message DeepseaExecutableProto {
+  .tpu.TpuCoreProgramProto core_program = 1;
+  .platforms_deepsea.jellyfish.xdb.CompilerMetadata compiler_metadata = 2;
+  .tpu.TpuCoreProgramProto sparse_core_program = 3;
+  .platforms_deepsea.jellyfish.xdb.CompilerMetadata sparse_core_compiler_metadata = 4;
+}

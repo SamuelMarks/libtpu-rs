@@ -177,12 +177,16 @@ pub const EMBEDDED_CSR_REGISTER_MAP_JSON: &str =
 pub struct CsrCatalogEntry {
     /// Cloud TPU hardware generation (`V2..=V7x`).
     pub generation: TpuGeneration,
-    /// Full hierarchical register name from `*_pf_csrs.br` (e.g., `"pxc_tc_0_tcs_core_state.PC"`).
+    /// Full hierarchical register name from `*_pf_csrs.br` or `.lrodata` (e.g., `"pxc_tc_0_tcs_core_state.PC"`).
     pub full_path: &'static str,
-    /// Physical BAR0 MMIO byte offset (`CsrAddress`).
+    /// `PCIe` BAR aperture index (`0` = BAR0 VF/Gasket aperture, `2` = BAR2 `DeepSea` CSR aperture).
+    pub bar_index: u8,
+    /// Physical BAR MMIO byte offset (`CsrAddress`).
     pub byte_offset: u64,
     /// Register width in bits (`32` or `64`).
     pub width_bits: u32,
+    /// Hardware power-on reset value (`u64`).
+    pub reset_value: u64,
     /// Hardware access permission (`RO`, `RW`, `WO`, `W1C`).
     pub access: CsrAccessPermission,
 }
@@ -193,12 +197,11 @@ impl CsrCatalogEntry {
     #[must_use]
     pub fn to_descriptor(self) -> CsrRegisterDescriptor {
         let bitfields = ChipRegisterMap::bitfields_for_register_path(self.full_path, self.access);
-        let reset_value = u64::from(self.full_path.ends_with("RUN_STATUS"));
         CsrRegisterDescriptor {
             full_path: self.full_path,
             byte_offset: self.byte_offset,
             access: self.access,
-            reset_value,
+            reset_value: self.reset_value,
             bitfields,
         }
     }
@@ -215,8 +218,10 @@ pub fn global_csr_register_catalog() -> &'static [CsrCatalogEntry] {
         let mut entries = Vec::with_capacity(2700);
         let mut current_gen = TpuGeneration::V4;
         let mut pending_name: &'static str = "";
+        let mut pending_bar: u8 = 2;
         let mut pending_offset: u64 = 0;
         let mut pending_width: u32 = 64;
+        let mut pending_reset: u64 = 0;
         for raw_line in EMBEDDED_CSR_REGISTER_MAP_JSON.lines() {
             let trimmed = raw_line.trim();
             if trimmed.starts_with("\"V2\":") {
@@ -237,6 +242,9 @@ pub fn global_csr_register_catalog() -> &'static [CsrCatalogEntry] {
                 current_gen = TpuGeneration::V7x;
             } else if let Some(rest) = trimmed.strip_prefix("\"name\": \"") {
                 pending_name = rest.trim_end_matches("\",");
+            } else if let Some(rest) = trimmed.strip_prefix("\"bar\": ") {
+                let num_str = rest.trim_end_matches(',');
+                pending_bar = num_str.parse::<u8>().unwrap_or(2);
             } else if let Some(rest) = trimmed.strip_prefix("\"offset\": \"") {
                 let val = rest.trim_end_matches("\",");
                 let hex = val.strip_prefix("0x").unwrap_or(val);
@@ -244,14 +252,20 @@ pub fn global_csr_register_catalog() -> &'static [CsrCatalogEntry] {
             } else if let Some(rest) = trimmed.strip_prefix("\"width_bits\": ") {
                 let num_str = rest.trim_end_matches(',');
                 pending_width = num_str.parse::<u32>().unwrap_or(64);
+            } else if let Some(rest) = trimmed.strip_prefix("\"reset_value\": \"") {
+                let val = rest.trim_end_matches("\",");
+                let hex = val.strip_prefix("0x").unwrap_or(val);
+                pending_reset = u64::from_str_radix(hex, 16).unwrap_or(0);
             } else if let Some(rest) = trimmed.strip_prefix("\"access\": \"") {
-                let val = rest.trim_end_matches('"');
+                let val = rest.trim_end_matches(',').trim_end_matches('"');
                 let access = CsrAccessPermission::from_str_code(val);
                 entries.push(CsrCatalogEntry {
                     generation: current_gen,
                     full_path: pending_name,
+                    bar_index: pending_bar,
                     byte_offset: pending_offset,
                     width_bits: pending_width,
+                    reset_value: pending_reset,
                     access,
                 });
             }
@@ -1062,24 +1076,25 @@ impl ChipRegisterMap {
         let registers = self
             .csr_descriptors()
             .into_iter()
-            .map(|d| crate::proto::RegisterTranslatorEntryProto {
-                full_path: String::from(d.full_path),
-                byte_offset: d.byte_offset,
-                width_bits: 64,
-                access_mode: String::from(match d.access {
-                    CsrAccessPermission::ReadOnly => "RO",
-                    CsrAccessPermission::ReadWrite => "RW",
-                    CsrAccessPermission::WriteOnly => "WO",
-                    CsrAccessPermission::WriteOneToClear => "W1C",
-                }),
-                reset_value: d.reset_value,
+            .map(|d| crate::proto::EncodedRegister {
+                name: String::from(d.full_path),
+                offset: d.byte_offset,
+                width: 8,
+                register_data_index: 0,
+                register_data: Vec::new(),
             })
             .collect();
         crate::proto::RegisterTranslatorDataProto {
-            chip_codename: String::from(self.chip_codename),
-            tpu_version: self.generation as i32,
-            hardware_abi_version: self.hardware_abi_version,
-            registers,
+            nodes: vec![crate::proto::EncodedNode {
+                mnemonic: String::from(self.chip_codename),
+                registers,
+                memories: Vec::new(),
+                tag: vec![format!("abi_{}", self.hardware_abi_version)],
+                base_offset: 0,
+                layout_index: self.generation as i32,
+            }],
+            register_data_table: Vec::new(),
+            node_layout_table: Vec::new(),
         }
     }
 

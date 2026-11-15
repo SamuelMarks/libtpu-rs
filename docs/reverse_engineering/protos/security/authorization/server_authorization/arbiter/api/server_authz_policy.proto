@@ -1,0 +1,30 @@
+syntax = "proto3";
+package server_authz;
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+message ServerAuthzPolicy {
+  reserved 1;
+  reserved "rslb_services";
+  .server_authz.CompressedServiceList gslb_services_compressed = 3;
+  .server_authz.CompressedServiceList rslb_services_compressed = 2;
+}
+message GslbService {
+  string namespace = 1;
+  string service_name = 2;
+}
+message GslbServiceList {
+  repeated .server_authz.GslbService gslb_services = 1;
+}
+message RslbService {
+  string namespace = 1;
+  string service_name = 2;
+}
+message RslbServiceList {
+  repeated .server_authz.RslbService rslb_services = 1;
+}
+message AllowedServiceList {
+  repeated .server_authz.GslbService gslb_services = 2;
+  repeated .server_authz.RslbService rslb_services = 1;
+}
+message CompressedServiceList {
+  bytes data = 1;
+}

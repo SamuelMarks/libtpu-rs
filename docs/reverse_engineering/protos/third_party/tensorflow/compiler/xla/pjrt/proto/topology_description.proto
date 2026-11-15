@@ -1,0 +1,11 @@
+syntax = "proto3";
+package xla;
+import "google/protobuf/any.proto";
+message PjRtTopologyDescriptionProto {
+  reserved 5 to 8;
+  uint64 platform_id = 1;
+  string platform_name = 2;
+  string platform_version = 3;
+  bool is_subslice_topology = 4;
+  .google.protobuf.Any platform_specific_topology = 9;
+}

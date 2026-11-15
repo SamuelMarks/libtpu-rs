@@ -1,0 +1,35 @@
+syntax = "proto3";
+package cloud_tpu_lib_monitoring_proto;
+import "google/protobuf/timestamp.proto";
+enum UtilizationMetricType {
+  UNSPECIFIED_UTILIZATION = 0;
+  TENSORCORE_UTILIZATION = 1;
+  HBM_UTILIZATION = 2;
+  ICI_UTILIZATION = 3;
+  SPARSECORE_UTILIZATION = 4;
+}
+message ChipThrottlingMetric {
+  int64 tray_id = 1;
+  int64 chip_id = 2;
+  int64 throttling_score = 3;
+}
+message IciLinkMetric {
+  string port_id = 1;
+  int64 link_health = 2;
+}
+message TpuHealthMetrics {
+  .cloud_tpu_lib_monitoring_proto.ChipThrottlingMetric chip_throttling_metric = 1;
+  repeated .cloud_tpu_lib_monitoring_proto.IciLinkMetric ici_link_metrics = 2;
+}
+message UtilizationMetricData {
+  message UtilizationMetric {
+    .cloud_tpu_lib_monitoring_proto.UtilizationMetricType metric_type = 1;
+    float utilization = 2;
+    float usage = 3;
+    float duty_cycle = 4;
+  }
+  .google.protobuf.Timestamp timestamp = 1;
+  repeated .cloud_tpu_lib_monitoring_proto.UtilizationMetricData.UtilizationMetric metrics = 2;
+  string chip_identifier = 3;
+  .cloud_tpu_lib_monitoring_proto.TpuHealthMetrics tpu_health_metrics = 4;
+}

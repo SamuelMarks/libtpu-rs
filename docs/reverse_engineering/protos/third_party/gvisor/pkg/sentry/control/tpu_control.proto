@@ -1,0 +1,43 @@
+syntax = "proto3";
+package cloud_gvisor.tpu;
+enum ControlAction {
+  ACTION_UNSPECIFIED = 0;
+  ACTION_LOCK = 1;
+  ACTION_CHECKPOINT = 2;
+  ACTION_RESTORE = 3;
+  ACTION_UNLOCK = 4;
+  ACTION_GETSTATE = 5;
+}
+enum RuntimeState {
+  STATE_UNSPECIFIED = 0;
+  STATE_RUNNING = 1;
+  STATE_LOCKED = 2;
+  STATE_DETACHED = 3;
+  STATE_RESTORING = 4;
+  STATE_FAULTED = 5;
+}
+message TpuTopology {
+  string chip_architecture = 1;
+  int32 num_chips = 2;
+  string mesh_shape = 3;
+  string pjrt_version = 4;
+}
+message ControlRequest {
+  .cloud_gvisor.tpu.ControlAction action = 1;
+  int32 timeout_secs = 2;
+  .cloud_gvisor.tpu.TpuTopology expected_topology = 3;
+}
+message ControlResponse {
+  oneof telemetry {
+    .cloud_gvisor.tpu.CheckpointTelemetry checkpoint_stats = 5;
+    .cloud_gvisor.tpu.RestoreTelemetry restore_stats = 6;
+  }
+  bool success = 1;
+  .cloud_gvisor.tpu.RuntimeState current_state = 2;
+  string error_message = 3;
+  .cloud_gvisor.tpu.TpuTopology active_topology = 4;
+}
+message CheckpointTelemetry {
+}
+message RestoreTelemetry {
+}

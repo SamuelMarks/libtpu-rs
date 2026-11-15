@@ -1,0 +1,279 @@
+syntax = "proto3";
+package tpu.runtime.debug;
+enum TpuCoreTypeProto {
+  TPU_CORE_TYPE_INVALID = 0;
+  TPU_CORE_TYPE_TENSOR_CORE = 1;
+  TPU_CORE_TYPE_BARNA_CORE = 2;
+  TPU_CORE_TYPE_SPARSE_CORE = 3;
+}
+enum LogHloOutputKindProto {
+  LOG_HLO_OUTPUT_UNKNOWN = 0;
+  LOG_HLO_OUTPUT_DATA = 1;
+  LOG_HLO_OUTPUT_SUMMARY = 2;
+  LOG_HLO_OUTPUT_BLOCK_SUMMARY = 3;
+  LOG_HLO_DISTRIBUTED_HASH = 4;
+}
+message TpuDimensionsProto {
+  repeated int32 coordinates = 1;
+}
+message TpuCoreOnChipProto {
+  .tpu.runtime.debug.TpuCoreTypeProto type = 1;
+  int32 index = 2;
+}
+message TpuTopologyArgsProto {
+  string version = 1;
+  string variant = 2;
+  int32 platform_type = 3;
+  string chip_config_name = 4;
+  .tpu.runtime.debug.TpuDimensionsProto chips_per_host_bounds = 5;
+  .tpu.runtime.debug.TpuDimensionsProto host_bounds = 6;
+  repeated bool wrap = 7;
+}
+message LogHloOutputMetadata {
+  string module_name = 2;
+  int64 module_id = 3;
+  int64 run_id = 4;
+  repeated int64 shape_index = 5;
+  string instruction_name = 6;
+  .tpu.runtime.debug.LogHloOutputKindProto kind = 7;
+  string user_tag = 9;
+}
+message LogRecord {
+  string tag = 1;
+  int64 size_bytes = 2;
+  bytes shape = 3;
+  repeated string extra_args = 7;
+  .tpu.runtime.debug.LogHloOutputMetadata hlo_output_metadata = 9;
+}
+message FusionDebugCallbackAttributes {
+  string user_tag = 1;
+  string fusion_hlo_name = 2;
+  string fused_hlo_name = 3;
+  string core_location = 4;
+}
+message NanInfEventMetadata {
+  repeated string deduplicated_names = 1;
+  bool is_input_nan_or_inf = 2;
+  bool is_collective_hlo = 3;
+  bool is_tpu_custom_call = 4;
+  bool contains_nan = 5;
+  bool contains_inf = 6;
+  string tag = 7;
+}
+message HloOutputMismatchEventMetadata {
+  repeated string deduplicated_names = 1;
+  bool is_input_mismatch = 2;
+  bool is_collective_hlo = 3;
+  bool is_tpu_custom_call = 4;
+  string tag = 5;
+}
+message IciSdcMismatchEventMetadata {
+  .tpu.runtime.debug.TpuDimensionsProto src_chips_coordinates = 1;
+  .tpu.runtime.debug.TpuCoreOnChipProto src_core_on_chip = 2;
+  string src_core = 3;
+  .tpu.runtime.debug.TpuDimensionsProto dst_chips_coordinates = 4;
+  .tpu.runtime.debug.TpuCoreOnChipProto dst_core_on_chip = 5;
+  string dst_core = 6;
+}
+message IciSdcTimeoutEventMetadata {
+  .tpu.runtime.debug.TpuDimensionsProto chips_coordinates = 1;
+  .tpu.runtime.debug.TpuCoreOnChipProto core_on_chip = 2;
+  string core = 3;
+  bool send = 4;
+}
+message DebugEventLocation {
+  string version = 1;
+  string variant = 2;
+  .tpu.runtime.debug.TpuDimensionsProto chips_coordinates = 3;
+  .tpu.runtime.debug.TpuCoreOnChipProto core_on_chip = 4;
+  string physical_location = 5;
+  .tpu.runtime.debug.TpuTopologyArgsProto topology_args = 6;
+  .tpu.runtime.debug.HostLocation host = 7;
+}
+message HostLocation {
+  string hostname = 1;
+  int64 pid = 2;
+  int64 tid = 3;
+  string hlo_name = 4;
+}
+message HloLoggerEventMetadata {
+  .tpu.runtime.debug.LogRecord log_record = 1;
+}
+message HloLoggerEventPayload {
+  repeated string extra_args = 1;
+  bytes literal = 2;
+}
+message FusionDebugEventMetadata {
+  .tpu.runtime.debug.FusionDebugCallbackAttributes attributes = 1;
+}
+message FusionDebugEventPayload {
+  int64 duration_cycles = 1;
+  bytes literal = 2;
+}
+message HloLoggerEvent {
+  .tpu.runtime.debug.HloLoggerEventMetadata metadata = 1;
+  .tpu.runtime.debug.HloLoggerEventPayload payload = 2;
+}
+message FusionDebugEvent {
+  .tpu.runtime.debug.FusionDebugEventMetadata metadata = 1;
+  .tpu.runtime.debug.FusionDebugEventPayload payload = 2;
+}
+message NanInfEventPayload {
+}
+message NanInfEvent {
+  .tpu.runtime.debug.NanInfEventMetadata metadata = 1;
+  .tpu.runtime.debug.NanInfEventPayload payload = 2;
+}
+message HloOutputMismatchEventPayload {
+}
+message HloOutputMismatchEvent {
+  .tpu.runtime.debug.HloOutputMismatchEventMetadata metadata = 1;
+  .tpu.runtime.debug.HloOutputMismatchEventPayload payload = 2;
+}
+message IciSdcMismatchEventPayload {
+}
+message IciSdcMismatchEvent {
+  .tpu.runtime.debug.IciSdcMismatchEventMetadata metadata = 1;
+  .tpu.runtime.debug.IciSdcMismatchEventPayload payload = 2;
+}
+message IciSdcTimeoutEventPayload {
+}
+message IciSdcTimeoutEvent {
+  .tpu.runtime.debug.IciSdcTimeoutEventMetadata metadata = 1;
+  .tpu.runtime.debug.IciSdcTimeoutEventPayload payload = 2;
+}
+message SdcEvent {
+  .tpu.runtime.debug.NanInfEvent nan_inf_event = 1;
+  .tpu.runtime.debug.HloOutputMismatchEvent hlo_output_mismatch_event = 2;
+  .tpu.runtime.debug.IciSdcMismatchEvent ici_sdc_mismatch_event = 3;
+  .tpu.runtime.debug.IciSdcTimeoutEvent ici_sdc_timeout_event = 4;
+}
+message CoreDumpValue {
+  string title = 1;
+  repeated string values = 2;
+}
+message CoreDumpSCValue {
+  repeated .tpu.runtime.debug.CoreDumpValue scs_info = 1;
+  repeated .tpu.runtime.debug.CoreDumpValue tile_info = 2;
+  repeated .tpu.runtime.debug.CoreDumpValue misc_info = 3;
+}
+message CoreDumpEventPayload {
+  repeated .tpu.runtime.debug.CoreDumpValue core_dump_tc_values = 1;
+  repeated .tpu.runtime.debug.CoreDumpSCValue core_dump_sc_values = 2;
+}
+message CoreDumpEventMetadata {
+  string hlo_name = 1;
+}
+message CoreDumpEvent {
+  .tpu.runtime.debug.CoreDumpEventMetadata metadata = 1;
+  .tpu.runtime.debug.CoreDumpEventPayload payload = 2;
+}
+message DeviceDebugEvent {
+  oneof event {
+    .tpu.runtime.debug.HloLoggerEvent hlo_logger_event = 3;
+    .tpu.runtime.debug.FusionDebugEvent fusion_debug_event = 4;
+    .tpu.runtime.debug.SdcEvent sdc_event = 5;
+    .tpu.runtime.debug.TpuStallEvent tpu_stall_event = 6;
+    .tpu.runtime.debug.CoreDumpEvent core_dump_event = 7;
+    .tpu.runtime.debug.TpuStallTriggerEvent tpu_stall_trigger_event = 8;
+    .tpu.runtime.debug.ScMismatchEvent sc_mismatch_event = 9;
+    .tpu.runtime.debug.SflagTimeoutEvent sflag_timeout_event = 10;
+    .tpu.runtime.debug.BoundsCheckFailEvent bounds_check_fail_event = 11;
+    .tpu.runtime.debug.IciSdcTestLogEvent ici_sdc_test_log_event = 12;
+  }
+  string timestamp = 1;
+  .tpu.runtime.debug.DebugEventLocation location = 2;
+  int32 launch_id = 13;
+}
+message TpuStallTriggerEventMetadata {
+}
+message TpuStallTriggerEventPayload {
+  enum StallSource {
+    UNKNOWN = 0;
+    PJRT_WATCHDOG = 1;
+    HAL_WATCHDOG = 2;
+    SFLAG_TIMEOUT = 3;
+    CORE_STALL = 4;
+    HARDWARE_WEDGE = 5;
+  }
+  int32 host_id = 1;
+  .tpu.runtime.debug.TpuStallTriggerEventPayload.StallSource source = 2;
+  string description = 3;
+  int64 timeout_ms = 4;
+}
+message TpuStallTriggerEvent {
+  .tpu.runtime.debug.TpuStallTriggerEventMetadata metadata = 1;
+  .tpu.runtime.debug.TpuStallTriggerEventPayload payload = 2;
+}
+message TpuStallEventMetadata {
+}
+message TpuStallEventPayload {
+  message AggregatedTrigger {
+    int32 host_id = 1;
+    .tpu.runtime.debug.TpuStallTriggerEventPayload.StallSource source = 2;
+    string description = 3;
+    int64 timeout_ms = 4;
+  }
+  bytes serialized_artifact = 1;
+  int32 host_id = 2;
+  .tpu.runtime.debug.TpuStallTriggerEventPayload.StallSource source = 3;
+  string description = 4;
+  int64 timeout_ms = 5;
+  int64 launch_id = 6;
+  repeated .tpu.runtime.debug.TpuStallEventPayload.AggregatedTrigger aggregated_triggers = 7;
+}
+message TpuStallEvent {
+  .tpu.runtime.debug.TpuStallEventMetadata metadata = 1;
+  .tpu.runtime.debug.TpuStallEventPayload payload = 2;
+}
+message ScMismatchEventMetadata {
+  string tag = 1;
+}
+message ScMismatchEventPayload {
+  bytes literal = 1;
+}
+message ScMismatchEvent {
+  .tpu.runtime.debug.ScMismatchEventMetadata metadata = 1;
+  .tpu.runtime.debug.ScMismatchEventPayload payload = 2;
+}
+message SflagTimeoutEventMetadata {
+  string tag = 1;
+}
+message SflagTimeoutEventPayload {
+  bytes literal = 1;
+  int32 expected_sflag_value = 2;
+  int32 latest_sflag_value_seen = 3;
+  int32 progress_tracker_current_depth = 4;
+  int32 progress_tracker_meta_id = 5;
+  repeated int32 progress_tracker_levels = 6;
+  int32 unfinished_send_sflags_count = 7;
+  repeated int32 unfinished_send_sflags = 8;
+  repeated string errors = 9;
+}
+message SflagTimeoutEvent {
+  .tpu.runtime.debug.SflagTimeoutEventMetadata metadata = 1;
+  .tpu.runtime.debug.SflagTimeoutEventPayload payload = 2;
+}
+message BoundsCheckFailEventMetadata {
+  string tag = 1;
+}
+message BoundsCheckFailEventPayload {
+  bytes literal = 1;
+}
+message BoundsCheckFailEvent {
+  .tpu.runtime.debug.BoundsCheckFailEventMetadata metadata = 1;
+  .tpu.runtime.debug.BoundsCheckFailEventPayload payload = 2;
+}
+message IciSdcTestLogEventMetadata {
+  string tag = 1;
+}
+message IciSdcTestLogEventPayload {
+  bytes literal = 1;
+  int32 global_core_id = 2;
+  int32 iteration = 3;
+  repeated string errors = 4;
+}
+message IciSdcTestLogEvent {
+  .tpu.runtime.debug.IciSdcTestLogEventMetadata metadata = 1;
+  .tpu.runtime.debug.IciSdcTestLogEventPayload payload = 2;
+}

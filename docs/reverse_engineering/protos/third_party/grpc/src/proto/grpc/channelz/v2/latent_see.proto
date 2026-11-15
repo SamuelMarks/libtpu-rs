@@ -1,0 +1,32 @@
+syntax = "proto3";
+package grpc.channelz.v2;
+import "third_party/grpc/src/proto/grpc/channelz/v2/property_list.proto";
+message LatentSeeTrace {
+  message FlowBegin {
+    int64 id = 1;
+  }
+  message FlowEnd {
+    int64 id = 1;
+  }
+  message Mark {
+    .grpc.channelz.v2.PropertyList properties = 1;
+  }
+  message Span {
+    int64 duration_ns = 1;
+  }
+  oneof kind {
+    .grpc.channelz.v2.LatentSeeTrace.FlowBegin flow_begin = 4;
+    .grpc.channelz.v2.LatentSeeTrace.FlowEnd flow_end = 5;
+    .grpc.channelz.v2.LatentSeeTrace.Mark mark = 6;
+    .grpc.channelz.v2.LatentSeeTrace.Span span = 7;
+  }
+  string name = 1;
+  int64 tid = 2;
+  int64 timestamp_ns = 3;
+}
+message GetTraceRequest {
+  double sample_time = 1;
+}
+service LatentSee {
+  rpc GetTrace(.grpc.channelz.v2.GetTraceRequest) returns (stream .grpc.channelz.v2.LatentSeeTrace);
+}

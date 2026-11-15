@@ -1,0 +1,1523 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.gfc.isa;
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/sparsecore/sparsecore_common_encodings.proto";
+message SparseCoreTecVectorAlu {
+  message VectorAddS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorAddS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorSubtractS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorSubtractS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMultiplyU32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMultiplyU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorBitwiseAnd {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorBitwiseAndn {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorBitwiseOr {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorBitwiseXor {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLogicalShiftLeft {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLogicalShiftRight {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorArithmeticShiftRight {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMaxU32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMinU32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMaxU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMinU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorPopulationCount {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorCountLeadingZeros {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorMaxF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMinF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMove {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message LaneId {
+    optional uint32 dest = 1;
+  }
+  message LaneIdCompressed {
+    optional uint32 dest = 1;
+  }
+  message LaneIdInterleaved {
+    optional uint32 dest = 1;
+  }
+  message VectorMaxBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMinBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorClassifyF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorEqS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorNeqS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorGtS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorGteS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLtS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLteS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorCarryU32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorEqF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorNeqF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorGtF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorGteF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLtF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLteF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorInfOrNanF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message CreateMask {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message VectorTotalLtF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorTotalLteF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message ByteNez {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message VectorGtU32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorGteU32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLtU32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLteU32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorClassifyBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorEqS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorNeqS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorGtS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorGteS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLtS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLteS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorGtU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorGteU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLtU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLteU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorCarryU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorEqBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorNeqBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorGtBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorGteBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLtBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLteBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorInfOrNanBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorTotalLtBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorTotalLteBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorSelect {
+    optional uint32 vmsk = 1;
+    optional uint32 dest = 2;
+    optional uint32 x = 3;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 4;
+    optional uint32 y_vreg = 5;
+  }
+  message VectorSelectNot {
+    optional uint32 vmsk = 1;
+    optional uint32 dest = 2;
+    optional uint32 x = 3;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 4;
+    optional uint32 y_vreg = 5;
+  }
+  message VectorSelectPredicate {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message PackInterleavedF32ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackInterleavedB32ToB16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackInterleavedB16ToB8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackInterleavedB8ToB4 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackCompressedF32ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackCompressedB32ToB16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackCompressedB16ToB8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackCompressedB8ToB4 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackCompressedB4ToB2 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackCompressedB2ToB1 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackCompressedBf16ToS8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackCompressedBf16ToU8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackInterleavedBf16ToS8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackInterleavedBf16ToU8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackCompressedBf16ToE5m2 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackCompressedBf16ToE4m3 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackInterleavedBf16ToE5m2 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message PackInterleavedBf16ToE4m3 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message UnpackInterleavedLowerBf16ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedUpperBf16ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedLowerS16ToS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedUpperS16ToS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedBf16Lanes07ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedBf16Lanes815ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedHf16Lanes07ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedHf16Lanes815ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS16Lanes07ToS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS16Lanes815ToS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE5m2Lanes03ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE5m2Lanes47ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE5m2Lanes811ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE5m2Lanes1215ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS8Lanes03ToS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS8Lanes47ToS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS8Lanes811ToS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS8Lanes1215ToS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS4Lanes07ToS8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS4Lanes815ToS8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS2Lanes07ToS4 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS2Lanes815ToS4 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS1Lanes07ToS2 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS1Lanes815ToS2 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE4m3Lanes03ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE4m3Lanes47ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE4m3Lanes811ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE4m3Lanes1215ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS8Lanes07ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS8Lanes815ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE5m2Lanes07ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE5m2Lanes815ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE4m3Lanes07ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedE4m3Lanes815ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedU8Lanes07ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedU8Lanes815ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS8Lanes07ToS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedS8Lanes815ToS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedU8Lanes07ToU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackCompressedU8Lanes815ToU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedLowerS8ToS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedUpperS8ToS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedLowerU8ToU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedUpperU8ToU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedLowerS8ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedUpperS8ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedLowerU8ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedUpperU8ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedLowerE5m2ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedUpperE5m2ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedLowerE4m3ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedUpperE4m3ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedLowerS8ToS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedUpperS8ToS16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedLowerU8ToU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedUpperU8ToU16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedLowerS8ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedUpperS8ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedLowerU8ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedUpperU8ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedLowerE5m2ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedUpperE5m2ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedLowerE4m3ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackInterleavedCompressedUpperE4m3ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message UnpackAndJoinB2Lanes07ToB4 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message UnpackAndJoinB2Lanes815ToB4 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message UnpackAndJoinB4Lanes07ToB8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message UnpackAndJoinB4Lanes815ToB8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VmskMove {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask x_vmask = 2;
+  }
+  message VmskNegate {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask x_vmask = 2;
+  }
+  message VmskAnd {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask x_vmask = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask y_vmask = 3;
+  }
+  message VmskOr {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask x_vmask = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask y_vmask = 3;
+  }
+  message VmskXor {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask x_vmask = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask y_vmask = 3;
+  }
+  message VmskPackLow {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask x_vmask = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask y_vmask = 3;
+  }
+  message VmskPackEven {
+    optional uint32 dest = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask x_vmask = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVmask y_vmask = 3;
+  }
+  message VectorMultiplyReturningHighHalfU32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorConvertExmyToE5m2 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorConvertExmyToE4m3 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message PackCompressedF32ToExmy {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message PackCompressedBf16ToExmy {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message UnpackCompressedExmyLanes07ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message UnpackCompressedExmyLanes815ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMultiplyF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorReluxF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorClampF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorCeilingF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorFloorF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertS32ToF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertF32ToS32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertF32ToE5m2 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertF32ToE4m3 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertF32ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertF32ToHf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertStochasticF32ToE5m2 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorConvertStochasticF32ToE4m3 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorConvertStochasticF32ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorConvertStochasticF32ToHf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorConvertBf16ToS8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertBf16ToU8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertBf16ToS4 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertBf16ToU4 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertS8ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertU8ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertS4ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorConvertU4ToBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorMultiplyBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorReluxBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorClampBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorCeilingBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorFloorBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorRoundToIntegralEvenF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorRoundToIntegralEvenBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorRoundToIntegralAwayF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorRoundToIntegralAwayBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorClampAsymmetricF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorClampAsymmetricBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorTruncateFractionalF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorTruncateFractionalBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+  }
+  message VectorRemapF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorRemapBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMaskPopulationCountB32 {
+    optional uint32 dest = 1;
+    optional uint32 vmsk = 2;
+  }
+  message VectorMaskPopulationCountB16 {
+    optional uint32 dest = 1;
+    optional uint32 vmsk = 2;
+  }
+  message VectorMaskPrefixSumB32 {
+    optional uint32 dest = 1;
+    optional uint32 vmsk = 2;
+  }
+  message VectorMaskPrefixSumB16 {
+    optional uint32 dest = 1;
+    optional uint32 vmsk = 2;
+  }
+  message VectorMaskCountTrailingZerosB32 {
+    optional uint32 dest = 1;
+    optional uint32 vmsk = 2;
+  }
+  message VectorMaskCountTrailingZerosB16 {
+    optional uint32 dest = 1;
+    optional uint32 vmsk = 2;
+  }
+  message VectorBroadcastB32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorBroadcastB16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorRotateB32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorRotateB16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorPermuteB32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorPermuteB16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorPermuteB8 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMaskPermuteB32 {
+    optional uint32 dest = 1;
+    optional uint32 vmsk = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMaskPermuteB16 {
+    optional uint32 dest = 1;
+    optional uint32 vmsk = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorMaskPermuteB8 {
+    optional uint32 dest = 1;
+    optional uint32 vmsk = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorLaneLeftShiftInsertB32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY shift_src = 4;
+  }
+  message VectorLaneLeftShiftInsertB16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY shift_src = 4;
+  }
+  message CombineEightLanesLowLow {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message CombineEightLanesHighHigh {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional uint32 y_vreg = 3;
+  }
+  message ReciprocalSqrtF32 {
+    optional uint32 x = 1;
+  }
+  message PowTwoF32 {
+    optional uint32 x = 1;
+  }
+  message LogTwoF32 {
+    optional uint32 x = 1;
+  }
+  message TanhF32 {
+    optional uint32 x = 1;
+  }
+  message ShiftedSigmoidF32 {
+    optional uint32 x = 1;
+  }
+  message ReciprocalF32 {
+    optional uint32 x = 1;
+  }
+  message SinqF32 {
+    optional uint32 x = 1;
+  }
+  message CosqF32 {
+    optional uint32 x = 1;
+  }
+  message ErfF32 {
+    optional uint32 x = 1;
+  }
+  message ReciprocalSqrtBf16 {
+    optional uint32 x = 1;
+  }
+  message PowTwoBf16 {
+    optional uint32 x = 1;
+  }
+  message LogTwoBf16 {
+    optional uint32 x = 1;
+  }
+  message TanhBf16 {
+    optional uint32 x = 1;
+  }
+  message ShiftedSigmoidBf16 {
+    optional uint32 x = 1;
+  }
+  message ReciprocalBf16 {
+    optional uint32 x = 1;
+  }
+  message SinqBf16 {
+    optional uint32 x = 1;
+  }
+  message CosqBf16 {
+    optional uint32 x = 1;
+  }
+  message ErfBf16 {
+    optional uint32 x = 1;
+  }
+  message VectorAddF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorSubtractYXF32 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorAddLowF32Bf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorAddHighF32Bf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorAddBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message VectorSubtractYXBf16 {
+    optional uint32 dest = 1;
+    optional uint32 x = 2;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 3;
+    optional uint32 y_vreg = 4;
+  }
+  message PushV2s {
+    optional uint32 x = 1;
+    optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreVectorY y_src = 2;
+    optional uint32 y_vreg = 3;
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorAddS32 vector_add_s32 = 8;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorAddS16 vector_add_s16 = 9;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorSubtractS32 vector_subtract_s32 = 10;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorSubtractS16 vector_subtract_s16 = 11;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMultiplyU32 vector_multiply_u32 = 12;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMultiplyU16 vector_multiply_u16 = 13;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorBitwiseAnd vector_bitwise_and = 14;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorBitwiseAndn vector_bitwise_andn = 15;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorBitwiseOr vector_bitwise_or = 16;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorBitwiseXor vector_bitwise_xor = 17;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLogicalShiftLeft vector_logical_shift_left = 18;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLogicalShiftRight vector_logical_shift_right = 19;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorArithmeticShiftRight vector_arithmetic_shift_right = 20;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaxU32 vector_max_u32 = 21;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMinU32 vector_min_u32 = 22;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaxU16 vector_max_u16 = 23;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMinU16 vector_min_u16 = 24;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorPopulationCount vector_population_count = 25;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorCountLeadingZeros vector_count_leading_zeros = 26;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaxF32 vector_max_f32 = 27;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMinF32 vector_min_f32 = 28;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMove vector_move = 29;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.LaneId lane_id = 30;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.LaneIdCompressed lane_id_compressed = 31;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.LaneIdInterleaved lane_id_interleaved = 32;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaxBf16 vector_max_bf16 = 33;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMinBf16 vector_min_bf16 = 34;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorClassifyF32 vector_classify_f32 = 35;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorEqS32 vector_eq_s32 = 36;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorNeqS32 vector_neq_s32 = 37;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGtS32 vector_gt_s32 = 38;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGteS32 vector_gte_s32 = 39;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLtS32 vector_lt_s32 = 40;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLteS32 vector_lte_s32 = 41;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorCarryU32 vector_carry_u32 = 42;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorEqF32 vector_eq_f32 = 43;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorNeqF32 vector_neq_f32 = 44;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGtF32 vector_gt_f32 = 45;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGteF32 vector_gte_f32 = 46;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLtF32 vector_lt_f32 = 47;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLteF32 vector_lte_f32 = 48;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorInfOrNanF32 vector_inf_or_nan_f32 = 49;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.CreateMask create_mask = 50;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorTotalLtF32 vector_total_lt_f32 = 51;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorTotalLteF32 vector_total_lte_f32 = 52;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.ByteNez byte_nez = 53;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGtU32 vector_gt_u32 = 54;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGteU32 vector_gte_u32 = 55;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLtU32 vector_lt_u32 = 56;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLteU32 vector_lte_u32 = 57;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorClassifyBf16 vector_classify_bf16 = 58;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorEqS16 vector_eq_s16 = 59;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorNeqS16 vector_neq_s16 = 60;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGtS16 vector_gt_s16 = 61;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGteS16 vector_gte_s16 = 62;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLtS16 vector_lt_s16 = 63;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLteS16 vector_lte_s16 = 64;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGtU16 vector_gt_u16 = 65;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGteU16 vector_gte_u16 = 66;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLtU16 vector_lt_u16 = 67;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLteU16 vector_lte_u16 = 68;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorCarryU16 vector_carry_u16 = 69;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorEqBf16 vector_eq_bf16 = 70;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorNeqBf16 vector_neq_bf16 = 71;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGtBf16 vector_gt_bf16 = 72;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorGteBf16 vector_gte_bf16 = 73;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLtBf16 vector_lt_bf16 = 74;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLteBf16 vector_lte_bf16 = 75;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorInfOrNanBf16 vector_inf_or_nan_bf16 = 76;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorTotalLtBf16 vector_total_lt_bf16 = 77;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorTotalLteBf16 vector_total_lte_bf16 = 78;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorSelect vector_select = 79;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorSelectNot vector_select_not = 80;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorSelectPredicate vector_select_predicate = 81;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackInterleavedF32ToBf16 pack_interleaved_f32_to_bf16 = 82;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackInterleavedB32ToB16 pack_interleaved_b32_to_b16 = 83;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackInterleavedB16ToB8 pack_interleaved_b16_to_b8 = 84;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackInterleavedB8ToB4 pack_interleaved_b8_to_b4 = 85;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedF32ToBf16 pack_compressed_f32_to_bf16 = 86;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedB32ToB16 pack_compressed_b32_to_b16 = 87;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedB16ToB8 pack_compressed_b16_to_b8 = 88;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedB8ToB4 pack_compressed_b8_to_b4 = 89;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedB4ToB2 pack_compressed_b4_to_b2 = 90;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedB2ToB1 pack_compressed_b2_to_b1 = 91;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedBf16ToS8 pack_compressed_bf16_to_s8 = 92;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedBf16ToU8 pack_compressed_bf16_to_u8 = 93;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackInterleavedBf16ToS8 pack_interleaved_bf16_to_s8 = 94;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackInterleavedBf16ToU8 pack_interleaved_bf16_to_u8 = 95;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedBf16ToE5m2 pack_compressed_bf16_to_e5m2 = 96;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedBf16ToE4m3 pack_compressed_bf16_to_e4m3 = 97;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackInterleavedBf16ToE5m2 pack_interleaved_bf16_to_e5m2 = 98;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackInterleavedBf16ToE4m3 pack_interleaved_bf16_to_e4m3 = 99;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedLowerBf16ToF32 unpack_interleaved_lower_bf16_to_f32 = 100;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedUpperBf16ToF32 unpack_interleaved_upper_bf16_to_f32 = 101;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedLowerS16ToS32 unpack_interleaved_lower_s16_to_s32 = 102;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedUpperS16ToS32 unpack_interleaved_upper_s16_to_s32 = 103;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedBf16Lanes07ToF32 unpack_compressed_bf16_lanes_0_7_to_f32 = 104;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedBf16Lanes815ToF32 unpack_compressed_bf16_lanes_8_15_to_f32 = 105;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedHf16Lanes07ToF32 unpack_compressed_hf16_lanes_0_7_to_f32 = 106;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedHf16Lanes815ToF32 unpack_compressed_hf16_lanes_8_15_to_f32 = 107;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS16Lanes07ToS32 unpack_compressed_s16_lanes_0_7_to_s32 = 108;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS16Lanes815ToS32 unpack_compressed_s16_lanes_8_15_to_s32 = 109;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE5m2Lanes03ToF32 unpack_compressed_e5m2_lanes_0_3_to_f32 = 110;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE5m2Lanes47ToF32 unpack_compressed_e5m2_lanes_4_7_to_f32 = 111;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE5m2Lanes811ToF32 unpack_compressed_e5m2_lanes_8_11_to_f32 = 112;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE5m2Lanes1215ToF32 unpack_compressed_e5m2_lanes_12_15_to_f32 = 113;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS8Lanes03ToS32 unpack_compressed_s8_lanes_0_3_to_s32 = 114;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS8Lanes47ToS32 unpack_compressed_s8_lanes_4_7_to_s32 = 115;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS8Lanes811ToS32 unpack_compressed_s8_lanes_8_11_to_s32 = 116;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS8Lanes1215ToS32 unpack_compressed_s8_lanes_12_15_to_s32 = 117;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS4Lanes07ToS8 unpack_compressed_s4_lanes_0_7_to_s8 = 118;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS4Lanes815ToS8 unpack_compressed_s4_lanes_8_15_to_s8 = 119;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS2Lanes07ToS4 unpack_compressed_s2_lanes_0_7_to_s4 = 120;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS2Lanes815ToS4 unpack_compressed_s2_lanes_8_15_to_s4 = 121;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS1Lanes07ToS2 unpack_compressed_s1_lanes_0_7_to_s2 = 122;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS1Lanes815ToS2 unpack_compressed_s1_lanes_8_15_to_s2 = 123;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE4m3Lanes03ToF32 unpack_compressed_e4m3_lanes_0_3_to_f32 = 124;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE4m3Lanes47ToF32 unpack_compressed_e4m3_lanes_4_7_to_f32 = 125;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE4m3Lanes811ToF32 unpack_compressed_e4m3_lanes_8_11_to_f32 = 126;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE4m3Lanes1215ToF32 unpack_compressed_e4m3_lanes_12_15_to_f32 = 127;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS8Lanes07ToBf16 unpack_compressed_s8_lanes_0_7_to_bf16 = 128;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS8Lanes815ToBf16 unpack_compressed_s8_lanes_8_15_to_bf16 = 129;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE5m2Lanes07ToBf16 unpack_compressed_e5m2_lanes_0_7_to_bf16 = 130;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE5m2Lanes815ToBf16 unpack_compressed_e5m2_lanes_8_15_to_bf16 = 131;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE4m3Lanes07ToBf16 unpack_compressed_e4m3_lanes_0_7_to_bf16 = 132;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedE4m3Lanes815ToBf16 unpack_compressed_e4m3_lanes_8_15_to_bf16 = 133;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedU8Lanes07ToBf16 unpack_compressed_u8_lanes_0_7_to_bf16 = 134;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedU8Lanes815ToBf16 unpack_compressed_u8_lanes_8_15_to_bf16 = 135;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS8Lanes07ToS16 unpack_compressed_s8_lanes_0_7_to_s16 = 136;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedS8Lanes815ToS16 unpack_compressed_s8_lanes_8_15_to_s16 = 137;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedU8Lanes07ToU16 unpack_compressed_u8_lanes_0_7_to_u16 = 138;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedU8Lanes815ToU16 unpack_compressed_u8_lanes_8_15_to_u16 = 139;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedLowerS8ToS16 unpack_interleaved_lower_s8_to_s16 = 140;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedUpperS8ToS16 unpack_interleaved_upper_s8_to_s16 = 141;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedLowerU8ToU16 unpack_interleaved_lower_u8_to_u16 = 142;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedUpperU8ToU16 unpack_interleaved_upper_u8_to_u16 = 143;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedLowerS8ToBf16 unpack_interleaved_lower_s8_to_bf16 = 144;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedUpperS8ToBf16 unpack_interleaved_upper_s8_to_bf16 = 145;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedLowerU8ToBf16 unpack_interleaved_lower_u8_to_bf16 = 146;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedUpperU8ToBf16 unpack_interleaved_upper_u8_to_bf16 = 147;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedLowerE5m2ToBf16 unpack_interleaved_lower_e5m2_to_bf16 = 148;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedUpperE5m2ToBf16 unpack_interleaved_upper_e5m2_to_bf16 = 149;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedLowerE4m3ToBf16 unpack_interleaved_lower_e4m3_to_bf16 = 150;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedUpperE4m3ToBf16 unpack_interleaved_upper_e4m3_to_bf16 = 151;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedLowerS8ToS16 unpack_interleaved_compressed_lower_s8_to_s16 = 152;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedUpperS8ToS16 unpack_interleaved_compressed_upper_s8_to_s16 = 153;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedLowerU8ToU16 unpack_interleaved_compressed_lower_u8_to_u16 = 154;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedUpperU8ToU16 unpack_interleaved_compressed_upper_u8_to_u16 = 155;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedLowerS8ToBf16 unpack_interleaved_compressed_lower_s8_to_bf16 = 156;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedUpperS8ToBf16 unpack_interleaved_compressed_upper_s8_to_bf16 = 157;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedLowerU8ToBf16 unpack_interleaved_compressed_lower_u8_to_bf16 = 158;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedUpperU8ToBf16 unpack_interleaved_compressed_upper_u8_to_bf16 = 159;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedLowerE5m2ToBf16 unpack_interleaved_compressed_lower_e5m2_to_bf16 = 160;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedUpperE5m2ToBf16 unpack_interleaved_compressed_upper_e5m2_to_bf16 = 161;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedLowerE4m3ToBf16 unpack_interleaved_compressed_lower_e4m3_to_bf16 = 162;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackInterleavedCompressedUpperE4m3ToBf16 unpack_interleaved_compressed_upper_e4m3_to_bf16 = 163;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackAndJoinB2Lanes07ToB4 unpack_and_join_b2_lanes_0_7_to_b4 = 164;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackAndJoinB2Lanes815ToB4 unpack_and_join_b2_lanes_8_15_to_b4 = 165;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackAndJoinB4Lanes07ToB8 unpack_and_join_b4_lanes_0_7_to_b8 = 166;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackAndJoinB4Lanes815ToB8 unpack_and_join_b4_lanes_8_15_to_b8 = 167;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VmskMove vmsk_move = 168;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VmskNegate vmsk_negate = 169;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VmskAnd vmsk_and = 170;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VmskOr vmsk_or = 171;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VmskXor vmsk_xor = 172;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VmskPackLow vmsk_pack_low = 173;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VmskPackEven vmsk_pack_even = 174;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMultiplyReturningHighHalfU32 vector_multiply_returning_high_half_u32 = 175;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertExmyToE5m2 vector_convert_exmy_to_e5m2 = 176;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertExmyToE4m3 vector_convert_exmy_to_e4m3 = 177;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedF32ToExmy pack_compressed_f32_to_exmy = 178;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PackCompressedBf16ToExmy pack_compressed_bf16_to_exmy = 179;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedExmyLanes07ToBf16 unpack_compressed_exmy_lanes_0_7_to_bf16 = 180;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.UnpackCompressedExmyLanes815ToBf16 unpack_compressed_exmy_lanes_8_15_to_bf16 = 181;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMultiplyF32 vector_multiply_f32 = 182;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorReluxF32 vector_relux_f32 = 183;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorClampF32 vector_clamp_f32 = 184;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorCeilingF32 vector_ceiling_f32 = 185;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorFloorF32 vector_floor_f32 = 186;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertS32ToF32 vector_convert_s32_to_f32 = 187;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertF32ToS32 vector_convert_f32_to_s32 = 188;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertF32ToE5m2 vector_convert_f32_to_e5m2 = 189;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertF32ToE4m3 vector_convert_f32_to_e4m3 = 190;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertF32ToBf16 vector_convert_f32_to_bf16 = 191;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertF32ToHf16 vector_convert_f32_to_hf16 = 192;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertStochasticF32ToE5m2 vector_convert_stochastic_f32_to_e5m2 = 193;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertStochasticF32ToE4m3 vector_convert_stochastic_f32_to_e4m3 = 194;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertStochasticF32ToBf16 vector_convert_stochastic_f32_to_bf16 = 195;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertStochasticF32ToHf16 vector_convert_stochastic_f32_to_hf16 = 196;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertBf16ToS8 vector_convert_bf16_to_s8 = 197;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertBf16ToU8 vector_convert_bf16_to_u8 = 198;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertBf16ToS4 vector_convert_bf16_to_s4 = 199;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertBf16ToU4 vector_convert_bf16_to_u4 = 200;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertS8ToBf16 vector_convert_s8_to_bf16 = 201;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertU8ToBf16 vector_convert_u8_to_bf16 = 202;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertS4ToBf16 vector_convert_s4_to_bf16 = 203;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorConvertU4ToBf16 vector_convert_u4_to_bf16 = 204;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMultiplyBf16 vector_multiply_bf16 = 205;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorReluxBf16 vector_relux_bf16 = 206;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorClampBf16 vector_clamp_bf16 = 207;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorCeilingBf16 vector_ceiling_bf16 = 208;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorFloorBf16 vector_floor_bf16 = 209;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorRoundToIntegralEvenF32 vector_round_to_integral_even_f32 = 210;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorRoundToIntegralEvenBf16 vector_round_to_integral_even_bf16 = 211;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorRoundToIntegralAwayF32 vector_round_to_integral_away_f32 = 212;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorRoundToIntegralAwayBf16 vector_round_to_integral_away_bf16 = 213;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorClampAsymmetricF32 vector_clamp_asymmetric_f32 = 214;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorClampAsymmetricBf16 vector_clamp_asymmetric_bf16 = 215;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorTruncateFractionalF32 vector_truncate_fractional_f32 = 216;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorTruncateFractionalBf16 vector_truncate_fractional_bf16 = 217;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorRemapF32 vector_remap_f32 = 218;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorRemapBf16 vector_remap_bf16 = 219;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaskPopulationCountB32 vector_mask_population_count_b32 = 220;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaskPopulationCountB16 vector_mask_population_count_b16 = 221;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaskPrefixSumB32 vector_mask_prefix_sum_b32 = 222;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaskPrefixSumB16 vector_mask_prefix_sum_b16 = 223;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaskCountTrailingZerosB32 vector_mask_count_trailing_zeros_b32 = 224;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaskCountTrailingZerosB16 vector_mask_count_trailing_zeros_b16 = 225;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorBroadcastB32 vector_broadcast_b32 = 226;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorBroadcastB16 vector_broadcast_b16 = 227;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorRotateB32 vector_rotate_b32 = 228;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorRotateB16 vector_rotate_b16 = 229;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorPermuteB32 vector_permute_b32 = 230;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorPermuteB16 vector_permute_b16 = 231;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorPermuteB8 vector_permute_b8 = 232;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaskPermuteB32 vector_mask_permute_b32 = 233;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaskPermuteB16 vector_mask_permute_b16 = 234;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorMaskPermuteB8 vector_mask_permute_b8 = 235;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLaneLeftShiftInsertB32 vector_lane_left_shift_insert_b32 = 236;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorLaneLeftShiftInsertB16 vector_lane_left_shift_insert_b16 = 237;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.CombineEightLanesLowLow combine_eight_lanes_low_low = 238;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.CombineEightLanesHighHigh combine_eight_lanes_high_high = 239;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.ReciprocalSqrtF32 reciprocal_sqrt_f32 = 240;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PowTwoF32 pow_two_f32 = 241;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.LogTwoF32 log_two_f32 = 242;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.TanhF32 tanh_f32 = 243;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.ShiftedSigmoidF32 shifted_sigmoid_f32 = 244;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.ReciprocalF32 reciprocal_f32 = 245;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.SinqF32 sinq_f32 = 246;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.CosqF32 cosq_f32 = 247;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.ErfF32 erf_f32 = 248;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.ReciprocalSqrtBf16 reciprocal_sqrt_bf16 = 249;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PowTwoBf16 pow_two_bf16 = 250;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.LogTwoBf16 log_two_bf16 = 251;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.TanhBf16 tanh_bf16 = 252;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.ShiftedSigmoidBf16 shifted_sigmoid_bf16 = 253;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.ReciprocalBf16 reciprocal_bf16 = 254;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.SinqBf16 sinq_bf16 = 255;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.CosqBf16 cosq_bf16 = 256;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.ErfBf16 erf_bf16 = 257;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorAddF32 vector_add_f32 = 258;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorSubtractYXF32 vector_subtract_y_x_f32 = 259;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorAddLowF32Bf16 vector_add_low_f32_bf16 = 260;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorAddHighF32Bf16 vector_add_high_f32_bf16 = 261;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorAddBf16 vector_add_bf16 = 262;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.VectorSubtractYXBf16 vector_subtract_y_x_bf16 = 263;
+    .asic_sw.deepsea.gxc.gfc.isa.SparseCoreTecVectorAlu.PushV2s push_v2s = 264;
+  }
+  optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreNormalPredication normal_predication = 1 [default = SPARSECORE_NORMAL_PREDICATION_ALWAYS];
+  optional bool normal_predication_inversion = 2;
+  optional .asic_sw.deepsea.gxc.gfc.isa.SparsecoreRotatePredication rotate_predication = 3 [default = SPARSECORE_ROTATE_PREDICATION_PREG7_IS_1];
+  optional bool is_rotate_predication = 4;
+  optional uint32 latency = 5 [default = 1];
+  map<string, uint32> resource_usage = 6;
+  optional uint32 bit_width = 7;
+}

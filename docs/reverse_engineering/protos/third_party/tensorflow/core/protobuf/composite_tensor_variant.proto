@@ -1,0 +1,6 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/protobuf/struct.proto";
+message CompositeTensorVariantMetadata {
+  .tensorflow.TypeSpecProto type_spec_proto = 1;
+}

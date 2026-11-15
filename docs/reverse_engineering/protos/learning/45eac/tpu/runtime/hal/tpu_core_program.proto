@@ -1,0 +1,63 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/hal/tpu_compression_type.proto";
+import "learning/45eac/tpu/runtime/hal/tpu_sequencer_program.proto";
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "learning/45eac/tpu/runtime/tpu_platform_type.proto";
+import "learning/45eac/tpu/runtime/tpu_runtime_abi.proto";
+enum TpuSegmentTypeProto {
+  TPU_SEGMENT_TYPE_INVALID = 0;
+  TPU_SEGMENT_TYPE_CODE = 1;
+  TPU_SEGMENT_TYPE_DATA = 2;
+  TPU_SEGMENT_TYPE_NOBITS = 3;
+}
+message TpuMemorySegmentProto {
+  message Range {
+    int64 start_byte_offset = 1;
+    int64 size = 2;
+  }
+  oneof segment {
+    .tpu.TpuMemorySegmentProto.Range initialized_data_range = 3;
+    int64 segment_size_in_bytes = 4;
+  }
+  .tpu.TpuSegmentTypeProto segment_type = 1;
+  .tpu.TpuSegmentMemoryTypeProto memory_type = 2;
+}
+message TpuMemorySegmentSetProto {
+  .tpu.TpuSegmentMemoryTypeProto memory_type = 1;
+  repeated .tpu.TpuMemorySegmentProto segments = 2;
+  .tpu.TpuCompressionTypeProto compression = 5;
+  bytes initialized_data = 3;
+  bytes hash = 4;
+}
+message TpuCoreProgramProto {
+  reserved 1;
+  reserved 11;
+  reserved "version";
+  reserved "abi_version";
+  message TensorCore {
+    .tpu.TpuSequencerProgramProto sequencer = 1;
+  }
+  message BarnaCore {
+    .tpu.TpuSequencerProgramProto sequencer = 1;
+    repeated .tpu.TpuSequencerProgramProto address_handlers = 2;
+  }
+  message SparseCore {
+    .tpu.TpuSequencerProgramProto sequencer = 1;
+    .tpu.TpuSequencerProgramProto tile_access = 2;
+    .tpu.TpuSequencerProgramProto tile_execute = 3;
+  }
+  oneof core {
+    .tpu.TpuCoreProgramProto.TensorCore tensor_core = 5;
+    .tpu.TpuCoreProgramProto.BarnaCore barna_core = 6;
+    .tpu.TpuCoreProgramProto.SparseCore sparse_core = 7;
+  }
+  .tpu.TpuCoreProgramAbiProto abi = 12;
+  .tpu.TpuPlatformTypeProto platform_type = 2;
+  bytes fingerprint = 3;
+  uint64 compilation_id = 4;
+  repeated .tpu.TpuMemorySegmentSetProto memory_segments = 8;
+  int64 concurrent_program_hbm_stack_size = 9;
+  bool has_concurrent_program = 10;
+  bool oom_during_compilation = 14;
+}

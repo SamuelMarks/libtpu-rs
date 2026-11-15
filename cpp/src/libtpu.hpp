@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <span>
 #include <string>
+#include <string_view>
 
 /**
  * @namespace libtpu
@@ -151,7 +152,7 @@ enum class TpuVersion : int32_t {
 /**
  * @brief Zero-exception RAII status wrapper over `LibTpuCStatus`.
  */
-class Status {
+class [[nodiscard]] Status {
 public:
   /**
    * @brief Constructs a `Status` taking ownership of a raw `LibTpuCStatus` and
@@ -679,6 +680,17 @@ public:
    */
   [[nodiscard]] Status compile(const char *format, const uint8_t *code,
                                size_t code_len,
+                               LoadedExecutable *exec_out) noexcept;
+
+  /**
+   * @brief Compiles and loads an HLO or `StableHLO` program from
+   * `std::string_view` views without manual pointer casts or byte lengths.
+   * @param format Format string view (`"mlir"` or `"hlo"`).
+   * @param code Program source or bytecode view.
+   * @param exec_out Output `LoadedExecutable` receiving the compiled program.
+   * @return `Status` indicating compilation success or failure.
+   */
+  [[nodiscard]] Status compile(std::string_view format, std::string_view code,
                                LoadedExecutable *exec_out) noexcept;
 
   /**
@@ -1698,9 +1710,6 @@ using MultiSliceCoordinator = MegascaleContext;
 /** @brief Type alias for `EmbeddingEngine` (`SparseCoreEngine`). */
 using SparseCoreEngine = EmbeddingEngine;
 
-/** @brief Type alias for `Buffer` (`DlPackTensor`). */
-using DlPackTensor = Buffer;
-
 /**
  * @brief Strongly-typed C++20 wrapper for registering OpenXLA Typed FFI v0.2
  * `XLA_FFI_Handler` custom call targets (`FfiRegistry`).
@@ -2012,11 +2021,383 @@ execute_multicore_vm(const LoadedExecutable &executable,
 query_llo_schedule_summary(const LoadedExecutable &executable) noexcept;
 
 /**
+ * @brief Runs HLO rematerialization and input-output buffer donation alias
+ * analysis on `executable` (`libtpu_rs_query_rematerialization_report`).
+ * @param executable Reference to a compiled `LoadedExecutable`.
+ * @param memory_limit_bytes Target peak memory budget in bytes (`>= 256`).
+ * @return Formatted rematerialization and buffer donation summary string (or
+ * `""` if `executable` is null).
+ */
+[[nodiscard]] std::string
+query_rematerialization_report(const LoadedExecutable &executable,
+                               uint64_t memory_limit_bytes) noexcept;
+
+/**
+ * @brief Executes the lowered `BarnacoreExecutableProto` `SparseCore` (`SCS` /
+ * `TAC` / `TEC`) embedding program for `executable`
+ * (`libtpu_rs_execute_barnacore_program`).
+ * @param executable Reference to a compiled `LoadedExecutable`.
+ * @param optimizer_algorithm `SparseCoreOptimizer` ordinal (`0..=17`).
+ * @param out_sparse_ops Output pointer receiving the executed sparse operation
+ * count.
+ * @return `Status` indicating execution success or failure.
+ */
+[[nodiscard]] Status
+execute_barnacore_program(const LoadedExecutable &executable,
+                          int32_t optimizer_algorithm,
+                          uint64_t *out_sparse_ops) noexcept;
+
+/** @brief Canonical RAII alias for `Topology` (`TopologyDescription`). */
+using TopologyDescription = Topology;
+
+/** @brief Canonical RAII alias for `Communicator` (`CollectiveCommunicator`).
+ */
+using CollectiveCommunicator = Communicator;
+
+/** @brief Canonical RAII alias for `FfiRegistry` (`FfiCustomCallRegistry`). */
+using FfiCustomCallRegistry = FfiRegistry;
+
+/**
+ * @brief Move-only RAII wrapper over `GetPjrtApi()` (`PJRT_Plugin_Initialize` &
+ * `PJRT_Plugin_Attributes`).
+ */
+class Plugin {
+public:
+  /**
+   * @brief Binds to `GetPjrtApi()` and invokes `PJRT_Plugin_Initialize`.
+   */
+  Plugin() noexcept;
+
+  /**
+   * @brief Destroys the `Plugin` handle.
+   */
+  ~Plugin() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other plugin instance.
+   */
+  Plugin(const Plugin &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other plugin instance.
+   * @return Reference to this plugin.
+   */
+  Plugin &operator=(const Plugin &other) = delete;
+
+  /**
+   * @brief Move constructor transferring `Plugin` ownership.
+   * @param other Rvalue plugin to move from.
+   */
+  Plugin(Plugin &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring `Plugin` ownership.
+   * @param other Rvalue plugin to move from.
+   * @return Reference to this plugin.
+   */
+  Plugin &operator=(Plugin &&other) noexcept;
+
+  /**
+   * @brief Queries the number of plugin-level `PJRT_NamedValue` attributes.
+   * @return Number of plugin attributes (`>= 1`).
+   */
+  [[nodiscard]] size_t attribute_count() const noexcept;
+
+  /**
+   * @brief Returns the underlying `const PJRT_Api*` vtable pointer.
+   * @return Non-null `const PJRT_Api*` pointer (or `nullptr` if moved-from).
+   */
+  [[nodiscard]] const PJRT_Api *raw() const noexcept;
+
+private:
+  /** @brief Non-owning pointer to static `PJRT_Api` vtable. */
+  const PJRT_Api *api_;
+};
+
+/**
+ * @brief Move-safe strongly-typed C++20 wrapper over `PJRT_DeviceDescription*`.
+ */
+class DeviceDescription {
+public:
+  /**
+   * @brief Constructs a `DeviceDescription` view over `handle`.
+   * @param handle Raw `const PJRT_DeviceDescription*` (defaults to `nullptr`).
+   */
+  explicit DeviceDescription(
+      const PJRT_DeviceDescription *handle = nullptr) noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other device description.
+   */
+  DeviceDescription(const DeviceDescription &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other device description.
+   * @return Reference to this device description.
+   */
+  DeviceDescription &operator=(const DeviceDescription &other) = delete;
+
+  /**
+   * @brief Move constructor transferring the `PJRT_DeviceDescription*` view.
+   * @param other Rvalue device description to move from.
+   */
+  DeviceDescription(DeviceDescription &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring the `PJRT_DeviceDescription*`
+   * view.
+   * @param other Rvalue device description to move from.
+   * @return Reference to this device description.
+   */
+  DeviceDescription &operator=(DeviceDescription &&other) noexcept;
+
+  /**
+   * @brief Queries `PJRT_DeviceDescription_Id`.
+   * @return Global device ID (`>= 0`).
+   */
+  [[nodiscard]] int32_t id() const noexcept;
+
+  /**
+   * @brief Queries `PJRT_DeviceDescription_ProcessIndex`.
+   * @return Host process index (`>= 0`).
+   */
+  [[nodiscard]] int32_t process_index() const noexcept;
+
+  /**
+   * @brief Queries `PJRT_DeviceDescription_Kind` (e.g., `"TPU v4"`).
+   * @return Device kind string.
+   */
+  [[nodiscard]] std::string kind() const noexcept;
+
+  /**
+   * @brief Queries `PJRT_DeviceDescription_ToString`.
+   * @return Human-readable device description string.
+   */
+  [[nodiscard]] std::string to_string() const noexcept;
+
+private:
+  /** @brief Non-owning `const PJRT_DeviceDescription*` handle. */
+  const PJRT_DeviceDescription *handle_;
+};
+
+/**
+ * @brief Move-only C++20 RAII wrapper over `PJRT_ExecuteContext*`.
+ */
+class ExecuteContext {
+public:
+  /**
+   * @brief Creates a `PJRT_ExecuteContext*` via `PJRT_ExecuteContext_Create`.
+   */
+  ExecuteContext() noexcept;
+
+  /**
+   * @brief Destroys the `PJRT_ExecuteContext*` via
+   * `PJRT_ExecuteContext_Destroy`.
+   */
+  ~ExecuteContext() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other execution context.
+   */
+  ExecuteContext(const ExecuteContext &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other execution context.
+   * @return Reference to this execution context.
+   */
+  ExecuteContext &operator=(const ExecuteContext &other) = delete;
+
+  /**
+   * @brief Move constructor transferring `PJRT_ExecuteContext*` ownership.
+   * @param other Rvalue execution context to move from.
+   */
+  ExecuteContext(ExecuteContext &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring `PJRT_ExecuteContext*`
+   * ownership.
+   * @param other Rvalue execution context to move from.
+   * @return Reference to this execution context.
+   */
+  ExecuteContext &operator=(ExecuteContext &&other) noexcept;
+
+  /**
+   * @brief Returns the underlying `PJRT_ExecuteContext*` handle.
+   * @return Raw `PJRT_ExecuteContext*` pointer.
+   */
+  [[nodiscard]] PJRT_ExecuteContext *raw() const noexcept;
+
+private:
+  /** @brief Owned `PJRT_ExecuteContext*` handle. */
+  PJRT_ExecuteContext *handle_;
+};
+
+/**
+ * @brief Move-only C++20 RAII wrapper over `PJRT_CopyToDeviceStream*`.
+ */
+class CopyToDeviceStream {
+public:
+  /**
+   * @brief Constructs a `CopyToDeviceStream` taking ownership of `handle`.
+   * @param handle Raw `PJRT_CopyToDeviceStream*` (defaults to `nullptr`).
+   */
+  explicit CopyToDeviceStream(
+      PJRT_CopyToDeviceStream *handle = nullptr) noexcept;
+
+  /**
+   * @brief Destroys the `PJRT_CopyToDeviceStream*` via
+   * `PJRT_CopyToDeviceStream_Destroy`.
+   */
+  ~CopyToDeviceStream() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other stream.
+   */
+  CopyToDeviceStream(const CopyToDeviceStream &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other stream.
+   * @return Reference to this stream.
+   */
+  CopyToDeviceStream &operator=(const CopyToDeviceStream &other) = delete;
+
+  /**
+   * @brief Move constructor transferring `PJRT_CopyToDeviceStream*` ownership.
+   * @param other Rvalue stream to move from.
+   */
+  CopyToDeviceStream(CopyToDeviceStream &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring `PJRT_CopyToDeviceStream*`
+   * ownership.
+   * @param other Rvalue stream to move from.
+   * @return Reference to this stream.
+   */
+  CopyToDeviceStream &operator=(CopyToDeviceStream &&other) noexcept;
+
+  /**
+   * @brief Enqueues a host byte chunk via `PJRT_CopyToDeviceStream_AddChunk`
+   * and awaits transfer completion.
+   * @param chunk_bytes Span of host bytes to stream.
+   * @return `Status` indicating chunk transfer result.
+   */
+  [[nodiscard]] Status add_chunk(std::span<const uint8_t> chunk_bytes) noexcept;
+
+  /**
+   * @brief Queries `PJRT_CopyToDeviceStream_TotalBytes`.
+   * @return Total expected stream byte count.
+   */
+  [[nodiscard]] int64_t total_bytes() const noexcept;
+
+  /**
+   * @brief Queries `PJRT_CopyToDeviceStream_GranuleSize`.
+   * @return Stream transfer granule size in bytes.
+   */
+  [[nodiscard]] int64_t granule_size() const noexcept;
+
+  /**
+   * @brief Queries `PJRT_CopyToDeviceStream_CurrentBytes`.
+   * @return Bytes transferred so far.
+   */
+  [[nodiscard]] int64_t current_bytes() const noexcept;
+
+private:
+  /** @brief Owned `PJRT_CopyToDeviceStream*` handle. */
+  PJRT_CopyToDeviceStream *handle_;
+};
+
+/**
+ * @brief Move-only zero-copy DLPack v1.0 tensor capsule (`DlPackTensor`)
+ * wrapping an exported `Buffer` device/host view.
+ */
+class DlPackTensor {
+public:
+  /**
+   * @brief Exports a `DlPackTensor` view from `buffer`.
+   * @param buffer Source on-device `Buffer`.
+   */
+  explicit DlPackTensor(const Buffer &buffer) noexcept;
+
+  /**
+   * @brief Releases any owned DLPack shape metadata.
+   */
+  ~DlPackTensor() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other DLPack tensor.
+   */
+  DlPackTensor(const DlPackTensor &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other DLPack tensor.
+   * @return Reference to this DLPack tensor.
+   */
+  DlPackTensor &operator=(const DlPackTensor &other) = delete;
+
+  /**
+   * @brief Move constructor transferring DLPack capsule ownership.
+   * @param other Rvalue DLPack tensor to move from.
+   */
+  DlPackTensor(DlPackTensor &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring DLPack capsule ownership.
+   * @param other Rvalue DLPack tensor to move from.
+   * @return Reference to this DLPack tensor.
+   */
+  DlPackTensor &operator=(DlPackTensor &&other) noexcept;
+
+  /**
+   * @brief Returns the DLPack device type (`kDLExtDev = 12` for TPU).
+   * @return DLPack device type code (`12`).
+   */
+  [[nodiscard]] int32_t dlpack_device_type() const noexcept;
+
+  /**
+   * @brief Returns the underlying opaque device data pointer.
+   * @return Opaque device memory address (`uintptr_t`).
+   */
+  [[nodiscard]] uintptr_t data_address() const noexcept;
+
+  /**
+   * @brief Returns the tensor rank (`ndim`).
+   * @return Number of dimensions.
+   */
+  [[nodiscard]] size_t ndim() const noexcept;
+
+  /**
+   * @brief Returns the exported `DataType`.
+   * @return Tensor `DataType`.
+   */
+  [[nodiscard]] DataType dtype() const noexcept;
+
+private:
+  /** @brief Opaque device memory data address. */
+  uintptr_t data_addr_;
+  /** @brief Tensor rank. */
+  size_t ndim_;
+  /** @brief Element `DataType`. */
+  DataType dtype_;
+  /** @brief DLPack device type (`12` = `kDLExtDev`). */
+  int32_t device_type_;
+};
+
+/**
  * @brief Zero-exception monadic value-or-status container (`Result<T>`) for
  * C++20 callers.
  * @tparam T Contained value type.
  */
-template <typename T> class Result {
+template <typename T> class [[nodiscard]] Result {
 public:
   /**
    * @brief Constructs a successful `Result<T>` holding `value`.
@@ -2032,6 +2413,38 @@ public:
    */
   explicit Result(Status &&status) noexcept
       : status_(static_cast<Status &&>(status)), value_{} {}
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other result instance.
+   */
+  Result(const Result &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other result instance.
+   * @return Reference to this result.
+   */
+  Result &operator=(const Result &other) = delete;
+
+  /**
+   * @brief Move constructor transferring `status_` and `value_`.
+   * @param other Rvalue `Result<T>` to move from.
+   */
+  Result(Result &&other) noexcept
+      : status_(static_cast<Status &&>(other.status_)),
+        value_(static_cast<T &&>(other.value_)) {}
+
+  /**
+   * @brief Move assignment operator transferring `status_` and `value_`.
+   * @param other Rvalue `Result<T>` to move from.
+   * @return Reference to this result.
+   */
+  Result &operator=(Result &&other) noexcept {
+    status_ = static_cast<Status &&>(other.status_);
+    value_ = static_cast<T &&>(other.value_);
+    return *this;
+  }
 
   /**
    * @brief Returns `true` if the contained `Status` is `OK` (`code == 0`).
@@ -2050,6 +2463,56 @@ public:
    * @return Const reference to `value_`.
    */
   [[nodiscard]] const T &value() const noexcept { return value_; }
+
+  /**
+   * @brief Returns `value_` when `is_ok()` is `true`, otherwise returns
+   * `fallback`.
+   * @param fallback Fallback value returned when `!is_ok()`.
+   * @return Contained value or `fallback`.
+   */
+  [[nodiscard]] T value_or(T fallback) const noexcept {
+    if (status_.is_ok()) {
+      return value_;
+    }
+    return fallback;
+  }
+
+  /**
+   * @brief Transforms the contained value via `fn(value_)` when `is_ok()`, or
+   * propagates the failure `Status` without exceptions.
+   * @tparam Fn Callable `U(const T&)`.
+   * @param fn Mapping function invoked on `value_` when `is_ok()`.
+   * @return `Result<decltype(fn(value_))>` holding mapped value or propagated
+   * error `Status`.
+   */
+  template <typename Fn>
+  [[nodiscard]] auto map(Fn &&fn) const noexcept
+      -> Result<decltype(fn(this->value()))> {
+    using OutT = decltype(fn(this->value()));
+    if (status_.is_ok()) {
+      return Result<OutT>(fn(value_));
+    }
+    return Result<OutT>(
+        Status(LibTpuCStatus{status_.code(), nullptr}, status_.message()));
+  }
+
+  /**
+   * @brief Chains a fallible computation `fn(value_) -> Result<U>` when
+   * `is_ok()`, or propagates the failure `Status` without exceptions.
+   * @tparam Fn Callable returning `Result<U>`.
+   * @param fn Monadic continuation invoked on `value_` when `is_ok()`.
+   * @return Result of `fn(value_)` or propagated failure `Result<U>`.
+   */
+  template <typename Fn>
+  [[nodiscard]] auto and_then(Fn &&fn) const noexcept
+      -> decltype(fn(this->value())) {
+    using NextRes = decltype(fn(this->value()));
+    if (status_.is_ok()) {
+      return fn(value_);
+    }
+    return NextRes(
+        Status(LibTpuCStatus{status_.code(), nullptr}, status_.message()));
+  }
 
 private:
   /** @brief Underlying operation status. */

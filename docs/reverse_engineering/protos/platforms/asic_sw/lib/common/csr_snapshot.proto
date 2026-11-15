@@ -1,0 +1,24 @@
+syntax = "proto2";
+package asic_sw;
+import "platforms/asic_sw/lib/common/internal/tag_filter_spec.proto";
+message AddressRange {
+  optional uint64 start_offset = 1;
+  optional uint64 end_offset = 2;
+  optional string start_name = 3;
+  optional string end_name = 4;
+  optional int32 access_size = 5;
+}
+message CsrCollectionConfig {
+  optional int32 bar = 1;
+  repeated .asic_sw.AddressRange ranges = 2;
+  optional string regex_filter = 3;
+  optional .asic_sw.TagFilterSpec tag_filters = 4;
+  repeated string exclude_regex_filter = 5;
+}
+message Csrs {
+  reserved 1;
+  reserved 2;
+  reserved "start_offset";
+  reserved "end_offset";
+  map<uint64, uint64> csrs = 3;
+}

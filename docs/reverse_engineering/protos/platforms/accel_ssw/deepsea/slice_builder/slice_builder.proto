@@ -1,0 +1,172 @@
+syntax = "proto2";
+package accel_ssw.deepsea.slice_builder;
+import "google/protobuf/duration.proto";
+import "platforms/accel_ssw/deepsea/common/proto/dimension.proto";
+import "platforms/accel_ssw/deepsea/common/proto/local_topology.proto";
+import "platforms/accel_ssw/deepsea/common/proto/routing_entry.proto";
+import "platforms/asic_sw/driver/deepsea/common/friends/ici_errors.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+import "platforms/asic_sw/proto/core_dump.proto";
+import "platforms/asic_sw/proto/deepsea/common/gtc_config.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/chip_coordinate.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/tpu_type.proto";
+import "util/task/status.proto";
+enum MasterState {
+  SLICE_BUILDER_UNCONFIGURED_STATE = 0;
+  SLICE_BUILDER_UNINITIALIZED_STATE = 1;
+  SLICE_BUILDER_HEALTHY_STATE = 2;
+  SLICE_BUILDER_FAILED_STATE = 3;
+  SLICE_BUILDER_FAILING_STATE = 4;
+}
+enum SliceFailureType {
+  SLICE_FAILURE_UNKNOWN = 0;
+  SLICE_FAILURE_INIT_ERROR = 1;
+  SLICE_FAILURE_WORKER_UNAVAILABLE = 2;
+  SLICE_FAILURE_FLAPPING_TASK_ERROR = 3;
+  SLICE_FAILURE_SW_INJECT_ERROR = 4;
+  SLICE_FAILURE_CHIP_DRIVER_ERROR = 5;
+}
+message SliceInformation {
+  repeated .accel_ssw.deepsea.proto.Orientation degraded_dimensions = 1 [packed = true];
+  optional bool is_nhop_source_relative = 2 [default = false];
+}
+message GetLocalTopologyRequest {
+  optional .google.protobuf.Duration timeout = 1;
+  optional bool ignore_external_ici_ports = 2;
+}
+message GetLocalTopologyReply {
+  repeated .accel_ssw.deepsea.proto.LocalTopology info = 1;
+}
+message SetGlobalChipIdRequest {
+  message ChipLocationToId {
+    optional .asic_sw.proto.ChipLocation location = 1;
+    optional int32 global_id = 2;
+  }
+  repeated .accel_ssw.deepsea.slice_builder.SetGlobalChipIdRequest.ChipLocationToId ids = 1;
+}
+message SetGlobalChipIdReply {
+}
+message SetRoutingTableRequest {
+  message ChipRoutingTable {
+    optional .asic_sw.proto.ChipLocation location = 1;
+    optional .accel_ssw.deepsea.proto.RoutingTable chip_egress_routing_table = 2;
+    optional .accel_ssw.deepsea.proto.RoutingTable chip_egress_next_hop_routing_table = 3;
+    map<int32, .accel_ssw.deepsea.proto.RoutingTable> link_next_hop_routing_tables = 4;
+  }
+  repeated .accel_ssw.deepsea.slice_builder.SetRoutingTableRequest.ChipRoutingTable table_sets = 1;
+}
+message SetRoutingTableReply {
+}
+message SetGtcConfigurationRequest {
+  message ChipGtcConfiguration {
+    optional .asic_sw.proto.ChipLocation location = 1;
+    optional .asic_sw.proto.deepsea.GtcConfigurationData config = 2;
+    optional bool single_chip_mode = 3;
+  }
+  repeated .accel_ssw.deepsea.slice_builder.SetGtcConfigurationRequest.ChipGtcConfiguration gtc_configurations = 1;
+}
+message SetGtcConfigurationReply {
+}
+message EnableIciDataLinkRequest {
+  message IciDataLinkConfiguration {
+    optional .asic_sw.proto.ChipLocation location = 1;
+    repeated uint32 links = 2;
+  }
+  repeated .accel_ssw.deepsea.slice_builder.EnableIciDataLinkRequest.IciDataLinkConfiguration ici_configurations = 1;
+}
+message EnableIciDataLinkReply {
+}
+message WaitForDataLinkUpRequest {
+  optional .google.protobuf.Duration timeout = 2;
+}
+message WaitForDataLinkUpReply {
+}
+message ClearGlobalGtcRequest {
+  optional .google.protobuf.Duration clear_wait_duration = 1;
+}
+message ClearGlobalGtcReply {
+}
+message WaitForGtcResetRequest {
+  optional .google.protobuf.Duration timeout = 1;
+}
+message WaitForGtcResetReply {
+}
+message DisableIciInterruptsRequest {
+}
+message DisableIciInterruptsReply {
+}
+message LinksDownResetRequest {
+}
+message LinksDownResetReply {
+}
+message SetChipCoordinatesRequest {
+  repeated .superpod.routing.proto.ChipLocationToCoordinate chip_mapping = 1;
+}
+message SetChipCoordinatesResponse {
+}
+message CheckHeartbeatRequest {
+  optional .google.protobuf.Duration heartbeat_interval = 1;
+  optional int32 num_allowed_missed_heartbeats = 2 [default = 1];
+}
+message CheckHeartbeatReply {
+  optional bool ici_configured = 2;
+  optional .util.StatusProto injected_slice_error = 3;
+  repeated .asic_sw.proto.ChipLocation failed_chips = 1;
+}
+message GetHostnameRequest {
+}
+message GetHostnameReply {
+  optional string host_name = 1;
+}
+message GetDeviceTypeRequest {
+}
+message GetDeviceTypeReply {
+  optional .superpod.routing.proto.TpuType type = 1;
+}
+message ControlIciErrorReportRequest {
+  optional .asic_sw.driver.deepsea.IciErrorType error_type = 1;
+  optional bool error_report_off = 2;
+}
+message ControlIciErrorReportReply {
+}
+message BroadcastSliceInfoRequest {
+  optional .accel_ssw.deepsea.slice_builder.SliceInformation slice_information = 1;
+}
+message BroadcastSliceInfoReply {
+}
+message GetSliceInfoRequest {
+}
+message GetSliceInfoReply {
+  optional .accel_ssw.deepsea.slice_builder.SliceInformation slice_information = 1;
+}
+message GetCoreDumpRequest {
+  repeated .asic_sw.proto.ChipLocation targeted_chips = 1;
+  optional .google.protobuf.Duration timeout = 2;
+}
+message GetCoreDumpReply {
+  repeated .asic_sw.proto.ChipCoreDump core_dumps = 1;
+}
+message NotifyWorkerDisconnectRequest {
+}
+message NotifyWorkerDisconnectReply {
+}
+service SliceBuilderWorkerService {
+  rpc CheckHeartbeat(.accel_ssw.deepsea.slice_builder.CheckHeartbeatRequest) returns (.accel_ssw.deepsea.slice_builder.CheckHeartbeatReply);
+  rpc GetHostname(.accel_ssw.deepsea.slice_builder.GetHostnameRequest) returns (.accel_ssw.deepsea.slice_builder.GetHostnameReply);
+  rpc GetDeviceType(.accel_ssw.deepsea.slice_builder.GetDeviceTypeRequest) returns (.accel_ssw.deepsea.slice_builder.GetDeviceTypeReply);
+  rpc GetLocalTopology(.accel_ssw.deepsea.slice_builder.GetLocalTopologyRequest) returns (.accel_ssw.deepsea.slice_builder.GetLocalTopologyReply);
+  rpc SetGlobalChipId(.accel_ssw.deepsea.slice_builder.SetGlobalChipIdRequest) returns (.accel_ssw.deepsea.slice_builder.SetGlobalChipIdReply);
+  rpc SetRoutingTable(.accel_ssw.deepsea.slice_builder.SetRoutingTableRequest) returns (.accel_ssw.deepsea.slice_builder.SetRoutingTableReply);
+  rpc SetGtcConfiguration(.accel_ssw.deepsea.slice_builder.SetGtcConfigurationRequest) returns (.accel_ssw.deepsea.slice_builder.SetGtcConfigurationReply);
+  rpc ControlIciErrorReport(.accel_ssw.deepsea.slice_builder.ControlIciErrorReportRequest) returns (.accel_ssw.deepsea.slice_builder.ControlIciErrorReportReply);
+  rpc EnableIciDataLink(.accel_ssw.deepsea.slice_builder.EnableIciDataLinkRequest) returns (.accel_ssw.deepsea.slice_builder.EnableIciDataLinkReply);
+  rpc WaitForDataLinkUp(.accel_ssw.deepsea.slice_builder.WaitForDataLinkUpRequest) returns (.accel_ssw.deepsea.slice_builder.WaitForDataLinkUpReply);
+  rpc ClearGlobalGtc(.accel_ssw.deepsea.slice_builder.ClearGlobalGtcRequest) returns (.accel_ssw.deepsea.slice_builder.ClearGlobalGtcReply);
+  rpc WaitForGtcReset(.accel_ssw.deepsea.slice_builder.WaitForGtcResetRequest) returns (.accel_ssw.deepsea.slice_builder.WaitForGtcResetReply);
+  rpc BroadcastSliceInfo(.accel_ssw.deepsea.slice_builder.BroadcastSliceInfoRequest) returns (.accel_ssw.deepsea.slice_builder.BroadcastSliceInfoReply);
+  rpc DisableIciInterrupts(.accel_ssw.deepsea.slice_builder.DisableIciInterruptsRequest) returns (.accel_ssw.deepsea.slice_builder.DisableIciInterruptsReply);
+  rpc LinksDownReset(.accel_ssw.deepsea.slice_builder.LinksDownResetRequest) returns (.accel_ssw.deepsea.slice_builder.LinksDownResetReply);
+  rpc GetCoreDump(.accel_ssw.deepsea.slice_builder.GetCoreDumpRequest) returns (.accel_ssw.deepsea.slice_builder.GetCoreDumpReply);
+  rpc NotifyWorkerDisconnect(.accel_ssw.deepsea.slice_builder.NotifyWorkerDisconnectRequest) returns (.accel_ssw.deepsea.slice_builder.NotifyWorkerDisconnectReply);
+  rpc SetChipCoordinates(.accel_ssw.deepsea.slice_builder.SetChipCoordinatesRequest) returns (.accel_ssw.deepsea.slice_builder.SetChipCoordinatesResponse);
+}

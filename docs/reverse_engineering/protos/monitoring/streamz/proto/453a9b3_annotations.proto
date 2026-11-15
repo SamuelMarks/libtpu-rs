@@ -1,0 +1,12 @@
+syntax = "proto3";
+package monitoring.streamz;
+import "monitoring/streamz/proto/streamz.proto";
+import "third_party/protobuf/cpp_features.proto";
+message c_453a9b3Annotations {
+  bool is_constant = 1;
+  bool is_public = 2;
+  string denominator_metric = 3;
+  string promotion_field_name = 4;
+  string varz_name = 5;
+  .monitoring.streamz.ExtendedAnnotations extended_annotations = 16;
+}

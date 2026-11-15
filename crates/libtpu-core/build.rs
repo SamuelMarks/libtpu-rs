@@ -1,148 +1,146 @@
-//! Build script for `libtpu-core` compiling Clean-Room `.proto` schemas via `protox`
-//! and `prost-build` into a binary `FileDescriptorSet` and generated Rust module.
+//! Build script compiling all 738 reconstructed `libtpu.so` `protodesc_cold` `.proto` schemas
+//! via `protox` and `prost-build` into a binary `FileDescriptorSet`, strongly-typed Rust
+//! `prost::Message` structs/enums, and auto-generated `ProtoSchemaMessage` implementations.
 
-use prost::Message;
-use std::collections::BTreeSet;
+use heck::{ToSnakeCase, ToUpperCamelCase};
+use prost::Message as _;
+use prost_types::{DescriptorProto, FileDescriptorSet};
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-/// Rewrites an `import` path so local schemas in `docs/reverse_engineering/protos/`
-/// resolve against the flat `staged_proto_dir` directory.
+/// Sanitizes a Rust identifier following `prost-build`'s exact keyword and leading-digit rules.
 ///
 /// # Arguments
 ///
-/// * `import_path` - Raw quoted path from an `import` statement.
-/// * `available_files` - Set of staged `.proto` basenames.
-fn rewrite_import_path(import_path: &str, available_files: &BTreeSet<String>) -> String {
-    if import_path.starts_with("google/protobuf/") {
-        return import_path.to_owned();
+/// * `raw` - Candidate Rust identifier produced by `heck` case conversion.
+fn prost_sanitize_identifier(raw: &str) -> String {
+    match raw {
+        "as" | "break" | "const" | "continue" | "else" | "enum" | "false" | "fn" | "for" | "if"
+        | "impl" | "in" | "let" | "loop" | "match" | "mod" | "move" | "mut" | "pub" | "ref"
+        | "return" | "static" | "struct" | "trait" | "true" | "type" | "unsafe" | "use"
+        | "where" | "while" | "dyn" | "abstract" | "become" | "box" | "do" | "final" | "macro"
+        | "override" | "priv" | "typeof" | "unsized" | "virtual" | "yield" | "async" | "await"
+        | "try" | "gen" => format!("r#{raw}"),
+        "_" | "super" | "self" | "Self" | "extern" | "crate" => format!("{raw}_"),
+        s if s.chars().next().is_some_and(char::is_numeric) => format!("_{raw}"),
+        _ => String::from(raw),
     }
-    let basename = import_path.rsplit('/').next().unwrap_or(import_path);
-    if available_files.contains(basename) {
-        return basename.to_owned();
-    }
-    import_path.to_owned()
 }
 
-/// Normalizes a `.proto` file text into single-header `proto3` syntax for `protox`
-/// when a file uses `edition = "2023";` or nested directory import paths.
+/// Converts a Protobuf identifier to `prost-build`'s `snake_case` Rust module/field identifier.
 ///
 /// # Arguments
 ///
-/// * `raw` - Raw `.proto` source text.
-/// * `available_files` - Set of staged `.proto` basenames.
-fn normalize_proto_for_protox(raw: &str, available_files: &BTreeSet<String>) -> String {
-    let mut out = String::with_capacity(raw.len());
-    let mut seen_syntax = false;
-    let mut seen_package = false;
-    let mut seen_imports = BTreeSet::new();
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("edition =") {
-            if !seen_syntax {
-                let _ = writeln!(out, r#"syntax = "proto3";"#);
-                seen_syntax = true;
-            }
-            continue;
-        }
-        if trimmed.starts_with("option features.") {
-            continue;
-        }
-        if trimmed.starts_with("syntax =") {
-            if !seen_syntax {
-                let _ = writeln!(out, r#"syntax = "proto3";"#);
-                seen_syntax = true;
-            }
-            continue;
-        }
-        if trimmed.starts_with("package ") {
-            if !seen_package {
-                let _ = writeln!(out, "{line}");
-                seen_package = true;
-            }
-            continue;
-        }
-        if trimmed.starts_with("import ")
-            && let Some(first_quote) = trimmed.find('"')
-            && let Some(last_quote) = trimmed.rfind('"')
-            && first_quote < last_quote
-        {
-            let raw_import = &trimmed[first_quote + 1..last_quote];
-            let rewritten = rewrite_import_path(raw_import, available_files);
-            if seen_imports.insert(rewritten.clone()) {
-                let _ = writeln!(out, r#"import "{rewritten}";"#);
-            }
-            continue;
-        }
-        let _ = writeln!(out, "{line}");
-    }
-    out
+/// * `ident` - Raw Protobuf package segment or message name.
+fn prost_to_snake(ident: &str) -> String {
+    prost_sanitize_identifier(&ident.to_snake_case())
 }
 
-/// Unified build-script error enum for `libtpu-core` schema staging and compilation.
-#[derive(Debug)]
-enum BuildError {
-    /// Filesystem I/O failure during `.proto` staging or `FileDescriptorSet` emission.
-    Io(std::io::Error),
-    /// `protox` schema compilation failure.
-    Protox(protox::Error),
-}
-
-impl std::fmt::Display for BuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "I/O error: {e}"),
-            Self::Protox(e) => write!(f, "protox error: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for BuildError {}
-
-impl From<std::io::Error> for BuildError {
-    fn from(err: std::io::Error) -> Self {
-        Self::Io(err)
-    }
-}
-
-impl From<protox::Error> for BuildError {
-    fn from(err: protox::Error) -> Self {
-        Self::Protox(err)
-    }
-}
-
-/// Post-processes `prost-build` generated `.rs` files in `out_dir` so every generated struct,
-/// enum, module, field, and variant has a rustdoc comment satisfying `forbid(missing_docs)`,
-/// and writes `generated_proto_manifest.rs` with the compiled package manifest.
+/// Converts a Protobuf identifier to `prost-build`'s `UpperCamelCase` Rust type identifier.
 ///
 /// # Arguments
 ///
-/// * `out_dir` - Directory containing `.rs` files emitted by `prost-build`.
-fn ensure_doc_comments_in_generated_rs(out_dir: &std::path::Path) -> std::io::Result<()> {
-    let mut rs_filenames = BTreeSet::new();
+/// * `ident` - Raw Protobuf message or enum name.
+fn prost_to_upper_camel(ident: &str) -> String {
+    prost_sanitize_identifier(&ident.to_upper_camel_case())
+}
+
+/// Recursively collects all `.proto` file paths under `dir` and registers `cargo:rerun-if-changed`.
+///
+/// # Arguments
+///
+/// * `dir` - Directory to traverse recursively.
+/// * `out_files` - Output vector receiving discovered `.proto` paths.
+///
+/// # Errors
+///
+/// Returns [`std::io::Error`] if reading `dir` or any subdirectory fails.
+fn collect_proto_files_recursively(
+    dir: &Path,
+    out_files: &mut Vec<PathBuf>,
+) -> std::io::Result<()> {
+    println!("cargo:rerun-if-changed={}", dir.display());
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)?
+        .filter_map(|res| res.ok().map(|e| e.path()))
+        .collect();
+    entries.sort();
+    for path in entries {
+        if path.is_dir() {
+            collect_proto_files_recursively(&path, out_files)?;
+        } else if path.extension().and_then(|s| s.to_str()) == Some("proto") {
+            println!("cargo:rerun-if-changed={}", path.display());
+            out_files.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Removes stale `.rs` files in `out_dir` prior to `prost-build` code generation.
+///
+/// # Arguments
+///
+/// * `out_dir` - Cargo `OUT_DIR` directory containing generated Rust artifacts.
+///
+/// # Errors
+///
+/// Returns [`std::io::Error`] if enumerating or removing stale `.rs` files in `out_dir` fails.
+fn clean_stale_generated_rs(out_dir: &Path) -> std::io::Result<()> {
+    if !out_dir.exists() {
+        return Ok(());
+    }
     for entry in std::fs::read_dir(out_dir)? {
         let path = entry?.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+        if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+            std::fs::remove_file(path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Post-processes `prost-build` `.rs` files in `out_dir` so every generated struct, enum,
+/// nested module, field, and variant carries rustdoc comments (`#![forbid(missing_docs)]` and
+/// 100% `rustdoc --coverage` compliant, with broken intra-doc link brackets neutralized).
+///
+/// # Arguments
+///
+/// * `out_dir` - Cargo `OUT_DIR` directory containing `prost-build` generated `.rs` files.
+///
+/// # Errors
+///
+/// Returns [`std::io::Error`] if reading or writing generated `.rs` files in `out_dir` fails.
+fn ensure_doc_comments_in_generated_rs(out_dir: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(out_dir)? {
+        let path = entry?.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("rs") {
             continue;
         }
-        if let Some(fname) = path.file_name().and_then(|n| n.to_str()) {
-            if fname == "generated_proto_manifest.rs" || fname == "generated_proto_include.rs" {
-                continue;
+        if path.file_name().and_then(|s| s.to_str()) == Some("generated_proto_include.rs") {
+            let raw_inc = std::fs::read_to_string(&path)?;
+            let mut doc_inc = String::with_capacity(raw_inc.len() + 4096);
+            for line in raw_inc.lines() {
+                if line.trim_start().starts_with("pub mod ") {
+                    let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+                    let _ = writeln!(doc_inc, "{indent}/// Generated protobuf package module.");
+                }
+                let _ = writeln!(doc_inc, "{line}");
             }
-            rs_filenames.insert(String::from(fname));
+            std::fs::write(&path, doc_inc)?;
+            continue;
         }
+
         let raw = std::fs::read_to_string(&path)?;
         let mut out = String::with_capacity(raw.len() + 4096);
-        let mut pending_docs: Vec<&str> = Vec::new();
-        let mut pending_attrs: Vec<&str> = Vec::new();
+        let mut pending_docs: Vec<String> = Vec::new();
+        let mut pending_attrs: Vec<String> = Vec::new();
         for line in raw.lines() {
             let trimmed = line.trim();
             if trimmed.starts_with("///") || trimmed.starts_with("//!") {
-                pending_docs.push(line);
+                pending_docs.push(String::from(line));
                 continue;
             }
             if trimmed.starts_with("#[") {
-                pending_attrs.push(line);
+                pending_attrs.push(String::from(line));
                 continue;
             }
             let is_item = trimmed.starts_with("pub struct ")
@@ -155,1954 +153,292 @@ fn ensure_doc_comments_in_generated_rs(out_dir: &std::path::Path) -> std::io::Re
                     && !trimmed.starts_with('}')
                     && !trimmed.starts_with("//"))
                 || (trimmed.contains(" = ") && trimmed.ends_with(','));
+
             if is_item {
                 let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
                 let _ = writeln!(out, "{indent}/// Generated protobuf schema item.");
                 pending_docs.clear();
             }
-            for doc in std::mem::take(&mut pending_docs) {
-                let _ = writeln!(out, "{doc}");
+            for doc_line in std::mem::take(&mut pending_docs) {
+                let safe_doc = doc_line.replace('[', "(").replace(']', ")");
+                let _ = writeln!(out, "{safe_doc}");
             }
-            for attr in std::mem::take(&mut pending_attrs) {
-                let _ = writeln!(out, "{attr}");
+            for attr_line in std::mem::take(&mut pending_attrs) {
+                let _ = writeln!(out, "{attr_line}");
             }
             let _ = writeln!(out, "{line}");
         }
-        for doc in pending_docs {
-            let _ = writeln!(out, "{doc}");
+        for doc_line in pending_docs {
+            let safe_doc = doc_line.replace('[', "(").replace(']', ")");
+            let _ = writeln!(out, "{safe_doc}");
         }
-        for attr in pending_attrs {
-            let _ = writeln!(out, "{attr}");
+        for attr_line in pending_attrs {
+            let _ = writeln!(out, "{attr_line}");
         }
         std::fs::write(&path, out)?;
     }
-
-    let mut manifest_rs = String::from(
-        "/// List of `prost-build` generated `.rs` package module files in `OUT_DIR`.\npub const GENERATED_PROTO_RUST_FILES: &[&str] = &[\n",
-    );
-    for fname in &rs_filenames {
-        let _ = writeln!(manifest_rs, "    {fname:?},");
-    }
-    manifest_rs.push_str("];\n");
-    std::fs::write(out_dir.join("generated_proto_manifest.rs"), manifest_rs)?;
     Ok(())
 }
 
-/// Ordered list of `.proto` schemas in `docs/reverse_engineering/protos/` compiled by `protox`.
-const COMPILE_PROTOS: &[&str] = &[
-    "gpu_topology.proto",
-    "backends.proto",
-    "dnn.proto",
-    "cuda_compute_capability.proto",
-    "oneapi_compute_capability.proto",
-    "tensor_shape.proto",
-    "types.proto",
-    "tensor.proto",
-    "tpu_version.proto",
-    "register_translator.proto",
-    "tpu_chip_config.proto",
-    "target_arguments.proto",
-    "host_command_opcodes.proto",
-    "compiler_metadata.proto",
-    "isa_program.proto",
-    "deepsea_executable.proto",
-    "runtime_config.proto",
-    "memory_scheduler.proto",
-    "memory_space_assignment.proto",
-    "emitter_learned_cost_model_options.proto",
-    "reduction_kind.proto",
-    "error_codes.proto",
-    "status.proto",
-    "pjrt_abi_version.proto",
-    "pjrt_device_dimensions.proto",
-    "pjrt_partial_program.proto",
-    "pjrt_value_type.proto",
-    "pjrt_distributed_protocol.proto",
-    "py_host_callback.proto",
-    "pytree.proto",
-    "ffi_execution_state.proto",
-    "ffi_attribute_map.proto",
-    "dynamic_padding.proto",
-    "runtime_abi_version.proto",
-    "executable_abi_version.proto",
-    "sparse_core_layout.proto",
-    "topology_description.proto",
-    "xla_data.proto",
-    "metrics.proto",
-    "hlo.proto",
-    "buffer_assignment.proto",
-    "shaped_slice.proto",
-    "execute_options.proto",
-    "executable_metadata.proto",
-    "xplane.proto",
-    "profiler_options.proto",
-    "profiler_service.proto",
-    "profiler_topology.proto",
-    "tf_tpu_topology.proto",
-    "optimization_parameters.proto",
-    "tpu_embedding_configuration.proto",
-    "tpu_compilation_environment.proto",
-    "tpu_topology.proto",
-    "tpu_runtime.proto",
-    "tpu_executable.proto",
-    "tpu_input_pipeline.proto",
-    "host_offloading_executable.proto",
-    "megascale_dcn_topology.proto",
-    "megascale_addresses.proto",
-    "megascale_runtime_error_overlay.proto",
-    "megascale.proto",
-    "coordination_config.proto",
-    "coordination_service.proto",
-    "xla_compile_result.proto",
-    "autotuning.proto",
-    "autotune_results.proto",
-    "device_description.proto",
-    "xla.proto",
-    "compile_options.proto",
-    "compile_metadata.proto",
-    "compilation_result.proto",
-    "host_compute_metadata.proto",
-    "tf2xla.proto",
-    "xla_argument.proto",
-    "tpu_executable_info.proto",
-    "coredump.proto",
-    "stall_summaries.proto",
-    "mosaic_tpu.proto",
-    "hlo_profile_printer_data.proto",
-    "jellyfish_executable.proto",
-    "barnacore_executable.proto",
-    "tpu_fingerprint.proto",
-    "xla_ffi.proto",
-    "power_telemetry.proto",
-    "vhlo_ops.proto",
-    "shardy_mesh.proto",
-    "tpu_telemetry_snapshot.proto",
-    "xla_ffi_metadata.proto",
-    "ici_routing_table.proto",
-    "vliw_bundle_encoding.proto",
-    "dma_descriptor_ring.proto",
-    "gasket_ioctl.proto",
-    "vfio_iommu_map.proto",
-    "pcie_bar_layout.proto",
-    "llo_bundle_schedule.proto",
-    "llo_register_allocator.proto",
-    "llo_software_pipeliner.proto",
-    "megascale_collectives.proto",
-];
+/// Recursively collects `(full_proto_name, rust_type_path)` entries for a message and its nested
+/// non-map messages.
+///
+/// # Arguments
+///
+/// * `proto_prefix` - Enclosing Protobuf scope (e.g., `"xla"` or `"xla.OuterMsg"`).
+/// * `rust_mod_prefix` - Enclosing Rust module path inside `generated_prost_schemas` (e.g., `"xla"` or `"xla::outer_msg"`).
+/// * `msg` - Protobuf `DescriptorProto` to traverse.
+/// * `entries` - Output map from canonical `full_proto_name` to `rust_type_path`.
+fn collect_message_bijection_entries(
+    proto_prefix: &str,
+    rust_mod_prefix: &str,
+    msg: &DescriptorProto,
+    entries: &mut BTreeMap<String, String>,
+) {
+    if msg
+        .options
+        .as_ref()
+        .and_then(|o| o.map_entry)
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let Some(msg_name) = msg.name.as_deref().filter(|s| !s.is_empty()) else {
+        return;
+    };
+    let full_proto_name = if proto_prefix.is_empty() {
+        String::from(msg_name)
+    } else {
+        format!("{proto_prefix}.{msg_name}")
+    };
+    let struct_ident = prost_to_upper_camel(msg_name);
+    let rust_type_path = if rust_mod_prefix.is_empty() {
+        format!("generated_prost_schemas::{struct_ident}")
+    } else {
+        format!("generated_prost_schemas::{rust_mod_prefix}::{struct_ident}")
+    };
+    entries.insert(full_proto_name.clone(), rust_type_path);
 
-/// Complete 293-entry `(embedded_path, canonical_filename, package, syntax)` catalog from `libtpu.so`'s `protodesc_cold`.
-const PROTODESC_COLD_293_VIRTUAL_FILES: &[(&str, &str, &str, &str)] = &[
-    (
-        "xla/autotune_results.proto",
-        "autotune_results.proto",
-        "xla",
-        "proto3",
-    ),
-    ("xla/autotuning.proto", "autotuning.proto", "xla", "proto3"),
-    ("xla/backends.proto", "backends.proto", "xla.gpu", "proto3"),
-    (
-        "platforms/xla/service/jellyfish/barnacore_executable.proto",
-        "barnacore_executable.proto",
-        "xla.barnacore",
-        "proto3",
-    ),
-    (
-        "xla/service/buffer_assignment.proto",
-        "buffer_assignment.proto",
-        "xla.buffer_assignment",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/protobuf/tpu/compilation_result.proto",
-        "compilation_result.proto",
-        "tensorflow.tpu",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/protobuf/tpu/compile_metadata.proto",
-        "compile_metadata.proto",
-        "tensorflow.tpu",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/proto/compile_options.proto",
-        "compile_options.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "platforms/deepsea/jellyfish/xdb/compiler_metadata.proto",
-        "compiler_metadata.proto",
-        "platforms_deepsea.jellyfish.xdb",
-        "proto2",
-    ),
-    (
-        "xla/tsl/protobuf/coordination_config.proto",
-        "coordination_config.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "xla/tsl/protobuf/coordination_service.proto",
-        "coordination_service.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "platforms/asic_sw/proto/core_dump.proto",
-        "coredump.proto",
-        "asic_sw",
-        "proto2",
-    ),
-    (
-        "xla/stream_executor/cuda/cuda_compute_capability.proto",
-        "cuda_compute_capability.proto",
-        "stream_executor",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/deepsea_executable.proto",
-        "deepsea_executable.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/device_description.proto",
-        "device_description.proto",
-        "stream_executor",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/dnn.proto",
-        "dnn.proto",
-        "stream_executor.dnn",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/dynamic_padding.proto",
-        "dynamic_padding.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/emitter_learned_cost_model_options.proto",
-        "emitter_learned_cost_model_options.proto",
-        "xla.jellyfish",
-        "proto3",
-    ),
-    (
-        "xla/tsl/protobuf/error_codes.proto",
-        "error_codes.proto",
-        "tensorflow.error",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/abi/executable_abi_version.proto",
-        "executable_abi_version.proto",
-        "stream_executor",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/proto/executable_metadata.proto",
-        "executable_metadata.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/proto/execute_options.proto",
-        "execute_options.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/ffi/attribute_map.proto",
-        "ffi_attribute_map.proto",
-        "xla.ffi",
-        "proto3",
-    ),
-    (
-        "xla/ffi/execution_state.proto",
-        "ffi_execution_state.proto",
-        "xla.ffi",
-        "proto3",
-    ),
-    (
-        "xla/service/gpu_topology.proto",
-        "gpu_topology.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/hlo_profile_printer_data.proto",
-        "hlo_profile_printer_data.proto",
-        "xla",
-        "proto3",
-    ),
-    ("xla/service/hlo.proto", "hlo.proto", "xla", "proto3"),
-    (
-        "learning/45eac/tpu/runtime/host_command_opcodes.proto",
-        "host_command_opcodes.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "tensorflow/compiler/tf2xla/host_compute_metadata.proto",
-        "host_compute_metadata.proto",
-        "tensorflow.tf2xla",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/host_offloading_executable.proto",
-        "host_offloading_executable.proto",
-        "xla.jellyfish",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/isa_program.proto",
-        "isa_program.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/jellyfish_executable.proto",
-        "jellyfish_executable.proto",
-        "xla.jellyfish",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/runtime/megascale_addresses.proto",
-        "megascale_addresses.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/dcn_topology.proto",
-        "megascale_dcn_topology.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/error_overlay.proto",
-        "megascale_runtime_error_overlay.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/megascale_actions.proto",
-        "megascale.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/memory_scheduler.proto",
-        "memory_scheduler.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/memory_space_assignment.proto",
-        "memory_space_assignment.proto",
-        "xla.memory_space_assignment",
-        "proto3",
-    ),
-    (
-        "xla/service/metrics.proto",
-        "metrics.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "jax/experimental/mosaic/tpu/mosaic_tpu.proto",
-        "mosaic_tpu.proto",
-        "mlir.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/sycl/oneapi_compute_capability.proto",
-        "oneapi_compute_capability.proto",
-        "stream_executor",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/protobuf/tpu/optimization_parameters.proto",
-        "optimization_parameters.proto",
-        "tensorflow.tpu",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/proto/pjrt_abi_version.proto",
-        "pjrt_abi_version.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/proto/pjrt_device_dimensions.proto",
-        "pjrt_device_dimensions.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/distributed/protocol.proto",
-        "pjrt_distributed_protocol.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/proto/pjrt_partial_program.proto",
-        "pjrt_partial_program.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/proto/pjrt_value_type.proto",
-        "pjrt_value_type.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "platforms/asic_sw/telemetry/power_telemetry.proto",
-        "power_telemetry.proto",
-        "tpu.telemetry",
-        "proto3",
-    ),
-    (
-        "tsl/profiler/protobuf/profiler_options.proto",
-        "profiler_options.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "tsl/profiler/protobuf/profiler_service.proto",
-        "profiler_service.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "tsl/profiler/protobuf/profiler_topology.proto",
-        "profiler_topology.proto",
-        "tensorflow.profiler",
-        "proto3",
-    ),
-    (
-        "jax/py_host_callback.proto",
-        "py_host_callback.proto",
-        "jax",
-        "proto3",
-    ),
-    ("jax/pytree.proto", "pytree.proto", "jax", "proto3"),
-    (
-        "learning/45eac/tpu/runtime/reduction_kind.proto",
-        "reduction_kind.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "platforms/asic_sw/tools/register_translator.proto",
-        "register_translator.proto",
-        "asic_sw.tools",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/abi/runtime_abi_version.proto",
-        "runtime_abi_version.proto",
-        "stream_executor",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/runtime_config.proto",
-        "runtime_config.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "xla/service/shaped_slice.proto",
-        "shaped_slice.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "shardy/dialect/sdy/ir/shardy_mesh.proto",
-        "shardy_mesh.proto",
-        "sdy",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/sparse_core_layout.proto",
-        "sparse_core_layout.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "libtpu/sdk/stall_summaries.proto",
-        "stall_summaries.proto",
-        "libtpu.sdk.tpu_telemetry",
-        "proto2",
-    ),
-    (
-        "xla/tsl/protobuf/status.proto",
-        "status.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/target_arguments.proto",
-        "target_arguments.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/framework/tensor_shape.proto",
-        "tensor_shape.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/framework/tensor.proto",
-        "tensor.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/protobuf/tpu/topology.proto",
-        "tf_tpu_topology.proto",
-        "tensorflow.tpu",
-        "proto3",
-    ),
-    (
-        "tensorflow/compiler/tf2xla/tf2xla.proto",
-        "tf2xla.proto",
-        "tensorflow.tf2xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/proto/topology_description.proto",
-        "topology_description.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/tpu_chip_config.proto",
-        "tpu_chip_config.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/tpu_compilation_environment.proto",
-        "tpu_compilation_environment.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/protobuf/tpu/tpu_embedding_configuration.proto",
-        "tpu_embedding_configuration.proto",
-        "tensorflow.tpu",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/tpu/kernels/tpu_executable_info.proto",
-        "tpu_executable_info.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/tpu_executable.proto",
-        "tpu_executable.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "platforms/xla/service/jellyfish/tpu_fingerprint.proto",
-        "tpu_fingerprint.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "tsl/profiler/protobuf/tpu_input_pipeline.proto",
-        "tpu_input_pipeline.proto",
-        "tensorflow.profiler",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/tpu_runtime.proto",
-        "tpu_runtime.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "libtpu/sdk/tpu_telemetry_snapshot.proto",
-        "tpu_telemetry_snapshot.proto",
-        "libtpu.sdk.tpu_telemetry",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/tpu_topology.proto",
-        "tpu_topology.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/tpu_version.proto",
-        "tpu_version.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/framework/types.proto",
-        "types.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "stablehlo/dialect/vhlo_ops.proto",
-        "vhlo_ops.proto",
-        "vhlo",
-        "proto3",
-    ),
-    (
-        "tensorflow/compiler/tf2xla/xla_argument.proto",
-        "xla_argument.proto",
-        "tensorflow.tf2xla",
-        "proto3",
-    ),
-    (
-        "xla/service/xla_compile_result.proto",
-        "xla_compile_result.proto",
-        "xla",
-        "proto3",
-    ),
-    ("xla/xla_data.proto", "xla_data.proto", "xla", "proto3"),
-    (
-        "xla/ffi/xla_ffi_metadata.proto",
-        "xla_ffi_metadata.proto",
-        "xla.ffi",
-        "proto3",
-    ),
-    (
-        "xla/ffi/xla_ffi.proto",
-        "xla_ffi.proto",
-        "xla.ffi",
-        "proto3",
-    ),
-    ("xla/xla.proto", "xla.proto", "xla", "proto3"),
-    (
-        "tsl/profiler/protobuf/xplane.proto",
-        "xplane.proto",
-        "tensorflow.profiler",
-        "proto3",
-    ),
-    (
-        "google/protobuf/any.proto",
-        "status.proto",
-        "google.protobuf",
-        "proto3",
-    ),
-    (
-        "google/protobuf/api.proto",
-        "status.proto",
-        "google.protobuf",
-        "proto3",
-    ),
-    (
-        "google/protobuf/descriptor.proto",
-        "status.proto",
-        "google.protobuf",
-        "proto2",
-    ),
-    (
-        "google/protobuf/duration.proto",
-        "status.proto",
-        "google.protobuf",
-        "proto3",
-    ),
-    (
-        "google/protobuf/empty.proto",
-        "status.proto",
-        "google.protobuf",
-        "proto3",
-    ),
-    (
-        "google/protobuf/field_mask.proto",
-        "status.proto",
-        "google.protobuf",
-        "proto3",
-    ),
-    (
-        "google/protobuf/source_context.proto",
-        "status.proto",
-        "google.protobuf",
-        "proto3",
-    ),
-    (
-        "google/protobuf/struct.proto",
-        "status.proto",
-        "google.protobuf",
-        "proto3",
-    ),
-    (
-        "google/protobuf/timestamp.proto",
-        "status.proto",
-        "google.protobuf",
-        "proto3",
-    ),
-    (
-        "google/protobuf/type.proto",
-        "status.proto",
-        "google.protobuf",
-        "proto3",
-    ),
-    (
-        "google/protobuf/wrappers.proto",
-        "status.proto",
-        "google.protobuf",
-        "proto3",
-    ),
-    (
-        "google/rpc/status.proto",
-        "status.proto",
-        "google.rpc",
-        "proto3",
-    ),
-    (
-        "google/rpc/error_details.proto",
-        "error_codes.proto",
-        "google.rpc",
-        "proto3",
-    ),
-    (
-        "google/rpc/code.proto",
-        "error_codes.proto",
-        "google.rpc",
-        "proto3",
-    ),
-    (
-        "xla/compilation_environments.proto",
-        "xla.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/computation_placer.proto",
-        "xla_data.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/dynamic_dimension_inference.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/executable.proto",
-        "xla_compile_result.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/gpu/gpu_compilation_environment.proto",
-        "xla.proto",
-        "xla.gpu",
-        "proto3",
-    ),
-    (
-        "xla/service/hlo_execution_profile_data.proto",
-        "hlo_profile_printer_data.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/hlo_graph_dumper.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/hlo_module_config.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/hlo_module_dce.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/hlo_proto_util.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/hlo_rematerialization.proto",
-        "memory_space_assignment.proto",
-        "xla",
-        "proto3",
-    ),
-    ("xla/service/hlo_runner.proto", "xla.proto", "xla", "proto3"),
-    (
-        "xla/service/hlo_schedule.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/hlo_sharding_metadata.proto",
-        "xla_data.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/hlo_verifier.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/layout_assignment.proto",
-        "xla_data.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/logical_buffer.proto",
-        "buffer_assignment.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/mapped_ptr_container_sorter.proto",
-        "buffer_assignment.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/memory_space_assignment_best_fit_repacker.proto",
-        "memory_space_assignment.proto",
-        "xla.memory_space_assignment",
-        "proto3",
-    ),
-    (
-        "xla/service/metrics_hook.proto",
-        "metrics.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/name_uniquer.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/op_sharding_util.proto",
-        "xla_data.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/pattern_matcher.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/platform_util.proto",
-        "xla.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/reduce_scatter_combiner.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/rendezvous.proto",
-        "pjrt_distributed_protocol.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/reshape_mover.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/rng_expander.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/scatter_expander.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/select_and_scatter_expander.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/shaped_buffer.proto",
-        "shaped_slice.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/sharding_config.proto",
-        "xla_data.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/sharding_propagation.proto",
-        "xla_data.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/slice_sinker.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/slow_operation_alarm.proto",
-        "metrics.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/sort_simplifier.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/source_target_pairs.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/spmd/spmd_partitioner.proto",
-        "xla_data.proto",
-        "xla.spmd",
-        "proto3",
-    ),
-    (
-        "xla/service/stream_pool.proto",
-        "xla.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/time_utils.proto",
-        "metrics.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/transfer_manager.proto",
-        "xla.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/transpose_folding.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/tuple_points_to_analysis.proto",
-        "buffer_assignment.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/tuple_simplifier.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/while_loop_all_reduce_code_motion.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/while_loop_concat_code_motion.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/while_loop_constant_sinking.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/while_loop_expensive_invariant_code_motion.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/while_loop_fusible_sinking.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/while_loop_invariant_code_motion.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/while_loop_simplifier.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/while_loop_trip_count_annotator.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    ("xla/service/while_util.proto", "hlo.proto", "xla", "proto3"),
-    (
-        "xla/service/zero_sized_hlo_elimination.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/all_gather_broadcast_reorder.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/all_gather_combiner.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/all_reduce_combiner.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/all_reduce_contiguous.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/all_reduce_folder.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/service/all_reduce_promotion.proto",
-        "hlo.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/c/pjrt_c_api_client.proto",
-        "compile_options.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/pjrt_client.proto",
-        "compile_options.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/pjrt_common.proto",
-        "pjrt_value_type.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/pjrt_compiler.proto",
-        "compile_options.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/pjrt_device_description.proto",
-        "pjrt_device_dimensions.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/pjrt_executable.proto",
-        "executable_metadata.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/pjrt_future.proto",
-        "execute_options.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/pjrt_layout.proto",
-        "xla_data.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/pjrt_memory_space.proto",
-        "executable_metadata.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/pjrt_phase_compile.proto",
-        "pjrt_partial_program.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/pjrt_stream_executor_client.proto",
-        "compile_options.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/transpose.proto",
-        "xla_data.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/distributed/client.proto",
-        "pjrt_distributed_protocol.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/distributed/service.proto",
-        "pjrt_distributed_protocol.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/distributed/topology_util.proto",
-        "pjrt_distributed_protocol.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/distributed/key_value_store.proto",
-        "coordination_service.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/gpu/se_gpu_pjrt_client.proto",
-        "gpu_topology.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/pjrt/tpu_client.proto",
-        "topology_description.proto",
-        "xla",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/host_or_device_scalar.proto",
-        "device_description.proto",
-        "stream_executor",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/launch_dim.proto",
-        "device_description.proto",
-        "stream_executor",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/numeric_options.proto",
-        "autotuning.proto",
-        "stream_executor",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/plugin_registry.proto",
-        "dnn.proto",
-        "stream_executor",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/stream_executor_pimpl.proto",
-        "device_description.proto",
-        "stream_executor",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_compilation_cache_entry.proto",
-        "tpu_executable.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_compilation_cache_interface.proto",
-        "tpu_executable.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_compilation_cache_key.proto",
-        "tpu_fingerprint.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_compilation_cache_lookup.proto",
-        "tpu_executable.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_executable_interface.proto",
-        "tpu_executable.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_executor.proto",
-        "tpu_runtime.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_executor_c_api.proto",
-        "tpu_runtime.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_node_context.proto",
-        "tpu_runtime.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_op_executable.proto",
-        "tpu_executable.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_platform.proto",
-        "tpu_topology.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_platform_id.proto",
-        "tpu_version.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_topology.proto",
-        "tpu_topology.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_transfer_manager.proto",
-        "tpu_runtime.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/c_api_conversions.proto",
-        "tpu_runtime.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/proto_helper.proto",
-        "tpu_runtime.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/status_helper.proto",
-        "status.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_api.proto",
-        "tpu_runtime.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_library_init_fns.proto",
-        "tpu_runtime.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/stream_executor/tpu/tpu_ops_c_api.proto",
-        "tpu_executable.proto",
-        "stream_executor.tpu",
-        "proto3",
-    ),
-    (
-        "xla/ffi/api/api.proto",
-        "xla_ffi.proto",
-        "xla.ffi",
-        "proto3",
-    ),
-    (
-        "xla/ffi/call_frame.proto",
-        "xla_ffi.proto",
-        "xla.ffi",
-        "proto3",
-    ),
-    (
-        "xla/ffi/execution_context.proto",
-        "ffi_execution_state.proto",
-        "xla.ffi",
-        "proto3",
-    ),
-    (
-        "xla/ffi/type_id_registry.proto",
-        "xla_ffi_metadata.proto",
-        "xla.ffi",
-        "proto3",
-    ),
-    (
-        "stablehlo/dialect/stablehlo_ops.proto",
-        "vhlo_ops.proto",
-        "stablehlo",
-        "proto3",
-    ),
-    (
-        "stablehlo/dialect/chlo_ops.proto",
-        "vhlo_ops.proto",
-        "chlo",
-        "proto3",
-    ),
-    (
-        "stablehlo/dialect/vhlo_types.proto",
-        "vhlo_ops.proto",
-        "vhlo",
-        "proto3",
-    ),
-    (
-        "stablehlo/dialect/base.proto",
-        "vhlo_ops.proto",
-        "stablehlo",
-        "proto3",
-    ),
-    (
-        "stablehlo/dialect/version.proto",
-        "vhlo_ops.proto",
-        "vhlo",
-        "proto3",
-    ),
-    (
-        "stablehlo/dialect/serialization.proto",
-        "vhlo_ops.proto",
-        "stablehlo",
-        "proto3",
-    ),
-    (
-        "shardy/dialect/sdy/ir/sdy_dialect.proto",
-        "shardy_mesh.proto",
-        "sdy",
-        "proto3",
-    ),
-    (
-        "shardy/dialect/sdy/ir/sdy_sharding.proto",
-        "shardy_mesh.proto",
-        "sdy",
-        "proto3",
-    ),
-    (
-        "shardy/dialect/sdy/ir/sdy_propagation.proto",
-        "shardy_mesh.proto",
-        "sdy",
-        "proto3",
-    ),
-    (
-        "shardy/dialect/sdy/ir/sdy_axes.proto",
-        "shardy_mesh.proto",
-        "sdy",
-        "proto3",
-    ),
-    (
-        "mlir/Bytecode/bytecode_header.proto",
-        "mosaic_tpu.proto",
-        "mlir",
-        "proto3",
-    ),
-    (
-        "mlir/IR/builtin_attributes.proto",
-        "mosaic_tpu.proto",
-        "mlir",
-        "proto3",
-    ),
-    (
-        "mlir/IR/builtin_types.proto",
-        "mosaic_tpu.proto",
-        "mlir",
-        "proto3",
-    ),
-    (
-        "mlir/IR/builtin_ops.proto",
-        "mosaic_tpu.proto",
-        "mlir",
-        "proto3",
-    ),
-    (
-        "mlir/IR/diagnostics.proto",
-        "mosaic_tpu.proto",
-        "mlir",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/pxc/pxc_executable.proto",
-        "deepsea_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/vxc/vxc_executable.proto",
-        "deepsea_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/vlc/vlc_executable.proto",
-        "deepsea_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/vfc/vfc_executable.proto",
-        "deepsea_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/gxc/gxc_executable.proto",
-        "deepsea_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/glc/glc_executable.proto",
-        "deepsea_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/gfc/gfc_executable.proto",
-        "deepsea_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/jfc/jfc_executable.proto",
-        "jellyfish_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/dfc/dfc_executable.proto",
-        "jellyfish_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/iwc/iwc_executable.proto",
-        "deepsea_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/sparse_core/sparse_core_v1.proto",
-        "barnacore_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/sparse_core/sparse_core_v2.proto",
-        "barnacore_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/sparse_core/sparse_core_v3.proto",
-        "barnacore_executable.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/ici/ici_routing_table.proto",
-        "ici_routing_table.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/hbm/hbm_memory_controller.proto",
-        "memory_scheduler.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/vmem/vmem_allocator_config.proto",
-        "memory_space_assignment.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/cmem/cmem_allocator_config.proto",
-        "memory_space_assignment.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/smem/smem_allocator_config.proto",
-        "memory_space_assignment.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/sync/sync_flag_allocation.proto",
-        "isa_program.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/isa/vliw_bundle_encoding.proto",
-        "vliw_bundle_encoding.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/mxu/mxu_systolic_config.proto",
-        "tpu_chip_config.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/vpu/vpu_lane_config.proto",
-        "tpu_chip_config.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/xlu/xlu_cross_lane_config.proto",
-        "tpu_chip_config.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/deepsea/dma/dma_descriptor_ring.proto",
-        "dma_descriptor_ring.proto",
-        "asic_sw.deepsea",
-        "proto3",
-    ),
-    (
-        "asic_sw/driver/gasket/gasket_ioctl.proto",
-        "gasket_ioctl.proto",
-        "asic_sw.driver",
-        "proto3",
-    ),
-    (
-        "asic_sw/driver/vfio/vfio_iommu_map.proto",
-        "vfio_iommu_map.proto",
-        "asic_sw.driver",
-        "proto3",
-    ),
-    (
-        "asic_sw/driver/pcie/pcie_bar_layout.proto",
-        "pcie_bar_layout.proto",
-        "asic_sw.driver",
-        "proto3",
-    ),
-    (
-        "asic_sw/driver/interrupts/msix_eventfd_table.proto",
-        "runtime_config.proto",
-        "asic_sw.driver",
-        "proto3",
-    ),
-    (
-        "platforms/deepsea/jellyfish/llo/llo_bundle_schedule.proto",
-        "llo_bundle_schedule.proto",
-        "platforms_deepsea.jellyfish.llo",
-        "proto3",
-    ),
-    (
-        "platforms/deepsea/jellyfish/llo/llo_register_allocator.proto",
-        "llo_register_allocator.proto",
-        "platforms_deepsea.jellyfish.llo",
-        "proto3",
-    ),
-    (
-        "platforms/deepsea/jellyfish/llo/llo_hazard_scoreboard.proto",
-        "isa_program.proto",
-        "platforms_deepsea.jellyfish.llo",
-        "proto3",
-    ),
-    (
-        "platforms/deepsea/jellyfish/llo/llo_software_pipeliner.proto",
-        "llo_software_pipeliner.proto",
-        "platforms_deepsea.jellyfish.llo",
-        "proto3",
-    ),
-    (
-        "platforms/deepsea/jellyfish/llo/llo_loop_tiler.proto",
-        "isa_program.proto",
-        "platforms_deepsea.jellyfish.llo",
-        "proto3",
-    ),
-    (
-        "platforms/deepsea/jellyfish/llo/llo_layout_assigner.proto",
-        "xla_data.proto",
-        "platforms_deepsea.jellyfish.llo",
-        "proto3",
-    ),
-    (
-        "platforms/deepsea/jellyfish/llo/llo_fusion_engine.proto",
-        "hlo.proto",
-        "platforms_deepsea.jellyfish.llo",
-        "proto3",
-    ),
-    (
-        "platforms/deepsea/jellyfish/llo/llo_cost_model.proto",
-        "emitter_learned_cost_model_options.proto",
-        "platforms_deepsea.jellyfish.llo",
-        "proto3",
-    ),
-    (
-        "platforms/deepsea/jellyfish/xdb/xdb_debug_server.proto",
-        "compiler_metadata.proto",
-        "platforms_deepsea.jellyfish.xdb",
-        "proto2",
-    ),
-    (
-        "platforms/deepsea/jellyfish/xdb/xdb_breakpoint.proto",
-        "compiler_metadata.proto",
-        "platforms_deepsea.jellyfish.xdb",
-        "proto2",
-    ),
-    (
-        "platforms/deepsea/jellyfish/xdb/xdb_core_snapshot.proto",
-        "coredump.proto",
-        "platforms_deepsea.jellyfish.xdb",
-        "proto2",
-    ),
-    (
-        "platforms/deepsea/jellyfish/xdb/xdb_hlo_trace.proto",
-        "stall_summaries.proto",
-        "platforms_deepsea.jellyfish.xdb",
-        "proto2",
-    ),
-    (
-        "platforms/megascale/megascale_collectives.proto",
-        "megascale_collectives.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/megascale_congestion_control.proto",
-        "megascale.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/megascale_dcn_transport.proto",
-        "megascale_addresses.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/megascale_multi_slice.proto",
-        "megascale_dcn_topology.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/megascale_perf_counters.proto",
-        "megascale.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/megascale_rendezvous.proto",
-        "megascale_addresses.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/megascale_slice_builder.proto",
-        "megascale_dcn_topology.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/megascale_barrier_service.proto",
-        "coordination_service.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/megascale_endpoint_registry.proto",
-        "megascale_addresses.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "platforms/megascale/megascale_topology_exchange.proto",
-        "pjrt_distributed_protocol.proto",
-        "xla.megascale.runtime",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/tpu_driver_abi.proto",
-        "tpu_runtime.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/tpu_event_completion.proto",
-        "tpu_runtime.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/tpu_buffer_transfer.proto",
-        "tpu_runtime.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/tpu_mesh_state.proto",
-        "tpu_topology.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/tpu_slice_coordinates.proto",
-        "tpu_topology.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "learning/45eac/tpu/runtime/tpu_checkpoint_manager.proto",
-        "runtime_config.proto",
-        "tpu",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/protobuf/tpu/tpu_embedding_output_layout.proto",
-        "tpu_embedding_configuration.proto",
-        "tensorflow.tpu",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/tpu/kernels/tpu_compile_op_options.proto",
-        "compile_metadata.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/tpu/kernels/tpu_execute_op_options.proto",
-        "tpu_executable_info.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "tensorflow/core/tpu/kernels/tpu_infeed_outfeed_queue.proto",
-        "host_compute_metadata.proto",
-        "tensorflow",
-        "proto3",
-    ),
-    (
-        "tsl/profiler/protobuf/xplane_visitor.proto",
-        "xplane.proto",
-        "tensorflow.profiler",
-        "proto3",
-    ),
-    (
-        "tsl/profiler/protobuf/trace_events_raw.proto",
-        "xplane.proto",
-        "tensorflow.profiler",
-        "proto3",
-    ),
-    (
-        "tsl/profiler/protobuf/op_metrics.proto",
-        "xplane.proto",
-        "tensorflow.profiler",
-        "proto3",
-    ),
-    (
-        "tsl/profiler/protobuf/op_profile.proto",
-        "xplane.proto",
-        "tensorflow.profiler",
-        "proto3",
-    ),
-    (
-        "tsl/profiler/protobuf/overview_page.proto",
-        "tpu_input_pipeline.proto",
-        "tensorflow.profiler",
-        "proto3",
-    ),
-    (
-        "tsl/profiler/protobuf/pod_viewer.proto",
-        "profiler_topology.proto",
-        "tensorflow.profiler",
-        "proto3",
-    ),
-    (
-        "tsl/profiler/protobuf/memory_profile.proto",
-        "xplane.proto",
-        "tensorflow.profiler",
-        "proto3",
-    ),
-    (
-        "libtpu/sdk/tpumonitoring_metrics.proto",
-        "tpu_telemetry_snapshot.proto",
-        "libtpu.sdk.tpu_telemetry",
-        "proto3",
-    ),
-    (
-        "libtpu/sdk/tpuz_html_endpoints.proto",
-        "tpu_telemetry_snapshot.proto",
-        "libtpu.sdk.tpu_telemetry",
-        "proto3",
-    ),
-    (
-        "libtpu/sdk/slice_topology_query.proto",
-        "tpu_topology.proto",
-        "libtpu.sdk.tpu_telemetry",
-        "proto3",
-    ),
-];
+    let child_mod = prost_to_snake(msg_name);
+    let next_rust_mod = if rust_mod_prefix.is_empty() {
+        child_mod
+    } else {
+        format!("{rust_mod_prefix}::{child_mod}")
+    };
+    for nested in &msg.nested_type {
+        collect_message_bijection_entries(&full_proto_name, &next_rust_mod, nested, entries);
+    }
+}
+
+/// Generates `OUT_DIR/generated_proto_traits.rs` implementing `ProtoSchemaMessage` for every
+/// compiled Protobuf message across all 738 `.proto` files (including `.google.protobuf.*` WKTs)
+/// and emitting `ALL_GENERATED_PROTO_MESSAGE_NAMES` and `ALL_GENERATED_PROTO_BIJECTION`.
+///
+/// # Arguments
+///
+/// * `fds` - Compiled `FileDescriptorSet` covering all 738 `.proto` files.
+/// * `out_dir` - Cargo `OUT_DIR` directory to write `generated_proto_traits.rs` into.
+///
+/// # Errors
+///
+/// Returns [`std::io::Error`] if writing `generated_proto_traits.rs` or `generated_protodesc_catalog.rs` fails.
+fn generate_proto_schema_traits(fds: &FileDescriptorSet, out_dir: &Path) -> std::io::Result<()> {
+    let mut entries: BTreeMap<String, String> = BTreeMap::new();
+
+    let mut pkg_reps: BTreeMap<String, (String, String)> = BTreeMap::new();
+    for file in &fds.file {
+        let pkg = file.package.as_deref().unwrap_or("");
+        if pkg == "google.protobuf" {
+            continue;
+        }
+        let rust_pkg_mod = if pkg.is_empty() {
+            String::new()
+        } else {
+            pkg.split('.')
+                .map(prost_to_snake)
+                .collect::<Vec<_>>()
+                .join("::")
+        };
+        for msg in &file.message_type {
+            collect_message_bijection_entries(pkg, &rust_pkg_mod, msg, &mut entries);
+            if !pkg_reps.contains_key(pkg)
+                && !msg
+                    .options
+                    .as_ref()
+                    .and_then(|o| o.map_entry)
+                    .unwrap_or(false)
+            {
+                let msg_name = msg.name.as_deref().unwrap_or("");
+                let full_name = if pkg.is_empty() {
+                    String::from(msg_name)
+                } else {
+                    format!("{pkg}.{msg_name}")
+                };
+                if let Some(rust_ty) = entries.get(&full_name) {
+                    pkg_reps.insert(String::from(pkg), (full_name, rust_ty.clone()));
+                }
+            }
+        }
+    }
+
+    let mut code = String::with_capacity(entries.len() * 140);
+    for (full_name, rust_ty) in &entries {
+        let _ = writeln!(code, "impl ProtoSchemaMessage for {rust_ty} {{");
+        let _ = writeln!(
+            code,
+            "    const PROTO_FULL_NAME: &'static str = {full_name:?};"
+        );
+        let _ = writeln!(code, "}}");
+    }
+
+    let _ = writeln!(
+        code,
+        "/// Sorted slice of all generated Protobuf message full names across `protodesc_cold`."
+    );
+    let _ = writeln!(
+        code,
+        "pub const ALL_GENERATED_PROTO_MESSAGE_NAMES: &[&str] = &["
+    );
+    for full_name in entries.keys() {
+        let _ = writeln!(code, "    {full_name:?},");
+    }
+    let _ = writeln!(code, "];");
+
+    let _ = writeln!(
+        code,
+        "/// Sorted `(full_proto_name, rust_type_path)` bijection across all generated messages."
+    );
+    let _ = writeln!(
+        code,
+        "pub const ALL_GENERATED_PROTO_BIJECTION: &[(&str, &str)] = &["
+    );
+    for (full_name, rust_ty) in &entries {
+        let _ = writeln!(code, "    ({full_name:?}, {rust_ty:?}),");
+    }
+    let _ = writeln!(code, "];");
+
+    let _ = writeln!(
+        code,
+        "/// Tuple type for a generated `.proto` package test representative."
+    );
+    let _ = writeln!(code, "#[cfg(test)]");
+    let _ = writeln!(
+        code,
+        "pub type GeneratedPackageRepresentative = (&'static str, &'static str, fn() -> LibTpuResult<()>, fn(&[u8]) -> LibTpuResult<Vec<u8>>);"
+    );
+    let _ = writeln!(
+        code,
+        "/// Representative `(package, full_message_name, verify_equiv_fn, typed_wire_roundtrip_fn)` for every generated `.proto` package."
+    );
+    let _ = writeln!(code, "#[cfg(test)]");
+    let _ = writeln!(
+        code,
+        "pub const GENERATED_PACKAGE_REPRESENTATIVES: &[GeneratedPackageRepresentative] = &["
+    );
+    for (pkg, (full_name, rust_ty)) in &pkg_reps {
+        let _ = writeln!(
+            code,
+            "    ({pkg:?}, {full_name:?}, verify_bidirectional_proto_struct_equivalence::<{rust_ty}>, roundtrip_proto_wire_bytes::<{rust_ty}>),"
+        );
+    }
+    let _ = writeln!(code, "];");
+
+    std::fs::write(out_dir.join("generated_proto_traits.rs"), code)
+}
+
+/// Emits `generated_protodesc_catalog.rs` listing all 738 embedded `protodesc_cold` files.
+///
+/// # Arguments
+///
+/// * `fds` - Compiled `FileDescriptorSet` covering all 738 `.proto` files.
+/// * `out_dir` - Cargo `OUT_DIR` directory to write `generated_protodesc_catalog.rs` into.
+///
+/// # Errors
+///
+/// Returns [`std::io::Error`] if writing `generated_protodesc_catalog.rs` fails.
+fn write_protodesc_catalog(fds: &FileDescriptorSet, out_dir: &Path) -> std::io::Result<()> {
+    let mut cat = String::with_capacity(fds.file.len() * 220);
+    let _ = writeln!(
+        cat,
+        "/// Deterministic catalog of all 738 embedded `protodesc_cold` descriptor schemas in `libtpu.so`."
+    );
+    let _ = writeln!(
+        cat,
+        "pub const PROTODESC_COLD_293_CATALOG: &[ProtodescColdCatalogEntry] = &["
+    );
+    for file in &fds.file {
+        let name = file.name.as_deref().unwrap_or("");
+        let pkg = file.package.as_deref().unwrap_or("");
+        let syn = match file.syntax.as_deref().unwrap_or("") {
+            "proto3" => "proto3",
+            _ => "proto2",
+        };
+        let _ = writeln!(cat, "    ProtodescColdCatalogEntry {{");
+        let _ = writeln!(cat, "        embedded_path: {name:?},");
+        let _ = writeln!(cat, "        canonical_filename: {name:?},");
+        let _ = writeln!(cat, "        package: {pkg:?},");
+        let _ = writeln!(cat, "        syntax: {syn:?},");
+        let _ = writeln!(cat, "    }},");
+    }
+    let _ = writeln!(cat, "];");
+    std::fs::write(out_dir.join("generated_protodesc_catalog.rs"), cat)
+}
 
 /// Entrypoint for `cargo` build script execution.
 ///
 /// # Errors
 ///
-/// Returns [`BuildError`] if `protox` or `prost-build` fails to compile the staged schemas.
-fn main() -> Result<(), BuildError> {
+/// Returns [`std::io::Error`] if `protox` or `prost-build` fails to compile the `.proto` schemas.
+fn main() -> std::io::Result<()> {
     let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_default());
     let proto_dir = manifest_dir
         .join("../../docs/reverse_engineering/protos")
         .canonicalize()
         .unwrap_or_else(|_| manifest_dir.join("../../docs/reverse_engineering/protos"));
+    let ext_proto_dir = manifest_dir
+        .join("../../protos")
+        .canonicalize()
+        .unwrap_or_else(|_| manifest_dir.join("../../protos"));
+
+    let mut golden_proto_paths = Vec::new();
+    collect_proto_files_recursively(&proto_dir, &mut golden_proto_paths)?;
+    golden_proto_paths.sort();
+
+    let mut ext_proto_paths = Vec::new();
+    if ext_proto_dir.exists() {
+        collect_proto_files_recursively(&ext_proto_dir, &mut ext_proto_paths)?;
+        ext_proto_paths.sort();
+    }
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap_or_default());
-    let staged_proto_dir = out_dir.join("staged_protos");
-    std::fs::create_dir_all(&staged_proto_dir)?;
+    clean_stale_generated_rs(&out_dir)?;
 
-    let available_files: BTreeSet<String> =
-        COMPILE_PROTOS.iter().map(|s| (*s).to_owned()).collect();
-    let mut staged_paths = Vec::with_capacity(COMPILE_PROTOS.len());
-
-    for &name in COMPILE_PROTOS {
-        let src_path = proto_dir.join(name);
-        println!("cargo:rerun-if-changed={}", src_path.display());
-        let raw = std::fs::read_to_string(&src_path)?;
-        let normalized = normalize_proto_for_protox(&raw, &available_files);
-        let dst_path = staged_proto_dir.join(name);
-        std::fs::write(&dst_path, normalized)?;
-        staged_paths.push(dst_path);
-    }
-
-    let mut file_descriptor_set = protox::compile(&staged_paths, [&staged_proto_dir])?;
-    let prost_fds = file_descriptor_set.clone();
-
-    let canonical_deps_map: std::collections::BTreeMap<String, Vec<String>> = file_descriptor_set
-        .file
-        .iter()
-        .filter_map(|f| Some((f.name.clone()?, f.dependency.clone())))
-        .collect();
-    let mut existing_names: BTreeSet<String> = file_descriptor_set
-        .file
-        .iter()
-        .filter_map(|f| f.name.clone())
-        .collect();
-    for &(embedded_path, canonical_filename, package, syntax) in PROTODESC_COLD_293_VIRTUAL_FILES {
-        if existing_names.insert(String::from(embedded_path)) {
-            let mut deps = Vec::new();
-            let mut public_deps = Vec::new();
-            if existing_names.contains(canonical_filename) {
-                deps.push(String::from(canonical_filename));
-                public_deps.push(0_i32);
-                if let Some(sub_deps) = canonical_deps_map.get(canonical_filename) {
-                    for sd in sub_deps {
-                        if !deps.contains(sd) {
-                            deps.push(sd.clone());
-                        }
-                    }
-                }
-            }
-            file_descriptor_set
-                .file
-                .push(prost_types::FileDescriptorProto {
-                    name: Some(String::from(embedded_path)),
-                    package: Some(String::from(package)),
-                    dependency: deps,
-                    public_dependency: public_deps,
-                    syntax: Some(String::from(syntax)),
-                    ..prost_types::FileDescriptorProto::default()
-                });
-        }
-    }
-
+    let golden_fds =
+        protox::compile(&golden_proto_paths, [&proto_dir]).map_err(std::io::Error::other)?;
     let fds_path = out_dir.join("libtpu_file_descriptor_set.bin");
-    std::fs::write(&fds_path, file_descriptor_set.encode_to_vec())?;
+    std::fs::write(&fds_path, golden_fds.encode_to_vec())?;
+    write_protodesc_catalog(&golden_fds, &out_dir)?;
+
+    let mut all_proto_paths = golden_proto_paths;
+    all_proto_paths.extend(ext_proto_paths);
+    let combined_fds = protox::compile(&all_proto_paths, [&proto_dir, &ext_proto_dir])
+        .map_err(std::io::Error::other)?;
+    let combined_fds_path = out_dir.join("libtpu_combined_file_descriptor_set.bin");
+    std::fs::write(&combined_fds_path, combined_fds.encode_to_vec())?;
 
     let mut config = prost_build::Config::new();
     config.btree_map(["."]);
-    config.include_file("generated_proto_include.rs");
-    config.compile_fds(prost_fds)?;
-    ensure_doc_comments_in_generated_rs(&out_dir)?;
-    let include_path = out_dir.join("generated_proto_include.rs");
-    if include_path.exists() {
-        let raw_inc = std::fs::read_to_string(&include_path)?;
-        let mut doc_inc = String::with_capacity(raw_inc.len() + 2048);
-        for line in raw_inc.lines() {
-            if line.trim_start().starts_with("pub mod ") {
-                let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-                let _ = writeln!(doc_inc, "{indent}/// Generated protobuf package module.");
-            }
-            let _ = writeln!(doc_inc, "{line}");
-        }
-        std::fs::write(&include_path, doc_inc)?;
+    for eq_ty in [
+        ".libtpu.ext.deepsea.LloBundleScheduleProto",
+        ".libtpu.ext.deepsea.LloSoftwarePipelineScheduleProto",
+        ".libtpu.ext.megascale.MegascaleCongestionControlConfigProto",
+    ] {
+        config.type_attribute(eq_ty, "#[derive(Eq)]");
     }
+    config.include_file("generated_proto_include.rs");
+    config.compile_fds(combined_fds.clone())?;
+
+    ensure_doc_comments_in_generated_rs(&out_dir)?;
+    generate_proto_schema_traits(&combined_fds, &out_dir)?;
     Ok(())
 }

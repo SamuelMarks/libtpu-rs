@@ -1,0 +1,50 @@
+syntax = "proto3";
+package accel_ssw.deepsea.proto;
+import "platforms/accel_ssw/deepsea/common/proto/dimension.proto";
+enum IciConnector {
+  ICI0 = 0;
+  ICI1 = 1;
+  ICI2 = 2;
+  ICI3 = 3;
+  ICI4 = 4;
+  ICI5 = 5;
+  ICI6 = 6;
+  ICI7 = 7;
+  ICI8 = 8;
+  ICI9 = 9;
+  ICI10 = 10;
+  ICI11 = 11;
+  ICI12 = 12;
+  ICI13 = 13;
+  ICI14 = 14;
+  ICI15 = 15;
+  ICI16 = 16;
+  ICI17 = 17;
+  ICI18 = 18;
+  ICI19 = 19;
+}
+enum IciPortType {
+  ICI_PORT_TYPE_UNSPECIFIED = 0;
+  ICI_PORT_TYPE_ICI = 1;
+  ICI_PORT_TYPE_IMX = 2;
+  ICI_PORT_TYPE_ICIOE = 3;
+  ICI_PORT_TYPE_UNUSED = 4;
+}
+message ChipPort {
+  int32 chip = 1;
+  int32 port = 2;
+  .accel_ssw.deepsea.proto.IciPortType port_type = 3;
+  int32 physical_link_id = 4;
+}
+message IciLinkMapEntry {
+  oneof connection {
+    .accel_ssw.deepsea.proto.IciConnector ici_connector = 3;
+    .accel_ssw.deepsea.proto.ChipPort remote_chip = 4;
+  }
+  .accel_ssw.deepsea.proto.ChipPort local_chip = 1;
+  .accel_ssw.deepsea.proto.Orientation orientation = 2;
+  .accel_ssw.deepsea.proto.Polarity polarity = 5;
+}
+message IciLinkMap {
+  repeated .accel_ssw.deepsea.proto.IciLinkMapEntry ici_connectors = 1;
+}

@@ -1,0 +1,9 @@
+syntax = "proto3";
+package xprof;
+message TaskInfo {
+  string compiler_borg_cell = 1;
+  int64 compiler_borg_uid = 2;
+}
+message CompilationTaskInfo {
+  map<uint64, .xprof.TaskInfo> task_info = 1;
+}

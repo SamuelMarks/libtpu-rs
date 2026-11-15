@@ -1,0 +1,60 @@
+syntax = "proto3";
+package platforms_deepsea.jellyfish.barna_core.hot_id;
+message IdOccurrenceEntry {
+  int64 embedding_id = 1;
+  int32 user_table_id = 2;
+  int32 home_column = 3;
+  int64 occurrences = 4;
+}
+message HotIdStatisticsProto {
+  message UserTableStatistics {
+    message SoftwareRowShard {
+      repeated int64 total_occurrences_by_column = 1;
+    }
+    map<int64, int64> occurrences_by_id = 1;
+    repeated .platforms_deepsea.jellyfish.barna_core.hot_id.HotIdStatisticsProto.UserTableStatistics.SoftwareRowShard software_row_shards = 2;
+  }
+  repeated .platforms_deepsea.jellyfish.barna_core.hot_id.HotIdStatisticsProto.UserTableStatistics user_tables = 1;
+  int64 total_profiled_tpu_batch_count_per_row = 3;
+}
+message HotIdAssignmentsProto {
+  message Assignment {
+    int64 embedding_id = 1;
+    int64 embedding_gid = 2;
+    int32 user_table_id = 3;
+    repeated int32 in_use_cores = 4;
+  }
+  repeated .platforms_deepsea.jellyfish.barna_core.hot_id.HotIdAssignmentsProto.Assignment assignments = 2;
+  uint64 created_at_ns = 3;
+}
+message HotIdAssignmentsForCoreProto {
+  message AssignmentForCore {
+    int64 embedding_id = 1;
+    repeated int64 embedding_gid = 2;
+    int32 user_table_id = 3;
+  }
+  repeated .platforms_deepsea.jellyfish.barna_core.hot_id.HotIdAssignmentsForCoreProto.AssignmentForCore assignments = 2;
+  uint64 created_at_ns = 3;
+}
+message CompressedHotIdAssignmentsForCoreProto {
+  uint64 created_at_ns = 1;
+  bytes compressed_data = 2;
+}
+message ParameterBuffer {
+  repeated float data = 1;
+}
+message EmbeddingVector {
+  int32 user_table_id = 1;
+  int64 embedding_id = 2;
+  double core_count = 3;
+  repeated .platforms_deepsea.jellyfish.barna_core.hot_id.ParameterBuffer parameters = 4;
+}
+message RetrieveOutput {
+  repeated .platforms_deepsea.jellyfish.barna_core.hot_id.EmbeddingVector embedding_vectors = 1;
+}
+message MergedOutput {
+  repeated .platforms_deepsea.jellyfish.barna_core.hot_id.EmbeddingVector embedding_vectors = 1;
+}
+message LoadOutput {
+  int64 next_replication_step = 1;
+}

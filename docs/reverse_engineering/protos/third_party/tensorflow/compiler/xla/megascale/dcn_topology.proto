@@ -1,0 +1,22 @@
+syntax = "proto3";
+package xla.megascale.runtime;
+message DCNTopology {
+  message SymmetricTree {
+    repeated int32 branching_per_layer = 1;
+  }
+  message TreeNode {
+    message SliceRange {
+      int32 slice_id_start = 1;
+      int32 slice_id_end = 2;
+    }
+    optional string label = 1;
+    repeated .xla.megascale.runtime.DCNTopology.TreeNode nodes = 2;
+    repeated .xla.megascale.runtime.DCNTopology.TreeNode.SliceRange slice_ranges = 3;
+    optional float egress_constraint = 4;
+    bool ring_transfers = 5;
+  }
+  oneof representation {
+    .xla.megascale.runtime.DCNTopology.SymmetricTree symmetric_tree = 1;
+    .xla.megascale.runtime.DCNTopology.TreeNode tree = 2;
+  }
+}

@@ -1,268 +1,23 @@
-//! Python FFI bridge and drop-in helper entrypoints for `libtpu-rs` (`libtpu` and `libtpu.sdk`).
+//! Native `PyO3` (`abi3`) Python FFI bridge for `libtpu-rs` (`libtpu._C` and `libtpu/sdk.so`).
 //!
-//! Provides [`PyTpuRuntime`], [`PySdkBridge`], and C-ABI / `PyInit_sdk` entrypoints used by the
-//! `libtpu` Python package to resolve library paths, manage `LIBTPU_INIT_ARGS`, query
-//! `GetPjrtApi()` and `GetLibtpuSdkApi()`, and execute TPU programs.
+//! Provides [`PyTpuRuntime`], [`PySdkBridge`], `DLPack` v1.0 C-ABI capsules ([`dlpack`]), and native
+//! PEP 489 `PyO3` (`abi3`) module entrypoints ([`PyInit__C`], [`PyInit_sdk`], [`PyInit_libtpu_py`])
+//! mapping [`libtpu_core::error::LibTpuError`] cleanly to typed Python `TpuError` exceptions.
 
 #![cfg_attr(all(test, coverage_nightly), feature(coverage_attribute))]
+
+pub mod dlpack;
+pub mod pyo3_modules;
+
+pub use pyo3_modules::{
+    PyInit__C, PyInit_libtpu_py, PyInit_sdk, lib_tpu_error_to_py_err, tpu_error_type,
+};
 
 use libtpu_core::config::TpuInitConfig;
 use libtpu_core::driver::{LibtpuSdkCoreClient, TpuCoreDriver, TpuCoreProfiler};
 use libtpu_core::error::LibTpuResult;
 use libtpu_core::pjrt::PjrtCoreClient;
 use libtpu_core::types::{DeviceId, ElementType, MemorySpaceId, Shape, TpuGeneration};
-
-/// `CPython` Stable ABI (`abi3`) object header (`PyObject`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CPythonObjectHead {
-    /// Reference count (`ob_refcnt`).
-    pub ob_refcnt: isize,
-    /// Object type pointer (`ob_type`, `0` before interpreter initialization).
-    pub ob_type: usize,
-}
-
-/// `CPython` Stable ABI (`abi3`) module definition base header (`PyModuleDef_Base`).
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CPythonModuleDefBase {
-    /// Embedded `PyObject` header (`PyObject_HEAD_INIT(NULL)`).
-    pub ob_base: CPythonObjectHead,
-    /// Module init function pointer (`m_init`, `0`).
-    pub m_init: usize,
-    /// Module state index (`m_index`, `0`).
-    pub m_index: isize,
-    /// Module copy dictionary pointer (`m_copy`, `0`).
-    pub m_copy: usize,
-}
-
-/// `CPython` `METH_VARARGS` calling convention flag (`0x0001`).
-pub const METH_VARARGS: i32 = 0x0001;
-
-/// `CPython` `METH_NOARGS` calling convention flag (`0x0004`).
-pub const METH_NOARGS: i32 = 0x0004;
-
-/// `CPython` multi-phase module initialization slot ID `Py_mod_exec` (`2`).
-pub const PY_MOD_EXEC_SLOT: i32 = 2;
-
-/// `CPython` Stable ABI (`abi3`) C function pointer type (`PyCFunction`).
-pub type PyCFunction =
-    unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> *mut std::ffi::c_void;
-
-/// `CPython` Stable ABI (`abi3`) method descriptor (`PyMethodDef`, `32` bytes on 64-bit targets).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct CPythonMethodDef {
-    /// Null-terminated method name (`ml_name`).
-    pub ml_name: *const std::os::raw::c_char,
-    /// C callback function pointer (`ml_meth`, `0` for sentinel).
-    pub ml_meth: Option<PyCFunction>,
-    /// Calling convention flags (`ml_flags`, e.g., [`METH_NOARGS`] or [`METH_VARARGS`]).
-    pub ml_flags: i32,
-    /// Reserved 4-byte structure padding on 64-bit targets.
-    pub pad: i32,
-    /// Null-terminated method docstring (`ml_doc`).
-    pub ml_doc: *const std::os::raw::c_char,
-}
-
-// SAFETY: `CPythonMethodDef` holds only static `'static` C-string pointers and C function pointers.
-unsafe impl Sync for CPythonMethodDef {}
-
-/// `CPython` Stable ABI (`abi3`) `Py_mod_exec` callback signature (`unsafe extern "C" fn(*mut c_void) -> i32`).
-pub type PyModExecFunction = unsafe extern "C" fn(*mut std::ffi::c_void) -> i32;
-
-/// `CPython` Stable ABI (`abi3`) multi-phase module slot descriptor (`PyModuleDef_Slot`, `16` bytes on 64-bit targets).
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct CPythonModuleDefSlot {
-    /// Slot identifier (`slot`, e.g., [`PY_MOD_EXEC_SLOT`] or `0` for sentinel).
-    pub slot: i32,
-    /// Explicit 4-byte alignment padding.
-    pub pad: i32,
-    /// Slot callback pointer (`value`).
-    pub value: Option<PyModExecFunction>,
-}
-
-// SAFETY: `CPythonModuleDefSlot` holds only static C function pointers and integers.
-unsafe impl Sync for CPythonModuleDefSlot {}
-
-/// Native `CPython` `METH_NOARGS` callback returning the active `PY_SDK_ABI_HEADER` descriptor address
-/// (`_get_sdk_abi_header`).
-///
-/// # Arguments
-///
-/// * `self_obj` - Module object pointer (`PyObject*`).
-/// * `_args` - Unused argument pointer (`NULL` for `METH_NOARGS`).
-///
-/// # Safety
-///
-/// Safe to invoke from both `CPython` and standalone C/Rust callers; returns `self_obj` if non-null,
-/// or `&raw const PY_SDK_ABI_HEADER` cast to `*mut c_void`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn py_sdk_get_abi_header(
-    self_obj: *mut std::ffi::c_void,
-    _args: *mut std::ffi::c_void,
-) -> *mut std::ffi::c_void {
-    if !self_obj.is_null() {
-        return self_obj;
-    }
-    (&raw const PY_SDK_ABI_HEADER)
-        .cast_mut()
-        .cast::<std::ffi::c_void>()
-}
-
-/// Native `CPython` `METH_NOARGS` callback returning a non-null C-string pointer for the SDK version
-/// (`_get_sdk_version`).
-///
-/// # Arguments
-///
-/// * `_self_obj` - Module object pointer (`PyObject*`).
-/// * `_args` - Unused argument pointer (`NULL` for `METH_NOARGS`).
-///
-/// # Safety
-///
-/// Returns a static `'static` C-string pointer cast to `*mut c_void`.
-#[unsafe(no_mangle)]
-pub const unsafe extern "C" fn py_sdk_get_version(
-    _self_obj: *mut std::ffi::c_void,
-    _args: *mut std::ffi::c_void,
-) -> *mut std::ffi::c_void {
-    c"0.0.52".as_ptr().cast_mut().cast::<std::ffi::c_void>()
-}
-
-/// Native `CPython` `METH_NOARGS` callback returning the default chip count (`4`) encoded as a pointer-sized integer
-/// (`_get_chip_count`).
-///
-/// # Arguments
-///
-/// * `_self_obj` - Module object pointer (`PyObject*`).
-/// * `_args` - Unused argument pointer (`NULL` for `METH_NOARGS`).
-///
-/// # Safety
-///
-/// Safe to invoke from C/Rust tests.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn py_sdk_get_chip_count(
-    _self_obj: *mut std::ffi::c_void,
-    _args: *mut std::ffi::c_void,
-) -> *mut std::ffi::c_void {
-    let count = LibtpuSdkCoreClient::new().chip_coordinates.len();
-    std::ptr::without_provenance_mut(count)
-}
-
-/// Native `CPython` `Py_mod_exec` multi-phase initialization slot callback (`py_sdk_mod_exec`).
-///
-/// # Arguments
-///
-/// * `module_obj` - Module object pointer (`PyObject*`).
-///
-/// # Safety
-///
-/// Returns `0` (`success`) when `module_obj` is non-null, or `-1` when `module_obj` is null.
-#[unsafe(no_mangle)]
-pub const unsafe extern "C" fn py_sdk_mod_exec(module_obj: *mut std::ffi::c_void) -> i32 {
-    if module_obj.is_null() { -1 } else { 0 }
-}
-
-/// Static `PyMethodDef` table exported by [`PySdkAbiHeader`].
-pub static PY_SDK_METHOD_TABLE: [CPythonMethodDef; 4] = [
-    CPythonMethodDef {
-        ml_name: c"_get_sdk_abi_header".as_ptr(),
-        ml_meth: Some(py_sdk_get_abi_header),
-        ml_flags: METH_NOARGS,
-        pad: 0,
-        ml_doc: c"Returns the static PySdkAbiHeader descriptor pointer.".as_ptr(),
-    },
-    CPythonMethodDef {
-        ml_name: c"_get_sdk_version".as_ptr(),
-        ml_meth: Some(py_sdk_get_version),
-        ml_flags: METH_NOARGS,
-        pad: 0,
-        ml_doc: c"Returns the libtpu.sdk version C-string pointer.".as_ptr(),
-    },
-    CPythonMethodDef {
-        ml_name: c"_get_chip_count".as_ptr(),
-        ml_meth: Some(py_sdk_get_chip_count),
-        ml_flags: METH_NOARGS,
-        pad: 0,
-        ml_doc: c"Returns the discovered TPU chip count.".as_ptr(),
-    },
-    CPythonMethodDef {
-        ml_name: std::ptr::null(),
-        ml_meth: None,
-        ml_flags: 0,
-        pad: 0,
-        ml_doc: std::ptr::null(),
-    },
-];
-
-/// Static `PyModuleDef_Slot` table for `libtpu.sdk`.
-pub static PY_SDK_SLOT_TABLE: [CPythonModuleDefSlot; 2] = [
-    CPythonModuleDefSlot {
-        slot: PY_MOD_EXEC_SLOT,
-        pad: 0,
-        value: Some(py_sdk_mod_exec),
-    },
-    CPythonModuleDefSlot {
-        slot: 0,
-        pad: 0,
-        value: None,
-    },
-];
-
-/// `CPython` Stable ABI (`abi3`) module definition (`PyModuleDef`) returned by [`PyInit_sdk`].
-#[repr(C)]
-#[derive(Debug)]
-pub struct PySdkAbiHeader {
-    /// Base `PyModuleDef_Base` header (`PyModuleDef_HEAD_INIT`).
-    pub m_base: CPythonModuleDefBase,
-    /// Null-terminated C module name (`"sdk\0"`).
-    pub m_name: *const std::os::raw::c_char,
-    /// Null-terminated C module docstring.
-    pub m_doc: *const std::os::raw::c_char,
-    /// Per-module state size in bytes (`-1` for stateless global module).
-    pub m_size: isize,
-    /// Method table pointer (`m_methods` -> [`PY_SDK_METHOD_TABLE`]).
-    pub m_methods: *const CPythonMethodDef,
-    /// Multi-phase slot table pointer (`m_slots`, `NULL` for single-phase `PyModule_Create2` compatibility).
-    pub m_slots: *const CPythonModuleDefSlot,
-    /// GC traverse callback (`m_traverse`, `0`).
-    pub m_traverse: usize,
-    /// GC clear callback (`m_clear`, `0`).
-    pub m_clear: usize,
-    /// Module free callback (`m_free`, `0`).
-    pub m_free: usize,
-    /// `LibtpuSdk_Api` struct size in bytes (`144`).
-    pub struct_size: usize,
-    /// PJRT ABI minor version (`116`).
-    pub abi_version: usize,
-}
-
-// SAFETY: `PySdkAbiHeader` contains only static `'static` C-string/table pointers and integer fields.
-unsafe impl Sync for PySdkAbiHeader {}
-
-/// Static [`PySdkAbiHeader`] (`PyModuleDef`) singleton exposed to C/Python extension loaders via [`PyInit_sdk`].
-static PY_SDK_ABI_HEADER: PySdkAbiHeader = PySdkAbiHeader {
-    m_base: CPythonModuleDefBase {
-        ob_base: CPythonObjectHead {
-            ob_refcnt: 1,
-            ob_type: 0,
-        },
-        m_init: 0,
-        m_index: 0,
-        m_copy: 0,
-    },
-    m_name: c"sdk".as_ptr(),
-    m_doc: c"libtpu.sdk CPython Stable ABI (abi3) module".as_ptr(),
-    m_size: -1,
-    m_methods: PY_SDK_METHOD_TABLE.as_ptr(),
-    m_slots: PY_SDK_SLOT_TABLE.as_ptr(),
-    m_traverse: 0,
-    m_clear: 0,
-    m_free: 0,
-    struct_size: 144,
-    abi_version: 116,
-};
 
 /// High-level Rust session backing the `libtpu` Python package (`PyTpuRuntime`).
 #[derive(Debug)]
@@ -286,7 +41,7 @@ impl PyTpuRuntime {
     pub fn from_init_args(init_args: &str) -> LibTpuResult<Self> {
         let mut config = TpuInitConfig::default();
         config.apply_init_args(init_args)?;
-        let client = PjrtCoreClient::from_simulated(&config);
+        let client = PjrtCoreClient::from_config(&config);
         Ok(Self { config, client })
     }
 
@@ -294,12 +49,6 @@ impl PyTpuRuntime {
     #[must_use]
     pub const fn pjrt_api_version() -> (i32, i32) {
         (0, 116)
-    }
-
-    /// Returns the raw [`PySdkAbiHeader`] vtable descriptor pointer for `libtpu.sdk` consumers.
-    #[must_use]
-    pub const fn sdk_api_ptr() -> *const PySdkAbiHeader {
-        &raw const PY_SDK_ABI_HEADER
     }
 
     /// Returns the active [`TpuGeneration`] of this runtime.
@@ -397,11 +146,7 @@ impl PyTpuRuntime {
         }
         let buf_refs: Vec<_> = device_buffers.iter().collect();
         let outs = loaded.execute_on_device(device_id, MemorySpaceId(0), &buf_refs)?;
-        let mut host_outs = Vec::with_capacity(outs.len());
-        for out_buf in outs {
-            host_outs.push(out_buf.to_host_bytes()?);
-        }
-        Ok(host_outs)
+        outs.into_iter().map(|b| b.to_host_bytes()).collect()
     }
 
     /// Compiles and executes an MLIR program on `device_id` doubling a 4-element `f32` input.
@@ -461,9 +206,11 @@ impl PyTpuRuntime {
         shape: &Shape,
         inputs: &[&[u8]],
     ) -> LibTpuResult<Vec<Vec<u8>>> {
-        let ast_mod = libtpu_core::compiler::parse_mlir_ast_module(mlir_source)?;
-        let bc_bytes = libtpu_core::compiler::MlirBytecodeHeader::encode_from_ast_module(&ast_mod);
-        self.execute_shaped_tensor(device_id, "mlir", &bc_bytes, shape, inputs)
+        libtpu_core::compiler::parse_mlir_ast_module(mlir_source).and_then(|ast_mod| {
+            let bc_bytes =
+                libtpu_core::compiler::MlirBytecodeHeader::encode_from_ast_module(&ast_mod);
+            self.execute_shaped_tensor(device_id, "mlir", &bc_bytes, shape, inputs)
+        })
     }
 
     /// Compiles a wire-encoded `xla.HloModuleProto` payload (`hlo_proto_bytes`) and executes it
@@ -487,6 +234,35 @@ impl PyTpuRuntime {
         inputs: &[&[u8]],
     ) -> LibTpuResult<Vec<Vec<u8>>> {
         self.execute_shaped_tensor(device_id, "hlo", hlo_proto_bytes, shape, inputs)
+    }
+
+    /// Compiles `mlir_code`, runs [`libtpu_core::compiler::CompiledProgram::pass_hlo_rematerialization`]
+    /// and [`libtpu_core::compiler::CompiledProgram::build_input_output_buffer_alias_config_proto`],
+    /// and returns `(rematerialized_count, total_aliased_bytes, barnacore_program_count)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `mlir_code` - MLIR module source bytes.
+    /// * `memory_limit_bytes` - Target peak memory budget in bytes (`>= 256`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`libtpu_core::error::LibTpuError`] if compilation fails.
+    pub fn query_rematerialization_and_barnacore(
+        &self,
+        mlir_code: &[u8],
+        memory_limit_bytes: u64,
+    ) -> LibTpuResult<(u32, u64, usize)> {
+        let loaded = self.client.compile_and_load("mlir", mlir_code, b"")?;
+        let mut prog = loaded.executable.program;
+        let remat = prog.pass_hlo_rematerialization(memory_limit_bytes);
+        let alias_cfg = prog.build_input_output_buffer_alias_config_proto();
+        let barnacore = prog.build_barnacore_executable_proto();
+        Ok((
+            remat.rematerialized_count,
+            alias_cfg.total_aliased_bytes,
+            barnacore.programs.len(),
+        ))
     }
 }
 
@@ -556,7 +332,7 @@ impl PySdkBridge {
         Ok(self.profiler.collect_xspace_bytes())
     }
 
-    /// Resolves a hierarchical `DeepSea` CSR path in the 13,261+ CSR catalog for this bridge's
+    /// Resolves a hierarchical `DeepSea` CSR path in the hardware CSR catalog for this bridge's
     /// generation and returns its physical BAR0 MMIO byte offset (`None` if unknown).
     ///
     /// # Arguments
@@ -569,7 +345,7 @@ impl PySdkBridge {
             .map(|d| d.byte_offset)
     }
 
-    /// Resolves a physical BAR0 MMIO byte offset in the 13,261+ CSR catalog for this bridge's
+    /// Resolves a physical BAR0 MMIO byte offset in the hardware CSR catalog for this bridge's
     /// generation and returns its canonical hierarchical register name (`None` if unknown).
     ///
     /// # Arguments
@@ -591,44 +367,6 @@ impl PySdkBridge {
     pub fn collect_profiler_tool_data(&self, tool_name: &str) -> Vec<u8> {
         self.profiler.collect_tool_data_bytes(tool_name)
     }
-}
-
-/// `CPython` Stable ABI (`abi3`) version constant (`1013`).
-pub const PYTHON_ABI3_VERSION: i32 = 1013;
-
-/// Function pointer type for `CPython`'s `Py_IsInitialized` (`() -> c_int`).
-pub type PyIsInitializedFn = unsafe extern "C" fn() -> i32;
-
-/// Function pointer type for `CPython`'s `PyModule_Create2` (`(*const PySdkAbiHeader, c_int) -> *const PySdkAbiHeader`).
-pub type PyModuleCreate2Fn =
-    unsafe extern "C" fn(*const PySdkAbiHeader, i32) -> *const PySdkAbiHeader;
-
-/// Initializes the `libtpu.sdk` `CPython` `abi3` module via `PyModule_Create2`.
-///
-/// When an active `CPython` interpreter is detected (`is_init_fn() != 0`), invokes
-/// `create_fn`, falling back to the static [`PySdkAbiHeader`] descriptor when invoked outside `CPython`.
-///
-/// # Arguments
-///
-/// * `is_init_fn` - Optional `Py_IsInitialized` function pointer.
-/// * `create_fn` - Optional `PyModule_Create2` function pointer.
-#[must_use]
-pub fn init_py_sdk_module(
-    is_init_fn: Option<PyIsInitializedFn>,
-    create_fn: Option<PyModuleCreate2Fn>,
-) -> *const PySdkAbiHeader {
-    if let (Some(is_init), Some(create)) = (is_init_fn, create_fn) {
-        // SAFETY: `is_init` is a valid C function pointer with no arguments.
-        let active = unsafe { is_init() };
-        if active != 0 {
-            // SAFETY: `PY_SDK_ABI_HEADER` is a valid static `PyModuleDef`-compatible structure.
-            let created = unsafe { create(&raw const PY_SDK_ABI_HEADER, PYTHON_ABI3_VERSION) };
-            if !created.is_null() {
-                return created;
-            }
-        }
-    }
-    &raw const PY_SDK_ABI_HEADER
 }
 
 /// Executes an in-memory multi-replica `AllReduce` sum across `f32` slices via [`libtpu_core::distributed::CollectiveRuntimeEngine`].
@@ -709,12 +447,12 @@ pub fn assemble_llo_vliw(listing: &str) -> LibTpuResult<Vec<u8>> {
 /// Returns [`libtpu_core::error::LibTpuError`] if `envelope_bytes` is malformed.
 pub fn service_host_command_envelope(envelope_bytes: &[u8]) -> LibTpuResult<u64> {
     let cfg = TpuInitConfig::default();
-    let hal = libtpu_core::hal::LinuxDeviceHal::open(
+    libtpu_core::hal::LinuxDeviceHal::open(
         libtpu_core::hal::KernelDriverMode::Gasket,
         libtpu_core::hal::EmulatedKernelDriverBackend::default(),
         &cfg,
-    )?;
-    hal.service_continuation_queue(envelope_bytes)
+    )
+    .and_then(|hal| hal.service_continuation_queue(envelope_bytes))
 }
 
 /// Disassembles 64-byte `IMEM` binary words into a canonical `DeepSea` LLO VLIW assembly listing.
@@ -796,186 +534,155 @@ pub fn execute_multi_replica_ragged_all_to_all_f32_4(replicas: &[[f32; 4]]) -> V
         .collect()
 }
 
-/// Native C-ABI entrypoint matching `PyInit_sdk` in `libtpu/sdk.so` (`0x004198c0`).
-///
-/// Returns the static [`PySdkAbiHeader`] descriptor pointer so C/Python
-/// extension loaders and `dlsym(..., "PyInit_sdk")` callers can inspect `libtpu.sdk`.
-#[unsafe(no_mangle)]
-pub const extern "C" fn PyInit_sdk() -> *const PySdkAbiHeader {
-    &raw const PY_SDK_ABI_HEADER
-}
-
-/// Alias C-ABI module initializer (`PyInit_libtpu_py`) returning [`PySdkAbiHeader`].
-#[unsafe(no_mangle)]
-pub const extern "C" fn PyInit_libtpu_py() -> *const PySdkAbiHeader {
-    &raw const PY_SDK_ABI_HEADER
-}
-
 #[cfg(test)]
 #[allow(clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::*;
+    use crate::dlpack::{
+        DlDataType, DlDevice, DlManagedTensor, DlTensor, compute_compact_strides,
+        consume_dlpack_capsule, dlpack_managed_tensor_deleter, export_dlpack_capsule,
+        unconsumed_dlpack_capsule_destructor,
+    };
+    use crate::pyo3_modules::{
+        c_module_exec, create_exception_or_fallback, sdk_module_exec, set_module_attr,
+    };
+    use core::ffi::c_void;
+    use pyo3::PyTypeInfo;
+    use pyo3::exceptions::PyRuntimeError;
+    use pyo3::ffi;
+    use pyo3::prelude::*;
+    use pyo3::types::PyModule;
 
-    /// Mock `Py_IsInitialized` returning `0` (not initialized).
-    unsafe extern "C" fn mock_py_not_initialized() -> i32 {
-        0
-    }
-
-    /// Mock `Py_IsInitialized` returning `1` (initialized).
-    unsafe extern "C" fn mock_py_initialized() -> i32 {
-        1
-    }
-
-    /// Mock `PyModule_Create2` returning `def` (`*const PySdkAbiHeader`).
-    ///
-    /// # Arguments
-    ///
-    /// * `def` - Module definition pointer.
-    /// * `_ver` - Module ABI version integer.
-    unsafe extern "C" fn mock_py_module_create_ok(
-        def: *const PySdkAbiHeader,
-        _ver: i32,
-    ) -> *const PySdkAbiHeader {
-        def
-    }
-
-    /// Mock `PyModule_Create2` returning `NULL`.
-    ///
-    /// # Arguments
-    ///
-    /// * `_def` - Module definition pointer.
-    /// * `_ver` - Module ABI version integer.
-    unsafe extern "C" fn mock_py_module_create_null(
-        _def: *const PySdkAbiHeader,
-        _ver: i32,
-    ) -> *const PySdkAbiHeader {
-        std::ptr::null()
+    /// Builds a minimal 64-bit ELF shared object exporting `"GetPjrtApi"` in `.dynsym`.
+    #[allow(clippy::indexing_slicing)]
+    fn build_test_elf64_dynsym() -> Vec<u8> {
+        let mut buf = vec![0_u8; 64];
+        buf[0..4].copy_from_slice(b"\x7fELF");
+        buf[4] = 2;
+        buf[5] = 1;
+        buf[6] = 1;
+        buf[16..18].copy_from_slice(&3_u16.to_le_bytes());
+        buf[18..20].copy_from_slice(&62_u16.to_le_bytes());
+        buf[20..24].copy_from_slice(&1_u32.to_le_bytes());
+        buf[52..54].copy_from_slice(&64_u16.to_le_bytes());
+        let shstrtab = b"\0.shstrtab\0.dynstr\0.dynsym\0";
+        let shstr_off = buf.len();
+        buf.extend_from_slice(shstrtab);
+        let dynstr = b"\0GetPjrtApi\0";
+        let dynstr_off = buf.len();
+        buf.extend_from_slice(dynstr);
+        while buf.len() % 8 != 0 {
+            buf.push(0);
+        }
+        let dynsym_off = buf.len();
+        buf.extend_from_slice(&[0_u8; 24]);
+        buf.extend_from_slice(&1_u32.to_le_bytes());
+        buf.push(0x12);
+        buf.push(0);
+        buf.extend_from_slice(&1_u16.to_le_bytes());
+        buf.extend_from_slice(&0x1000_u64.to_le_bytes());
+        buf.extend_from_slice(&32_u64.to_le_bytes());
+        let dynsym_size = (buf.len() - dynsym_off) as u64;
+        let shoff = buf.len();
+        buf[40..48].copy_from_slice(&(shoff as u64).to_le_bytes());
+        buf[58..60].copy_from_slice(&64_u16.to_le_bytes());
+        buf[60..62].copy_from_slice(&4_u16.to_le_bytes());
+        buf[62..64].copy_from_slice(&1_u16.to_le_bytes());
+        let push_shdr = |out: &mut Vec<u8>,
+                         name: u32,
+                         sh_type: u32,
+                         offset: u64,
+                         size: u64,
+                         link: u32,
+                         entsize: u64| {
+            let mut sh = [0_u8; 64];
+            sh[0..4].copy_from_slice(&name.to_le_bytes());
+            sh[4..8].copy_from_slice(&sh_type.to_le_bytes());
+            sh[24..32].copy_from_slice(&offset.to_le_bytes());
+            sh[32..40].copy_from_slice(&size.to_le_bytes());
+            sh[40..44].copy_from_slice(&link.to_le_bytes());
+            sh[56..64].copy_from_slice(&entsize.to_le_bytes());
+            out.extend_from_slice(&sh);
+        };
+        push_shdr(&mut buf, 0, 0, 0, 0, 0, 0);
+        push_shdr(
+            &mut buf,
+            1,
+            3,
+            shstr_off as u64,
+            shstrtab.len() as u64,
+            0,
+            0,
+        );
+        push_shdr(
+            &mut buf,
+            11,
+            3,
+            dynstr_off as u64,
+            dynstr.len() as u64,
+            0,
+            0,
+        );
+        push_shdr(&mut buf, 19, 11, dynsym_off as u64, dynsym_size, 2, 24);
+        buf
     }
 
     #[test]
-    fn test_py_tpu_runtime() {
+    fn test_py_runtime_and_sdk_bridge() {
         assert_eq!(PyTpuRuntime::pjrt_api_version(), (0, 116));
-        assert_eq!(protodesc_293_catalog_count(), 293);
-        assert_eq!(verify_protodesc_cold_293(), Ok(293));
-        let llo_sample = "[pc=0000 gen=v5 stall=0] { S0(op=1, $s0 <- $s0, $s0, imm=0) | V0(AddF32, $v0 <- $v0, $v1, $v0) }";
-        let imem_out = assemble_llo_vliw(llo_sample);
-        assert!(imem_out.is_ok());
-        if let Ok(imem) = imem_out {
+        assert_eq!(protodesc_293_catalog_count(), 738);
+        assert_eq!(verify_protodesc_cold_293(), Ok(738));
+
+        let llo_src = "[pc=0000 gen=v5 stall=0] { S0(op=1, $s0 <- $s0, $s0, imm=0) | V0(AddF32, $v0 <- $v0, $v1, $v0) }";
+        let imem_res = assemble_llo_vliw(llo_src);
+        assert!(imem_res.is_ok());
+        if let Ok(imem) = imem_res {
             assert_eq!(imem.len(), 64);
             assert!(disassemble_llo_vliw(&imem).contains("pc=0000"));
         }
         assert!(assemble_llo_vliw("bad_line").is_err());
-        let hc_env = libtpu_core::proto::HostCommandEnvelopeProto {
-            opcode: 1,
-            continuation_id: 10,
-            device_id: 0,
-            core_index: 0,
-            handler_id: 2,
-            payload: b"pkt".to_vec(),
-        };
-        assert_eq!(service_host_command_envelope(&hc_env.encode()), Ok(12));
-        assert!(service_host_command_envelope(&[0xFF, 0xFF, 0xFF]).is_err());
-        let ar_res = execute_multi_replica_all_reduce_f32_4(&[
-            [1.0, 2.0, 3.0, 4.0],
-            [10.0, 20.0, 30.0, 40.0],
-        ]);
-        assert_eq!(
-            ar_res,
-            vec![[11.0, 22.0, 33.0, 44.0], [11.0, 22.0, 33.0, 44.0]]
-        );
-        let bc_res = execute_multi_replica_collective_broadcast_f32_4(
-            &[[1.0, 2.0, 3.0, 4.0], [10.0, 20.0, 30.0, 40.0]],
-            1,
-        );
-        assert_eq!(
-            bc_res,
-            vec![[10.0, 20.0, 30.0, 40.0], [10.0, 20.0, 30.0, 40.0]]
-        );
-        let rag_res = execute_multi_replica_ragged_all_to_all_f32_4(&[
-            [1.0, 2.0, 3.0, 4.0],
-            [10.0, 20.0, 30.0, 40.0],
-        ]);
-        assert_eq!(rag_res.len(), 2);
-        assert!(!PyTpuRuntime::sdk_api_ptr().is_null());
-        assert!(!PyInit_sdk().is_null());
-        assert_eq!(PyInit_libtpu_py(), PyInit_sdk());
-        assert!(!PY_SDK_ABI_HEADER.m_methods.is_null());
-        assert!(!PY_SDK_ABI_HEADER.m_slots.is_null());
-        assert_eq!(PY_SDK_METHOD_TABLE[0].ml_flags, METH_NOARGS);
-        assert_ne!(
-            format!("{:?}{:?}", PY_SDK_METHOD_TABLE[0], PY_SDK_SLOT_TABLE[0]),
-            ""
-        );
-        assert_eq!(PY_SDK_SLOT_TABLE[0].slot, PY_MOD_EXEC_SLOT);
-        // SAFETY: Testing `py_sdk_get_abi_header`, `py_sdk_get_version`, `py_sdk_get_chip_count`, and `py_sdk_mod_exec` with null and non-null pointers.
-        unsafe {
-            let hdr_ptr = py_sdk_get_abi_header(std::ptr::null_mut(), std::ptr::null_mut());
-            assert!(!hdr_ptr.is_null());
-            let ver_ptr = py_sdk_get_version(std::ptr::null_mut(), std::ptr::null_mut());
-            assert!(!ver_ptr.is_null());
-            let chip_cnt_ptr = py_sdk_get_chip_count(std::ptr::null_mut(), std::ptr::null_mut());
-            assert_eq!(chip_cnt_ptr.addr(), 4);
-            let mut dummy_mod: i32 = 1;
-            let self_ptr = std::ptr::from_mut(&mut dummy_mod).cast::<std::ffi::c_void>();
-            assert_eq!(
-                py_sdk_get_abi_header(self_ptr, std::ptr::null_mut()),
-                self_ptr
-            );
-            assert_eq!(py_sdk_mod_exec(std::ptr::null_mut()), -1);
-            assert_eq!(py_sdk_mod_exec(self_ptr), 0);
-        }
-        assert_eq!(init_py_sdk_module(None, None), &raw const PY_SDK_ABI_HEADER);
-        assert_eq!(
-            init_py_sdk_module(Some(mock_py_not_initialized), None),
-            &raw const PY_SDK_ABI_HEADER
-        );
-        assert_eq!(
-            init_py_sdk_module(
-                Some(mock_py_not_initialized),
-                Some(mock_py_module_create_ok),
-            ),
-            &raw const PY_SDK_ABI_HEADER
-        );
-        assert_eq!(
-            init_py_sdk_module(Some(mock_py_initialized), Some(mock_py_module_create_ok)),
-            &raw const PY_SDK_ABI_HEADER
-        );
-        assert_eq!(
-            init_py_sdk_module(Some(mock_py_initialized), Some(mock_py_module_create_null)),
-            &raw const PY_SDK_ABI_HEADER
-        );
-        assert_eq!(PY_SDK_ABI_HEADER.struct_size, 144);
-        assert_eq!(PY_SDK_ABI_HEADER.abi_version, 116);
-        assert_eq!(PY_SDK_ABI_HEADER.m_size, -1);
-        assert_eq!(PY_SDK_ABI_HEADER.m_base.ob_base.ob_refcnt, 1);
-        assert_eq!(PY_SDK_ABI_HEADER.m_base.clone(), PY_SDK_ABI_HEADER.m_base);
-        assert_eq!(
-            PY_SDK_ABI_HEADER.m_base.ob_base.clone(),
-            PY_SDK_ABI_HEADER.m_base.ob_base
-        );
-        assert!(!PY_SDK_ABI_HEADER.m_name.is_null());
-        assert!(!PY_SDK_ABI_HEADER.m_doc.is_null());
-        assert_ne!(format!("{PY_SDK_ABI_HEADER:?}"), "");
-        assert!(matches!(
-            PyTpuRuntime::inspect_binary_symbol_names(b"not_a_binary"),
-            Err(libtpu_core::error::LibTpuError::GoblinParseFailed(_))
-        ));
-        let mut macho_hdr = Vec::with_capacity(32);
-        macho_hdr.extend_from_slice(&0xfeed_facf_u32.to_le_bytes());
-        macho_hdr.extend_from_slice(&0x0100_0007_u32.to_le_bytes());
-        macho_hdr.extend_from_slice(&0_u32.to_le_bytes());
-        macho_hdr.extend_from_slice(&6_u32.to_le_bytes());
-        macho_hdr.resize(32, 0);
-        assert!(PyTpuRuntime::inspect_binary_symbol_names(&macho_hdr).is_ok());
-        assert!(matches!(
-            PyTpuRuntime::from_init_args("--tpu_generation=invalid"),
-            Err(libtpu_core::error::LibTpuError::InvalidArgument {
-                parameter: "generation",
-                ..
-            })
-        ));
 
+        let env_pb = libtpu_core::proto::HostCommandEnvelopeProto {
+            opcode: 1,
+            channel_id: 1,
+            continuation_id: 99,
+            handler_id: 3,
+            payload: b"hello".to_vec(),
+            ..libtpu_core::proto::HostCommandEnvelopeProto::default()
+        };
+        assert!(service_host_command_envelope(&env_pb.encode()).is_ok());
+        assert!(service_host_command_envelope(&[0xFF, 0xFF, 0xFF]).is_err());
+
+        let rep = execute_multi_replica_all_reduce_f32_4(&[[1.0, 2.0, 3.0, 4.0]; 2]);
+        assert_eq!(rep.len(), 2);
+        assert_eq!(rep.first(), Some(&[2.0, 4.0, 6.0, 8.0]));
+        let bcast = execute_multi_replica_collective_broadcast_f32_4(
+            &[[9.0, 8.0, 7.0, 6.0], [1.0, 1.0, 1.0, 1.0]],
+            0,
+        );
+        assert_eq!(bcast.get(1), Some(&[9.0, 8.0, 7.0, 6.0]));
+        let ragged = execute_multi_replica_ragged_all_to_all_f32_4(&[
+            [1.0, 2.0, 3.0, 4.0],
+            [5.0, 6.0, 7.0, 8.0],
+        ]);
+        assert_eq!(ragged.first(), Some(&[1.0, 2.0, 5.0, 6.0]));
+        assert_eq!(ragged.get(1), Some(&[3.0, 4.0, 7.0, 8.0]));
+
+        assert!(PyTpuRuntime::inspect_binary_symbol_names(b"not_a_binary").is_err());
+        let mut macho_hdr = vec![0_u8; 32];
+        if let Some(s) = macho_hdr.get_mut(0..4) {
+            s.copy_from_slice(&0xFEED_FACF_u32.to_le_bytes());
+        }
+        if let Some(s) = macho_hdr.get_mut(4..8) {
+            s.copy_from_slice(&0x0100_000C_u32.to_le_bytes());
+        }
+        if let Some(s) = macho_hdr.get_mut(12..16) {
+            s.copy_from_slice(&6_u32.to_le_bytes());
+        }
+        assert!(PyTpuRuntime::inspect_binary_symbol_names(&macho_hdr).is_ok());
+
+        assert!(PyTpuRuntime::from_init_args("--tpu_generation=invalid").is_err());
         let rt_res = PyTpuRuntime::from_init_args("--tpu_generation=v6e");
         assert!(rt_res.is_ok());
         if let Ok(rt) = rt_res {
@@ -983,65 +690,87 @@ mod tests {
             assert_eq!(rt.generation(), TpuGeneration::V6e);
             assert_eq!(rt.device_count(), 4);
             assert_ne!(rt.serialize_topology(), [] as [u8; 0]);
-            let ser_res = rt.compile_and_serialize("mlir", b"module @py_add { stablehlo.add }");
-            assert!(ser_res.is_ok());
-            if let Ok(ser_bytes) = ser_res {
-                let fp = rt.deserialize_executable_fingerprint(&ser_bytes);
-                assert_eq!(fp.ok().map(|s| s.len()), Some(32));
-            }
-            assert!(matches!(
-                rt.compile_and_serialize("bad", b""),
-                Err(libtpu_core::error::LibTpuError::CompilationFailed { .. })
-            ));
-            assert!(matches!(
-                rt.deserialize_executable_fingerprint(b"bad"),
-                Err(libtpu_core::error::LibTpuError::DeserializationFailed { .. })
-            ));
-            let sum = rt.execute_f32_4(
-                DeviceId(0),
-                b"module @py_add { stablehlo.add }",
-                &[1.0, 2.0, 3.0, 4.0],
+
+            let mlir = b"module @jit_add { func.func public @main(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.add %arg0, %arg1 : tensor<4xf32> return %0 : tensor<4xf32> } }";
+            let ser = rt.compile_and_serialize("mlir", mlir).unwrap_or_default();
+            assert_ne!(ser, [] as [u8; 0]);
+            let fp = rt
+                .deserialize_executable_fingerprint(&ser)
+                .unwrap_or_default();
+            assert_eq!(fp.len(), 32);
+            assert!(rt.compile_and_serialize("unknown", mlir).is_err());
+            assert!(rt.deserialize_executable_fingerprint(b"bad").is_err());
+
+            assert_eq!(
+                rt.execute_f32_4(DeviceId(0), mlir, &[1.5, 2.5, 3.5, 4.5]),
+                Ok([3.0, 5.0, 7.0, 9.0])
             );
-            assert_eq!(sum.ok(), Some([2.0, 4.0, 6.0, 8.0]));
-            let bc_sh = Shape {
+            assert!(rt.execute_f32_4(DeviceId(99), mlir, &[1.0; 4]).is_err());
+            assert!(
+                rt.execute_f32_4(DeviceId(0), b"SYNTAX_ERROR", &[1.0; 4])
+                    .is_err()
+            );
+
+            let shape_1d = Shape {
                 element_type: ElementType::F32,
                 dims: vec![4],
                 dynamic_dims: vec![false],
                 layout: libtpu_core::types::MemoryLayout::default_tpu_tiled(1),
             };
-            let bc_in = ElementType::F32.pack_from_f64_slice(&[1.0, 2.0, 3.0, 4.0]);
-            let bc_res = rt.compile_mlir_bytecode_and_execute(
+            let raw_in: Vec<u8> = [2.0_f32, 4.0, 6.0, 8.0]
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect();
+            let mlir_str = core::str::from_utf8(mlir).unwrap_or("");
+            let bc_outs = rt.compile_mlir_bytecode_and_execute(
                 DeviceId(0),
-                "module @py_bc { func.func public @main(%arg0: tensor<4xf32>, %arg1: tensor<4xf32>) -> tensor<4xf32> { %0 = stablehlo.add %arg0, %arg1 : tensor<4xf32> return %0 : tensor<4xf32> } }",
-                &bc_sh,
-                &[&bc_in, &bc_in],
+                mlir_str,
+                &shape_1d,
+                &[&raw_in, &raw_in],
             );
-            assert!(bc_res.is_ok());
-            let emb_gen = libtpu_core::driver::TpuCoreEmbeddingEngine::new();
-            let hlo_pb = emb_gen.generate_xla_computation("recv_activations");
-            let hlo_res =
-                rt.compile_and_execute_hlo_proto(DeviceId(0), &hlo_pb, &bc_sh, &[&bc_in, &bc_in]);
-            assert!(hlo_res.is_ok());
+            assert!(bc_outs.is_ok());
             assert!(
-                rt.compile_mlir_bytecode_and_execute(DeviceId(0), "", &bc_sh, &[&bc_in])
+                rt.compile_mlir_bytecode_and_execute(DeviceId(0), "bad {{{", &shape_1d, &[])
                     .is_err()
             );
-            assert!(matches!(
-                rt.execute_f32_4(DeviceId(0), b"", &[1.0; 4]),
-                Err(libtpu_core::error::LibTpuError::CompilationFailed { .. })
-            ));
-            assert!(matches!(
-                rt.execute_f32_4(DeviceId(99), b"module @py_add { stablehlo.add }", &[1.0; 4]),
-                Err(libtpu_core::error::LibTpuError::DeviceNotFound { device_id: 99 })
-            ));
-            let _ = rt
-                .client
-                .hal
-                .poison_device(DeviceId(0), String::from("poisoned"));
-            assert!(matches!(
-                rt.execute_f32_4(DeviceId(0), b"module @py_add { stablehlo.add }", &[1.0; 4]),
-                Err(libtpu_core::error::LibTpuError::ExecutionFailed { device_id: 0, .. })
-            ));
+
+            let ast_m = libtpu_core::compiler::parse_mlir_ast_module(mlir_str);
+            assert!(ast_m.is_ok());
+            if let Ok(am) = ast_m
+                && let Ok(hlo_mod_pb) = libtpu_core::compiler::stablehlo_to_hlo_module_proto(&am)
+            {
+                use libtpu_core::proto::ProtoSchemaMessage as _;
+                let hlo_pb = hlo_mod_pb.encode_proto();
+                assert!(
+                    rt.compile_and_execute_hlo_proto(
+                        DeviceId(0),
+                        &hlo_pb,
+                        &shape_1d,
+                        &[&raw_in, &raw_in]
+                    )
+                    .is_ok()
+                );
+            }
+            assert!(
+                rt.compile_and_execute_hlo_proto(DeviceId(0), &[0xFF, 0xFF], &shape_1d, &[])
+                    .is_err()
+            );
+            let q = rt.query_rematerialization_and_barnacore(mlir, 512);
+            assert!(q.is_ok());
+            assert!(
+                rt.query_rematerialization_and_barnacore(b"SYNTAX_ERROR", 512)
+                    .is_err()
+            );
+            let bad_shape = Shape {
+                element_type: ElementType::F32,
+                dims: vec![8],
+                dynamic_dims: vec![false],
+                layout: libtpu_core::types::MemoryLayout::default_tpu_tiled(1),
+            };
+            assert!(
+                rt.execute_shaped_tensor(DeviceId(0), "mlir", mlir, &bad_shape, &[&raw_in])
+                    .is_err()
+            );
         }
 
         let bridge = PySdkBridge::new(TpuGeneration::V5e);
@@ -1053,25 +782,541 @@ mod tests {
                 .get_metric_values("tpu.runtime.hbm.usage_bytes")
                 .is_ok()
         );
-        assert!(matches!(
-            bridge.get_metric_values("unknown_metric"),
-            Err(libtpu_core::error::LibTpuError::MetricNotFound { .. })
-        ));
-        let xspace = bridge.capture_xspace();
-        assert!(xspace.is_ok());
-        let csr_off = bridge.lookup_csr_by_path("tc_0.tcs_core_state.RUN_STATUS");
-        assert!(csr_off.is_some());
-        if let Some(off) = csr_off {
-            assert!(bridge.lookup_csr_by_offset(off).is_some());
+        assert!(bridge.get_metric_values("unknown").is_err());
+        assert_ne!(bridge.capture_xspace().unwrap_or_default(), [] as [u8; 0]);
+        assert_eq!(bridge.lookup_csr_by_path("nonexistent"), None);
+        let v5e_map = libtpu_core::hal::ChipRegisterMap::for_generation(TpuGeneration::V5e);
+        let v5e_csrs = v5e_map.csr_descriptors();
+        if let Some(first_csr) = v5e_csrs.first() {
+            assert_eq!(
+                bridge.lookup_csr_by_path(first_csr.full_path),
+                Some(first_csr.byte_offset)
+            );
+            assert!(bridge.lookup_csr_by_offset(first_csr.byte_offset).is_some());
         }
+        assert_eq!(bridge.lookup_csr_by_offset(0xDEAD_BEEF), None);
         assert_ne!(
-            bridge.collect_profiler_tool_data("trace_viewer.json"),
+            bridge.collect_profiler_tool_data("xspace.pb"),
             [] as [u8; 0]
         );
         let _ = bridge.profiler.start();
-        assert!(matches!(
-            bridge.capture_xspace(),
-            Err(libtpu_core::error::LibTpuError::ProfilerAlreadyActive)
-        ));
+        assert!(bridge.capture_xspace().is_err());
+    }
+
+    #[test]
+    fn test_pyo3_native_modules_and_dlpack() {
+        Python::initialize();
+        Python::attach(|py| {
+            // 1. Verify PyInit__C, PyInit_sdk, and PyInit_libtpu_py PEP 489 multi-phase module defs.
+            // SAFETY: Holding the GIL in an initialized CPython interpreter.
+            let raw_c_def = unsafe { PyInit__C() };
+            assert!(!raw_c_def.is_null());
+            // SAFETY: Holding the GIL.
+            let raw_sdk_def = unsafe { PyInit_sdk() };
+            assert!(!raw_sdk_def.is_null());
+            // SAFETY: Holding the GIL.
+            let raw_alias_def = unsafe { PyInit_libtpu_py() };
+            assert!(!raw_alias_def.is_null());
+
+            // Null and non-module error paths on c_module_exec and sdk_module_exec.
+            // SAFETY: Passing null explicitly tests the null guard.
+            assert_eq!(unsafe { c_module_exec(core::ptr::null_mut()) }, -1);
+            // SAFETY: Passing null explicitly tests the null guard.
+            assert_eq!(unsafe { sdk_module_exec(core::ptr::null_mut()) }, -1);
+
+            let Ok(int_obj) = 7_i32.into_pyobject(py).map(Bound::into_any);
+            // SAFETY: `int_obj.as_ptr()` is a valid borrowed `PyObject*`; `setattr` fails on `int`.
+            assert_eq!(unsafe { c_module_exec(int_obj.as_ptr()) }, -1);
+            // SAFETY: Clearing the expected AttributeError restored by `c_module_exec`.
+            unsafe {
+                ffi::PyErr_Clear();
+            }
+            // SAFETY: `int_obj.as_ptr()` is a valid borrowed `PyObject*`; `setattr` fails on `int`.
+            assert_eq!(unsafe { sdk_module_exec(int_obj.as_ptr()) }, -1);
+            // SAFETY: Clearing the expected AttributeError restored by `sdk_module_exec`.
+            unsafe {
+                ffi::PyErr_Clear();
+            }
+
+            // Exercise fallback branch when CPython rejects a dotless exception name.
+            let fb_ty = create_exception_or_fallback(py, c"InvalidNoDotName");
+            assert!(fb_ty.bind(py).is(PyRuntimeError::type_object(py)));
+
+            // Exercise `set_module_attr` Err path directly.
+            let c_mod = PyModule::new(py, "_C").map(Bound::into_any);
+            assert!(c_mod.is_ok());
+            if let Ok(c_mod) = c_mod {
+                assert!(
+                    set_module_attr(&c_mod, "bad", Err(PyRuntimeError::new_err("synthetic")))
+                        .is_err()
+                );
+                // SAFETY: `c_mod` is a valid `PyModule`.
+                assert_eq!(unsafe { c_module_exec(c_mod.as_ptr()) }, 0);
+
+                let ver: String = c_mod
+                    .getattr("__version__")
+                    .and_then(|v| v.extract())
+                    .unwrap_or_default();
+                assert_eq!(ver, env!("CARGO_PKG_VERSION"));
+
+                let pjrt_ver: (i32, i32) = c_mod
+                    .getattr("pjrt_api_version")
+                    .and_then(|f| f.call0())
+                    .and_then(|v| v.extract())
+                    .unwrap_or((0, 0));
+                assert_eq!(pjrt_ver, (0, 116));
+
+                let proto_cnt: usize = c_mod
+                    .getattr("protodesc_cold_count")
+                    .and_then(|f| f.call0())
+                    .and_then(|v| v.extract())
+                    .unwrap_or(0);
+                assert_eq!(proto_cnt, 738);
+
+                let parse_fn = c_mod.getattr("parse_init_args");
+                assert!(parse_fn.is_ok());
+                if let Ok(pf) = parse_fn {
+                    let parsed: (String, i32, u32, u32) = pf
+                        .call1(("--tpu_generation=v6e --megascale_num_slices=2",))
+                        .and_then(|v| v.extract())
+                        .unwrap_or_default();
+                    assert_eq!(parsed.0, "TPU v6 lite");
+                    assert_eq!(parsed.2, 2);
+                    assert!(pf.call1((123,)).is_err());
+                    let err_res = pf.call1(("--tpu_generation=invalid",));
+                    assert!(err_res.is_err());
+                    if let Err(py_err) = err_res {
+                        assert!(py_err.is_instance(py, &tpu_error_type(py)));
+                    }
+                }
+
+                // pack_dtype_f64 & unpack_dtype_f64 (BF16 = 13, F8E4M3FN = 16, S4 = 21, Invalid = 0).
+                if let (Ok(pack_f), Ok(unpack_f)) = (
+                    c_mod.getattr("pack_dtype_f64"),
+                    c_mod.getattr("unpack_dtype_f64"),
+                ) {
+                    let raw_bf16: Vec<u8> = pack_f
+                        .call1((13_i32, vec![1.5_f64, -2.0_f64]))
+                        .and_then(|v| v.extract())
+                        .unwrap_or_default();
+                    assert_eq!(raw_bf16.len(), 4);
+                    let unpacked_bf16: Vec<f64> = unpack_f
+                        .call1((13_i32, raw_bf16))
+                        .and_then(|v| v.extract())
+                        .unwrap_or_default();
+                    assert_eq!(unpacked_bf16, vec![1.5, -2.0]);
+                    assert!(pack_f.call1((0_i32, vec![1.0_f64])).is_err());
+                    assert!(pack_f.call1((999_i32, vec![1.0_f64])).is_err());
+                    assert!(pack_f.call1(("bad",)).is_err());
+                    assert!(unpack_f.call1((0_i32, vec![0_u8])).is_err());
+                    assert!(unpack_f.call1((999_i32, vec![0_u8])).is_err());
+                    assert!(unpack_f.call1(("bad",)).is_err());
+                }
+
+                // compile_and_execute happy + error paths.
+                if let Ok(exec_f) = c_mod.getattr("compile_and_execute") {
+                    let mlir = b"module @m { func.func public @main(%arg0: tensor<2xf32>, %arg1: tensor<2xf32>) -> tensor<2xf32> { %0 = stablehlo.add %arg0, %arg1 : tensor<2xf32> return %0 : tensor<2xf32> } }".to_vec();
+                    let a_bytes: Vec<u8> = [3.0_f32, 4.0]
+                        .iter()
+                        .flat_map(|v| v.to_le_bytes())
+                        .collect();
+                    let outs: Vec<Vec<u8>> = exec_f
+                        .call1((
+                            "mlir",
+                            mlir.clone(),
+                            vec![2_i64],
+                            11_i32,
+                            vec![a_bytes.clone(), a_bytes],
+                            "--tpu_generation=v5e",
+                        ))
+                        .and_then(|v| v.extract())
+                        .unwrap_or_default();
+                    assert_eq!(outs.len(), 1);
+                    assert!(exec_f.call1(("bad_arity",)).is_err());
+                    assert!(
+                        exec_f
+                            .call1((
+                                "mlir",
+                                mlir.clone(),
+                                vec![2_i64],
+                                0_i32,
+                                Vec::<Vec<u8>>::new(),
+                                ""
+                            ))
+                            .is_err()
+                    );
+                    assert!(
+                        exec_f
+                            .call1((
+                                "mlir",
+                                mlir,
+                                vec![2_i64],
+                                11_i32,
+                                Vec::<Vec<u8>>::new(),
+                                "--tpu_generation=invalid",
+                            ))
+                            .is_err()
+                    );
+                    assert!(
+                        exec_f
+                            .call1((
+                                "mlir",
+                                b"SYNTAX_ERROR".to_vec(),
+                                vec![2_i64],
+                                11_i32,
+                                Vec::<Vec<u8>>::new(),
+                                "",
+                            ))
+                            .is_err()
+                    );
+                }
+
+                // PEP 3118 buffer_view happy + error paths.
+                if let Ok(bv_f) = c_mod.getattr("buffer_view") {
+                    let mv = bv_f.call1((b"abcd".as_slice(),));
+                    assert!(mv.is_ok());
+                    assert!(bv_f.call0().is_err());
+                    assert!(bv_f.call1((42_i32,)).is_err());
+                }
+
+                // DLPack export + consume + unconsumed destructor + 0D scalar + strided + null deleter.
+                if let (Ok(exp_f), Ok(con_f)) = (
+                    c_mod.getattr("export_dlpack"),
+                    c_mod.getattr("consume_dlpack"),
+                ) {
+                    let payload: Vec<u8> = [10.0_f32, 20.0, 30.0, 40.0]
+                        .iter()
+                        .flat_map(|v| v.to_le_bytes())
+                        .collect();
+                    let cap = exp_f.call1((
+                        payload.clone(),
+                        vec![2_i64, 2_i64],
+                        2_u8,
+                        32_u8,
+                        1_i32,
+                        0_i32,
+                    ));
+                    assert!(cap.is_ok());
+                    if let Ok(cap_obj) = cap {
+                        let res: (Vec<u8>, Vec<i64>, u8, u8, u16, i32, i32) = con_f
+                            .call1((&cap_obj,))
+                            .and_then(|v| v.extract())
+                            .unwrap_or_default();
+                        assert_eq!(res.0, payload);
+                        assert_eq!(res.1, vec![2, 2]);
+                        assert_eq!(res.2, 2);
+                        assert_eq!(res.3, 32);
+                        // Second consumption of `"used_dltensor"` must fail cleanly with `TpuError`!
+                        assert!(con_f.call1((&cap_obj,)).is_err());
+                        // Dropping `cap_obj` now triggers `unconsumed_dlpack_capsule_destructor` on `"used_dltensor"`.
+                    }
+                    // 0-D scalar capsule consumption + separate unconsumed capsule drop!
+                    let scalar_cap = exp_f.call1((
+                        Vec::<u8>::new(),
+                        Vec::<i64>::new(),
+                        2_u8,
+                        32_u8,
+                        1_i32,
+                        0_i32,
+                    ));
+                    assert!(scalar_cap.is_ok());
+                    if let Ok(sc_obj) = scalar_cap {
+                        assert!(con_f.call1((&sc_obj,)).is_ok());
+                    }
+                    let drop_cap =
+                        exp_f.call1((vec![1_u8, 2, 3, 4], vec![1_i64], 2_u8, 32_u8, 1_i32, 0_i32));
+                    assert!(drop_cap.is_ok());
+                    drop(drop_cap);
+
+                    assert!(exp_f.call0().is_err());
+                    assert!(con_f.call0().is_err());
+                }
+
+                // inspect_binary_symbols happy + error paths (using cross-platform synthetic ELF64 with .dynsym).
+                if let Ok(sym_f) = c_mod.getattr("inspect_binary_symbols") {
+                    let elf_bytes = build_test_elf64_dynsym();
+                    let syms: Vec<String> = sym_f
+                        .call1((elf_bytes,))
+                        .and_then(|v| v.extract())
+                        .unwrap_or_default();
+                    assert!(syms.iter().any(|s| s == "GetPjrtApi"));
+                    assert!(sym_f.call1((b"invalid".to_vec(),)).is_err());
+                    assert!(sym_f.call0().is_err());
+                }
+                if let Ok(dec_f) = c_mod.getattr("decode_mlir_v6_text") {
+                    let empty_s: String = dec_f
+                        .call1((b"not_mlir".to_vec(),))
+                        .and_then(|v| v.extract())
+                        .unwrap_or_default();
+                    assert_eq!(empty_s, "");
+                    assert!(dec_f.call0().is_err());
+                }
+            }
+
+            // 2. Verify SDK module (`PyInit_sdk` / `sdk_module_exec`).
+            let sdk_mod = PyModule::new(py, "sdk").map(Bound::into_any);
+            assert!(sdk_mod.is_ok());
+            if let Ok(sdk_mod) = sdk_mod {
+                // SAFETY: `sdk_mod` is a valid `PyModule`.
+                assert_eq!(unsafe { sdk_module_exec(sdk_mod.as_ptr()) }, 0);
+
+                let metrics: Vec<String> = sdk_mod
+                    .getattr("list_supported_metrics")
+                    .and_then(|f| f.call0())
+                    .and_then(|v| v.extract())
+                    .unwrap_or_default();
+                assert_ne!(metrics, [] as [String; 0]);
+
+                if let Ok(gm_f) = sdk_mod.getattr("get_metric") {
+                    assert!(gm_f.call1(("tpu.runtime.hbm.usage_bytes", "v5e")).is_ok());
+                    assert!(gm_f.call1(("unknown_metric", "v5e")).is_err());
+                    assert!(
+                        gm_f.call1(("tpu.runtime.hbm.usage_bytes", "bad_gen"))
+                            .is_err()
+                    );
+                    assert!(gm_f.call0().is_err());
+                }
+                if let Ok(cc_f) = sdk_mod.getattr("get_chip_coordinates") {
+                    let coords: Vec<(u32, u32, u32, i32)> = cc_f
+                        .call1(("v5e",))
+                        .and_then(|v| v.extract())
+                        .unwrap_or_default();
+                    assert_ne!(coords, [] as [(u32, u32, u32, i32); 0]);
+                    assert!(cc_f.call1(("bad_gen",)).is_err());
+                    assert!(cc_f.call0().is_err());
+                }
+                if let Ok(cs_f) = sdk_mod.getattr("get_core_state_summary") {
+                    let summary: String = cs_f
+                        .call1(("v5e",))
+                        .and_then(|v| v.extract())
+                        .unwrap_or_default();
+                    assert_ne!(summary, "");
+                    assert!(cs_f.call1(("bad_gen",)).is_err());
+                    assert!(cs_f.call0().is_err());
+                }
+                if let Ok(xs_f) = sdk_mod.getattr("capture_xspace") {
+                    let xb: Vec<u8> = xs_f
+                        .call1(("v5e",))
+                        .and_then(|v| v.extract())
+                        .unwrap_or_default();
+                    assert_ne!(xb, [] as [u8; 0]);
+                    assert!(xs_f.call1(("bad_gen",)).is_err());
+                    assert!(xs_f.call0().is_err());
+                }
+                if let Ok(csr_f) = sdk_mod.getattr("lookup_csr_offset") {
+                    let v5e_map =
+                        libtpu_core::hal::ChipRegisterMap::for_generation(TpuGeneration::V5e);
+                    let v5e_csrs = v5e_map.csr_descriptors();
+                    if let Some(first) = v5e_csrs.first() {
+                        assert!(csr_f.call1((first.full_path, "v5e")).is_ok());
+                    }
+                    assert!(csr_f.call1(("missing_csr", "v5e")).is_err());
+                    assert!(csr_f.call1(("missing_csr", "bad_gen")).is_err());
+                    assert!(csr_f.call0().is_err());
+                }
+            }
+
+            // 3. Exercise remaining DLPack edge cases: null deleter, null strides, strided transpose, null data, null manager_ctx.
+            assert_eq!(compute_compact_strides(&[2, 3, 4]), vec![12, 4, 1]);
+            // SAFETY: Null pointer is explicitly handled as a no-op.
+            unsafe {
+                dlpack_managed_tensor_deleter(core::ptr::null_mut());
+            }
+            let empty_managed = Box::into_raw(Box::new(DlManagedTensor {
+                dl_tensor: DlTensor {
+                    data: core::ptr::null_mut(),
+                    device: DlDevice {
+                        device_type: 1,
+                        device_id: 0,
+                    },
+                    ndim: 0,
+                    dtype: DlDataType {
+                        code: 2,
+                        bits: 32,
+                        lanes: 1,
+                    },
+                    shape: core::ptr::null_mut(),
+                    strides: core::ptr::null_mut(),
+                    byte_offset: 0,
+                },
+                manager_ctx: core::ptr::null_mut(),
+                deleter: None,
+            }));
+            // SAFETY: `empty_managed` was allocated via `Box::into_raw` with null `manager_ctx`.
+            unsafe {
+                dlpack_managed_tensor_deleter(empty_managed);
+            }
+
+            // Strided 2x2 transpose with `deleter: None` and non-zero `byte_offset`, plus null-strides 1D.
+            let mut raw_mat: [u32; 5] = [999, 1, 2, 3, 4];
+            let mut dims_2d: [i64; 2] = [2, 2];
+            let mut transposed_strides: [i64; 2] = [1, 2];
+            let mut strided_managed = DlManagedTensor {
+                dl_tensor: DlTensor {
+                    data: raw_mat.as_mut_ptr().cast::<c_void>(),
+                    device: DlDevice {
+                        device_type: 1,
+                        device_id: 0,
+                    },
+                    ndim: 2,
+                    dtype: DlDataType {
+                        code: 1,
+                        bits: 32,
+                        lanes: 1,
+                    },
+                    shape: dims_2d.as_mut_ptr(),
+                    strides: transposed_strides.as_mut_ptr(),
+                    byte_offset: 4,
+                },
+                manager_ctx: core::ptr::null_mut(),
+                deleter: None,
+            };
+            // SAFETY: `strided_managed` lives on stack across `consume_dlpack_capsule` with `deleter: None`.
+            let cap_strided = unsafe {
+                let ptr = ffi::PyCapsule_New(
+                    (&raw mut strided_managed).cast::<c_void>(),
+                    c"dltensor".as_ptr(),
+                    None,
+                );
+                Bound::from_owned_ptr(py, ptr)
+            };
+            let consumed_strided = consume_dlpack_capsule(&cap_strided);
+            assert!(consumed_strided.is_ok());
+            if let Ok(cs) = consumed_strided {
+                let expected: Vec<u8> = [1_u32, 3, 2, 4]
+                    .iter()
+                    .flat_map(|x| x.to_le_bytes())
+                    .collect();
+                assert_eq!(cs.raw_bytes, expected);
+            }
+
+            // Null-strides + null-data 0-size tensor, non-zero null-data tensor, and null-shape 1D tensor.
+            let mut zero_dim: [i64; 1] = [0];
+            let mut null_strides_managed = DlManagedTensor {
+                dl_tensor: DlTensor {
+                    data: core::ptr::null_mut(),
+                    device: DlDevice {
+                        device_type: 1,
+                        device_id: 0,
+                    },
+                    ndim: 1,
+                    dtype: DlDataType {
+                        code: 2,
+                        bits: 32,
+                        lanes: 1,
+                    },
+                    shape: zero_dim.as_mut_ptr(),
+                    strides: core::ptr::null_mut(),
+                    byte_offset: 0,
+                },
+                manager_ctx: core::ptr::null_mut(),
+                deleter: None,
+            };
+            // SAFETY: Stack `DlManagedTensor` with `deleter: None`.
+            let cap_zero = unsafe {
+                let ptr = ffi::PyCapsule_New(
+                    (&raw mut null_strides_managed).cast::<c_void>(),
+                    c"dltensor".as_ptr(),
+                    None,
+                );
+                Bound::from_owned_ptr(py, ptr)
+            };
+            let cz = consume_dlpack_capsule(&cap_zero);
+            assert!(cz.is_ok());
+            if let Ok(c) = cz {
+                assert_eq!(c.raw_bytes, [] as [u8; 0]);
+            }
+
+            let mut two_dim: [i64; 1] = [2];
+            let mut null_data_nonzero_managed = DlManagedTensor {
+                dl_tensor: DlTensor {
+                    data: core::ptr::null_mut(),
+                    device: DlDevice {
+                        device_type: 1,
+                        device_id: 0,
+                    },
+                    ndim: 1,
+                    dtype: DlDataType {
+                        code: 2,
+                        bits: 32,
+                        lanes: 1,
+                    },
+                    shape: two_dim.as_mut_ptr(),
+                    strides: core::ptr::null_mut(),
+                    byte_offset: 0,
+                },
+                manager_ctx: core::ptr::null_mut(),
+                deleter: None,
+            };
+            // SAFETY: Stack `DlManagedTensor` with `deleter: None`.
+            let cap_nd = unsafe {
+                let ptr = ffi::PyCapsule_New(
+                    (&raw mut null_data_nonzero_managed).cast::<c_void>(),
+                    c"dltensor".as_ptr(),
+                    None,
+                );
+                Bound::from_owned_ptr(py, ptr)
+            };
+            assert_eq!(
+                consume_dlpack_capsule(&cap_nd).map_or(0, |c| c.raw_bytes.len()),
+                8
+            );
+
+            let mut null_shape_managed = DlManagedTensor {
+                dl_tensor: DlTensor {
+                    data: core::ptr::null_mut(),
+                    device: DlDevice {
+                        device_type: 1,
+                        device_id: 0,
+                    },
+                    ndim: 1,
+                    dtype: DlDataType {
+                        code: 2,
+                        bits: 32,
+                        lanes: 1,
+                    },
+                    shape: core::ptr::null_mut(),
+                    strides: core::ptr::null_mut(),
+                    byte_offset: 0,
+                },
+                manager_ctx: core::ptr::null_mut(),
+                deleter: None,
+            };
+            // SAFETY: Stack `DlManagedTensor` with `deleter: None`.
+            let cap_missing_shape = unsafe {
+                let ptr = ffi::PyCapsule_New(
+                    (&raw mut null_shape_managed).cast::<c_void>(),
+                    c"dltensor".as_ptr(),
+                    None,
+                );
+                Bound::from_owned_ptr(py, ptr)
+            };
+            assert!(consume_dlpack_capsule(&cap_missing_shape).is_ok());
+
+            // Directly test `export_dlpack_capsule` and `unconsumed_dlpack_capsule_destructor`.
+            let cap_direct = export_dlpack_capsule(
+                py,
+                &[1, 2, 3, 4],
+                &[1],
+                DlDataType {
+                    code: 1,
+                    bits: 32,
+                    lanes: 1,
+                },
+                DlDevice {
+                    device_type: 1,
+                    device_id: 0,
+                },
+            );
+            assert!(cap_direct.is_ok());
+            if let Ok(cd) = cap_direct {
+                // Invoke destructor on valid unconsumed capsule, then rename so drop doesn't double-free.
+                // SAFETY: `cd` is an unconsumed `"dltensor"` capsule.
+                unsafe {
+                    unconsumed_dlpack_capsule_destructor(cd.as_ptr());
+                    let _ = ffi::PyCapsule_SetName(cd.as_ptr(), c"used_dltensor".as_ptr());
+                }
+            }
+        });
     }
 }

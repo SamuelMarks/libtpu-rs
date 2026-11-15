@@ -1,0 +1,7 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/protobuf/meta_graph.proto";
+message SavedModel {
+  int64 saved_model_schema_version = 1;
+  repeated .tensorflow.MetaGraphDef meta_graphs = 2;
+}

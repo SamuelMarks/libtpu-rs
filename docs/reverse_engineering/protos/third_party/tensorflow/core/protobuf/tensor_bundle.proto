@@ -1,0 +1,24 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/tensor_slice.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+import "third_party/tensorflow/core/framework/versions.proto";
+message BundleHeaderProto {
+  enum Endianness {
+    LITTLE = 0;
+    BIG = 1;
+  }
+  int32 num_shards = 1;
+  .tensorflow.BundleHeaderProto.Endianness endianness = 2;
+  .tensorflow.VersionDef version = 3;
+}
+message BundleEntryProto {
+  .tensorflow.DataType dtype = 1;
+  .tensorflow.TensorShapeProto shape = 2;
+  int32 shard_id = 3;
+  int64 offset = 4;
+  int64 size = 5;
+  fixed32 crc32c = 6;
+  repeated .tensorflow.TensorSliceProto slices = 7;
+}

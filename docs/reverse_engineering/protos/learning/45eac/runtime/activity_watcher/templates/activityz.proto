@@ -1,0 +1,24 @@
+syntax = "proto3";
+package tensorflow.activity_watcher;
+message OutstandingActivity {
+  message Attribute {
+    string key = 1;
+    string value = 2;
+  }
+  uint64 id = 1;
+  string title = 2;
+  string category = 3;
+  string start_time = 4;
+  string elapsed = 5;
+  repeated .tensorflow.activity_watcher.OutstandingActivity.Attribute attributes = 6;
+}
+message ActivityzData {
+  string timestamp = 1;
+  repeated .tensorflow.activity_watcher.OutstandingActivity outstanding_activities = 2;
+  string match_string = 3;
+  bool local_activities_only = 4;
+  string filter_string = 5;
+  bool is_global_activity_available = 6;
+  int64 offset = 7;
+  int64 total_count = 8;
+}

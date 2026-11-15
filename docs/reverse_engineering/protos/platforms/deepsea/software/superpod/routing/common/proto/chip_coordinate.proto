@@ -1,0 +1,13 @@
+syntax = "proto2";
+package superpod.routing.proto;
+import "platforms/asic_sw/proto/chip_location.proto";
+message ChipCoordinate {
+  repeated int64 coordinates = 1;
+}
+message ChipLocationToCoordinate {
+  optional .asic_sw.proto.ChipLocation location = 1;
+  optional .superpod.routing.proto.ChipCoordinate coordinate = 2;
+}
+message ChipCoordinateMapping {
+  repeated .superpod.routing.proto.ChipLocationToCoordinate chip_mapping = 1;
+}

@@ -1,0 +1,27 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.pfc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_channel_isa_base.proto";
+message BarnaCoreChannelVectorStore {
+  message Noop {
+  }
+  message VectorStore {
+    optional uint32 add_loop_index_to_store_addr = 1;
+    optional uint32 source_address = 2;
+    optional .asic_sw.deepsea.pxc.pfc.isa.VectorBase base_address = 3;
+    optional uint32 feature_length_multiple = 4;
+    optional bool concat_reg = 5;
+    optional uint32 vs0 = 6;
+    optional uint32 vs1 = 7;
+    optional uint32 vs2 = 8;
+    optional uint32 imm2 = 9;
+  }
+  oneof inst {
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorStore.Noop noop = 6;
+    .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreChannelVectorStore.VectorStore vector_store = 7;
+  }
+  optional .asic_sw.deepsea.pxc.pfc.isa.BarnacoreChannelPredication predication = 1 [default = BARNACORE_CHANNEL_PREDICATION_NEVER];
+  optional uint32 pipeline_stage = 2;
+  optional uint32 latency = 3;
+  map<string, uint32> resource_usage = 4;
+  optional uint32 bit_width = 5;
+}

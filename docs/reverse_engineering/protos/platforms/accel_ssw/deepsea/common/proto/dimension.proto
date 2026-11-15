@@ -1,0 +1,20 @@
+syntax = "proto2";
+package accel_ssw.deepsea.proto;
+enum Orientation {
+  UNKNOWN_ORIENTATION = 0;
+  X = 1;
+  Y = 2;
+  Z = 3;
+  A = 4;
+  B = 5;
+  C = 6;
+}
+enum Polarity {
+  UNKNOWN_POLARITY = 0;
+  POSITIVE = 1;
+  NEGATIVE = 2;
+}
+message Direction {
+  optional .accel_ssw.deepsea.proto.Orientation orientation = 1;
+  optional .accel_ssw.deepsea.proto.Polarity polarity = 2;
+}

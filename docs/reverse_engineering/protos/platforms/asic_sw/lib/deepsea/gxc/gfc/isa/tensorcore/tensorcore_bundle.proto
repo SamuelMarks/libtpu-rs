@@ -1,0 +1,38 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.gfc.isa;
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_dma.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_immediates.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_predicates.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_scalar_alu.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_vector_alu.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_vector_extended.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_vector_load.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_vector_misc.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_vector_result.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_vector_scalar.proto";
+import "platforms/asic_sw/lib/deepsea/gxc/gfc/isa/tensorcore/tensorcore_vector_store.proto";
+message TensorCoreBundle {
+  oneof scalar_instruction {
+    .asic_sw.deepsea.gxc.gfc.isa.ScalarSubBundle scalar_alu = 1;
+    .asic_sw.deepsea.gxc.gfc.isa.TensorCoreDma dma = 5;
+  }
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCorePredicates predicates = 2;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreImmediates immediates = 3;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorScalar vector_scalar = 4;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorAlu vector_alu_0 = 6;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorAlu vector_alu_1 = 7;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorAlu vector_alu_2 = 8;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorAlu vector_alu_3 = 9;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorStore vector_store = 10;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorLoad vector_load_0 = 11;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorLoad vector_load_1 = 12;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorMisc vector_misc = 13;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorExtended vector_extended_0 = 14;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorExtended vector_extended_1 = 15;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorResult vector_result_0 = 16;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreVectorResult vector_result_1 = 17;
+}
+message ScalarSubBundle {
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreScalarAlu scalar_alu_0 = 1;
+  optional .asic_sw.deepsea.gxc.gfc.isa.TensorCoreScalarAlu scalar_alu_1 = 2;
+}

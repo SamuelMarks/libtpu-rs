@@ -1,0 +1,6 @@
+syntax = "proto3";
+package tensorflow.data;
+message Metadata {
+  bytes name = 1;
+  string data_service_address = 2;
+}

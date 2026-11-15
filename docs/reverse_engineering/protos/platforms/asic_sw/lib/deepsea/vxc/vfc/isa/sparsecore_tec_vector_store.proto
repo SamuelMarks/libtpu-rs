@@ -1,0 +1,148 @@
+syntax = "proto2";
+package asic_sw.deepsea.vxc.vfc.isa;
+import "platforms/asic_sw/lib/deepsea/vxc/vfc/isa/sparsecore_common_encodings.proto";
+import "platforms/asic_sw/lib/deepsea/vxc/common/isa/common_encodings.proto";
+message SparseCoreTecVectorStore {
+  message TileSpmemStore {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 5;
+  }
+  message TileSpmemStoreCircularBuffer {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional uint32 cbreg = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 5;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemStoreCircularBufferPostUpdate {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional uint32 cbreg = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 5;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemIntegerStoreAdd {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 5;
+  }
+  message TileSpmemIntegerStoreAddCircularBuffer {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional uint32 cbreg = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 5;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemIntegerStoreAddCircularBufferPostUpdate {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional uint32 cbreg = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 5;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemFloatStoreAdd {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 5;
+  }
+  message TileSpmemFloatStoreAddCircularBuffer {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional uint32 cbreg = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 5;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemFloatStoreAddCircularBufferPostUpdate {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional uint32 cbreg = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 5;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemIndexedStore {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 4;
+    optional uint32 index = 5;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemIndexedStoreCircularBuffer {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional uint32 cbreg = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 5;
+    optional uint32 index = 6;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 7;
+  }
+  message TileSpmemIntegerIndexedStoreAdd {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 4;
+    optional uint32 index = 5;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemIntegerIndexedStoreAddCircularBuffer {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional uint32 cbreg = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 5;
+    optional uint32 index = 6;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 7;
+  }
+  message TileSpmemFloatIndexedStoreAdd {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 4;
+    optional uint32 index = 5;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 6;
+  }
+  message TileSpmemFloatIndexedStoreAddCircularBuffer {
+    optional uint32 source = 1;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorBase base_address = 2;
+    optional uint32 cbreg = 3;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorOffset offset = 4;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorStride stride = 5;
+    optional uint32 index = 6;
+    optional .asic_sw.deepsea.vxc.vfc.isa.SparsecoreVectorMask mask = 7;
+  }
+  oneof inst {
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemStore tile_spmem_store = 6;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemStoreCircularBuffer tile_spmem_store_circular_buffer = 7;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemStoreCircularBufferPostUpdate tile_spmem_store_circular_buffer_post_update = 8;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemIntegerStoreAdd tile_spmem_integer_store_add = 9;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemIntegerStoreAddCircularBuffer tile_spmem_integer_store_add_circular_buffer = 10;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemIntegerStoreAddCircularBufferPostUpdate tile_spmem_integer_store_add_circular_buffer_post_update = 11;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemFloatStoreAdd tile_spmem_float_store_add = 12;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemFloatStoreAddCircularBuffer tile_spmem_float_store_add_circular_buffer = 13;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemFloatStoreAddCircularBufferPostUpdate tile_spmem_float_store_add_circular_buffer_post_update = 14;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemIndexedStore tile_spmem_indexed_store = 15;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemIndexedStoreCircularBuffer tile_spmem_indexed_store_circular_buffer = 16;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemIntegerIndexedStoreAdd tile_spmem_integer_indexed_store_add = 17;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemIntegerIndexedStoreAddCircularBuffer tile_spmem_integer_indexed_store_add_circular_buffer = 18;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemFloatIndexedStoreAdd tile_spmem_float_indexed_store_add = 19;
+    .asic_sw.deepsea.vxc.vfc.isa.SparseCoreTecVectorStore.TileSpmemFloatIndexedStoreAddCircularBuffer tile_spmem_float_indexed_store_add_circular_buffer = 20;
+  }
+  optional .asic_sw.deepsea.vxc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional bool predication_inversion = 2;
+  optional uint32 latency = 3 [default = 1];
+  map<string, uint32> resource_usage = 4;
+  optional uint32 bit_width = 5;
+}

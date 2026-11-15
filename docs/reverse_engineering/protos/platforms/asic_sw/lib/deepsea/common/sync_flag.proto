@@ -1,0 +1,17 @@
+syntax = "proto2";
+package asic_sw.deepsea;
+message SyncFlag {
+  enum Core {
+    TENSORCORE = 0;
+    BARNACORE = 1;
+    HOST_INTERFACE = 2;
+    SPARSECORE = 3;
+    SPARSECORE_TAC = 4;
+    SPARSECORE_TEC = 5;
+  }
+  optional int32 index = 1;
+  optional .asic_sw.deepsea.SyncFlag.Core core = 2;
+  optional int32 core_index = 3;
+  optional int32 tile_index = 4;
+  optional uint32 slice_id = 5;
+}

@@ -1,0 +1,33 @@
+syntax = "proto3";
+package tfrt.tpu;
+import "learning/45eac/tfrt/fdo_config/fdo_config_proto.proto";
+import "learning/45eac/tpu/runtime/hal/tpu_core_program.proto";
+import "platforms/deepsea/jellyfish/xdb/debugger.proto";
+import "platforms/xla/service/jellyfish/isa_program.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message TpuCompilationCacheEntryProgramProto {
+  .tpu.TpuCoreProgramProto core_program = 1;
+  repeated .xla.ShapeProto input_layouts = 2;
+  repeated .xla.ShapeProto output_layouts = 3;
+  .platforms_deepsea.jellyfish.xdb.CompilerMetadata compiler_metadata = 4;
+  repeated .xla.HostTransferProto host_transfers = 5;
+}
+message CompiledVariableIndexPair {
+  int32 index = 1;
+  bool updated = 2;
+}
+message TpuCompilationCacheEntryProto {
+  reserved 9;
+  reserved "autofdo_fingerprint";
+  string key = 1;
+  string rendezvous_key_base = 8;
+  .tfrt.tpu.TpuCompilationCacheEntryProgramProto main_program = 2;
+  .tfrt.tpu.TpuCompilationCacheEntryProgramProto optional_sharding_program = 3;
+  .tfrt.tpu.TpuCompilationCacheEntryProgramProto optional_unsharding_program = 4;
+  .tfrt.tpu.TpuCompilationCacheEntryProgramProto optional_sparsecore_program = 10;
+  .xla.DeviceAssignmentProto device_assignment = 5;
+  .tfrt.fdo_config.FdoConfigProto fdo_config = 11;
+  int32 next_message_index = 12;
+  repeated .tfrt.tpu.CompiledVariableIndexPair main_program_compiled_variable_indices = 6;
+  repeated bool may_modify_variables = 7;
+}

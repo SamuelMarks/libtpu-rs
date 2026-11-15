@@ -1,0 +1,43 @@
+syntax = "proto3";
+package tensorflow.proto_splitter;
+import "third_party/tensorflow/tools/proto_splitter/versions.proto";
+message ChunkMetadata {
+  .tensorflow.proto_splitter.VersionDef version = 1;
+  repeated .tensorflow.proto_splitter.ChunkInfo chunks = 2;
+  .tensorflow.proto_splitter.ChunkedMessage message = 3;
+}
+message ChunkInfo {
+  enum Type {
+    UNSET = 0;
+    MESSAGE = 1;
+    BYTES = 2;
+  }
+  .tensorflow.proto_splitter.ChunkInfo.Type type = 1;
+  uint64 size = 2;
+  uint64 offset = 3;
+}
+message ChunkedMessage {
+  optional uint64 chunk_index = 1;
+  repeated .tensorflow.proto_splitter.ChunkedField chunked_fields = 2;
+}
+message ChunkedField {
+  repeated .tensorflow.proto_splitter.FieldIndex field_tag = 1;
+  .tensorflow.proto_splitter.ChunkedMessage message = 3;
+}
+message FieldIndex {
+  message MapKey {
+    oneof type {
+      string s = 1;
+      bool boolean = 2;
+      uint32 ui32 = 3;
+      uint64 ui64 = 4;
+      int32 i32 = 5;
+      int64 i64 = 6;
+    }
+  }
+  oneof kind {
+    uint32 field = 1;
+    .tensorflow.proto_splitter.FieldIndex.MapKey map_key = 2;
+    uint64 index = 3;
+  }
+}

@@ -1,0 +1,77 @@
+syntax = "proto3";
+package tensorflow.data;
+import "third_party/tensorflow/compiler/xla/tsl/protobuf/status.proto";
+import "third_party/tensorflow/core/framework/graph.proto";
+import "third_party/tensorflow/core/protobuf/data_service.proto";
+import "third_party/tensorflow/core/protobuf/snapshot.proto";
+enum TargetWorkers {
+  TARGET_WORKERS_UNSPECIFIED = 0;
+  TARGET_WORKERS_AUTO = 1;
+  TARGET_WORKERS_ANY = 2;
+  TARGET_WORKERS_LOCAL = 3;
+}
+message DatasetDef {
+  .tensorflow.GraphDef graph = 1;
+}
+message IterationKeyDef {
+  string name = 1;
+  int64 iteration = 2;
+}
+message TaskDef {
+  reserved 6;
+  oneof dataset {
+    .tensorflow.data.DatasetDef dataset_def = 1;
+    string path = 2;
+  }
+  oneof optional_num_consumers {
+    int64 num_consumers = 7;
+  }
+  string dataset_id = 3;
+  int64 task_id = 4;
+  int64 iteration_id = 5;
+  int64 num_split_providers = 9;
+  string worker_address = 8;
+  .tensorflow.data.ProcessingModeDef processing_mode_def = 10;
+  int64 num_workers = 11;
+  int64 worker_index = 12;
+  bool use_cross_trainer_cache = 13;
+}
+message TaskInfo {
+  reserved 4;
+  string worker_address = 1;
+  repeated .tensorflow.data.DataTransferServerInfo transfer_servers = 8;
+  repeated string worker_tags = 6;
+  int64 task_id = 2;
+  int64 iteration_id = 3;
+  int64 worker_uid = 7;
+  int64 starting_round = 5;
+}
+message SnapshotTaskDef {
+  string base_path = 1;
+  int64 stream_index = 2;
+  int64 num_sources = 3;
+  .tensorflow.data.experimental.DistributedSnapshotMetadata metadata = 4;
+}
+message SnapshotTaskProgress {
+  .tensorflow.data.SnapshotTaskDef snapshot_task = 1;
+  bool completed = 2;
+  .tensorflow.StatusProto status = 3;
+}
+message SnapshotStreamInfo {
+  enum State {
+    UNSPECIFIED = 0;
+    ASSIGNED = 1;
+    ORPHAN = 2;
+    UNKNOWN = 3;
+    DONE = 4;
+  }
+  int64 index = 1;
+  .tensorflow.data.SnapshotStreamInfo.State state = 2;
+}
+message DataTransferServerInfo {
+  string protocol = 1;
+  string address = 2;
+  bytes compatibility_info = 3;
+  bool fall_back_to_grpc_at_client_creation_time = 4;
+  bool fall_back_to_grpc_at_get_element_time = 5;
+}

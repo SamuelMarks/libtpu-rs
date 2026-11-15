@@ -1,0 +1,8 @@
+syntax = "proto3";
+package platforms_xla_sparse_core;
+message HighWaterMark {
+  int64 hbm_high_water_mark_ = 1;
+  int64 tec_smem_high_water_mark_ = 2;
+  int64 tec_sflag_high_water_mark_ = 3;
+  int64 tec_tilespmem_high_water_mark_ = 4;
+}

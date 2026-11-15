@@ -1,0 +1,33 @@
+syntax = "proto2";
+package accel_ssw.deepsea.slice_builder.proto;
+import "platforms/accel_ssw/deepsea/common/proto/dimension.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/chip_coordinate.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/topology.proto";
+import "third_party/protobuf/cpp_features.proto";
+message ToroidalRouteCache {
+  message RouteScheme {
+    message RandomHop {
+      optional .accel_ssw.deepsea.proto.Direction hop = 1;
+      optional int32 probability = 2;
+    }
+    message StaticPath {
+      repeated .accel_ssw.deepsea.proto.Direction hops = 1;
+    }
+    oneof route {
+      .superpod.routing.proto.ChipCoordinate distance = 3;
+      .accel_ssw.deepsea.slice_builder.proto.ToroidalRouteCache.RouteScheme.StaticPath static_path = 4;
+      bytes bit_encoded_path = 5;
+    }
+    optional uint32 src_chip_id = 1 [default = 0];
+    optional uint32 dest_chip_id = 2;
+    repeated .accel_ssw.deepsea.slice_builder.proto.ToroidalRouteCache.RouteScheme.RandomHop random_first_hop = 7;
+  }
+  optional .superpod.routing.proto.Topology topology = 1;
+  optional .superpod.routing.proto.ChipCoordinate translational_symmetry = 2;
+  optional int32 prob_denominator = 4 [default = 12];
+  repeated .accel_ssw.deepsea.slice_builder.proto.ToroidalRouteCache.RouteScheme routing_schemes = 3;
+}
+message CompressedToroidalRouteCache {
+  optional int32 format = 1;
+  optional bytes data = 15;
+}

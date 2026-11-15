@@ -1,0 +1,174 @@
+syntax = "proto3";
+package xla.coordination;
+enum TaskState {
+  UNSPECIFIED = 0;
+  UNINITIALIZED = 1;
+  DISCONNECTED = 2;
+  CONNECTED = 3;
+  ERROR = 4;
+}
+message CoordinationServiceError {
+  reserved 1;
+  reserved 2;
+  bool is_reported_error = 3;
+  int32 source_task_id = 4;
+}
+message BarrierError {
+  string barrier_id = 1;
+  int64 counter = 2;
+}
+message Incarnations {
+  int32 task_id = 1;
+  fixed64 task_incarnation = 2;
+  fixed64 service_incarnation = 3;
+}
+message ServiceMismatchError {
+  fixed64 service_incarnation = 1;
+}
+message TaskInfo {
+  int32 task_id = 1;
+  fixed64 incarnation = 6;
+  .xla.coordination.TaskState state = 2;
+  int32 error_code = 3;
+  string error_message = 4;
+  .xla.coordination.CoordinationServiceError error_payload = 5;
+}
+message RegisterTaskRequest {
+  reserved 1;
+  reserved 2;
+  reserved 4;
+  fixed64 incarnation = 3;
+  int32 source_task_id = 5;
+}
+message RegisterTaskResponse {
+  fixed64 service_incarnation = 1;
+}
+message HeartbeatRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  fixed64 incarnation = 2;
+  int32 source_task_id = 3;
+}
+message HeartbeatResponse {
+  fixed64 service_incarnation = 1;
+}
+message PollForErrorRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  int32 source_task_id = 2;
+}
+message PollForErrorResponse {
+}
+message ReportErrorToServiceRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  int32 source_task_id = 2;
+  int32 error_code = 3;
+  string error_message = 4;
+}
+message ReportErrorToServiceResponse {
+}
+message ShutdownTaskRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  int32 source_task_id = 2;
+}
+message ShutdownTaskResponse {
+}
+message WatchTasksRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  int64 version_number = 2;
+}
+message WatchTasksResponse {
+  repeated .xla.coordination.TaskInfo task_state = 1;
+  int64 version_number = 2;
+}
+message KeyValueEntry {
+  string key = 1;
+  bytes value = 2;
+}
+message InsertKeyValueRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  .xla.coordination.KeyValueEntry kv = 2;
+  bool allow_overwrite = 3;
+}
+message InsertKeyValueResponse {
+}
+message GetKeyValueRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  string key = 2;
+}
+message GetKeyValueResponse {
+  .xla.coordination.KeyValueEntry kv = 1;
+}
+message TryGetKeyValueRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  string key = 2;
+}
+message TryGetKeyValueResponse {
+  .xla.coordination.KeyValueEntry kv = 1;
+}
+message IncrementKeyValueRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  string key = 2;
+  int64 increment = 3;
+}
+message IncrementKeyValueResponse {
+  .xla.coordination.KeyValueEntry kv = 1;
+}
+message GetKeyValueDirRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  string directory_key = 2;
+}
+message GetKeyValueDirResponse {
+  string directory_key = 1;
+  repeated .xla.coordination.KeyValueEntry kv = 2;
+}
+message DeleteKeyValueRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  string key = 2;
+  bool is_directory = 3;
+}
+message DeleteKeyValueResponse {
+}
+message BarrierRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  string barrier_id = 2;
+  int64 barrier_timeout_in_ms = 3;
+  repeated int32 task_ids = 4;
+  int32 source_task_id = 5;
+  int64 counter = 6;
+}
+message BarrierResponse {
+  int64 counter = 1;
+}
+message GetAliveTasksRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  int32 requesting_task_id = 2;
+  repeated int32 task_ids = 3;
+}
+message GetAliveTasksResponse {
+  repeated int32 alive_task_ids = 1;
+  repeated fixed64 incarnations = 2;
+}
+message CancelBarrierRequest {
+  .xla.coordination.Incarnations incarnations = 1;
+  string barrier_id = 2;
+  int64 counter = 3;
+  int32 source_task_id = 4;
+}
+message CancelBarrierResponse {
+}
+service CoordinationService {
+  rpc RegisterTask(.xla.coordination.RegisterTaskRequest) returns (.xla.coordination.RegisterTaskResponse);
+  rpc Heartbeat(.xla.coordination.HeartbeatRequest) returns (.xla.coordination.HeartbeatResponse);
+  rpc ShutdownTask(.xla.coordination.ShutdownTaskRequest) returns (.xla.coordination.ShutdownTaskResponse);
+  rpc WatchTasks(.xla.coordination.WatchTasksRequest) returns (.xla.coordination.WatchTasksResponse);
+  rpc InsertKeyValue(.xla.coordination.InsertKeyValueRequest) returns (.xla.coordination.InsertKeyValueResponse);
+  rpc GetKeyValue(.xla.coordination.GetKeyValueRequest) returns (.xla.coordination.GetKeyValueResponse);
+  rpc TryGetKeyValue(.xla.coordination.TryGetKeyValueRequest) returns (.xla.coordination.TryGetKeyValueResponse);
+  rpc IncrementKeyValue(.xla.coordination.IncrementKeyValueRequest) returns (.xla.coordination.IncrementKeyValueResponse);
+  rpc GetKeyValueDir(.xla.coordination.GetKeyValueDirRequest) returns (.xla.coordination.GetKeyValueDirResponse);
+  rpc DeleteKeyValue(.xla.coordination.DeleteKeyValueRequest) returns (.xla.coordination.DeleteKeyValueResponse);
+  rpc Barrier(.xla.coordination.BarrierRequest) returns (.xla.coordination.BarrierResponse);
+  rpc CancelBarrier(.xla.coordination.CancelBarrierRequest) returns (.xla.coordination.CancelBarrierResponse);
+  rpc GetAliveTasks(.xla.coordination.GetAliveTasksRequest) returns (.xla.coordination.GetAliveTasksResponse);
+  rpc PollForError(.xla.coordination.PollForErrorRequest) returns (.xla.coordination.PollForErrorResponse);
+  rpc ReportErrorToService(.xla.coordination.ReportErrorToServiceRequest) returns (.xla.coordination.ReportErrorToServiceResponse);
+}

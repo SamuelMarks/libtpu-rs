@@ -1,0 +1,1036 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.xdb;
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+import "learning/45eac/tpu/runtime/host_commands/debugger/debug_handler.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_chip_parts_locators.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_dimensions.proto";
+import "learning/45eac/tpu/runtime/topology/tpu_topology_args.proto";
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "learning/45eac/tpu/runtime/tpu_platform_type.proto";
+import "learning/45eac/tpu/runtime/tpu_version.proto";
+import "platforms/deepsea/jellyfish/xdb/program_memory_allocator.proto";
+import "platforms/deepsea/jellyfish/xdb/symbols.proto";
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+enum AddressSpace {
+  LOCAL = 1;
+  GLOBAL = 2;
+  SMEM = 3;
+  SFLAG = 4;
+  CMEM = 5;
+  IMEM = 6;
+}
+enum Format {
+  PRED = 0;
+  U8 = 1;
+  F32 = 2;
+  U32 = 3;
+  S32 = 4;
+  S64 = 5;
+}
+enum RegisterClass {
+  SCALAR_REGISTER = 1;
+  PREDICATE_REGISTER = 2;
+  VECTOR_REGISTER = 3;
+}
+enum TimestampKind {
+  TS_INVALID = 0;
+  TS_BEFORE_START_BARRIER_GTC_LO = 1;
+  TS_BEFORE_START_BARRIER_GTC_HI = 2;
+  TS_AFTER_START_BARRIER_DIFF = 3;
+  TS_AT_HLO_START_DIFF = 4;
+  TS_AT_HLO_END_DIFF = 5;
+  TS_AT_PROGRAM_END_DIFF = 6;
+}
+enum LogHloOutputKind {
+  LOG_HLO_OUTPUT_UNKNOWN = 0;
+  LOG_HLO_OUTPUT_DATA = 1;
+  LOG_HLO_OUTPUT_SUMMARY = 2;
+  LOG_HLO_OUTPUT_BLOCK_SUMMARY = 3;
+  LOG_HLO_DISTRIBUTED_HASH = 4;
+}
+enum FeatureKind {
+  FEATURE_KIND_NONE = 0;
+  FEATURE_KIND_HOST_ASSISTED_INSTRUMENTATION = 1;
+  FEATURE_KIND_HLO_VALUE_TRACKING = 2;
+  FEATURE_KIND_RESULTS_ACCURACY_SETTING = 3;
+  FEATURE_KIND_DEBUG_SERVER = 4;
+}
+enum InstrumentationMode {
+  INSTRUMENTATION_MODE_NONE = 0;
+  INSTRUMENTATION_MODE_DEFINITION = 1;
+  INSTRUMENTATION_MODE_COMPLETION = 2;
+  INSTRUMENTATION_MODE_COMPLETION_SUMMARY = 3;
+}
+enum RegisterType {
+  REGISTER_TYPE_UNKNOWN = 0;
+  REGISTER_TYPE_PREDICATE = 1;
+  REGISTER_TYPE_SCALAR = 2;
+  REGISTER_TYPE_VECTOR_MASK = 3;
+  REGISTER_TYPE_VECTOR = 4;
+}
+enum FusionDebugVdelayType {
+  FUSION_DEBUG_VDELAY_TYPE_UNKNOWN = 0;
+  FUSION_DEBUG_VDELAY_TYPE_WINDOW_START = 1;
+  FUSION_DEBUG_VDELAY_TYPE_WINDOW_END = 2;
+  FUSION_DEBUG_VDELAY_TYPE_FUSION_START = 3;
+  FUSION_DEBUG_VDELAY_TYPE_FUSION_END = 4;
+}
+enum FusionDebugLogType {
+  FUSION_DEBUG_LOG_TYPE_NONE = 0;
+  FUSION_DEBUG_LOG_TYPE_INFO = 1;
+  FUSION_DEBUG_LOG_TYPE_CALLBACK = 2;
+}
+enum FusionDebugBf16PackingType {
+  FUSION_DEBUG_BF16_PACKING_TYPE_INTERLEAVED = 0;
+  FUSION_DEBUG_BF16_PACKING_TYPE_COMPRESSED = 1;
+  FUSION_DEBUG_BF16_PACKING_TYPE_UNPACKED = 2;
+}
+enum FusionDebugOutputBufferMemorySpace {
+  FUSION_DEBUG_OUTPUT_BUFFER_MEMORY_SPACE_UNSPECIFIED = 0;
+  FUSION_DEBUG_OUTPUT_BUFFER_MEMORY_SPACE_HBM = 1;
+  FUSION_DEBUG_OUTPUT_BUFFER_MEMORY_SPACE_VMEM = 2;
+}
+enum LogHloScopeSection {
+  LOG_HLO_SCOPE_UNKNOWN = 0;
+  LOG_HLO_SCOPE_WHILE_COND = 1;
+  LOG_HLO_SCOPE_WHILE_BODY = 2;
+}
+enum ProgressTrackerMetadata {
+  HPPT_UNKNOWN = 0;
+  HPPT_DMA_GENERAL = 1;
+  HPPT_RECV_WAIT_UNSPECIFIED = 2;
+  HPPT_SEND_WAIT_UNSPECIFIED = 3;
+  HPPT_BARRIER_WAIT = 4;
+  HPPT_START_BARRIER_WAIT = 5;
+  HPPT_RECV_WAIT_X_PREV_CHIP = 10;
+  HPPT_RECV_WAIT_X_NEXT_CHIP = 11;
+  HPPT_RECV_WAIT_X_PREV_CORE = 12;
+  HPPT_RECV_WAIT_X_NEXT_CORE = 13;
+  HPPT_RECV_WAIT_Y_PREV_CHIP = 14;
+  HPPT_RECV_WAIT_Y_NEXT_CHIP = 15;
+  HPPT_RECV_WAIT_Y_PREV_CORE = 16;
+  HPPT_RECV_WAIT_Y_NEXT_CORE = 17;
+  HPPT_RECV_WAIT_Z_PREV_CHIP = 18;
+  HPPT_RECV_WAIT_Z_NEXT_CHIP = 19;
+  HPPT_RECV_WAIT_Z_PREV_CORE = 20;
+  HPPT_RECV_WAIT_Z_NEXT_CORE = 21;
+  HPPT_RECV_WAIT_FREE_RING_CW = 22;
+  HPPT_RECV_WAIT_FREE_RING_CCW = 23;
+  HPPT_RECV_WAIT_PARTNER = 24;
+  HPPT_SEND_WAIT_X = 30;
+  HPPT_SEND_WAIT_Y = 31;
+  HPPT_SEND_WAIT_Z = 32;
+  HPPT_SEND_WAIT_FREE_RING = 33;
+  HPPT_SEND_WAIT_PARTNER = 34;
+}
+enum InstructionValueKind {
+  ADDRESS = 0;
+  SCALAR = 1;
+  VECTOR = 2;
+  MATRIX = 3;
+  PREDICATE = 4;
+}
+enum Option {
+  FAST_FORWARD_NOPS = 1;
+}
+enum ChunkStateKind {
+  ALL_NAN = 1;
+  ALL_ZERO = 2;
+  ALL_ONE = 3;
+  ALL_SAME_OTHER = 4;
+  ENTROPY_GIVEN = 5;
+}
+message VectorRegisterStateChange {
+  optional int32 vreg = 1;
+  optional bytes before_bytes = 2;
+  optional bytes after_bytes = 3;
+  repeated float before_floats = 4;
+  repeated float after_floats = 5;
+  repeated uint32 before_u32s = 7;
+  repeated uint32 after_u32s = 8;
+  optional int32 depth = 6;
+}
+message ScalarRegisterStateChange {
+  optional int32 sreg = 1;
+  optional uint64 before = 2;
+  optional uint64 after = 3;
+}
+message PredicateRegisterStateChange {
+  optional int32 preg = 1;
+  optional bool before = 2;
+  optional bool after = 3;
+}
+message LocalMemoryStateChange {
+  optional int64 address = 1;
+  optional bytes before_bytes = 2;
+  optional bytes after_bytes = 3;
+  repeated float before_floats = 4;
+  repeated float after_floats = 5;
+}
+message GlobalMemoryStateChange {
+  optional int64 address = 1;
+  optional bytes before = 2;
+  optional bytes after = 3;
+}
+message ArchitectureStateChange {
+  repeated .platforms_deepsea.jellyfish.xdb.VectorRegisterStateChange vreg_changes = 1;
+  repeated .platforms_deepsea.jellyfish.xdb.ScalarRegisterStateChange sreg_changes = 2;
+  repeated .platforms_deepsea.jellyfish.xdb.PredicateRegisterStateChange preg_changes = 3;
+  repeated .platforms_deepsea.jellyfish.xdb.LocalMemoryStateChange lmem_changes = 4;
+  repeated .platforms_deepsea.jellyfish.xdb.GlobalMemoryStateChange gmem_changes = 5;
+}
+message LiveInterval {
+  optional int64 start = 1;
+  optional int64 limit = 2;
+}
+message AllocationRange {
+  optional .platforms_deepsea.jellyfish.xdb.LiveInterval live_range = 1;
+  optional string shape = 2;
+  optional string name = 3;
+  optional .platforms_deepsea.jellyfish.xdb.AddressSpace address_space = 4;
+  optional int64 offset_bytes = 5;
+  optional int64 size_bytes = 6;
+  optional bool constant = 7;
+  optional bool scoped = 8;
+}
+message AllocationMetadata {
+  repeated .platforms_deepsea.jellyfish.xdb.AllocationRange allocation_ranges = 1;
+}
+message LiveRange {
+  repeated .platforms_deepsea.jellyfish.xdb.LiveInterval intervals = 1;
+  optional .platforms_deepsea.jellyfish.xdb.RegisterClass register_class = 2;
+}
+message RegisterMetadata {
+  repeated .platforms_deepsea.jellyfish.xdb.LiveRange live_ranges = 1;
+}
+message OverlayMetadata {
+  message Overlay {
+    optional int64 prefix_size = 1;
+    optional int64 start_bundle_number = 2;
+    optional int64 end_bundle_number = 3;
+    optional int64 suffix_size = 4;
+    optional int64 encoded_word_offset = 5;
+    optional bool hlo_function_overlay = 6;
+  }
+  repeated .platforms_deepsea.jellyfish.xdb.OverlayMetadata.Overlay overlays = 1;
+  optional int64 overlay_slot_size = 2;
+  optional int64 overlay_slots_offset = 7;
+  optional bool single_imem_overlay = 3;
+  optional int64 current_overlay_address_smem_location = 4;
+  repeated int64 overlay_encoding_order = 5;
+  optional .tpu.TpuSequencerTypeProto sequencer_type = 6 [default = TPU_SEQUENCER_TYPE_TENSOR_CORE_SEQUENCER];
+}
+message SlotAnnotation {
+  optional string slot = 1;
+  optional string text = 2;
+}
+message Annotation {
+  optional int64 pc = 1;
+  map<string, .platforms_deepsea.jellyfish.xdb.SlotAnnotation> slot_to_text = 2;
+  optional string annotation = 3;
+}
+message AnnotationMetadata {
+  map<int64, .platforms_deepsea.jellyfish.xdb.Annotation> annotations = 1;
+}
+message TrapEntry {
+  optional .platforms_deepsea.jellyfish.xdb.TagAndPc tag_and_pc = 1;
+  optional string display_message = 2;
+  optional int32 trap_id = 3;
+}
+message TrapEntryList {
+  repeated .platforms_deepsea.jellyfish.xdb.TrapEntry entries = 1;
+}
+message TrapMetadata {
+  optional .platforms_deepsea.jellyfish.xdb.TagAndPc success_tag_and_pc = 1;
+  repeated .platforms_deepsea.jellyfish.xdb.TrapEntry trap_entries = 2;
+  optional bytes compressed_trap_entries = 3;
+}
+message HloOutputMismatchSdcEvent {
+  optional .xla.HloInstructionProto hlo_instruction = 1;
+  optional string hlo_text = 2;
+  repeated string deduplicated_names = 3;
+  optional bool input_mismatch = 4;
+  optional bool is_collective_hlo = 5;
+  optional string tag = 6;
+  optional bool is_tpu_custom_call = 7;
+}
+message NanOrInfSdcEvent {
+  optional .xla.HloInstructionProto hlo_instruction = 1;
+  optional string hlo_text = 2;
+  repeated string deduplicated_names = 3;
+  optional bool input_nan_or_inf = 4;
+  optional bool is_collective_hlo = 5;
+  optional string tag = 6;
+  optional bool is_tpu_custom_call = 7;
+  optional bool contains_nan = 8;
+  optional bool contains_inf = 9;
+}
+message IciTransferChecksumMismatchSdcEvent {
+  optional .tpu.TpuDimensionsProto src_chips_coordinates = 1;
+  optional .tpu.TpuCoreOnChipProto src_core_on_chip = 2;
+  optional string src_core = 3;
+  optional .tpu.TpuDimensionsProto dst_chips_coordinates = 4;
+  optional .tpu.TpuCoreOnChipProto dst_core_on_chip = 5;
+  optional string dst_core = 6;
+}
+message IciTransferTimeoutSdcEvent {
+  optional .tpu.TpuDimensionsProto chips_coordinates = 1;
+  optional .tpu.TpuCoreOnChipProto core_on_chip = 2;
+  optional string core = 3;
+  optional bool send = 6;
+}
+message LloSequenceResultMismatchSdcEvent {
+  optional .xla.HloInstructionProto hlo_instruction = 1;
+  optional string hlo_text = 2;
+  repeated string deduplicated_names = 3;
+  optional bool is_collective_hlo = 4;
+  map<string, uint32> instructions = 5;
+  optional bool injected = 6;
+  optional bool aggregated = 7;
+}
+message HloChecksumSdcEvent {
+  optional .xla.HloInstructionProto hlo_instruction = 1;
+  optional string hlo_text = 2;
+  repeated string deduplicated_names = 3;
+  optional bool is_collective_hlo = 4;
+  optional string tag = 5;
+}
+message TimestampSdcEvent {
+  optional .xla.HloInstructionProto hlo_instruction = 1;
+  optional string hlo_text = 2;
+  repeated string deduplicated_names = 3;
+  optional bool is_collective_hlo = 4;
+  optional .platforms_deepsea.jellyfish.xdb.TimestampKind kind = 5;
+}
+message SdcEventMetadata {
+  oneof descriptors {
+    string opaque = 1;
+    .platforms_deepsea.jellyfish.xdb.HloOutputMismatchSdcEvent hlo_output_mismatch = 2;
+    .platforms_deepsea.jellyfish.xdb.IciTransferChecksumMismatchSdcEvent ici_transfer_mismatch = 3;
+    .platforms_deepsea.jellyfish.xdb.IciTransferTimeoutSdcEvent ici_transfer_timeout = 4;
+    .platforms_deepsea.jellyfish.xdb.LloSequenceResultMismatchSdcEvent llo_sequence_result_mismatch = 5;
+    .platforms_deepsea.jellyfish.xdb.HloChecksumSdcEvent hlo_checksum = 6;
+    .platforms_deepsea.jellyfish.xdb.TimestampSdcEvent timestamp = 7;
+    .platforms_deepsea.jellyfish.xdb.NanOrInfSdcEvent nan_or_inf = 8;
+  }
+}
+message SdcEventLocation {
+  optional .tpu.TpuVersionProto version = 1;
+  optional string variant = 2;
+  optional .tpu.TpuDimensionsProto chips_coordinates = 3;
+  optional .tpu.TpuCoreOnChipProto core_on_chip = 4;
+  optional string physical_location = 5;
+  optional .tpu.TpuTopologyArgsProto topology_args = 6;
+}
+message SdcMetadata {
+  reserved 1;
+  optional bool silent_sdc_event_reporting = 2;
+  repeated .platforms_deepsea.jellyfish.xdb.SdcEventMetadata sdc_events = 3;
+  optional string explicit_checksum_trace_output_dir = 4;
+  optional int64 explicit_checksum_trace_words_per_record = 5;
+  optional int64 checksum_trace_data_values_per_record = 6;
+}
+message LogRecord {
+  enum HostAction {
+    UNKNOWN = 0;
+    CLEAR_SFLAG_AFTER_READ = 1;
+    CLEAR_SFLAG_AFTER_LOG = 2;
+  }
+  enum DirectSourceBuffer {
+    UNSPECIFIED = 0;
+    HBM = 1;
+    VMEM = 2;
+  }
+  optional string tag = 1;
+  optional int64 size_bytes = 2;
+  optional .xla.ShapeProto shape = 3;
+  optional .platforms_deepsea.jellyfish.xdb.LogRecord.HostAction host_action = 4;
+  optional bool enable_formater = 5;
+  optional bool flush_buffer = 6;
+  repeated string extra_args = 7;
+  optional .platforms_deepsea.jellyfish.xdb.LogRecord.DirectSourceBuffer direct_source_buffer = 8;
+  optional .platforms_deepsea.jellyfish.xdb.LogHloOutputMetadata hlo_output_metadata = 9;
+  optional .platforms_deepsea.jellyfish.xdb.InstrumentationMetadata instrumentation_metadata = 10;
+  optional bool log_tensor_checksum = 11;
+}
+message LogLiteralChunk {
+  optional bytes chunk_data = 1;
+  optional int64 chunk_number = 2;
+  optional int64 chunk_count = 3;
+  optional int64 byte_offset = 4;
+  optional int64 total_size = 5;
+  optional uint64 fingerprint = 6;
+}
+message LogData {
+  optional string tag = 1;
+  optional .xla.LiteralProto literal = 2;
+  optional .google.protobuf.Timestamp timestamp = 3;
+  repeated string extra_args = 4;
+  optional .platforms_deepsea.jellyfish.xdb.LogHloOutputMetadata hlo_output_metadata = 5;
+  optional .platforms_deepsea.jellyfish.xdb.LogLiteralChunk literal_chunk = 6;
+  optional string recipe_name_prefix = 7;
+}
+message LogHloOutputMetadata {
+  message DimSplitSpecProto {
+    optional int64 dim_index = 1;
+    optional int64 block_count = 2;
+  }
+  repeated .platforms_deepsea.jellyfish.xdb.LogHloScope scopes = 1;
+  optional string module_name = 2;
+  optional int64 module_id = 3;
+  optional uint64 run_id = 4;
+  repeated int64 shape_index = 5;
+  optional string instruction_name = 6;
+  optional .platforms_deepsea.jellyfish.xdb.LogHloOutputKind kind = 7;
+  optional .xla.OriginalValueProto original_value = 8;
+  optional string user_tag = 9;
+  repeated .platforms_deepsea.jellyfish.xdb.LogHloOutputMetadata.DimSplitSpecProto dim_split_spec = 10;
+}
+message LogHloOutputMetadataMapping {
+  optional .platforms_deepsea.jellyfish.xdb.LogHloOutputFilter filter = 1;
+  optional .platforms_deepsea.jellyfish.xdb.LogHloOutputMetadata mapped_data = 2;
+}
+message BreakpointMetadata {
+  optional bool enable_breakpoint = 1;
+}
+message InstrumentationMetadata {
+  optional .platforms_deepsea.jellyfish.xdb.InstrumentationMode instrumentation_mode = 1;
+  optional .xla.HloInstructionProto hlo_instruction = 2;
+  repeated int64 shape_index = 3 [packed = true];
+  optional bool disable_output_log = 4;
+  optional .platforms_deepsea.jellyfish.xdb.BreakpointMetadata breakpoint_metadata = 5;
+}
+message FusionBundleInfo {
+  repeated .platforms_deepsea.jellyfish.xdb.FusionInstructionInfo instruction_info = 1;
+}
+message TpuDebuggerInstructionInfo {
+  optional int32 reg_number = 1;
+  optional string hlo_name = 2;
+}
+message TpuDebuggerBundleInfo {
+  repeated .platforms_deepsea.jellyfish.xdb.TpuDebuggerInstructionInfo instruction_info = 1;
+}
+message FusionInstructionInfo {
+  oneof info {
+    .platforms_deepsea.jellyfish.xdb.FusionInstructionIterationInfo iteration_info = 1;
+    .platforms_deepsea.jellyfish.xdb.FusionInstructionChunkInfo chunk_info = 2;
+    .platforms_deepsea.jellyfish.xdb.FusionInstructionSfenceInfo sfence_info = 3;
+    .platforms_deepsea.jellyfish.xdb.FusionInstructionVdelayInfo vdelay_info = 4;
+    .platforms_deepsea.jellyfish.xdb.FusionInstructionOutputWindowOffsetsInfo output_window_offsets_info = 5;
+    .platforms_deepsea.jellyfish.xdb.FusionInstructionMegacoreIterationInfo megacore_iteration_info = 6;
+    .platforms_deepsea.jellyfish.xdb.FusionInstructionOutputBufferAddressInfo output_buffer_address_info = 7;
+    .platforms_deepsea.jellyfish.xdb.FusionInstructionDusStartIndexInfo dus_start_index_info = 8;
+  }
+}
+message FusionInstructionIterationInfo {
+  optional int32 reg_number = 1;
+  optional int64 stage = 2;
+  optional int64 iteration_index = 3;
+  optional string fusion_hlo_name = 4;
+  optional bool used_at_runtime = 5;
+  optional int64 compute_stage = 6;
+}
+message FusionInstructionMegacoreIterationInfo {
+  optional int32 reg_number = 1;
+  optional int64 stage = 2;
+  optional string fusion_hlo_name = 3;
+}
+message FusionInstructionOutputWindowOffsetsInfo {
+  optional int32 reg_number = 1;
+  optional int32 offset_index = 2;
+  optional string fusion_hlo_name = 3;
+  optional int64 output_number = 4;
+  optional bool is_promoted_f32 = 7;
+  optional int64 packing_factor = 8;
+}
+message FusionInstructionOutputBufferAddressInfo {
+  optional int32 reg_number = 1;
+  optional string fusion_hlo_name = 2;
+  optional int64 output_number = 3;
+  optional .platforms_deepsea.jellyfish.xdb.FusionDebugOutputBufferMemorySpace memory_space = 4;
+}
+message FusionInstructionDusStartIndexInfo {
+  optional int32 reg_number = 1;
+  optional string fusion_hlo_name = 2;
+  optional int64 output_number = 3;
+  optional int64 dimension = 4;
+}
+message FusionInstructionChunkInfo {
+  optional int32 reg_number = 1;
+  optional .platforms_deepsea.jellyfish.xdb.RegisterType reg_type = 2;
+  optional string fused_hlo_name = 3;
+  repeated int64 window_offsets = 4 [packed = true];
+  optional .platforms_deepsea.jellyfish.xdb.FusionDebugBf16PackingType bf16_packing_type = 5 [default = FUSION_DEBUG_BF16_PACKING_TYPE_UNPACKED];
+  optional string fusion_hlo_name = 6;
+}
+message FusionInstructionSfenceInfo {
+  optional string fusion_hlo_name = 1;
+}
+message FusionInstructionVdelayInfo {
+  optional .platforms_deepsea.jellyfish.xdb.FusionDebugVdelayType type = 1;
+  optional string fusion_hlo_name = 2;
+}
+message FusionDebugWindowConfig {
+  repeated int64 window_bounds = 1 [packed = true];
+  repeated int64 iteration_bounds = 2 [packed = true];
+  optional int64 elementsize_in_bytes = 3;
+  repeated int64 base_bounds = 4 [packed = true];
+  repeated int64 strides = 5 [packed = true];
+  repeated int64 pad_low = 6 [packed = true];
+  repeated int64 pad_high = 7 [packed = true];
+  repeated int64 output_window_transform_indices = 8 [packed = true];
+  optional int64 second_minor_factor = 9;
+}
+message FusionDebugMegacoreConfig {
+  optional int64 split_dim = 1;
+  optional bool is_primary_core_mode = 2;
+  optional .platforms_deepsea.jellyfish.xdb.FusionDebugWindowConfig window_config = 3;
+}
+message FusionDebugConfig {
+  optional string fusion_hlo_name = 1;
+  optional uint64 fusion_id = 2;
+  optional string user_tag = 3;
+  optional .platforms_deepsea.jellyfish.xdb.FusionDebugWindowConfig window_config = 4;
+  repeated .platforms_deepsea.jellyfish.xdb.FusionDebugWindowConfig output_window_configs = 5;
+  repeated string fused_instructions_to_debug = 6;
+  optional bool needs_epilogue = 7;
+  optional .platforms_deepsea.jellyfish.xdb.FusionDebugMegacoreConfig megacore_config = 8;
+  map<string, .platforms_deepsea.jellyfish.xdb.FusionDebugWindowConfig> nested_fusion_window_configs = 9;
+}
+message FusedInstructionInfo {
+  optional int64 output_size = 1;
+  optional .xla.ShapeProto shape = 2;
+  optional bool is_fusion_output = 3;
+  optional int64 output_number = 4;
+  optional bool is_promoted_f32 = 7;
+  optional int64 packing_factor = 8;
+  optional string user_tag = 5;
+  optional .platforms_deepsea.jellyfish.xdb.FusionDebugLogType log_type = 6 [default = FUSION_DEBUG_LOG_TYPE_INFO];
+  optional bool needs_device_buffer_completion = 9;
+  optional .xla.ShapeProto dynamic_update_slice_update_shape = 10;
+  repeated int64 dynamic_update_slice_capture_alignment = 11;
+}
+message FusionDebugFusedInstructionsInfo {
+  map<string, .platforms_deepsea.jellyfish.xdb.FusedInstructionInfo> fused_instructions_info = 1;
+}
+message FusionDebugCallbackAttributes {
+  optional string user_tag = 1;
+  optional string fusion_hlo_name = 2;
+  optional string fused_hlo_name = 3;
+  optional string core_location = 4;
+}
+message LogHloScope {
+  optional string instruction_name = 1;
+  optional int32 it_count = 2;
+  optional .platforms_deepsea.jellyfish.xdb.LogHloScopeSection section = 3;
+  optional .xla.OriginalValueProto original_value = 4;
+}
+message LogHloOutputFilter {
+  repeated .platforms_deepsea.jellyfish.xdb.LogHloOutputFilterScope scopes = 1;
+  optional string module_name_re = 2;
+  optional .platforms_deepsea.jellyfish.xdb.IntegerRange module_id_range = 3;
+  optional .platforms_deepsea.jellyfish.xdb.IntegerRange run_id_range = 4;
+  repeated int64 shape_index = 5 [packed = true];
+  optional string instruction_re = 6;
+}
+message IntegerRange {
+  optional int64 begin = 1;
+  optional int64 end = 2;
+}
+message LogHloOutputFilterScope {
+  optional string instruction_name_re = 1;
+  optional .platforms_deepsea.jellyfish.xdb.IntegerRange iteration_range = 2;
+  optional .platforms_deepsea.jellyfish.xdb.LogHloScopeSection section = 3;
+}
+message LogMetadata {
+  repeated .platforms_deepsea.jellyfish.xdb.LogRecord log_records = 1;
+  optional bool log_enabled = 2;
+  optional bool tile_log_enabled = 3;
+  optional string xla_tpu_dump_logs_to_dir = 4;
+  optional string xla_pgq_recipe_name_prefix = 5;
+  optional bool sc_log_enabled = 6;
+  optional bool only_record_last_sc_log = 7;
+}
+message SubsliceMetadata {
+  optional int64 x = 1;
+  optional int64 y = 2;
+  optional int64 z = 3;
+}
+message TpuTraceMeEntry {
+  optional string label = 1;
+}
+message TpuTraceMeMetadata {
+  map<uint32, .platforms_deepsea.jellyfish.xdb.TpuTraceMeEntry> traceme_entries = 1;
+}
+message EmbeddingTableMetadata {
+  optional int32 vocab_size = 1;
+  optional int32 feature_width = 2;
+  optional int32 sample_count = 3;
+  optional int32 max_nonunique_ids_per_partition = 4;
+  optional int32 max_uniques_ids_per_partition = 5;
+}
+message SparseCoreCaptureLayout {
+  enum Schedule {
+    SCHEDULE_UNSPECIFIED = 0;
+    SCHEDULE_LINEAR = 1;
+    SCHEDULE_INTERLEAVED = 2;
+  }
+  enum Packing {
+    PACKING_COMPRESSED = 0;
+    PACKING_INTERLEAVED = 1;
+    PACKING_WORD_FIELD = 2;
+    PACKING_PROMOTED = 3;
+  }
+  enum ShardOrder {
+    SHARD_ORDER_UNSPECIFIED = 0;
+    SHARD_ORDER_CORE_MAJOR = 1;
+    SHARD_ORDER_TILE_MAJOR = 2;
+  }
+  message Loop {
+    optional int32 dimension = 1;
+    optional int64 step = 2;
+  }
+  message Axis {
+    optional int32 dimension = 1;
+    optional int64 count = 2;
+  }
+  message Subtile {
+    optional int32 dimension = 1;
+    optional int64 stride = 2;
+    optional int64 packing = 3;
+  }
+  message WordField {
+    optional int32 dimension = 1;
+    optional int64 stride = 2;
+  }
+  repeated int32 logical_dimensions = 1;
+  repeated int64 window_sizes = 2;
+  optional .platforms_deepsea.jellyfish.xdb.SparseCoreCaptureLayout.Schedule schedule = 3;
+  repeated int64 shards = 4;
+  repeated .platforms_deepsea.jellyfish.xdb.SparseCoreCaptureLayout.Loop loops = 5;
+  optional bool full_window_bounds = 6;
+  optional int32 vector_dimension = 7;
+  optional int64 vector_bound_multiple = 8;
+  repeated .platforms_deepsea.jellyfish.xdb.SparseCoreCaptureLayout.Axis register_axes = 9;
+  optional .platforms_deepsea.jellyfish.xdb.SparseCoreCaptureLayout.Packing packing = 10;
+  optional .platforms_deepsea.jellyfish.xdb.SparseCoreCaptureLayout.Axis register_part_axis = 11;
+  optional .platforms_deepsea.jellyfish.xdb.SparseCoreCaptureLayout.Subtile subtile = 12;
+  optional .platforms_deepsea.jellyfish.xdb.SparseCoreCaptureLayout.WordField word_field = 13;
+  repeated int32 core_ids = 14;
+  optional .platforms_deepsea.jellyfish.xdb.SparseCoreCaptureLayout.ShardOrder shard_order = 15;
+  optional int32 tiles_per_core = 16;
+}
+message SparseCoreCapturePoint {
+  optional string hlo_name = 1;
+  optional string fusion_hlo_name = 2;
+  optional .tpu.TpuSequencerTypeProto sequencer_type = 3;
+  optional int64 bundle = 4;
+  optional .platforms_deepsea.jellyfish.xdb.RegisterType register_type = 5;
+  optional int32 register_number = 6;
+  optional .xla.ShapeProto shape = 7;
+  optional string user_tag = 8;
+  optional .platforms_deepsea.jellyfish.xdb.FusionDebugLogType log_type = 9 [default = FUSION_DEBUG_LOG_TYPE_INFO];
+  optional .platforms_deepsea.jellyfish.xdb.SparseCoreCaptureLayout layout = 10;
+  optional string unassemblable_reason = 11;
+  optional int32 register_part = 12;
+  optional int32 unroll_factor = 13;
+  optional int32 unroll_copy = 14;
+  optional bool unroll_epilogue = 15;
+}
+message SparseCoreFusionDebugMetadata {
+  repeated .platforms_deepsea.jellyfish.xdb.SparseCoreCapturePoint capture_points = 1;
+  optional int32 gate_sync_flag = 3;
+  optional int32 join_sync_flag = 4;
+  optional int32 tile_overlay_slot_count = 5;
+  repeated int32 core_ids = 6;
+}
+message SparseCoreSpecificMetadata {
+  optional string computation_name = 1;
+  optional .platforms_deepsea.jellyfish.xdb.TrapMetadata trap_metadata = 2;
+  optional .platforms_deepsea.jellyfish.xdb.SdcMetadata sdc_metadata = 3;
+  map<string, .platforms_deepsea.jellyfish.xdb.EmbeddingTableMetadata> table_name_to_metadata = 4;
+  repeated .platforms_deepsea.jellyfish.xdb.OverlayMetadata overlay_metadata = 5;
+  map<string, int64> program_shared_registry_slots = 7;
+  optional .platforms_deepsea.jellyfish.xdb.SparseCoreFusionDebugMetadata fusion_debug = 8;
+}
+message CompilerMetadata {
+  reserved 2;
+  reserved 3;
+  reserved 5;
+  reserved 15;
+  reserved 16;
+  reserved 36;
+  reserved "bundle_metadata";
+  reserved "register_metadata";
+  reserved "region_metadata";
+  reserved "fusion_debug_fusion_instructions_config";
+  message DebugMetadata {
+    message TensorKeyProto {
+      optional string instruction_name = 1;
+      repeated int32 shape_index = 2;
+    }
+    repeated .platforms_deepsea.jellyfish.xdb.CompilerMetadata.DebugMetadata.TensorKeyProto logged_optimized_tensor_keys = 1;
+  }
+  optional uint64 program_id = 9;
+  optional string borg_cell = 28;
+  optional int64 borg_uid = 29;
+  optional .platforms_deepsea.jellyfish.xdb.AllocationMetadata allocation_metadata = 1;
+  optional .platforms_deepsea.jellyfish.xdb.AnnotationMetadata annotation_metadata = 4;
+  optional .platforms_deepsea.jellyfish.xdb.AnnotationMetadata overlayer_annotation_metadata = 30;
+  optional .xla.HloProto hlo_metadata = 6;
+  optional .platforms_deepsea.jellyfish.xdb.SymbolTable symbol_table = 8;
+  repeated .platforms_deepsea.jellyfish.xdb.OverlayMetadata overlay_metadata = 10;
+  optional .platforms_deepsea.jellyfish.xdb.TrapMetadata trap_metadata = 11;
+  optional .platforms_deepsea.jellyfish.xdb.ProgramMemoryMetadata program_memory_metadata = 12;
+  optional .platforms_deepsea.jellyfish.xdb.TpuTraceMeMetadata traceme_metadata = 21;
+  optional .platforms_deepsea.jellyfish.xdb.TpuTraceMeMetadata tc_symbol_metadata = 27;
+  optional int64 replica_count = 13;
+  optional int64 num_cores_per_replica = 14;
+  optional bool is_haltless = 17;
+  optional int64 executable_size = 18;
+  optional int64 optimized_hlo_instruction_count = 19;
+  optional string module_name = 20;
+  optional .platforms_deepsea.jellyfish.xdb.SdcMetadata sdc_metadata = 22;
+  map<string, int64> program_shared_registry_slots = 23;
+  optional int64 program_shared_registry_buffer_offset = 37;
+  optional .platforms_deepsea.jellyfish.xdb.LogMetadata log_metadata = 24;
+  optional .platforms_deepsea.jellyfish.xdb.SubsliceMetadata subslice_metadata = 25;
+  optional bytes executable_fingerprint = 26;
+  repeated .platforms_deepsea.jellyfish.xdb.FeatureKind enabled_features = 31 [packed = true];
+  map<int64, .platforms_deepsea.jellyfish.xdb.FusionBundleInfo> fusion_debug_info = 32;
+  repeated .platforms_deepsea.jellyfish.xdb.FusionDebugConfig fusion_debug_configs = 34;
+  map<uint64, .platforms_deepsea.jellyfish.xdb.FusionDebugFusedInstructionsInfo> fusion_debug_fused_instructions_info = 35;
+  map<int64, .platforms_deepsea.jellyfish.xdb.SparseCoreSpecificMetadata> sparse_core_specific_metadata = 33;
+  optional .xla.HloModuleProto original_hlo_module = 38;
+  repeated .tpu.BreakpointEvent breakpoint_events = 39;
+  optional .google.protobuf.Any tpu_compilation_environment = 40;
+  optional string final_llo_fingerprint = 41;
+  map<int64, .platforms_deepsea.jellyfish.xdb.TpuDebuggerBundleInfo> tpu_debugger_info = 43;
+  optional .platforms_deepsea.jellyfish.xdb.CompilerMetadata.DebugMetadata debug_metadata = 44;
+  optional bytes compressed_hlo_module = 46;
+}
+message RuntimeMetadata {
+  reserved 2;
+  optional int32 replica_id = 1;
+  optional int32 partition_id = 8;
+  optional int32 slice_id = 9;
+  optional int32 queue_id = 7;
+  optional int64 run_id = 3;
+  optional uint64 program_id = 4;
+  optional string model_name = 5;
+  optional int64 model_version = 6;
+}
+message InstructionValue {
+  optional .platforms_deepsea.jellyfish.xdb.InstructionValueKind kind = 1;
+  optional .platforms_deepsea.jellyfish.xdb.Format format = 9;
+  repeated int64 dimensions = 2;
+  repeated bool preds = 8;
+  optional bytes u8s = 3;
+  repeated float f32s = 4;
+  repeated uint32 u32s = 5;
+  repeated int32 s32s = 6;
+  repeated int64 s64s = 7;
+}
+message InstructionExecutionDetails {
+  repeated .platforms_deepsea.jellyfish.xdb.InstructionValue operands = 1;
+  optional .platforms_deepsea.jellyfish.xdb.InstructionValue result = 2;
+  optional string mnemonic = 3;
+  optional bool terminated = 4;
+}
+message StepInstructionRequest {
+  optional bool want_mnemonic = 1;
+}
+message StepInstructionResponse {
+  optional int64 new_pc = 1;
+  optional int64 new_cycle = 2;
+  optional .platforms_deepsea.jellyfish.xdb.ArchitectureStateChange changes = 3;
+  optional .platforms_deepsea.jellyfish.xdb.InstructionExecutionDetails details = 4;
+}
+message SetBreakpointRequest {
+  optional .platforms_deepsea.jellyfish.xdb.TagAndPc location = 1;
+  optional bool temporary = 2;
+}
+message SetBreakpointResponse {
+  optional int32 breakpoint_number = 1;
+}
+message GetBreakpointHitCountRequest {
+  optional int32 breakpoint_number = 1;
+}
+message GetBreakpointHitCountResponse {
+  optional int32 hit_count = 1;
+}
+message ToggleBreakpointRequest {
+  optional int32 breakpoint_number = 1;
+  optional bool new_state = 2;
+}
+message ToggleBreakpointResponse {
+}
+message DeleteBreakpointRequest {
+  optional int32 breakpoint_number = 1;
+}
+message DeleteBreakpointResponse {
+}
+message QueryBreakpointsRequest {
+}
+message Breakpoint {
+  optional .platforms_deepsea.jellyfish.xdb.TagAndPc location = 1;
+  optional bool enabled = 2;
+  optional int32 number = 3;
+}
+message QueryBreakpointsResponse {
+  repeated .platforms_deepsea.jellyfish.xdb.Breakpoint breakpoints = 1;
+}
+message ExamineAddressRequest {
+  optional .platforms_deepsea.jellyfish.xdb.AddressSpace address_space = 1;
+  optional int64 offset = 2;
+  optional int64 chunk_offset = 5;
+  optional int64 size_bytes = 3;
+  optional .platforms_deepsea.jellyfish.xdb.Format format = 4;
+}
+message ExamineAddressResponse {
+  optional .platforms_deepsea.jellyfish.xdb.Format format = 5;
+  optional int64 offset = 6;
+  optional bytes u8s = 1;
+  repeated int32 s32s = 2;
+  repeated uint32 u32s = 3;
+  repeated float f32s = 4;
+}
+message GetMemoryByteSizeRequest {
+  optional .platforms_deepsea.jellyfish.xdb.AddressSpace address_space = 1;
+}
+message GetMemoryByteSizeResponse {
+  optional int64 size_bytes = 1;
+}
+message ExamineAllocationRequest {
+  optional int64 allocation_rangeno = 1;
+}
+message AllocationCell {
+  repeated int64 indices = 1;
+  optional string value = 2;
+}
+message ExamineAllocationResponse {
+  optional .platforms_deepsea.jellyfish.xdb.AllocationRange allocation_range = 1;
+  repeated int64 sizes = 2;
+  repeated .platforms_deepsea.jellyfish.xdb.AllocationCell cells = 3;
+}
+message InterruptRequest {
+}
+message InterruptResponse {
+  optional int64 new_pc = 1;
+}
+message IsRunningRequest {
+}
+message IsRunningResponse {
+  optional bool is_running = 1;
+}
+message IsProgramTerminatedRequest {
+}
+message IsProgramTerminatedResponse {
+  optional bool is_program_terminated = 1;
+}
+message InFlightRequest {
+}
+message InFlightResponse {
+}
+message DisassembleRequest {
+  optional int64 from_pc = 1;
+  optional int64 to_pc = 2;
+  optional bool all = 3;
+}
+message DisassembleResponse {
+  repeated int64 pcs = 1;
+  repeated string bundles = 2;
+}
+message ContinueRequest {
+}
+message ContinueResponse {
+}
+message DetachRequest {
+}
+message DetachResponse {
+}
+message ToggleOptionRequest {
+  optional .platforms_deepsea.jellyfish.xdb.Option which_option = 1;
+  optional bool value = 2;
+}
+message ToggleOptionResponse {
+}
+message GetOptionRequest {
+  optional .platforms_deepsea.jellyfish.xdb.Option which_option = 1;
+}
+message GetOptionResponse {
+  optional bool value = 1;
+}
+message GetVregStateRequest {
+  optional .platforms_deepsea.jellyfish.xdb.Format format = 1;
+  optional int32 vregno = 2;
+}
+message GetVregStateResponse {
+  repeated .platforms_deepsea.jellyfish.xdb.VectorRegisterStateChange state = 1;
+}
+message GetSregStateRequest {
+  optional int64 sregno = 1;
+}
+message GetSregStateResponse {
+  repeated .platforms_deepsea.jellyfish.xdb.ScalarRegisterStateChange state = 1;
+}
+message GetPregStateRequest {
+}
+message GetPregStateResponse {
+  repeated .platforms_deepsea.jellyfish.xdb.PredicateRegisterStateChange state = 1;
+}
+message GetPcRequest {
+  optional bool want_next_pc = 2;
+}
+message TagAndPc {
+  optional .tpu.TpuSequencerTypeProto sequencer_type = 3;
+  optional int64 tag = 1;
+  optional int64 pc = 2;
+}
+message GetPcResponse {
+  optional .platforms_deepsea.jellyfish.xdb.TagAndPc location = 1;
+}
+message GetExecutionCycleRequest {
+}
+message GetExecutionCycleResponse {
+  optional int64 cycle = 1;
+}
+message GetCompilerMetadataRequest {
+}
+message GetCompilerMetadataResponse {
+  optional .platforms_deepsea.jellyfish.xdb.CompilerMetadata compiler_metadata = 1;
+}
+message ChunkState {
+  optional .platforms_deepsea.jellyfish.xdb.ChunkStateKind chunk_state = 1;
+  optional float entropy = 2;
+}
+message GetGmemChunkStateRequest {
+  optional int64 chunk_size = 1;
+}
+message GetGmemChunkStateResponse {
+  repeated .platforms_deepsea.jellyfish.xdb.ChunkState chunk_states = 1;
+}
+message GetLmemChunkStateRequest {
+  optional int64 chunk_bytes = 1;
+}
+message GetLmemChunkStateResponse {
+  repeated .platforms_deepsea.jellyfish.xdb.ChunkState chunk_states = 1;
+}
+message GetRegisterMetadataRequest {
+}
+message GetRegisterMetadataResponse {
+  optional int32 vreg_count = 1;
+}
+message GetDeviceInfoRequest {
+}
+message GetDeviceInfoResponse {
+  optional string device_name = 1;
+  optional .tpu.TpuPlatformTypeProto platform_type = 2;
+  optional .tpu.TpuVersionProto version = 3;
+  optional .tpu.TpuSequencerTypeProto sequencer_type = 4;
+}
+message EnumerateNamedScalarStateRequest {
+}
+message EnumerateNamedScalarStateResponse {
+  repeated string names = 1;
+  repeated string descriptions = 2;
+}
+message GetNamedScalarStateRequest {
+  optional string name = 1;
+}
+message GetNamedScalarStateResponse {
+  optional .platforms_deepsea.jellyfish.xdb.ScalarRegisterStateChange state = 1;
+}
+message EnumerateNamedVectorStateRequest {
+}
+message EnumerateNamedVectorStateResponse {
+  repeated string names = 1;
+  repeated string descriptions = 2;
+}
+message GetNamedVectorStateRequest {
+  optional string name = 1;
+}
+message GetNamedVectorStateResponse {
+  optional .platforms_deepsea.jellyfish.xdb.VectorRegisterStateChange state = 1;
+}
+message RunMnemonicRequest {
+  optional string mnemonic = 1;
+}
+message RunMnemonicResponse {
+}
+message CoreDumpEvent {
+  message Value {
+    optional string title = 1;
+    repeated string values = 2;
+  }
+  message SCValue {
+    repeated .platforms_deepsea.jellyfish.xdb.CoreDumpEvent.Value scs_info = 1;
+    repeated .platforms_deepsea.jellyfish.xdb.CoreDumpEvent.Value tile_info = 2;
+    repeated .platforms_deepsea.jellyfish.xdb.CoreDumpEvent.Value misc_info = 3;
+  }
+  message Metadata {
+    optional .tpu.TpuVersionProto version = 1;
+    optional string variant = 2;
+    optional string physical_location = 5;
+    optional string hlo_name = 7;
+  }
+  optional .platforms_deepsea.jellyfish.xdb.CoreDumpEvent.Metadata metadata = 1;
+  repeated .platforms_deepsea.jellyfish.xdb.CoreDumpEvent.Value tc_values = 3;
+  repeated .platforms_deepsea.jellyfish.xdb.CoreDumpEvent.SCValue sc_values = 4;
+}
+message CyclesExecutedAtPc {
+  repeated int32 cycles = 1;
+}
+message Status {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    CANCELLED = 1;
+    UNKNOWN = 2;
+    INVALID_ARGUMENT = 3;
+    DEADLINE_EXCEEDED = 4;
+    NOT_FOUND = 5;
+    OK = 6;
+    FAILED_PRECONDITION = 9;
+    INTERNAL = 13;
+    UNAVAILABLE = 14;
+  }
+  optional .platforms_deepsea.jellyfish.xdb.Status.Code code = 1;
+  optional string message = 2;
+}
+service DebuggerService {
+  rpc GetDeviceInfo(.platforms_deepsea.jellyfish.xdb.GetDeviceInfoRequest) returns (.platforms_deepsea.jellyfish.xdb.GetDeviceInfoResponse);
+  rpc Disassemble(.platforms_deepsea.jellyfish.xdb.DisassembleRequest) returns (.platforms_deepsea.jellyfish.xdb.DisassembleResponse);
+  rpc ToggleOption(.platforms_deepsea.jellyfish.xdb.ToggleOptionRequest) returns (.platforms_deepsea.jellyfish.xdb.ToggleOptionResponse);
+  rpc GetOption(.platforms_deepsea.jellyfish.xdb.GetOptionRequest) returns (.platforms_deepsea.jellyfish.xdb.GetOptionResponse);
+  rpc GetRegisterMetadata(.platforms_deepsea.jellyfish.xdb.GetRegisterMetadataRequest) returns (.platforms_deepsea.jellyfish.xdb.GetRegisterMetadataResponse);
+  rpc RunMnemonic(.platforms_deepsea.jellyfish.xdb.RunMnemonicRequest) returns (.platforms_deepsea.jellyfish.xdb.RunMnemonicResponse);
+  rpc GetVregState(.platforms_deepsea.jellyfish.xdb.GetVregStateRequest) returns (.platforms_deepsea.jellyfish.xdb.GetVregStateResponse);
+  rpc GetSregState(.platforms_deepsea.jellyfish.xdb.GetSregStateRequest) returns (.platforms_deepsea.jellyfish.xdb.GetSregStateResponse);
+  rpc GetPregState(.platforms_deepsea.jellyfish.xdb.GetPregStateRequest) returns (.platforms_deepsea.jellyfish.xdb.GetPregStateResponse);
+  rpc EnumerateNamedScalarState(.platforms_deepsea.jellyfish.xdb.EnumerateNamedScalarStateRequest) returns (.platforms_deepsea.jellyfish.xdb.EnumerateNamedScalarStateResponse);
+  rpc GetNamedScalarState(.platforms_deepsea.jellyfish.xdb.GetNamedScalarStateRequest) returns (.platforms_deepsea.jellyfish.xdb.GetNamedScalarStateResponse);
+  rpc EnumerateNamedVectorState(.platforms_deepsea.jellyfish.xdb.EnumerateNamedVectorStateRequest) returns (.platforms_deepsea.jellyfish.xdb.EnumerateNamedVectorStateResponse);
+  rpc GetNamedVectorState(.platforms_deepsea.jellyfish.xdb.GetNamedVectorStateRequest) returns (.platforms_deepsea.jellyfish.xdb.GetNamedVectorStateResponse);
+  rpc GetGmemChunkState(.platforms_deepsea.jellyfish.xdb.GetGmemChunkStateRequest) returns (.platforms_deepsea.jellyfish.xdb.GetGmemChunkStateResponse);
+  rpc GetLmemChunkState(.platforms_deepsea.jellyfish.xdb.GetLmemChunkStateRequest) returns (.platforms_deepsea.jellyfish.xdb.GetLmemChunkStateResponse);
+  rpc GetPc(.platforms_deepsea.jellyfish.xdb.GetPcRequest) returns (.platforms_deepsea.jellyfish.xdb.GetPcResponse);
+  rpc GetExecutionCycle(.platforms_deepsea.jellyfish.xdb.GetExecutionCycleRequest) returns (.platforms_deepsea.jellyfish.xdb.GetExecutionCycleResponse);
+  rpc GetCompilerMetadata(.platforms_deepsea.jellyfish.xdb.GetCompilerMetadataRequest) returns (.platforms_deepsea.jellyfish.xdb.GetCompilerMetadataResponse);
+  rpc StepInstruction(.platforms_deepsea.jellyfish.xdb.StepInstructionRequest) returns (.platforms_deepsea.jellyfish.xdb.StepInstructionResponse);
+  rpc SetBreakpoint(.platforms_deepsea.jellyfish.xdb.SetBreakpointRequest) returns (.platforms_deepsea.jellyfish.xdb.SetBreakpointResponse);
+  rpc GetBreakpointHitCount(.platforms_deepsea.jellyfish.xdb.GetBreakpointHitCountRequest) returns (.platforms_deepsea.jellyfish.xdb.GetBreakpointHitCountResponse);
+  rpc ToggleBreakpoint(.platforms_deepsea.jellyfish.xdb.ToggleBreakpointRequest) returns (.platforms_deepsea.jellyfish.xdb.ToggleBreakpointResponse);
+  rpc DeleteBreakpoint(.platforms_deepsea.jellyfish.xdb.DeleteBreakpointRequest) returns (.platforms_deepsea.jellyfish.xdb.DeleteBreakpointResponse);
+  rpc QueryBreakpoints(.platforms_deepsea.jellyfish.xdb.QueryBreakpointsRequest) returns (.platforms_deepsea.jellyfish.xdb.QueryBreakpointsResponse);
+  rpc ExamineAddress(.platforms_deepsea.jellyfish.xdb.ExamineAddressRequest) returns (.platforms_deepsea.jellyfish.xdb.ExamineAddressResponse);
+  rpc GetMemoryByteSize(.platforms_deepsea.jellyfish.xdb.GetMemoryByteSizeRequest) returns (.platforms_deepsea.jellyfish.xdb.GetMemoryByteSizeResponse);
+  rpc ExamineAllocation(.platforms_deepsea.jellyfish.xdb.ExamineAllocationRequest) returns (.platforms_deepsea.jellyfish.xdb.ExamineAllocationResponse);
+  rpc Continue(.platforms_deepsea.jellyfish.xdb.ContinueRequest) returns (.platforms_deepsea.jellyfish.xdb.ContinueResponse);
+  rpc Detach(.platforms_deepsea.jellyfish.xdb.DetachRequest) returns (.platforms_deepsea.jellyfish.xdb.DetachResponse);
+  rpc Interrupt(.platforms_deepsea.jellyfish.xdb.InterruptRequest) returns (.platforms_deepsea.jellyfish.xdb.InterruptResponse);
+  rpc IsRunning(.platforms_deepsea.jellyfish.xdb.IsRunningRequest) returns (.platforms_deepsea.jellyfish.xdb.IsRunningResponse);
+  rpc IsProgramTerminated(.platforms_deepsea.jellyfish.xdb.IsProgramTerminatedRequest) returns (.platforms_deepsea.jellyfish.xdb.IsProgramTerminatedResponse);
+  rpc InFlight(.platforms_deepsea.jellyfish.xdb.InFlightRequest) returns (.platforms_deepsea.jellyfish.xdb.InFlightResponse);
+}

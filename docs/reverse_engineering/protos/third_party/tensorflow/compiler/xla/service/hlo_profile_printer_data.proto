@@ -1,0 +1,24 @@
+syntax = "proto3";
+package xla;
+message HloProfilePrinterData {
+  message HloInstructionInfo {
+    reserved 6;
+    string long_name = 1;
+    string short_name = 2;
+    string category = 3;
+    float flop_count = 4;
+    float transcendental_count = 5;
+    int64 bytes_accessed = 9;
+    float optimal_seconds = 7;
+    int64 profile_index = 8;
+  }
+  message HloComputationInfo {
+    string name = 1;
+    int64 profile_index = 2;
+    repeated .xla.HloProfilePrinterData.HloInstructionInfo instruction_infos = 3;
+  }
+  repeated .xla.HloProfilePrinterData.HloComputationInfo computation_infos = 1;
+  int64 profile_counters_size = 2;
+  map<string, int64> extra_metrics = 3;
+  string entry_computation = 4;
+}

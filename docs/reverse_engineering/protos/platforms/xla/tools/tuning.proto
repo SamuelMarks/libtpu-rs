@@ -1,0 +1,39 @@
+syntax = "proto3";
+package xla.tuning;
+import "platforms/xla/service/jellyfish/lowering/backend_configs.proto";
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message ModuleRunData {
+  repeated .xla.tuning.OpRunData data = 1;
+}
+message OpRunData {
+  .xla.HloModuleProto module = 1;
+  string op_name = 2;
+  repeated .xla.tuning.OpConfigRunData runs = 3;
+  int64 config_count = 4;
+  string platform = 5;
+  uint64 fingerprint = 6;
+  repeated .xla.tuning.DecomposedOpRunData all_decomposed_op_runs = 7;
+}
+message OpConfigRunData {
+  string backend_config = 1;
+  .xla.ExecutionProfile profile = 2;
+  string error_message = 3;
+  repeated .xla.tuning.DecomposedOpRunReference decomposed_op_run_refs = 4;
+  repeated .xla.tuning.OpConfigRunData partitions = 5;
+  bool is_default = 6;
+}
+message DecomposedOpRunData {
+  .xla.HloModuleProto op_module = 1;
+  .xla.ExecutionProfile profile = 2;
+  .xla.jellyfish.WindowConfig window_config = 3;
+  int64 estimated_compute_time_ns = 4;
+}
+message DecomposedOpRunReference {
+  uint32 decomposed_op_run_index = 1;
+  uint32 instances_in_graph = 2;
+  bool profile_from_cache = 3;
+}
+message ShardConfigCount {
+  int64 complete = 1;
+}

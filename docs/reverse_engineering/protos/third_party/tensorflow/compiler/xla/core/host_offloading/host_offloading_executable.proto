@@ -1,0 +1,14 @@
+syntax = "proto3";
+package xla;
+import "third_party/tensorflow/compiler/xla/service/cpu/executable.proto";
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+message HostOffloadingExecutableProto {
+  enum ExecutableType {
+    EXECUTABLE_TYPE_INVALID = 0;
+    EXECUTABLE_TYPE_PJRT = 1;
+    EXECUTABLE_TYPE_NANORT = 2;
+  }
+  .xla.HloModuleProto hlo_module = 1;
+  .xla.HostOffloadingExecutableProto.ExecutableType executable_type = 2;
+  optional .xla.cpu.CompilationResultProto aot_compilation_result = 3;
+}

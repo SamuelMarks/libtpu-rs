@@ -1,0 +1,34 @@
+syntax = "proto2";
+package asic_sw.deepsea.gxc.gfc.isa;
+enum PredicationSlot {
+  PREDICATION_SLOT_PREG0_IS_1 = 0;
+  PREDICATION_SLOT_PREG1_IS_1 = 1;
+  PREDICATION_SLOT_PREG2_IS_1 = 2;
+  PREDICATION_SLOT_PREG3_IS_1 = 3;
+  PREDICATION_SLOT_PREG4_IS_1 = 4;
+  PREDICATION_SLOT_PREG5_IS_1 = 5;
+  PREDICATION_SLOT_PREG6_IS_1 = 6;
+  PREDICATION_SLOT_PREG7_IS_1 = 7;
+  PREDICATION_SLOT_PREG8_IS_1 = 8;
+  PREDICATION_SLOT_PREG9_IS_1 = 9;
+  PREDICATION_SLOT_PREG10_IS_1 = 10;
+  PREDICATION_SLOT_PREG11_IS_1 = 11;
+  PREDICATION_SLOT_PREG12_IS_1 = 12;
+  PREDICATION_SLOT_PREG13_IS_1 = 13;
+  PREDICATION_SLOT_ALWAYS = 14;
+  PREDICATION_SLOT_NEVER = 15;
+}
+message TensorCorePredicates {
+  message NoInstructions {
+  }
+  oneof inst {
+    .asic_sw.deepsea.gxc.gfc.isa.TensorCorePredicates.NoInstructions no_instructions = 8;
+  }
+  optional .asic_sw.deepsea.gxc.gfc.isa.PredicationSlot pred_0 = 1 [default = PREDICATION_SLOT_PREG0_IS_1];
+  optional bool pred_0_inversion = 2 [default = false];
+  optional .asic_sw.deepsea.gxc.gfc.isa.PredicationSlot pred_1 = 3 [default = PREDICATION_SLOT_PREG0_IS_1];
+  optional bool pred_1_inversion = 4 [default = false];
+  optional uint32 latency = 5;
+  map<string, uint32> resource_usage = 6;
+  optional uint32 bit_width = 7;
+}

@@ -124,7 +124,7 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
           if [[ -z "${VERSION}" || "${VERSION}" == "main" || "${VERSION}" == "master" ]]; then
-            VERSION="v0.0.50"
+            VERSION="v0.0.52"
           fi
           ARCHIVE_BASENAME="libtpu-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}"
           STAGE_DIR="dist/${ARCHIVE_BASENAME}"
@@ -150,18 +150,13 @@ jobs:
 
           tar -C dist -czf "dist/artifacts/${ARCHIVE_BASENAME}.tar.gz" "${ARCHIVE_BASENAME}"
 
-          python -m pip install --upgrade pip build wheel
-          python -m build --wheel --outdir dist/raw_wheel
-          for whl in dist/raw_wheel/*.whl; do
-            base="$(basename "$whl")"
-            plat_whl="${base%-py3-none-any.whl}-py3-none-${{ matrix.whl_plat }}.whl"
-            cp "$whl" "dist/artifacts/${plat_whl}"
-          done
+          python -m pip install --upgrade pip build wheel maturin
+          python -m build --wheel --outdir dist/artifacts
 
           # Smoke-test the built wheel in an isolated virtual environment
           python -m venv /tmp/test-venv
           /tmp/test-venv/bin/pip install dist/artifacts/*.whl
-          /tmp/test-venv/bin/python -c "import libtpu, pathlib; p = libtpu.get_library_path(); assert pathlib.Path(p).exists(), p; c = libtpu.TpuClient(); assert c.device_count() == 4; c.close()"
+          /tmp/test-venv/bin/python -c "import libtpu, libtpu._C, pathlib; p = libtpu.get_library_path(); assert pathlib.Path(p).exists(), p; assert (pathlib.Path(libtpu.__file__).parent / 'sdk.so').exists(); c = libtpu.TpuClient(); assert c.device_count() == 4; c.close()"
 
           cd dist/artifacts
           shasum -a 256 * > "SHA256SUMS-${{ matrix.os_name }}-${{ matrix.arch }}.txt"
@@ -173,7 +168,7 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
           if [[ -z "${VERSION}" || "${VERSION}" == "main" || "${VERSION}" == "master" ]]; then
-            VERSION="v0.0.50"
+            VERSION="v0.0.52"
           fi
           ARCHIVE_BASENAME="libtpu-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}"
           STAGE_DIR="dist/${ARCHIVE_BASENAME}"
@@ -191,13 +186,8 @@ jobs:
 
           (cd dist && 7z a -tzip "artifacts/${ARCHIVE_BASENAME}.zip" "${ARCHIVE_BASENAME}")
 
-          python -m pip install --upgrade pip build wheel
-          python -m build --wheel --outdir dist/raw_wheel
-          for whl in dist/raw_wheel/*.whl; do
-            base="$(basename "$whl")"
-            plat_whl="${base%-py3-none-any.whl}-py3-none-${{ matrix.whl_plat }}.whl"
-            cp "$whl" "dist/artifacts/${plat_whl}"
-          done
+          python -m pip install --upgrade pip build wheel maturin
+          python -m build --wheel --outdir dist/artifacts
 
           cd dist/artifacts
           sha256sum * > "SHA256SUMS-${{ matrix.os_name }}-${{ matrix.arch }}.txt"

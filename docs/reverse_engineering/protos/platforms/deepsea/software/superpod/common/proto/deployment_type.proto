@@ -1,0 +1,27 @@
+syntax = "proto2";
+package superpod.common;
+enum DeploymentType {
+  UNKNOWN = 0;
+  JELLYFISH = 1;
+  DRAGONFISH = 2;
+  PUFFERFISH = 3;
+  PUFFYLITE = 10;
+  VIPERFISH = 4;
+  VIPERLITE = 11;
+  VIPERLITE_POD = 5;
+  SEABAT = 12;
+  c_6acc60406_LITE = 8;
+  c_6acc60406_SAMPLING = 9;
+  GHOSTLITE_POD = 6;
+  GHOSTLITE_POD_COLO = 18;
+  GHOSTLITE_POD_EXT_TPU = 13;
+  GHOSTLITE_POD_EXT_TPU_SINGLE_TRAY = 17;
+  GHOSTLITE_POD_FOUR_BY_FOUR_EXT_TPU = 21;
+  c_6acc60406 = 7;
+  c_6acc60406_EXT_TPU = 14;
+  e6377df_SAMPLING = 15;
+  b544b9b8f = 16;
+  e6377df_SAMPLING_EXT_TPU = 19;
+  b544b9b8f_SAMPLING = 20;
+  c_3e6aa179 = 22;
+}

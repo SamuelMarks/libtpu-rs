@@ -39,11 +39,29 @@ def test_library_path_and_init_args(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TPU_LIBRARY_PATH", "/custom/libtpu.so")
     assert libtpu.configure_library_path() == "/custom/libtpu.so"
 
+    monkeypatch.setenv("LIBTPU_INIT_ARGS", "")
+    monkeypatch.delenv("LIBTPU_INIT_ARGS")
+    monkeypatch.setenv("TPU_ACCELERATOR_TYPE", "")
+    monkeypatch.delenv("TPU_ACCELERATOR_TYPE")
+    libtpu.set_init_args()
+    assert libtpu.get_init_args() == []
     libtpu.set_init_args(["--tpu_generation=v6e", "--xla_tpu_allow_async_allocations=true"])
     assert libtpu.get_init_args() == [
         "--tpu_generation=v6e",
         "--xla_tpu_allow_async_allocations=true",
     ]
+    libtpu.set_init_args("--tpu_generation=v6e", "--chips_per_host=1,1,1")
+    assert libtpu.get_init_args() == ["--tpu_generation=v6e", "--chips_per_host=1,1,1"]
+    with libtpu.TpuClient() as env_client:
+        assert env_client.device_count() == 1
+        assert "v6" in env_client.devices()[0].device_kind().lower()
+    with pytest.raises(TypeError):
+        libtpu.set_init_args([123])  # type: ignore[list-item]
+    with pytest.raises(TypeError):
+        libtpu.set_init_args("--tpu_generation=v6e", ["--bad"])  # type: ignore[call-overload]
+    monkeypatch.setenv("LIBTPU_INIT_ARGS", "---")
+    with pytest.raises(libtpu.TpuError):
+        libtpu.TpuClient()
     libtpu.set_init_args("--tpu_generation=v4")
     assert libtpu.get_init_args() == ["--tpu_generation=v4"]
     assert libtpu.initialize() == "/custom/libtpu.so"
@@ -308,20 +326,26 @@ def test_sdk_submodules(tmp_path: Path) -> None:
     assert "repeated int64 dimensions = 1;" in tile_schema
     assert "message CoreDump" in diagnostics.emit_proto_schema("asic_sw.CoreDump")
     assert "message AllCoreStateSummaries" in diagnostics.emit_proto_schema(
-        "libtpu.sdk.tpu_telemetry.AllCoreStateSummaries"
+        "platforms_deepsea.jellyfish.xdb.tpu_telemetry.AllCoreStateSummaries"
     )
     assert "message CompilerMetadata" in diagnostics.emit_proto_schema(
         "platforms_deepsea.jellyfish.xdb.CompilerMetadata"
     )
-    assert "message MosaicBackendConfigProto" in diagnostics.emit_proto_schema(
-        "mlir.tpu.MosaicBackendConfigProto"
-    )
+    assert "message TpuExecutableProto" in diagnostics.emit_proto_schema("xla.TpuExecutableProto")
     with pytest.raises(ValueError, match="must not be empty"):
         diagnostics.emit_proto_schema("")
     with pytest.raises(ValueError, match="Unknown protobuf message schema"):
         diagnostics.emit_proto_schema("nonexistent.MessageProto")
 
     def _varint(v: int) -> bytes:
+        """Encodes `v` as an unsigned/two's-complement 64-bit Protobuf varint.
+
+        Args:
+            v: Integer value to encode.
+
+        Returns:
+            Varint-encoded byte string.
+        """
         if v < 0:
             v += 1 << 64
         out = bytearray()
@@ -336,9 +360,27 @@ def test_sdk_submodules(tmp_path: Path) -> None:
         return bytes(out)
 
     def _tag(fnum: int, wtype: int) -> bytes:
+        """Encodes a Protobuf `(field_number, wire_type)` tag varint.
+
+        Args:
+            fnum: Field number (`>= 1`).
+            wtype: Wire type (`0..5`).
+
+        Returns:
+            Encoded tag varint bytes.
+        """
         return _varint((fnum << 3) | wtype)
 
     def _ld(fnum: int, payload: bytes) -> bytes:
+        """Encodes a length-delimited Protobuf field (`wire_type = 2`).
+
+        Args:
+            fnum: Field number (`>= 1`).
+            payload: Raw submessage or string byte payload.
+
+        Returns:
+            Encoded length-delimited field bytes.
+        """
         return _tag(fnum, 2) + _varint(len(payload)) + payload
 
     meta_file = tmp_path / "tpu_compiler_metadata_0.pb"
@@ -969,9 +1011,9 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     assert libtpu.lookup_csr_by_offset(0xDEAD_BEEF_FFFF) is None
     assert b"traceEvents" in tpuz.collect_profiler_tool_data("trace_viewer.json")
     assert len(libtpu.collect_profiler_tool_data("input_pipeline.pb")) > 0
-    assert libtpu.verify_protodesc_293_catalog() == 293
-    assert debug.verify_protodesc_cold_293() == 293
-    assert diagnostics.protodesc_cold_file_count() == 293
+    assert libtpu.verify_protodesc_293_catalog() == 738
+    assert debug.verify_protodesc_cold_293() == 738
+    assert diagnostics.protodesc_cold_file_count() == 738
     assert diagnostics.compute_torus_route_hops(0, 0, 0, 3, 0, 0, True) == 1
     assert diagnostics.compute_torus_route_hops(0, 0, 0, 3, 0, 0, False) == 3
     grpc_res = diagnostics.invoke_coordination_grpc(
@@ -997,6 +1039,13 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     assert libtpu.service_host_command(b"\x08\x01\x10\x05") == 7
     with pytest.raises(libtpu.TpuError):
         libtpu.service_host_command(b"\xff\xff\xff")
+    with libtpu.TpuClient() as rem_cl:
+        with rem_cl.compile("module @rem { stablehlo.add }") as rem_ex:
+            assert "computation=" in libtpu.query_rematerialization_report(rem_ex, 256)
+            assert libtpu.execute_barnacore_program(rem_ex, 1) >= 1
+        assert libtpu.query_rematerialization_report(rem_ex, 256) == ""
+        with pytest.raises(libtpu.TpuError):
+            libtpu.execute_barnacore_program(rem_ex, 1)
 
     # Verify all 138 PJRT_Api slots against golden_struct_layouts.json min_struct_size
     golden_path = (
@@ -1070,3 +1119,15 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
                         assert f"{param}:" in doc, (
                             f"Missing arg doc for {param} in {node.name} ({mod_path})"
                         )
+
+
+def test_usage_md_python_snippets_execute_end_to_end() -> None:
+    """Parses fenced `python` blocks in `USAGE.md` Section 4 and executes them end-to-end."""
+    usage_md = Path(__file__).resolve().parents[2] / "USAGE.md"
+    sec4 = usage_md.read_text(encoding="utf-8").split("## 4. Python SDK", 1)[1]
+    sec4 = sec4.split("## 5. Rust Core API", 1)[0]
+    blocks = [part.split("```", 1)[0] for part in sec4.split("```python\n")[1:]]
+    assert len(blocks) == 2
+    for block in blocks:
+        ns: dict[str, object] = {"__name__": "__usage_test__"}
+        exec(compile(block, str(usage_md), "exec"), ns)

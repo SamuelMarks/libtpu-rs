@@ -1,0 +1,14 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+import "platforms/asic_sw/lib/deepsea/common/sync_flag.proto";
+message XlaRecvBufferProto {
+  reserved 2;
+  reserved 5;
+  .asic_sw.deepsea.SyncFlag dst_sync_flag = 1;
+  int64 on_device_size = 6;
+  .tpu.TpuSharedMemoryTypeProto memory_type = 3;
+  int32 memory_id = 4;
+  int64 byte_offset = 7;
+  uint64 transfer_guid = 8;
+}

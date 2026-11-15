@@ -1,0 +1,29 @@
+syntax = "proto3";
+package asic_sw.tools;
+import "third_party/protobuf/cpp_features.proto";
+message EncodedRegister {
+  string name = 1;
+  uint64 offset = 2;
+  int32 width = 4;
+  int32 register_data_index = 5;
+  bytes register_data = 3;
+}
+message EncodedMemory {
+  string name = 1;
+  uint64 start_offset = 2;
+  uint64 memory_size_bytes = 3;
+  bytes memory_data = 4;
+}
+message EncodedNode {
+  string mnemonic = 1;
+  repeated .asic_sw.tools.EncodedRegister registers = 2;
+  repeated .asic_sw.tools.EncodedMemory memories = 3;
+  repeated string tag = 4;
+  uint64 base_offset = 5;
+  int32 layout_index = 6;
+}
+message RegisterTranslatorData {
+  repeated .asic_sw.tools.EncodedNode nodes = 1;
+  repeated bytes register_data_table = 2;
+  repeated .asic_sw.tools.EncodedNode node_layout_table = 3;
+}

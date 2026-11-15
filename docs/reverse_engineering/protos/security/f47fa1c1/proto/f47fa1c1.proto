@@ -1,0 +1,40 @@
+syntax = "proto2";
+package f47fa1c1;
+import public "security/f47fa1c1/proto/core/f47fa1c1_core.proto";
+import "n2a/p4r2d3/bridge/proto/message_set.proto";
+import "production/tpc/change_management/equivalence/proto/annotation.proto";
+import "security/credentials/proto/principal.proto";
+import "security/loas/l2/internal/securewrapper/multihop_clients/boundary_proxy.proto";
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+import "third_party/boundary_proxy/proto_compare/annotation.proto";
+message f47fa1c1Description {
+  repeated .security.credentials.PrincipalProto delegate = 1;
+  optional int64 not_before = 2;
+  optional int64 not_after = 3;
+  repeated uint64 revocation_id = 7;
+  optional bool is_renewable = 9;
+  repeated string path_segment = 4;
+  optional .proto2.bridge.MessageSet restrictions = 5;
+  optional .proto2.bridge.MessageSet comments = 6;
+  repeated string security_realms = 8;
+}
+message f47fa1c1Args {
+  repeated .f47fa1c1.f47fa1c1 mint = 1;
+  extend .proto2.bridge.MessageSet {
+    optional .f47fa1c1.f47fa1c1Args message_set_extension = 16343551;
+  }
+}
+message MintResponse {
+  enum Code {
+    OK = 0;
+    FAILURE = 1;
+    INVALID_REQUEST = 2;
+    INVALID_DESCRIPTION = 3;
+    INVALID_f47fa1c1 = 4;
+    INVALID_VALIDITY_PERIOD = 5;
+    ILLEGAL_f47fa1c1 = 6;
+    REVOKED_f47fa1c1 = 7;
+    REQUEST_THROTTLED_RETRY = 8;
+    REQUEST_THROTTLED_NO_RETRY = 9;
+  }
+}

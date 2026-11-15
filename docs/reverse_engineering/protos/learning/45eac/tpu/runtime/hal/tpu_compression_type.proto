@@ -1,0 +1,6 @@
+syntax = "proto3";
+package tpu;
+enum TpuCompressionTypeProto {
+  TPU_COMPRESSION_TYPE_NONE = 0;
+  TPU_COMPRESSION_TYPE_ZSTD = 1;
+}

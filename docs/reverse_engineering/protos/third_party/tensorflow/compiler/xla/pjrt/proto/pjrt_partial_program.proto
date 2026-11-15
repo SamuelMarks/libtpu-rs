@@ -1,0 +1,10 @@
+syntax = "proto3";
+package xla;
+message PjRtPartialProgramProto {
+  bytes program = 1;
+  string program_format = 2;
+  string producer_phase = 3;
+  repeated string consumer_phases = 4;
+  string version = 5;
+  string program_name = 6;
+}

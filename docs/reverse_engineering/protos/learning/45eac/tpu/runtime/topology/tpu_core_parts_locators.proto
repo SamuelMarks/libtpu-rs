@@ -1,0 +1,15 @@
+syntax = "proto3";
+package tpu;
+import "learning/45eac/tpu/runtime/tpu_chip_enums.proto";
+message TpuMemoryOnCoreProto {
+  .tpu.TpuMemoryTypeProto type = 1;
+  int32 index = 2;
+}
+message TpuMemoryTypeOnCoreTypeProto {
+  .tpu.TpuCoreTypeProto core_type = 1;
+  .tpu.TpuMemoryTypeProto memory_type = 2;
+}
+message TpuSequencerOnCoreProto {
+  .tpu.TpuSequencerTypeProto type = 1;
+  int32 index = 2;
+}

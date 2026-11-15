@@ -1,0 +1,84 @@
+syntax = "proto2";
+package streamz;
+import "google/protobuf/any.proto";
+import "google/protobuf/timestamp.proto";
+import "monitoring/streamz/api/distribution.proto";
+import "monitoring/streamz/api/tuple.proto";
+message Entity {
+  message Label {
+    oneof value {
+      string string_value = 2;
+      int64 int64_value = 3;
+      bool bool_value = 4;
+    }
+    optional string key = 1;
+  }
+  repeated .streamz.Entity.Label label = 1;
+}
+message MetricDescriptor {
+  enum StreamKind {
+    GAUGE = 1;
+    CUMULATIVE = 2;
+    DELTA = 3;
+  }
+  enum ValueType {
+    BOOL = 1;
+    STRING = 2;
+    INT64 = 3;
+    DOUBLE = 4;
+    DISTRIBUTION = 5;
+  }
+  message ColumnDescriptor {
+    enum Type {
+      STRING = 1;
+      INT64 = 2;
+      BOOL = 3;
+    }
+    optional string name = 1;
+    optional .streamz.MetricDescriptor.ColumnDescriptor.Type type = 2;
+  }
+  message TupleType {
+    optional .streamz.MetricDescriptor.StreamKind stream_kind = 1;
+    optional .streamz.MetricDescriptor.ValueType value_type = 2;
+  }
+  message Annotations {
+    optional string unit = 1;
+    optional bool timestamp = 2;
+    optional string deprecation = 3;
+    repeated .google.protobuf.Any annotation = 16;
+  }
+  optional string name = 1;
+  repeated .streamz.MetricDescriptor.ColumnDescriptor column = 2;
+  optional .streamz.MetricDescriptor.StreamKind stream_kind = 3;
+  optional .streamz.MetricDescriptor.ValueType value_type = 4;
+  optional string description = 5;
+  optional .streamz.MetricDescriptor.Annotations annotations = 6;
+  repeated .streamz.MetricDescriptor.TupleType tuple_types = 7;
+}
+message Point {
+  message Column {
+    oneof value {
+      string string_value = 2;
+      int64 int64_value = 3;
+      bool bool_value = 4;
+    }
+    optional string name = 1;
+  }
+  oneof value {
+    bool bool_value = 2;
+    string string_value = 3;
+    int64 int64_value = 4;
+    double double_value = 5;
+    .streamz.Distribution distribution_value = 6;
+    .streamz.Tuple tuple_value = 10;
+    bool not_for_use_with_exhaustive_switch_statements = 111;
+  }
+  repeated .streamz.Point.Column column = 1;
+  optional .google.protobuf.Timestamp start_timestamp = 7;
+  optional .google.protobuf.Timestamp end_timestamp = 8;
+  optional bool continuation = 9 [default = false];
+}
+message PointSet {
+  optional string metric_name = 1;
+  repeated .streamz.Point point = 2;
+}

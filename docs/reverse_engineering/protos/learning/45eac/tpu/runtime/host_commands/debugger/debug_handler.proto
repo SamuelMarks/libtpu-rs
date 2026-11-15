@@ -1,0 +1,21 @@
+syntax = "proto2";
+package tpu;
+import "third_party/tensorflow/compiler/xla/service/hlo.proto";
+message BreakpointEvent {
+  enum ScopeSection {
+    SCOPE_UNSPECIFIED = 0;
+    SCOPE_WHILE_CONDITION = 1;
+    SCOPE_WHILE_BODY = 2;
+    SCOPE_CONDITIONAL_TRUE = 3;
+    SCOPE_CONDITIONAL_FALSE = 4;
+  }
+  message Scope {
+    optional string instruction_name = 1;
+    optional .tpu.BreakpointEvent.ScopeSection section = 2 [default = SCOPE_UNSPECIFIED];
+  }
+  optional .xla.HloInstructionProto hlo_instruction = 1;
+  optional string tag = 2;
+  repeated .tpu.BreakpointEvent.Scope scopes = 3;
+  optional string hlo_instruction_name = 4;
+  optional int64 bundle_number = 5;
+}

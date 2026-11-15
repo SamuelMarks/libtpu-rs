@@ -234,10 +234,60 @@ pub(crate) static GLOBAL_PJRT_API: PJRT_Api = PJRT_Api {
         PJRT_TopologyDescription_GetMemorySpaceKindIds,
 };
 
+/// Thread-safe wrapper around [`PJRT_Api`] for optional minor-version negotiation.
+#[repr(transparent)]
+struct NegotiatedPjrtApi(PJRT_Api);
+
+// SAFETY: `PJRT_Api` contains only immutable static function pointers and static extension chain pointers.
+unsafe impl Send for NegotiatedPjrtApi {}
+// SAFETY: `PJRT_Api` contains only immutable static function pointers and static extension chain pointers.
+unsafe impl Sync for NegotiatedPjrtApi {}
+
+/// Optional negotiated `PJRT_Api` copy when `LIBTPU_PJRT_API_MINOR_VERSION` is set by older PJRT hosts (e.g., JAX 0.4.x `0.54`).
+static NEGOTIATED_PJRT_API: std::sync::OnceLock<NegotiatedPjrtApi> = std::sync::OnceLock::new();
+
+/// Constructs a `PJRT_Api` vtable tailored to `minor` version negotiation.
+///
+/// # Arguments
+///
+/// * `minor` - Negotiated PJRT minor API version requested by the host framework.
+#[must_use]
+pub(crate) fn build_negotiated_pjrt_api(minor: i32) -> PJRT_Api {
+    let mut copy = GLOBAL_PJRT_API;
+    copy.pjrt_api_version.minor_version = minor;
+    if minor < PJRT_API_MINOR {
+        copy.extension_start = ptr::addr_of!(crate::extensions::NEGOTIATED_EXT_PROFILER).cast();
+    }
+    copy
+}
+
+/// Resolves the `PJRT_Api` vtable pointer for an optional `LIBTPU_PJRT_API_MINOR_VERSION` string.
+///
+/// # Arguments
+///
+/// * `minor_env` - Optional string value of `LIBTPU_PJRT_API_MINOR_VERSION`.
+#[must_use]
+pub(crate) fn resolve_pjrt_api_for_env(minor_env: Option<&str>) -> *const PJRT_Api {
+    if let Some(minor) = minor_env.and_then(|raw| raw.parse::<i32>().ok())
+        && minor != PJRT_API_MINOR
+    {
+        let negotiated =
+            NEGOTIATED_PJRT_API.get_or_init(|| NegotiatedPjrtApi(build_negotiated_pjrt_api(minor)));
+        return ptr::from_ref(&negotiated.0);
+    }
+    ptr::addr_of!(GLOBAL_PJRT_API)
+}
+
 /// Primary PJRT C API entrypoint exported by `libtpu.so` (`GetPjrtApi`).
 #[unsafe(no_mangle)]
 pub extern "C" fn GetPjrtApi() -> *const PJRT_Api {
-    ptr::addr_of!(GLOBAL_PJRT_API)
+    crate::pjrt_helpers::ffi_catch_unwind(std::ptr::null(), || {
+        resolve_pjrt_api_for_env(
+            std::env::var("LIBTPU_PJRT_API_MINOR_VERSION")
+                .ok()
+                .as_deref(),
+        )
+    })
 }
 
 /// Returns the ABI version tuple and core primitive defaults.
@@ -274,6 +324,47 @@ mod tests {
         let tup = abi_version_tuple();
         assert_eq!(tup.0, 0);
         assert_eq!(tup.1, 116);
+        assert_eq!(
+            crate::pjrt_types::select_min_struct_size(None, 120, 96),
+            120
+        );
+        assert_eq!(
+            crate::pjrt_types::select_min_struct_size(Some("bad"), 120, 96),
+            120
+        );
+        assert_eq!(
+            crate::pjrt_types::select_min_struct_size(Some("116"), 120, 96),
+            120
+        );
+        assert_eq!(
+            crate::pjrt_types::select_min_struct_size(Some("54"), 120, 96),
+            96
+        );
+        assert_eq!(
+            build_negotiated_pjrt_api(54).pjrt_api_version.minor_version,
+            54
+        );
+        assert_eq!(
+            build_negotiated_pjrt_api(120)
+                .pjrt_api_version
+                .minor_version,
+            120
+        );
+        assert_eq!(
+            resolve_pjrt_api_for_env(None),
+            ptr::addr_of!(GLOBAL_PJRT_API)
+        );
+        assert_eq!(
+            resolve_pjrt_api_for_env(Some("invalid")),
+            ptr::addr_of!(GLOBAL_PJRT_API)
+        );
+        assert_eq!(
+            resolve_pjrt_api_for_env(Some("116")),
+            ptr::addr_of!(GLOBAL_PJRT_API)
+        );
+        let neg_ptr = resolve_pjrt_api_for_env(Some("54"));
+        assert!(!neg_ptr.is_null());
+        assert_ne!(neg_ptr, ptr::addr_of!(GLOBAL_PJRT_API));
         let cstr_with_nul = to_c_string("a\0b");
         assert_eq!(cstr_with_nul.as_bytes(), b"ab");
 

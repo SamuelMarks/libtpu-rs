@@ -1,0 +1,56 @@
+syntax = "proto3";
+package platforms_deepsea.jellyfish.barna_core;
+message PayloadProto {
+  message TpuSample {
+    message TpuTable {
+      message IdPayload {
+        uint64 token_id = 1;
+        uint32 arg1 = 2;
+        uint32 arg2 = 3;
+        float gain = 4;
+        int32 occurrence_count = 5;
+        bool first_occurrence = 6;
+        int32 duplicate_hash_id = 7;
+        int32 addrmap_hash_id = 8;
+      }
+      int32 tpu_table_id = 1;
+      repeated .platforms_deepsea.jellyfish.barna_core.PayloadProto.TpuSample.TpuTable.IdPayload id_payloads = 2;
+    }
+    repeated .platforms_deepsea.jellyfish.barna_core.PayloadProto.TpuSample.TpuTable tpu_tables = 1;
+  }
+  int32 batch_id = 1;
+  repeated .platforms_deepsea.jellyfish.barna_core.PayloadProto.TpuSample tpu_samples = 2;
+}
+message DfcPayloadProto {
+  message TpuSample {
+    message IdPayload {
+      uint64 token_id = 1;
+      uint32 arg = 2;
+      float gain = 4;
+      int32 occurrence_count = 5;
+      bool first_occurrence = 6;
+      int32 duplicate_hash_id = 7;
+      int32 addrmap_hash_id = 8;
+      int32 tpu_table_id = 9;
+    }
+    repeated .platforms_deepsea.jellyfish.barna_core.DfcPayloadProto.TpuSample.IdPayload id_payloads = 2;
+  }
+  int32 batch_id = 1;
+  repeated .platforms_deepsea.jellyfish.barna_core.DfcPayloadProto.TpuSample tpu_samples = 2;
+}
+message PfcPayloadProto {
+  message TpuSample {
+    message IdPayload {
+      uint64 token_id = 1;
+      uint32 arg = 2;
+      float gain = 4;
+      int32 occurrence_count = 5;
+      bool first_occurrence = 6;
+      int32 duplicate_hash_id = 7;
+      int32 tpu_table_id = 8;
+    }
+    repeated .platforms_deepsea.jellyfish.barna_core.PfcPayloadProto.TpuSample.IdPayload id_payloads = 2;
+  }
+  int32 batch_id = 1;
+  repeated .platforms_deepsea.jellyfish.barna_core.PfcPayloadProto.TpuSample tpu_samples = 2;
+}

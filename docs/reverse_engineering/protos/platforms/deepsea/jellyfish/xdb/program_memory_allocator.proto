@@ -1,0 +1,78 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.xdb;
+import "third_party/tensorflow/compiler/xla/xla_data.proto";
+message ProgramMemoryMetadata {
+  enum MemorySpace {
+    HBM = 0;
+    VMEM = 1;
+    CMEM = 2;
+    SMEM = 3;
+    SFLAG = 4;
+    BARNACORE_SMEM = 5;
+    BARNACORE_SFLAG = 6;
+    BARNACORE_BMEM = 7;
+    SPARSECORE_SEQUENCER_SFLAG = 8;
+    HOST = 9;
+    SPARSECORE_SEQUENCER_SMEM = 10;
+    SPARSECORE_TILE_SFLAG = 11;
+    SPARSECORE_TILE_SMEM = 12;
+    SPARSECORE_TILE_SPMEM = 13;
+  }
+  enum MemorySubSpace {
+    ABSOLUTE = 0;
+    HEAP_RELATIVE = 1;
+    STACK_RELATIVE = 2;
+  }
+  enum BlockType {
+    RESERVED = 0;
+    GLOBAL = 1;
+    SCOPED = 2;
+    HLO_TEMPORARY = 3;
+    HLO_TEMPORARY_OUTPUT = 4;
+    OVERLAYS = 5;
+  }
+  message Allocation {
+    optional string label = 1;
+    optional string metadata = 2;
+    optional .xla.ShapeProto shape = 3;
+    optional int64 size_bytes = 4;
+    optional int64 unpadded_size_bytes = 5;
+    optional bool is_spill = 6;
+    optional string tag = 7;
+  }
+  message Block {
+    optional .platforms_deepsea.jellyfish.xdb.ProgramMemoryMetadata.BlockType type = 1;
+    optional int64 size_bytes = 2;
+    optional int64 fragmentation_bytes = 3;
+    repeated .platforms_deepsea.jellyfish.xdb.ProgramMemoryMetadata.Allocation allocations = 4;
+  }
+  message MemorySpaceSummary {
+    optional .platforms_deepsea.jellyfish.xdb.ProgramMemoryMetadata.MemorySpace memory_space = 1;
+    optional int64 size_bytes = 2;
+    repeated .platforms_deepsea.jellyfish.xdb.ProgramMemoryMetadata.Block blocks = 3;
+    optional int64 max_bytes = 4;
+    optional int64 arg_bytes = 5;
+    optional int64 output_bytes = 6;
+    optional int64 aliased_output_bytes = 7;
+    optional int64 reserved_bytes = 8;
+  }
+  repeated .platforms_deepsea.jellyfish.xdb.ProgramMemoryMetadata.MemorySpaceSummary summaries = 1;
+}
+message MemorySpaceSize {
+  optional .platforms_deepsea.jellyfish.xdb.ProgramMemoryMetadata.MemorySpace space = 1;
+  optional .platforms_deepsea.jellyfish.xdb.ProgramMemoryMetadata.MemorySubSpace subspace = 2;
+  optional int64 size_bytes = 3;
+}
+message MemorySizes {
+  repeated .platforms_deepsea.jellyfish.xdb.MemorySpaceSize values = 1;
+}
+message MemoryUsage {
+  optional .platforms_deepsea.jellyfish.xdb.MemorySizes base_sizes = 1;
+  optional .platforms_deepsea.jellyfish.xdb.MemorySizes ceiling_sizes = 2;
+  optional .platforms_deepsea.jellyfish.xdb.MemorySizes base_adjustments = 3;
+}
+message ProgramMemoryAllocator {
+  optional .platforms_deepsea.jellyfish.xdb.MemoryUsage memory_usages = 1;
+  optional .platforms_deepsea.jellyfish.xdb.MemorySizes alignments = 2;
+  optional .platforms_deepsea.jellyfish.xdb.ProgramMemoryMetadata memory_metadata = 3;
+}

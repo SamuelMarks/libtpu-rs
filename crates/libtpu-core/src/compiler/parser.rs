@@ -786,8 +786,10 @@ pub fn classify_ast_operation(
         "collective_permute" | "collective-permute" | "collective_broadcast" => {
             AstOpKind::HardwareOp(TpuOpCode::CollectivePermute)
         }
-        "custom_call" | "custom-call" | "infeed" | "outfeed" | "send" | "recv" | "partition_id"
-        | "replica_id" | "AsyncStart" | "AsyncUpdate" | "AsyncDone" => {
+        "send" => AstOpKind::HardwareOp(TpuOpCode::Send),
+        "recv" => AstOpKind::HardwareOp(TpuOpCode::Recv),
+        "custom_call" | "custom-call" | "infeed" | "outfeed" | "partition_id" | "replica_id"
+        | "AsyncStart" | "AsyncUpdate" | "AsyncDone" => {
             AstOpKind::HardwareOp(TpuOpCode::CustomCall)
         }
         "reduce_max" => AstOpKind::HardwareOp(TpuOpCode::ReduceMax),
@@ -953,6 +955,14 @@ impl<'a> MlirModuleParser<'a> {
                 module.type_aliases.insert(alias_name, ty);
                 continue;
             }
+            // Check for file-level metadata `{-# dialect_resources: { ... } #-}`
+            if self.cursor.peek_token() == Some(&HloToken::Punct('{'))
+                && self.cursor.peek_n(1) == Some(&HloToken::Punct('-'))
+                && self.cursor.peek_n(2) == Some(&HloToken::Punct('#'))
+            {
+                self.parse_file_metadata_resources(&mut module);
+                continue;
+            }
             // Check for `module @name attributes { ... } { ... }`
             if self.cursor.consume_ident("module") || self.cursor.consume_ident("builtin.module") {
                 module.name = self.cursor.consume_symbol_str();
@@ -965,8 +975,11 @@ impl<'a> MlirModuleParser<'a> {
                 let _ = self.parse_optional_location();
                 continue;
             }
-            // Check for bare `func.func` or `sdy.mesh` or top-level op
-            if self.cursor.peek_token() == Some(&HloToken::Ident(String::from("func.func"))) {
+            // Check for bare `func.func`, `vhlo.func_v1`, or `sdy.mesh` or top-level op
+            if matches!(
+                self.cursor.peek_token(),
+                Some(HloToken::Ident(id)) if id == "func.func" || id == "vhlo.func_v1"
+            ) {
                 let func = self.parse_function()?;
                 module.functions.push(func);
                 continue;
@@ -989,17 +1002,66 @@ impl<'a> MlirModuleParser<'a> {
         }
 
         module.locations.clone_from(&self.locations);
+        resolve_module_locations_and_resources(&mut module);
         Ok(module)
     }
 
-    /// Parses the items inside a `module { ... }` block (`func.func`, `sdy.mesh`, aliases, or bare ops).
+    /// Parses a `{-# dialect_resources: { builtin: { key: "0x..." } } #-}` metadata block into `module.dialect_resources`.
+    ///
+    /// # Arguments
+    ///
+    /// * `module` - Mutable [`AstModule`] receiving decoded resource blobs.
+    fn parse_file_metadata_resources(&mut self, module: &mut AstModule) {
+        self.cursor.next_token(); // '{'
+        self.cursor.next_token(); // '-'
+        self.cursor.next_token(); // '#'
+        while !self.cursor.is_eof() {
+            if self.cursor.peek_token() == Some(&HloToken::AttrAlias(String::from("#-")))
+                && self.cursor.peek_n(1) == Some(&HloToken::Punct('}'))
+            {
+                self.cursor.next_token();
+                self.cursor.next_token();
+                break;
+            }
+            if let Some(HloToken::Ident(key) | HloToken::StringLiteral(key)) =
+                self.cursor.peek_token().cloned()
+                && self.cursor.peek_n(1) == Some(&HloToken::Punct(':'))
+                && let Some(HloToken::HexBlob(raw_blob)) = self.cursor.peek_n(2).cloned()
+            {
+                self.cursor.next_token();
+                self.cursor.next_token();
+                self.cursor.next_token();
+                let payload = if raw_blob.len() > 4 {
+                    let mut align_le = [0_u8; 4];
+                    align_le.copy_from_slice(raw_blob.get(..4).unwrap_or(&[0; 4]));
+                    let align = u32::from_le_bytes(align_le);
+                    if align.is_power_of_two() && align <= 4096 {
+                        raw_blob.get(4..).unwrap_or(&raw_blob).to_vec()
+                    } else {
+                        raw_blob
+                    }
+                } else {
+                    raw_blob
+                };
+                module.dialect_resources.insert(key, payload);
+                let _ = self.cursor.consume_punct(',');
+                continue;
+            }
+            self.cursor.next_token();
+        }
+    }
+
+    /// Parses the items inside a `module { ... }` block (`func.func`, `vhlo.func_v1`, `sdy.mesh`, aliases, or bare ops).
     ///
     /// # Arguments
     ///
     /// * `module` - Mutable [`AstModule`] being populated.
     fn parse_module_body(&mut self, module: &mut AstModule) -> LibTpuResult<()> {
         while self.cursor.is_open('}') {
-            if self.cursor.peek_token() == Some(&HloToken::Ident(String::from("func.func"))) {
+            if matches!(
+                self.cursor.peek_token(),
+                Some(HloToken::Ident(id)) if id == "func.func" || id == "vhlo.func_v1"
+            ) {
                 let func = self.parse_function()?;
                 module.functions.push(func);
             } else if self.cursor.peek_token() == Some(&HloToken::Ident(String::from("sdy.mesh"))) {
@@ -1454,6 +1516,12 @@ impl<'a> MlirModuleParser<'a> {
                 let _ = self.cursor.consume_punct(',');
                 continue;
             }
+            // Custom assembly bracketed slice `[0:2:1, 0:4:2]` or index list `[%i, %j]`
+            if self.cursor.peek_token() == Some(&HloToken::Punct('[')) {
+                self.parse_bracketed_slice_or_indices(&mnemonic, &mut operands, &mut attributes);
+                let _ = self.cursor.consume_punct(',');
+                continue;
+            }
             // Otherwise advance one token inside custom assembly syntax (e.g. `across`, `dims`, `into`, etc.)
             self.cursor.next_token();
         }
@@ -1512,6 +1580,77 @@ impl<'a> MlirModuleParser<'a> {
             return true;
         }
         false
+    }
+
+    /// Parses custom-assembly `[start:limit(:stride), ...]` on `stablehlo.slice` or `[%idx0, %idx1]` on `memref`/`vector` ops.
+    ///
+    /// # Arguments
+    ///
+    /// * `mnemonic` - Unqualified operation mnemonic.
+    /// * `operands` - Mutable operand list for index operands.
+    /// * `attributes` - Mutable attribute map for slice attributes.
+    fn parse_bracketed_slice_or_indices(
+        &mut self,
+        mnemonic: &str,
+        operands: &mut Vec<AstOperand>,
+        attributes: &mut BTreeMap<String, MlirAttribute>,
+    ) {
+        let _ = self.cursor.consume_punct('[');
+        if mnemonic == "slice" {
+            let mut starts = Vec::new();
+            let mut limits = Vec::new();
+            let mut strides = Vec::new();
+            while self.cursor.is_open(']') {
+                let s = self
+                    .cursor
+                    .consume_number_str()
+                    .and_then(|v| v.parse::<i64>().ok())
+                    .unwrap_or(0);
+                let _ = self.cursor.consume_punct(':');
+                let l = self
+                    .cursor
+                    .consume_number_str()
+                    .and_then(|v| v.parse::<i64>().ok())
+                    .unwrap_or(s);
+                let st = if self.cursor.consume_punct(':') {
+                    self.cursor
+                        .consume_number_str()
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .unwrap_or(1)
+                } else {
+                    1
+                };
+                starts.push(s);
+                limits.push(l);
+                strides.push(st);
+                let _ = self.cursor.consume_punct(',');
+            }
+            attributes.insert(
+                String::from("start_indices"),
+                MlirAttribute::DenseI64Array(starts),
+            );
+            attributes.insert(
+                String::from("limit_indices"),
+                MlirAttribute::DenseI64Array(limits),
+            );
+            attributes.insert(
+                String::from("strides"),
+                MlirAttribute::DenseI64Array(strides),
+            );
+            return;
+        }
+        let mut depth = 1_usize;
+        while depth > 0 && !self.cursor.is_eof() {
+            if let Some(opnd) = self.try_parse_operand() {
+                operands.push(opnd);
+                continue;
+            }
+            match self.cursor.next_token().map(|st| &st.token) {
+                Some(HloToken::Punct('[')) => depth += 1,
+                Some(HloToken::Punct(']')) => depth -= 1,
+                _ => {}
+            }
+        }
     }
 
     /// Returns `true` if the next `{` begins an attribute dictionary (`{key = val}` or `{}`) rather than a nested region.
@@ -1687,28 +1826,43 @@ impl<'a> MlirModuleParser<'a> {
         if is_unranked {
             return Ok(MlirType::UnrankedTensor(elem_type));
         }
+        let mut dims = dims;
         let encoding = encoding_part.map(|enc_str| {
             let trimmed = enc_str.trim();
-            trimmed
+            let bounds_inner = trimmed
                 .strip_prefix("#stablehlo.bounds<")
                 .and_then(|s| s.strip_suffix('>'))
-                .map_or_else(
-                    || TensorEncodingAttr::Custom(String::from(trimmed)),
-                    |b_inner| {
-                        let bounds = b_inner
-                            .split(',')
-                            .map(|item| {
-                                let t = item.trim();
-                                if t == "?" {
-                                    None
-                                } else {
-                                    t.parse::<i64>().ok()
-                                }
-                            })
-                            .collect();
-                        TensorEncodingAttr::Bounds(bounds)
-                    },
-                )
+                .or_else(|| {
+                    trimmed
+                        .strip_prefix("#vhlo.type_extensions_v1<bounds = [")
+                        .or_else(|| trimmed.strip_prefix("#vhlo.type_extensions_v1<bounds=["))
+                        .and_then(|s| s.strip_suffix("]>"))
+                });
+            bounds_inner.map_or_else(
+                || TensorEncodingAttr::Custom(String::from(trimmed)),
+                |b_inner| {
+                    let bounds: Vec<Option<i64>> = b_inner
+                        .split(',')
+                        .map(|item| {
+                            let t = item.trim();
+                            if t == "?" {
+                                None
+                            } else {
+                                t.parse::<i64>().ok()
+                            }
+                        })
+                        .collect();
+                    for (slot, b_opt) in dims.iter_mut().zip(bounds.iter()) {
+                        if *slot == DimensionSize::Dynamic
+                            && let Some(bound_val) = b_opt
+                            && *bound_val > 0
+                        {
+                            *slot = DimensionSize::Bounded(*bound_val);
+                        }
+                    }
+                    TensorEncodingAttr::Bounds(bounds)
+                },
+            )
         });
         Ok(MlirType::RankedTensor(RankedTensorType {
             dims,
@@ -2543,61 +2697,137 @@ fn extract_named_usize(body: &str, key: &str) -> Option<usize> {
     digits.parse::<usize>().ok()
 }
 
-/// Legalizes `chlo.*` operations inside an [`AstModule`] into canonical `stablehlo` / hardware [`AstOpKind`]s.
+/// Recursively resolves `#loc` aliases against `loc_table` up to a bounded depth.
+///
+/// # Arguments
+///
+/// * `loc` - Source [`MlirLocation`] to resolve.
+/// * `loc_table` - Top-level `#loc` alias definitions.
+/// * `depth` - Remaining recursion budget.
+fn resolve_single_location(
+    loc: &MlirLocation,
+    loc_table: &BTreeMap<String, MlirLocation>,
+    depth: usize,
+) -> MlirLocation {
+    if depth == 0 {
+        return loc.clone();
+    }
+    match loc {
+        MlirLocation::Alias(alias) => loc_table.get(alias).map_or_else(
+            || loc.clone(),
+            |target| resolve_single_location(target, loc_table, depth - 1),
+        ),
+        MlirLocation::Fused(items) => MlirLocation::Fused(
+            items
+                .iter()
+                .map(|i| resolve_single_location(i, loc_table, depth - 1))
+                .collect(),
+        ),
+        MlirLocation::CallSite { callee, caller } => MlirLocation::CallSite {
+            callee: Box::new(resolve_single_location(callee, loc_table, depth - 1)),
+            caller: Box::new(resolve_single_location(caller, loc_table, depth - 1)),
+        },
+        MlirLocation::Named { name, child } => MlirLocation::Named {
+            name: name.clone(),
+            child: child
+                .as_ref()
+                .map(|c| Box::new(resolve_single_location(c, loc_table, depth - 1))),
+        },
+        other => other.clone(),
+    }
+}
+
+/// Resolves location aliases and hydrates `dense_resource<key>` attributes inside an [`AstRegion`].
+///
+/// # Arguments
+///
+/// * `region` - Mutable [`AstRegion`] to update.
+/// * `loc_table` - Top-level `#loc` alias definitions.
+/// * `resources` - Decoded binary resource map from `{-# dialect_resources #-}`.
+fn resolve_region_locations_and_resources(
+    region: &mut AstRegion,
+    loc_table: &BTreeMap<String, MlirLocation>,
+    resources: &BTreeMap<String, Vec<u8>>,
+) {
+    for block in &mut region.blocks {
+        for arg in &mut block.arguments {
+            if let Some(loc) = &arg.location {
+                arg.location = Some(resolve_single_location(loc, loc_table, 8));
+            }
+        }
+        for op in &mut block.operations {
+            if let Some(loc) = &op.location {
+                op.location = Some(resolve_single_location(loc, loc_table, 8));
+            }
+            if !resources.is_empty()
+                && let Some(MlirAttribute::DenseResource(handle)) =
+                    op.attributes.get("value").cloned()
+                && let Some(raw_bytes) = resources.get(&handle)
+            {
+                let ranked = match op.signature.results.first() {
+                    Some(MlirType::RankedTensor(rt)) => Some(rt.clone()),
+                    _ => None,
+                };
+                let elem_ty = ranked
+                    .as_ref()
+                    .map_or(ElementType::F32, |rt| rt.element_type);
+                let values_f64 = elem_ty.unpack_to_f64_vec(raw_bytes);
+                op.attributes.insert(
+                    String::from("value"),
+                    MlirAttribute::DenseElements(DenseElementsAttr {
+                        values_f64,
+                        raw_bytes: Some(raw_bytes.clone()),
+                        is_splat: false,
+                        tensor_type: ranked,
+                    }),
+                );
+            }
+            for nested in &mut op.regions {
+                resolve_region_locations_and_resources(nested, loc_table, resources);
+            }
+        }
+    }
+}
+
+/// Resolves bottom-of-file `#loc` aliases and `{-# dialect_resources #-}` handles across `module`.
+///
+/// # Arguments
+///
+/// * `module` - Mutable [`AstModule`] to resolve in place.
+fn resolve_module_locations_and_resources(module: &mut AstModule) {
+    if module.locations.is_empty() && module.dialect_resources.is_empty() {
+        return;
+    }
+    let loc_table = module.locations.clone();
+    let resources = module.dialect_resources.clone();
+    for func in &mut module.functions {
+        for arg in &mut func.arguments {
+            if let Some(loc) = &arg.location {
+                arg.location = Some(resolve_single_location(loc, &loc_table, 8));
+            }
+        }
+        resolve_region_locations_and_resources(&mut func.body, &loc_table, &resources);
+    }
+    for op in &mut module.top_level_operations {
+        if let Some(loc) = &op.location {
+            op.location = Some(resolve_single_location(loc, &loc_table, 8));
+        }
+        for nested in &mut op.regions {
+            resolve_region_locations_and_resources(nested, &loc_table, &resources);
+        }
+    }
+}
+
+/// Legalizes `chlo.*` operations in `module` into canonical `stablehlo` multi-op sequences.
 ///
 /// # Arguments
 ///
 /// * `module` - Mutable [`AstModule`] to legalize in-place.
 pub fn legalize_chlo_in_ast_module(module: &mut AstModule) {
-    for func in &mut module.functions {
-        legalize_chlo_in_region(&mut func.body);
-    }
-    for op in &mut module.top_level_operations {
-        legalize_chlo_operation(op);
-    }
+    super::chlo::decompose_chlo_module(module);
 }
 
-/// Recursively legalizes `chlo.*` operations inside an [`AstRegion`].
-///
-/// # Arguments
-///
-/// * `region` - Mutable [`AstRegion`] whose operations are legalized.
-fn legalize_chlo_in_region(region: &mut AstRegion) {
-    for block in &mut region.blocks {
-        for op in &mut block.operations {
-            legalize_chlo_operation(op);
-        }
-    }
-}
-
-/// Legalizes a single [`AstOperation`] if it belongs to [`DialectKind::Chlo`].
-///
-/// # Arguments
-///
-/// * `op` - Mutable [`AstOperation`] to decompose or legalize.
-fn legalize_chlo_operation(op: &mut AstOperation) {
-    for reg in &mut op.regions {
-        legalize_chlo_in_region(reg);
-    }
-    if let AstOpKind::ChloDecomposable(name) = &op.op_kind {
-        let hw = match name.as_str() {
-            "erfc" | "erf_inv" => TpuOpCode::Erf,
-            "lgamma" | "digamma" | "polygamma" | "zeta" | "bessel_i0e" | "bessel_i1e" => {
-                TpuOpCode::Log1p
-            }
-            "acos" | "acosh" | "cosh" => TpuOpCode::Cosine,
-            "asin" | "asinh" | "sinh" => TpuOpCode::Sine,
-            "atan" | "atanh" => TpuOpCode::Tan,
-            "conj" => TpuOpCode::Complex,
-            "next_after" => TpuOpCode::AddF32,
-            _ => TpuOpCode::NegF32,
-        };
-        op.op_kind = AstOpKind::HardwareOp(hw);
-        op.dialect = DialectKind::StableHlo;
-    }
-}
-
-/// Parses an MLIR source string into a verified, CHLO-legalized [`AstModule`].
+/// Parses an MLIR source string into a verified, VHLO-upgraded, CHLO-legalized [`AstModule`].
 ///
 /// # Arguments
 ///
@@ -2605,12 +2835,13 @@ fn legalize_chlo_operation(op: &mut AstOperation) {
 ///
 /// # Errors
 ///
-/// Returns [`LibTpuError`] if lexing or recursive-descent parsing fails.
+/// Returns [`LibTpuError`] if lexing, recursive-descent parsing, or VHLO version upgrade fails.
 pub fn parse_mlir_ast_module(src: &str) -> LibTpuResult<AstModule> {
     let _checked = HloLexer::tokenize_checked(src)?;
     let spanned = HloLexer::tokenize_spanned(src);
     let mut parser = MlirModuleParser::new(&spanned);
     let mut module = parser.parse_module()?;
+    super::mlir_bytecode::upgrade_vhlo_to_stablehlo(&mut module)?;
     legalize_chlo_in_ast_module(&mut module);
     Ok(module)
 }

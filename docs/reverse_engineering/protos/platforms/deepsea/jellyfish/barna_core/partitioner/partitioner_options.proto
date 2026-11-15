@@ -1,0 +1,86 @@
+syntax = "proto2";
+package platforms_deepsea.jellyfish.barna_core.partitioner;
+message PartitionerObjective {
+  enum Type {
+    UNDEFINED = 0;
+    PERFORMANCE = 1;
+    HBM_USAGE = 2;
+    HYBRID = 3;
+  }
+}
+message SoftwareRowSharderOptions {
+  optional bool enabled = 1;
+  optional double lookup_frequency_limit_per_input_table = 2;
+  optional double hbm_usage_fraction_limit_per_input_table = 3;
+  optional int32 min_input_table_count = 4;
+  optional bool balance_load_across_channels = 5 [default = false];
+}
+message SoftwareDeduplicationOptions {
+  optional bool enabled = 1;
+  optional double extra_sample_count_fraction = 2;
+  optional double frequent_lookup_proportion_threshold = 3 [default = 0.0625];
+  optional double frequent_lookup_absolute_threshold = 4 [default = 1];
+  optional double multivalent_deduplication_cost_penalty = 5 [default = 2.3];
+  optional double kvalent_deduplication_frequent_id_exclusion_penalty = 6 [default = 2.5];
+}
+message PlacerOptions {
+  message Heuristic {
+  }
+  oneof type {
+    .platforms_deepsea.jellyfish.barna_core.partitioner.PlacerOptions.Heuristic heuristic = 1;
+  }
+}
+message TileMapperOptions {
+  message Ilp {
+  }
+  message Heuristic {
+  }
+  oneof type {
+    .platforms_deepsea.jellyfish.barna_core.partitioner.TileMapperOptions.Ilp ilp = 1;
+    .platforms_deepsea.jellyfish.barna_core.partitioner.TileMapperOptions.Heuristic heuristic = 2;
+  }
+}
+message HbmLimitsForEmbeddings {
+  optional double min_fraction = 1;
+  optional double max_fraction = 2 [default = 0.95];
+  optional double binary_search_margin = 3 [default = 0.005];
+}
+message PartitionerOptions {
+  message TableMerger {
+    optional double tpu_table_limit_fraction = 1;
+  }
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.PartitionerObjective.Type objective = 1;
+  optional double hbm_limit_fraction_for_embeddings = 2;
+  optional int32 barna_core_count_per_column = 3;
+  optional int32 global_tpu_table_width = 4;
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.PartitionerOptions.TableMerger table_merger = 5;
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.PlacerOptions placer = 6;
+  optional bool enable_channel_broadcast = 7;
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.TileMapperOptions tile_mapper = 8;
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.SoftwareRowSharderOptions software_row_sharder = 9;
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.SoftwareDeduplicationOptions software_deduplication = 10;
+  optional double hbm_savings_threshold_for_optimized_hbm_packing = 11;
+  optional bool enable_input_coalescing = 12;
+}
+message MasterPartitionerOptions {
+  message TpuTableWidthRange {
+    optional int32 low = 1;
+    optional int32 high = 2;
+    optional int32 step = 3;
+  }
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.PartitionerObjective.Type objective = 1;
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.HbmLimitsForEmbeddings hbm_limits_for_embeddings = 2;
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.PlacerOptions placer = 3;
+  optional bool enable_channel_broadcast = 4;
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.TileMapperOptions tile_mapper = 5;
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.MasterPartitionerOptions.TpuTableWidthRange tpu_table_width_range = 7;
+  repeated double tpu_table_limit_fractions = 8;
+  optional bool enable_preferred_core_counts_per_column = 9;
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.SoftwareRowSharderOptions software_row_sharder = 10;
+  optional .platforms_deepsea.jellyfish.barna_core.partitioner.SoftwareDeduplicationOptions software_deduplication = 11;
+  optional double hbm_savings_threshold_for_optimized_hbm_packing = 15;
+  optional bool enable_input_coalescing = 16;
+  optional int32 min_row_count = 12;
+  optional int32 max_row_count = 13;
+  optional int32 thread_count = 14;
+}

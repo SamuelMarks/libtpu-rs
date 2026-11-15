@@ -1,0 +1,16 @@
+syntax = "proto3";
+package tensorflow.profiler;
+message SourceStats {
+  message Metric {
+    uint64 occurrences = 1;
+    uint64 self_time_ps = 2;
+    uint64 time_ps = 3;
+    uint64 flops = 4;
+    double flops_v2 = 6;
+    double flops_utilization = 5;
+  }
+  message FileMetrics {
+    map<int32, .tensorflow.profiler.SourceStats.Metric> line_number_to_metric = 1;
+  }
+  map<string, .tensorflow.profiler.SourceStats.FileMetrics> file_name_to_metrics = 1;
+}

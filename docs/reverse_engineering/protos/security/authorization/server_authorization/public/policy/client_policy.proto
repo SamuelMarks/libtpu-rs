@@ -1,0 +1,56 @@
+syntax = "proto3";
+package server_authz;
+import "google/protobuf/wrappers.proto";
+import "security/authorization/server_authorization/public/policy/internal_monitoring_options.proto";
+import "security/authorization/server_authorization/public/policy/target.proto";
+import "security/authorization/server_authorization/public/relax/client_policy_overrides.proto";
+import "security/credentials/proto/principal.proto";
+import "security/loas/l2/proto/confidential_security_level.proto";
+import "security/loas/l2/proto/instance.proto";
+import "storage/datapol/annotations/proto/semantic_annotations.proto";
+message UnrestrictedClientPolicy {
+  .server_authz.ServiceCheckOptions service_check_options = 1;
+  .server_authz.UserConstraint user_constraint = 2;
+  .server_authz.RealmConstraint realm_constraint = 3;
+  .server_authz.HardenedConstraint hardened_constraint = 7;
+  .server_authz.KevlarConstraint kevlar_constraint = 8;
+  .server_authz.InstanceInfoConstraint instance_info_constraint = 9;
+  .server_authz.HostnameConstraint hostname_constraint = 4;
+  .server_authz.TighteningOverrides tightening_overrides = 5;
+  .server_authz.RelaxingOverrides relaxing_overrides = 6;
+  .server_authz.InternalMonitoringOptions internal_monitoring_options = 10;
+}
+message ServiceCheckOptions {
+  .server_authz.Target target_override = 1;
+  repeated .security.credentials.PrincipalProto lbns_allowed_users = 2;
+}
+message UserConstraint {
+  reserved 2;
+  repeated .security.credentials.PrincipalProto whitelisted_users = 1;
+  repeated string acceptable_acls = 5;
+  repeated string allowed_focus_obfuscated_gaia_ids = 3;
+  bool audit_only = 4;
+}
+message RealmConstraint {
+  .server_authz.RealmAclSet whitelisted_realm_acls = 1;
+  bool audit_only = 2;
+}
+message HardenedConstraint {
+  .google.protobuf.BoolValue require_hardened = 1;
+}
+message KevlarConstraint {
+  .security_loas_l2.ConfidentialSecurityLevel minimum_kevlar_level = 1;
+}
+message InstanceInfoConstraint {
+  repeated .security_loas_l2.CloudVMInfo allowed_cloud_vm_infos = 1;
+  bool audit_only = 2;
+}
+message RealmAclSet {
+  repeated string realm_acls = 1;
+}
+message HostnameConstraint {
+  .google.protobuf.BoolValue require_hostname_to_match_host_port_address = 1;
+}
+message TighteningOverrides {
+  reserved 1;
+}

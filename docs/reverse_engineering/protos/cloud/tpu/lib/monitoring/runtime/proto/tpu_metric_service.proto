@@ -1,0 +1,165 @@
+syntax = "proto3";
+package tpu.monitoring.runtime;
+import "google/protobuf/timestamp.proto";
+import "platforms/deepsea/jellyfish/xdb/tpu_telemetry/tpu_telemetry.proto";
+enum MetricType {
+  UNKNOWN = 0;
+  LIBTPU = 1;
+}
+enum MetricKind {
+  METRIC_KIND_UNSPECIFIED = 0;
+  METRIC_KIND_GAUGE = 1;
+  METRIC_KIND_COUNTER = 2;
+  METRIC_KIND_DISTRIBUTION = 3;
+}
+enum ValueType {
+  VALUE_TYPE_UNSPECIFIED = 0;
+  VALUE_TYPE_INT64 = 1;
+  VALUE_TYPE_DOUBLE = 2;
+  VALUE_TYPE_STRING = 3;
+  VALUE_TYPE_BOOL = 4;
+  VALUE_TYPE_DISTRIBUTION = 5;
+}
+message Exemplar {
+  double value = 1;
+  .google.protobuf.Timestamp timestamp = 2;
+  repeated .tpu.monitoring.runtime.Attribute attributes = 3;
+}
+message Distribution {
+  message BucketOptions {
+    message Regular {
+      int32 num_finite_buckets = 1;
+      repeated .tpu.monitoring.runtime.Distribution.BucketOptions.Bound bounds = 2;
+    }
+    message Exponential {
+      int32 num_finite_buckets = 1;
+      double growth_factor = 2;
+      double scale = 3;
+    }
+    message Bound {
+      double width = 1;
+      double offset = 2;
+    }
+    message Linear {
+      int32 num_finite_buckets = 1;
+      double width = 2;
+      double offset = 3;
+    }
+    message Explicit {
+      repeated double bounds = 1;
+    }
+    oneof options {
+      .tpu.monitoring.runtime.Distribution.BucketOptions.Regular regular_buckets = 1;
+      .tpu.monitoring.runtime.Distribution.BucketOptions.Exponential exponential_buckets = 2;
+      .tpu.monitoring.runtime.Distribution.BucketOptions.Explicit explicit_buckets = 3;
+      .tpu.monitoring.runtime.Distribution.BucketOptions.Linear linear_buckets = 4;
+    }
+  }
+  int64 count = 1;
+  double mean = 2;
+  double min = 3;
+  double max = 4;
+  double sum_of_squared_deviation = 5;
+  .tpu.monitoring.runtime.Distribution.BucketOptions bucket_options = 6;
+  repeated int64 bucket_counts = 7;
+  repeated .tpu.monitoring.runtime.Exemplar exemplars = 8;
+}
+message Gauge {
+  oneof value {
+    double as_double = 1;
+    int64 as_int = 2;
+    string as_string = 3;
+    bool as_bool = 4;
+  }
+}
+message Counter {
+  oneof value {
+    double as_double = 1;
+    uint64 as_int = 2;
+  }
+  .tpu.monitoring.runtime.Exemplar exemplar = 3;
+}
+message Quantile {
+  double quantile = 1;
+  double value = 2;
+}
+message Summary {
+  uint64 sample_count = 1;
+  double sample_sum = 2;
+  repeated .tpu.monitoring.runtime.Quantile quantile = 3;
+}
+message AttrValue {
+  oneof attr {
+    string string_attr = 1;
+    bool bool_attr = 2;
+    int64 int_attr = 3;
+    double double_attr = 4;
+    .tpu.monitoring.runtime.ArrayAttrValue array_attr = 5;
+    .tpu.monitoring.runtime.KeyValueList kvlist_attr = 6;
+    bytes bytes_attr = 7;
+  }
+}
+message ArrayAttrValue {
+  repeated .tpu.monitoring.runtime.AttrValue attrs = 1;
+}
+message KeyValueList {
+  repeated .tpu.monitoring.runtime.Attribute attributes = 1;
+}
+message Attribute {
+  string key = 1;
+  .tpu.monitoring.runtime.AttrValue value = 2;
+}
+message Metric {
+  oneof measure {
+    .tpu.monitoring.runtime.Gauge gauge = 3;
+    .tpu.monitoring.runtime.Counter counter = 4;
+    .tpu.monitoring.runtime.Distribution distribution = 5;
+    .tpu.monitoring.runtime.Summary summary = 6;
+  }
+  .tpu.monitoring.runtime.Attribute attribute = 1;
+  .google.protobuf.Timestamp start_timestamp = 7;
+  .google.protobuf.Timestamp timestamp = 2;
+}
+message TPUMetric {
+  string name = 1;
+  string description = 2;
+  repeated .tpu.monitoring.runtime.Metric metrics = 3;
+}
+message MetricRequest {
+  string metric_name = 1;
+  bool skip_node_aggregation = 2;
+}
+message MetricResponse {
+  reserved 2;
+  oneof response {
+    .tpu.monitoring.runtime.TPUMetric metric = 1;
+  }
+  .tpu.monitoring.runtime.MetricType metric_type = 3;
+}
+message ListSupportedMetricsRequest {
+  string filter = 1;
+}
+message SupportedMetric {
+  string metric_name = 1;
+  string unit = 2;
+  .tpu.monitoring.runtime.MetricKind metric_kind = 3;
+  .tpu.monitoring.runtime.ValueType value_type = 4;
+  string external_gke_name = 5;
+  string external_gce_name = 6;
+  repeated string attributes = 7;
+}
+message ListSupportedMetricsResponse {
+  repeated .tpu.monitoring.runtime.SupportedMetric supported_metric = 1;
+}
+message GetTpuRuntimeStatusRequest {
+  bool include_hlo_info = 1;
+}
+message GetTpuRuntimeStatusResponse {
+  string host_name = 1;
+  map<int32, .platforms_deepsea.jellyfish.xdb.tpu_telemetry.CurrentCoreStateSummary> core_states = 2;
+}
+service RuntimeMetricService {
+  rpc GetRuntimeMetric(.tpu.monitoring.runtime.MetricRequest) returns (.tpu.monitoring.runtime.MetricResponse);
+  rpc ListSupportedMetrics(.tpu.monitoring.runtime.ListSupportedMetricsRequest) returns (.tpu.monitoring.runtime.ListSupportedMetricsResponse);
+  rpc GetTpuRuntimeStatus(.tpu.monitoring.runtime.GetTpuRuntimeStatusRequest) returns (.tpu.monitoring.runtime.GetTpuRuntimeStatusResponse);
+}

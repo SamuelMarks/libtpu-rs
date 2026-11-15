@@ -19,6 +19,34 @@ pub struct PJRT_Error {
     pub c_message: CString,
 }
 
+/// Lifetime-bound extension state arena owned directly by a [`PJRT_Client`] instance.
+#[derive(Debug, Default)]
+pub struct ClientExtensionArena {
+    /// Registered `PJRT_Callback_Extension` callbacks (`callback_type -> (fn_addr, user_arg)`).
+    pub callback_registry: std::collections::BTreeMap<i64, (usize, usize)>,
+    /// Cross-host transfer payload mailboxes (`tag -> bytes`).
+    pub cross_host_mailboxes: std::collections::BTreeMap<usize, Vec<u8>>,
+    /// Cancelled cross-host tags (`tag -> status_code`).
+    pub cross_host_cancelled_tags: std::collections::BTreeMap<usize, i32>,
+    /// Completed cross-host transfer count on this client.
+    pub cross_host_transfers: usize,
+    /// Registered XLA transform passes (`name -> pass_id`).
+    pub transform_passes: std::collections::BTreeMap<String, usize>,
+    /// Lifetime-bound byte buffers owned by this client until `PJRT_Client_Destroy`.
+    pub owned_buffers: Vec<Box<[u8]>>,
+}
+
+/// Lifetime-bound extension state arena owned directly by a [`PJRT_Executable`] instance.
+#[derive(Debug, Default)]
+pub struct ExecutableExtensionArena {
+    /// Mutable `TpuCompilationEnvironmentProto` overrides bound to this executable.
+    pub tpu_compilation_env: libtpu_core::proto::TpuCompilationEnvironmentProto,
+    /// Number of compilation environment field overrides applied.
+    pub overrides_count: usize,
+    /// Lifetime-bound serialized buffers owned by this executable until `PJRT_Executable_Destroy`.
+    pub owned_buffers: Vec<Box<[u8]>>,
+}
+
 /// Opaque C handle wrapping a [`PjrtCoreClient`].
 #[derive(Debug)]
 pub struct PJRT_Client {
@@ -48,6 +76,8 @@ pub struct PJRT_Client {
     pub kv_try_get_callback: *const std::ffi::c_void,
     /// Optional distributed key-value store `kv_try_get` user argument.
     pub kv_try_get_user_arg: *mut std::ffi::c_void,
+    /// Lifetime-bound extension state arena freed when this client is destroyed.
+    pub ext_arena: parking_lot::Mutex<ClientExtensionArena>,
 }
 
 /// Opaque C handle wrapping a [`PjrtCoreDeviceDescription`].
@@ -55,7 +85,9 @@ pub struct PJRT_Client {
 pub struct PJRT_DeviceDescription {
     /// Underlying core device description.
     pub inner: PjrtCoreDeviceDescription,
-    /// Per-device `PJRT_NamedValue` attributes (`coords`, `core_on_chip`, `device_kind`).
+    /// Heap-pinned 3D chip coordinates `[x, y, z]` referenced by `attributes[2]`.
+    pub coords_heap: Box<[i64; 3]>,
+    /// Per-device `PJRT_NamedValue` attributes (`device_kind`, `core_on_chip`, `coords`).
     pub attributes: [PJRT_NamedValue; 3],
 }
 
@@ -67,35 +99,27 @@ impl PJRT_DeviceDescription {
     /// * `inner` - Core device description.
     #[must_use]
     pub fn new(inner: PjrtCoreDeviceDescription) -> Self {
-        let mut s = Self {
-            inner,
-            attributes: [PJRT_NamedValue {
-                struct_size: size_of::<PJRT_NamedValue>(),
-                extension_start: std::ptr::null_mut(),
-                name: std::ptr::null(),
-                name_size: 0,
-                value_type_and_pad: 0,
-                value_payload: 0,
-                value_size: 0,
-            }; 3],
-        };
-        let core_val = usize::from_ne_bytes(i64::from(s.inner.spec.core_on_chip.0).to_ne_bytes());
-        s.attributes = [
+        let coords_heap = Box::new(inner.coords_attr);
+        let coords_ptr = coords_heap.as_ptr() as usize;
+        let kind_ptr = inner.kind_str.as_ptr() as usize;
+        let kind_len = inner.kind_str.len();
+        let core_val = usize::from_ne_bytes(i64::from(inner.spec.core_on_chip.0).to_ne_bytes());
+        let attributes = [
             PJRT_NamedValue {
                 struct_size: size_of::<PJRT_NamedValue>(),
                 extension_start: std::ptr::null_mut(),
                 name: c"device_kind".as_ptr(),
                 name_size: 11,
-                value_type_and_pad: 0,
-                value_payload: s.inner.kind_str.as_ptr() as usize,
-                value_size: s.inner.kind_str.len(),
+                value_type_and_pad: 0, // PJRT_NamedValue_kString
+                value_payload: kind_ptr,
+                value_size: kind_len,
             },
             PJRT_NamedValue {
                 struct_size: size_of::<PJRT_NamedValue>(),
                 extension_start: std::ptr::null_mut(),
                 name: c"core_on_chip".as_ptr(),
                 name_size: 12,
-                value_type_and_pad: 1,
+                value_type_and_pad: 1, // PJRT_NamedValue_kInt64
                 value_payload: core_val,
                 value_size: 1,
             },
@@ -104,12 +128,16 @@ impl PJRT_DeviceDescription {
                 extension_start: std::ptr::null_mut(),
                 name: c"coords".as_ptr(),
                 name_size: 6,
-                value_type_and_pad: 3,
-                value_payload: s.inner.coords_attr.as_ptr() as usize,
+                value_type_and_pad: 2, // PJRT_NamedValue_kInt64List
+                value_payload: coords_ptr,
                 value_size: 3,
             },
         ];
-        s
+        Self {
+            inner,
+            coords_heap,
+            attributes,
+        }
     }
 }
 
@@ -212,12 +240,51 @@ pub struct PJRT_Executable {
     pub param_memory_kind_sizes: Vec<usize>,
     /// Precomputed cost analysis `PJRT_NamedValue` properties (`flops`, `transcendentals`, `bytes_accessed`).
     pub cost_properties: [PJRT_NamedValue; 3],
+    /// Owned serialized `xla.OpSharding` blobs for each parameter.
+    pub param_sharding_blobs: Vec<Box<[u8]>>,
+    /// Stable C byte pointers into `param_sharding_blobs` for `PJRT_Shardings_ParameterShardings`.
+    pub param_sharding_ptrs: Vec<*const c_char>,
+    /// Byte lengths corresponding to `param_sharding_ptrs`.
+    pub param_sharding_sizes: Vec<usize>,
+    /// Owned serialized `xla.OpSharding` blobs for each output.
+    pub output_sharding_blobs: Vec<Box<[u8]>>,
+    /// Stable C byte pointers into `output_sharding_blobs` for `PJRT_Shardings_OutputShardings`.
+    pub output_sharding_ptrs: Vec<*const c_char>,
+    /// Byte lengths corresponding to `output_sharding_ptrs`.
+    pub output_sharding_sizes: Vec<usize>,
+    /// Lifetime-bound extension state arena freed when this executable is destroyed.
+    pub ext_arena: parking_lot::Mutex<ExecutableExtensionArena>,
     /// Whether this executable is owned by a `PJRT_LoadedExecutable` (`true`) or standalone (`false`).
     pub owned_by_loaded: std::sync::atomic::AtomicBool,
 }
 
+/// Precomputed heap-pinned sharding blobs, C byte pointers, and byte sizes.
+type ShardingArenaArrays = (Vec<Box<[u8]>>, Vec<*const c_char>, Vec<usize>);
+
 impl PJRT_Executable {
-    /// Constructs a [`PJRT_Executable`] with precomputed C ABI output type, dimension, memory kind, and cost arrays.
+    /// Encodes a slice of [`libtpu_core::proto::OpShardingProto`] into stable heap-pinned C byte slices.
+    ///
+    /// # Arguments
+    ///
+    /// * `shardings` - Slice of [`libtpu_core::proto::OpShardingProto`] messages.
+    fn build_sharding_arena(
+        shardings: &[libtpu_core::proto::OpShardingProto],
+    ) -> ShardingArenaArrays {
+        use libtpu_core::proto::ProtoSchemaMessage as _;
+        let mut blobs: Vec<Box<[u8]>> = shardings
+            .iter()
+            .map(|sh| sh.encode_proto().into_boxed_slice())
+            .collect();
+        let mut ptrs = Vec::with_capacity(blobs.len());
+        let mut sizes = Vec::with_capacity(blobs.len());
+        for b in &mut blobs {
+            ptrs.push(b.as_ptr().cast::<c_char>());
+            sizes.push(b.len());
+        }
+        (blobs, ptrs, sizes)
+    }
+
+    /// Constructs a [`PJRT_Executable`] with precomputed C ABI output type, dimension, memory kind, sharding, and cost arrays.
     ///
     /// # Arguments
     ///
@@ -238,6 +305,10 @@ impl PJRT_Executable {
         let output_memory_kind_sizes = vec![6_usize; num_outputs];
         let param_memory_kind_ptrs = vec![c"device".as_ptr(); num_params];
         let param_memory_kind_sizes = vec![6_usize; num_params];
+        let (param_sharding_blobs, param_sharding_ptrs, param_sharding_sizes) =
+            Self::build_sharding_arena(&inner.program.parameter_shardings);
+        let (output_sharding_blobs, output_sharding_ptrs, output_sharding_sizes) =
+            Self::build_sharding_arena(&inner.program.output_shardings);
         let cost = inner.cost_analysis();
         let cost_properties = [
             PJRT_NamedValue {
@@ -245,7 +316,7 @@ impl PJRT_Executable {
                 extension_start: std::ptr::null_mut(),
                 name: c"flops".as_ptr(),
                 name_size: 5,
-                value_type_and_pad: 2,
+                value_type_and_pad: 3, // PJRT_NamedValue_kFloat
                 value_payload: usize::try_from(cost.flops.to_bits()).unwrap_or(0),
                 value_size: 1,
             },
@@ -254,7 +325,7 @@ impl PJRT_Executable {
                 extension_start: std::ptr::null_mut(),
                 name: c"transcendentals".as_ptr(),
                 name_size: 15,
-                value_type_and_pad: 2,
+                value_type_and_pad: 3, // PJRT_NamedValue_kFloat
                 value_payload: usize::try_from(cost.transcendentals.to_bits()).unwrap_or(0),
                 value_size: 1,
             },
@@ -263,7 +334,7 @@ impl PJRT_Executable {
                 extension_start: std::ptr::null_mut(),
                 name: c"bytes_accessed".as_ptr(),
                 name_size: 14,
-                value_type_and_pad: 2,
+                value_type_and_pad: 3, // PJRT_NamedValue_kFloat
                 value_payload: usize::try_from(cost.bytes_accessed.to_bits()).unwrap_or(0),
                 value_size: 1,
             },
@@ -278,6 +349,13 @@ impl PJRT_Executable {
             param_memory_kind_ptrs,
             param_memory_kind_sizes,
             cost_properties,
+            param_sharding_blobs,
+            param_sharding_ptrs,
+            param_sharding_sizes,
+            output_sharding_blobs,
+            output_sharding_ptrs,
+            output_sharding_sizes,
+            ext_arena: parking_lot::Mutex::new(ExecutableExtensionArena::default()),
             owned_by_loaded: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -316,11 +394,12 @@ impl PJRT_LoadedExecutable {
                 .owned_by_loaded
                 .store(true, std::sync::atomic::Ordering::Release);
         }
+        let num_parts = inner.executable.program.num_partitions.max(1);
         let mut logical_device_ids = Vec::with_capacity(inner.addressable_devices.len());
-        for d in &inner.addressable_devices {
+        for (idx, _d) in inner.addressable_devices.iter().enumerate() {
             logical_device_ids.push(PJRT_LogicalDeviceIds {
-                replica: i32::try_from(d.0).unwrap_or(0),
-                partition: 0,
+                replica: i32::try_from(idx / num_parts).unwrap_or(0),
+                partition: i32::try_from(idx % num_parts).unwrap_or(0),
             });
         }
         Self {
@@ -346,6 +425,10 @@ pub struct PJRT_TopologyDescription {
     pub inner: PjrtCoreTopology,
     /// Owned device description pointers.
     pub desc_ptrs: Vec<*mut PJRT_DeviceDescription>,
+    /// Whether this topology description represents a clamped subslice (`true`) or full slice (`false`).
+    pub is_subslice: std::sync::atomic::AtomicBool,
+    /// Lifetime-bound byte buffers owned by this topology description until `PJRT_TopologyDescription_Destroy`.
+    pub ext_arena: parking_lot::Mutex<Vec<Box<[u8]>>>,
 }
 
 /// Opaque C handle representing a `PJRT_ExecuteContext`.
@@ -472,12 +555,37 @@ pub type PJRT_Megascale_MultiSliceConfig = PJRT_MultiSlice_Config;
 
 /// Heap-allocated client context handle for `PJRT_Megascale_Extension`.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct PJRT_Megascale_ClientContext {
     /// Unique Megascale context identifier.
     pub context_id: u64,
-    /// Active transport type (`0` = Default/ICI, `1` = DCN).
-    pub transport_type: usize,
+    /// Active transport type (`0` = Default/ICI, `1` = DCN, `2` = `RoCEv2`).
+    pub transport_type: std::sync::atomic::AtomicUsize,
+    /// Number of barriers completed on this context.
+    pub completed_barriers: std::sync::atomic::AtomicUsize,
+    /// Optional registered C error callback function pointer (`usize`).
+    pub error_callback_fn: std::sync::atomic::AtomicUsize,
+    /// Lifetime-bound serialized telemetry buffers freed when this context is deleted.
+    pub metrics_arena: parking_lot::Mutex<Vec<Box<[u8]>>>,
+}
+
+impl PJRT_Megascale_ClientContext {
+    /// Creates a new [`PJRT_Megascale_ClientContext`] with `context_id` and `transport_type`.
+    ///
+    /// # Arguments
+    ///
+    /// * `context_id` - Unique context sequence ID.
+    /// * `transport_type` - Initial transport mode (`0` = ICI, `1` = DCN).
+    #[must_use]
+    pub const fn new(context_id: u64, transport_type: usize) -> Self {
+        Self {
+            context_id,
+            transport_type: std::sync::atomic::AtomicUsize::new(transport_type),
+            completed_barriers: std::sync::atomic::AtomicUsize::new(0),
+            error_callback_fn: std::sync::atomic::AtomicUsize::new(0),
+            metrics_arena: parking_lot::Mutex::new(Vec::new()),
+        }
+    }
 }
 
 /// Heap-allocated phase compiler handle for `PJRT_PhaseCompile_Extension` (`PJRT_PhaseCompile_Compiler`).
@@ -488,6 +596,8 @@ pub struct PJRT_PhaseCompile_Compiler {
     pub compiler_id: u64,
     /// Number of phases executed on this compiler instance.
     pub phases_executed: usize,
+    /// Lifetime-bound phase artifact buffers freed when this compiler is destroyed.
+    pub owned_buffers: parking_lot::Mutex<Vec<Box<[u8]>>>,
 }
 
 /// Heap-allocated profiler instance handle for `PLUGIN_Profiler_Api` (`PLUGIN_Profiler_Instance`).
@@ -496,6 +606,8 @@ pub struct PJRT_PhaseCompile_Compiler {
 pub struct PLUGIN_Profiler_Instance {
     /// Independent core profiler state.
     pub inner: libtpu_core::driver::TpuCoreProfiler,
+    /// Lifetime-bound serialized `XSpace` buffer retained until the next `CollectData` or `Destroy`.
+    pub last_xspace: parking_lot::Mutex<Box<[u8]>>,
 }
 
 /// Program descriptor passed to `PJRT_Client_Compile` (`PJRT_Program`).
@@ -716,9 +828,43 @@ pub struct PJRT_ProcessInfo {
     pub error_code: i64,
 }
 
+/// Selects the minimum valid PJRT `struct_size` given an optional `LIBTPU_PJRT_API_MINOR_VERSION` value.
+///
+/// # Arguments
+///
+/// * `minor_env` - Optional string value of `LIBTPU_PJRT_API_MINOR_VERSION`.
+/// * `default_size` - Standard PJRT `v0.116` minimum struct byte size.
+/// * `legacy_size` - Negotiated legacy (`< v0.116`) minimum struct byte size.
+#[must_use]
+pub(crate) fn select_min_struct_size(
+    minor_env: Option<&str>,
+    default_size: usize,
+    legacy_size: usize,
+) -> usize {
+    match minor_env.and_then(|s| s.parse::<i32>().ok()) {
+        Some(v) if v < 116 => legacy_size,
+        _ => default_size,
+    }
+}
+
 /// Trait implemented by every `PJRT_*_Args` C ABI struct providing its exact minimum valid
 /// `struct_size` (`PJRT_STRUCT_SIZE(type, last_field)`) as disassembled from `libtpu.so`.
 pub trait PjrtArgsStruct: Sized {
-    /// Minimum valid `struct_size` accepted by `PJRT_CheckMatchingStructSizes` in `libtpu.so`.
+    /// Minimum valid `struct_size` accepted by `PJRT_CheckMatchingStructSizes` in `libtpu.so` (`v0.116`).
     const MIN_STRUCT_SIZE: usize = size_of::<Self>();
+
+    /// Minimum valid `struct_size` when negotiating an earlier PJRT minor version (`LIBTPU_PJRT_API_MINOR_VERSION < 116`).
+    const LEGACY_MIN_STRUCT_SIZE: usize = Self::MIN_STRUCT_SIZE;
+
+    /// Returns [`Self::LEGACY_MIN_STRUCT_SIZE`] when `LIBTPU_PJRT_API_MINOR_VERSION < 116`, else [`Self::MIN_STRUCT_SIZE`].
+    #[must_use]
+    fn effective_min_struct_size() -> usize {
+        select_min_struct_size(
+            std::env::var("LIBTPU_PJRT_API_MINOR_VERSION")
+                .ok()
+                .as_deref(),
+            Self::MIN_STRUCT_SIZE,
+            Self::LEGACY_MIN_STRUCT_SIZE,
+        )
+    }
 }

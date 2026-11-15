@@ -1,0 +1,43 @@
+syntax = "proto3";
+package platforms_performance_deepsea.sparse_core;
+import "third_party/protobuf/cpp_features.proto";
+message SparseCoreTrainingBatchProto {
+  message BatchPerSparseCoreTable {
+    message Sample {
+      message Feature {
+        repeated uint32 embedding_ids = 1;
+        repeated float weights = 2;
+      }
+      repeated .platforms_performance_deepsea.sparse_core.SparseCoreTrainingBatchProto.BatchPerSparseCoreTable.Sample.Feature features = 1;
+    }
+    int32 table_id = 1;
+    repeated .platforms_performance_deepsea.sparse_core.SparseCoreTrainingBatchProto.BatchPerSparseCoreTable.Sample samples = 2;
+  }
+  repeated .platforms_performance_deepsea.sparse_core.SparseCoreTrainingBatchProto.BatchPerSparseCoreTable batch_per_table = 1;
+}
+message SparseCoreTrainingMiniBatchProto {
+  string table_name = 1;
+  repeated int32 row_pointers = 2;
+  repeated int32 row_ids = 3;
+  repeated int32 col_ids = 4;
+  repeated float gains = 5;
+  int32 row_pointers_unpadded_size = 6;
+  int32 ids_unpadded_size = 7;
+  int32 num_minibatch_per_sc = 8;
+  int32 unix_micro_timestamp = 9;
+  int32 table_vocab_size = 10;
+  int32 feature_width = 11;
+  int32 padded_row_pointers_size_per_sc = 12;
+  int32 num_sc_per_chip = 13;
+  int32 num_physical_replica = 14;
+  int32 sample_count_per_sc = 15;
+}
+message PerSparseCoreTrainingBatchProto {
+  message CooInputBatchProto {
+    repeated int32 sample_and_feature_ids = 1;
+    repeated uint32 embedding_ids = 2;
+    repeated float weights = 3;
+    int32 num_samples = 4;
+  }
+  repeated .platforms_performance_deepsea.sparse_core.PerSparseCoreTrainingBatchProto.CooInputBatchProto per_table_coo = 1;
+}

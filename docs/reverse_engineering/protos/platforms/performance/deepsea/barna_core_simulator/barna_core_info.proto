@@ -1,0 +1,143 @@
+syntax = "proto2";
+package platforms_performance_deepsea.barna_core;
+enum TpuChipVersion {
+  UNKNOWN = 0;
+  JFC = 1;
+  DFC = 2;
+  PFC = 3;
+  CUSTOM = 4;
+}
+message BarnaCoreModelParameters {
+  enum IciTopologyType {
+    MESH2D = 0;
+    MESH3D = 1;
+    TORUS2D = 2;
+    TORUS3D = 3;
+  }
+  optional float core_frequency_ghz = 1 [default = 0.7];
+  optional int32 bfifo_access_width_per_direction_bytes = 2 [default = 32];
+  optional float hbm_bandwidth_per_stack_gbps = 3 [default = 180];
+  optional int32 num_hbm_pseudo_channels_per_stack = 4 [default = 16];
+  optional int32 num_hbm_pseudo_channels_per_barna_core_channel = 5 [default = 2];
+  optional float bmem_bytes_per_cycle_per_barna_core_channel = 6 [default = 64];
+  optional int32 global_reduce_vector_size = 7 [default = 8];
+  optional bool has_feature_header = 8 [default = true];
+  optional int32 tile_header_overhead_cycles = 9 [default = 6];
+  optional int32 tile_header_size_bytes = 10 [default = 32];
+  optional int32 tile_size_bytes = 11 [default = 512];
+  optional int32 gradient_reduce_id_header_overhead_cycles = 12 [default = 2];
+  optional int32 gradient_reduce_gradient_header_overhead_cycles = 13 [default = 1];
+  optional float deduplication_factor_override = 14;
+  optional int32 multi_issue_factor = 15 [default = 1];
+  optional int32 bmem_bank_size_bytes = 16 [default = 32];
+  optional int32 data_type_size_bytes = 17 [default = 4];
+  optional int32 id_unit_size_bytes = 18 [default = 16];
+  optional int32 gradient_id_size_bytes = 19 [default = 32];
+  optional float ici_link_bw_gbps = 20 [default = 61];
+  optional .platforms_performance_deepsea.barna_core.BarnaCoreModelParameters.IciTopologyType ici_topology_type = 21 [default = TORUS2D];
+  optional float bisection_bw_utilization = 32 [default = 1];
+  optional int32 num_barna_cores_per_chip = 22 [default = 2];
+  optional float pcie_bw_per_barna_core_gbps = 23 [default = 3.125];
+  optional bool has_channel_broadcast = 24 [default = false];
+  optional bool has_software_pipelining = 25 [default = false];
+  optional bool has_channel_load_balancing = 26 [default = false];
+  optional float channel_load_balancing_efficiency = 27 [default = 1];
+  optional int32 num_vpu_sublanes_per_hbm_channel = 28 [default = 8];
+  optional int32 num_hbm_channels_per_barna_core = 29 [default = 16];
+  optional float hbm_load_to_use_latency_time_ns = 30 [default = 250];
+  optional float hbm_store_latency_time_ns = 33 [default = 150];
+  optional float sync_flag_update_time_ns = 34 [default = 5];
+  optional bool has_hw_deduplication = 31 [default = false];
+  optional int32 global_reduce_hw_dedup_header_overhead_cycles = 35 [default = 1];
+  optional bool has_address_map = 36 [default = true];
+  optional float scatter_gradient_header_cycles_reduction_ratio = 37 [default = 0];
+}
+message BarnaCoreConstantParameters {
+  enum AlgorithmType {
+    ADAGRAD = 0;
+    SGD = 1;
+    ADAM = 2;
+    FTRL = 3;
+    FORWARD = 5;
+    HWDEDUP = 6;
+  }
+  message AddressHandlerConfig {
+    optional .platforms_performance_deepsea.barna_core.BarnaCoreConstantParameters.AlgorithmType name = 1;
+    optional int32 cycles_base = 2;
+    optional int32 cycles_per_iteration = 3;
+    optional int32 pipelined_cycles_base = 4;
+    optional int32 pipelined_cycles_per_iteration = 5;
+    optional int32 num_parameter_types_per_id = 6;
+  }
+  message HbmUtilization {
+    optional int32 access_size = 1;
+    optional bool read_only = 2;
+    optional float utilization = 3;
+  }
+  message SparseReduceHeaderOverhead {
+    optional int32 tile_size = 1;
+    optional float overhead_cycles = 2;
+  }
+  repeated .platforms_performance_deepsea.barna_core.BarnaCoreConstantParameters.AddressHandlerConfig address_handler_config = 1;
+  repeated .platforms_performance_deepsea.barna_core.BarnaCoreConstantParameters.HbmUtilization hbm_utilization = 2;
+  repeated .platforms_performance_deepsea.barna_core.BarnaCoreConstantParameters.SparseReduceHeaderOverhead sparse_reduce_header_overhead = 3;
+}
+message EmbeddingTableInfo {
+  message IdStats {
+    optional float max_embedding_ids = 1;
+    optional float max_unique_embedding_ids = 2;
+  }
+  message ActivationStats {
+    optional float max_activation_floats = 1;
+    optional float max_unique_activation_floats = 2;
+  }
+  optional float num_embedding_ids = 3;
+  optional float num_embedding_ids_after_partition = 4;
+  optional float num_unique_embedding_ids_after_partition = 5;
+  optional int32 max_barna_core_features_per_row = 6;
+  optional float max_vpu_iters_per_channel = 8;
+  optional float max_unique_vpu_iters_per_channel = 9;
+  optional .platforms_performance_deepsea.barna_core.EmbeddingTableInfo.IdStats id_stats_per_row = 10;
+  optional .platforms_performance_deepsea.barna_core.EmbeddingTableInfo.IdStats id_stats_per_channel = 11;
+  optional .platforms_performance_deepsea.barna_core.EmbeddingTableInfo.IdStats id_stats_per_row_with_load_imbalance = 13;
+  optional .platforms_performance_deepsea.barna_core.EmbeddingTableInfo.ActivationStats activation_stats_per_row = 15;
+  optional .platforms_performance_deepsea.barna_core.EmbeddingTableInfo.ActivationStats activation_stats_per_channel = 16;
+  optional .platforms_performance_deepsea.barna_core.EmbeddingTableInfo.ActivationStats activation_stats_per_row_with_load_imbalance = 17;
+  optional float deduplication_factor = 18;
+}
+message BarnaCorePerformance {
+  message MicroStepTime {
+    optional float total_time_ns = 1;
+    optional float compute_time_ns = 2;
+    optional float data_time_ns = 3;
+    optional float vpu_time_ns = 4;
+    optional float hbm_time_ns = 5;
+    optional float issue_time_ns = 6;
+    optional float bmem_time_ns = 7;
+    optional float bfifo_time_ns = 8;
+    optional float hbm_latency_time_ns = 9;
+  }
+  optional float total_time_ns = 1;
+  optional float forward_pass_time_ns = 2;
+  optional float backward_pass_time_ns = 3;
+  optional float gradient_accumulation_pass_time_ns = 4;
+  optional .platforms_performance_deepsea.barna_core.BarnaCorePerformance.MicroStepTime id_scatter = 5;
+  optional .platforms_performance_deepsea.barna_core.BarnaCorePerformance.MicroStepTime local_gather = 6;
+  optional .platforms_performance_deepsea.barna_core.BarnaCorePerformance.MicroStepTime global_reduce = 7;
+  optional .platforms_performance_deepsea.barna_core.BarnaCorePerformance.MicroStepTime global_scatter_gradients = 8;
+  optional .platforms_performance_deepsea.barna_core.BarnaCorePerformance.MicroStepTime update_parameters = 9;
+  optional .platforms_performance_deepsea.barna_core.BarnaCorePerformance.MicroStepTime gradient_accumulation_scatter_gradients = 10;
+  optional .platforms_performance_deepsea.barna_core.BarnaCorePerformance.MicroStepTime gradient_accumulation_update_parameters = 11;
+  optional float pcie_infeed_time_ns = 12;
+}
+message BarnaCoreLoadBalanceFactor {
+  message LoadBalanceStats {
+    repeated float load_balance_factor_by_column = 1;
+    repeated float unique_load_balance_factor_by_column = 2;
+  }
+  optional float overall_load_balance_factor = 1;
+  optional float overall_unique_load_balance_factor = 2;
+  repeated float load_balance_factor_per_table = 3;
+  repeated float unique_load_balance_factor_per_table = 4;
+  repeated .platforms_performance_deepsea.barna_core.BarnaCoreLoadBalanceFactor.LoadBalanceStats stats_by_table = 5;
+}

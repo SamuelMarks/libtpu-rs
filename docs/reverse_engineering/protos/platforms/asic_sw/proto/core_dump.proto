@@ -1,0 +1,7 @@
+syntax = "proto2";
+package asic_sw.proto;
+import "platforms/asic_sw/proto/chip_location.proto";
+message ChipCoreDump {
+  optional .asic_sw.proto.ChipLocation location = 1;
+  optional bytes core_dump_recordio = 2;
+}

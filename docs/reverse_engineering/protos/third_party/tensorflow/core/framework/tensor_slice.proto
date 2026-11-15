@@ -1,0 +1,11 @@
+syntax = "proto3";
+package tensorflow;
+message TensorSliceProto {
+  message Extent {
+    oneof has_length_hack {
+      int64 length = 2;
+    }
+    int64 start = 1;
+  }
+  repeated .tensorflow.TensorSliceProto.Extent extent = 1;
+}

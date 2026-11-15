@@ -1,0 +1,10 @@
+syntax = "proto3";
+package asic_sw.driver;
+enum State {
+  CLOSED = 0;
+  OPENED = 1;
+  FAILED = 2;
+  DEBUG = 3;
+  CLOSE_PENDING = 4;
+  OPEN_PENDING = 5;
+}

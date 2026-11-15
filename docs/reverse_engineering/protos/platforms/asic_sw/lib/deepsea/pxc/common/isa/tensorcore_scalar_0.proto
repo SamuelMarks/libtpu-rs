@@ -1,0 +1,447 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/shared_isa_base.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/common/isa/tensorcore_isa_base.proto";
+message TensorCoreScalar0 {
+  message Noop {
+  }
+  message ScalarHalt {
+  }
+  message ScalarPopV2s {
+    optional uint32 dest = 1;
+  }
+  message ScalarDelay {
+    optional uint32 count = 1;
+  }
+  message ScalarSetRegister {
+    optional .asic_sw.deepsea.pxc.isa.ScalarY reg_value = 1;
+    optional .asic_sw.deepsea.pxc.isa.SetRegisterTarget target = 2;
+    optional uint32 imm0 = 3;
+    optional uint32 imm1 = 4;
+    optional uint32 imm2 = 5;
+    optional uint32 imm3 = 6;
+  }
+  message ScalarBranchAbsolute {
+    optional uint32 absolute_address = 1;
+  }
+  message ScalarBranchRelative {
+    optional int32 relative_address = 1;
+  }
+  message ScalarBranchReg {
+    optional uint32 target_address = 1;
+  }
+  message ScalarCallAbsolute {
+    optional uint32 absolute_address = 1;
+    optional uint32 return_address = 2;
+  }
+  message ScalarCallRelative {
+    optional int32 relative_address = 1;
+    optional uint32 return_address = 2;
+  }
+  message ScalarCallReg {
+    optional uint32 target_address = 1;
+    optional uint32 return_address = 2;
+  }
+  message ScalarFence {
+  }
+  message ScalarDmaSimple {
+    enum DmaType {
+      DMA_TYPE_LOCAL = 0;
+      DMA_TYPE_CHIP2HOST = 1;
+    }
+    optional uint32 source_address = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY length = 2;
+    optional uint32 dest_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY dest_sync_flag = 4;
+    optional uint32 imm0 = 5;
+    optional uint32 imm1 = 6;
+    optional uint32 imm2 = 7;
+    optional uint32 imm3 = 8;
+    optional .asic_sw.deepsea.pxc.isa.DmaMemoryId source_memory_id = 9;
+    optional .asic_sw.deepsea.pxc.isa.DmaCoreId source_core_id = 10;
+    optional .asic_sw.deepsea.pxc.isa.DmaSourceOpcode src_opcode = 11;
+    optional .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarDmaSimple.DmaType dma_type_0 = 12;
+    optional .asic_sw.deepsea.pxc.isa.DmaMemoryId destination_memory_id = 13;
+    optional .asic_sw.deepsea.pxc.isa.DmaCoreId destination_core_id = 14;
+    optional uint32 outfeed_queue_id = 15;
+    optional .asic_sw.deepsea.pxc.isa.DmaDestOpcode destination_opcode = 16;
+    optional bool trace = 17;
+  }
+  message ScalarDmaSingleStrided {
+    enum DmaType {
+      DMA_TYPE_LOCAL = 0;
+      DMA_TYPE_CHIP2HOST = 1;
+    }
+    optional uint32 source_address = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY length = 2;
+    optional uint32 dest_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY dest_sync_flag = 4;
+    optional uint32 source_stride = 5;
+    optional uint32 dest_stride = 6;
+    optional uint32 elements_per_stride = 7;
+    optional uint32 imm0 = 8;
+    optional uint32 imm1 = 9;
+    optional uint32 imm2 = 10;
+    optional uint32 imm3 = 11;
+    optional .asic_sw.deepsea.pxc.isa.DmaMemoryId source_memory_id = 12;
+    optional .asic_sw.deepsea.pxc.isa.DmaCoreId source_core_id = 13;
+    optional .asic_sw.deepsea.pxc.isa.DmaSourceOpcode src_opcode = 14;
+    optional .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarDmaSingleStrided.DmaType dma_type_0 = 15;
+    optional .asic_sw.deepsea.pxc.isa.DmaMemoryId destination_memory_id = 16;
+    optional .asic_sw.deepsea.pxc.isa.DmaCoreId destination_core_id = 17;
+    optional uint32 outfeed_queue_id = 18;
+    optional .asic_sw.deepsea.pxc.isa.DmaDestOpcode destination_opcode = 19;
+    optional bool trace = 20;
+  }
+  message ScalarGeneralDma {
+    enum DmaType {
+      DMA_TYPE_LOCAL = 0;
+      DMA_TYPE_CHIP2HOST = 1;
+    }
+    optional uint32 source_address = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY length = 2;
+    optional uint32 dest_address = 3;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY stride_descriptor = 4;
+    optional uint32 stride_count = 5;
+    optional uint32 source_sync_flag = 6;
+    optional uint32 dest_sync_flag = 7;
+    optional uint32 ici_dest = 8;
+    optional uint32 imm0 = 9;
+    optional uint32 imm1 = 10;
+    optional uint32 imm2 = 11;
+    optional uint32 imm3 = 12;
+    optional .asic_sw.deepsea.pxc.isa.DmaMemoryId source_memory_id = 13;
+    optional .asic_sw.deepsea.pxc.isa.DmaCoreId source_core_id = 14;
+    optional .asic_sw.deepsea.pxc.isa.DmaSourceOpcode src_opcode = 15;
+    optional .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarGeneralDma.DmaType dma_type_0 = 16;
+    optional .asic_sw.deepsea.pxc.isa.DmaMemoryId destination_memory_id = 17;
+    optional .asic_sw.deepsea.pxc.isa.DmaCoreId destination_core_id = 18;
+    optional uint32 outfeed_queue_id = 19;
+    optional .asic_sw.deepsea.pxc.isa.DmaDestOpcode destination_opcode = 20;
+    optional bool trace = 21;
+  }
+  message ScalarReadRegisters {
+    optional .asic_sw.deepsea.pxc.isa.TcsReadRegister reg = 1;
+    optional uint32 dest = 2;
+  }
+  message ScalarConvertIntToFloat {
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 1;
+    optional uint32 dest = 2;
+    optional uint32 imm0 = 3;
+    optional uint32 imm1 = 4;
+    optional uint32 imm2 = 5;
+    optional uint32 imm3 = 6;
+  }
+  message ScalarConvertFloatToInt {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarIntAdd {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarIntSub {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarAnd {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarOr {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarXor {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarFloatMul {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarUintMul {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarFloatMax {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarFloatMin {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarLogicalShiftLeft {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarLogicalShiftRight {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarArithmeticShiftRight {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarMove {
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 1;
+    optional uint32 dest = 2;
+    optional uint32 imm0 = 3;
+    optional uint32 imm1 = 4;
+    optional uint32 imm2 = 5;
+    optional uint32 imm3 = 6;
+  }
+  message ScalarCountLeadingZeros {
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 1;
+    optional uint32 dest = 2;
+    optional uint32 imm0 = 3;
+    optional uint32 imm1 = 4;
+    optional uint32 imm2 = 5;
+    optional uint32 imm3 = 6;
+  }
+  message ScalarIntEqual {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarIntNotEqual {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarIntGreater {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarIntGreaterEqual {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarIntLess {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarIntLessEqual {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarIntAddCarryOut {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarPredicateOr {
+    optional .asic_sw.deepsea.pxc.isa.PredicateOr px = 1;
+    optional .asic_sw.deepsea.pxc.isa.PredicateOr py = 2;
+    optional uint32 dest = 3;
+  }
+  message ScalarFloatEqual {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarFloatNotEqual {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarFloatGreater {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarFloatGreaterEqual {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarFloatLess {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarFloatLessEqual {
+    optional uint32 sx = 1;
+    optional .asic_sw.deepsea.pxc.isa.ScalarY sy = 2;
+    optional uint32 dest = 3;
+    optional uint32 imm0 = 4;
+    optional uint32 imm1 = 5;
+    optional uint32 imm2 = 6;
+    optional uint32 imm3 = 7;
+  }
+  message ScalarIsInfOrNan {
+    optional uint32 sx = 1;
+    optional uint32 dest = 2;
+  }
+  oneof inst {
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.Noop noop = 5;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarHalt scalar_halt = 6;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarPopV2s scalar_pop_v2s = 7;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarDelay scalar_delay = 8;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarSetRegister scalar_set_register = 9;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarBranchAbsolute scalar_branch_absolute = 10;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarBranchRelative scalar_branch_relative = 11;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarBranchReg scalar_branch_reg = 12;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarCallAbsolute scalar_call_absolute = 13;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarCallRelative scalar_call_relative = 14;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarCallReg scalar_call_reg = 15;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarFence scalar_fence = 16;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarDmaSimple scalar_dma_simple = 17;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarDmaSingleStrided scalar_dma_single_strided = 18;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarGeneralDma scalar_general_dma = 19;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarReadRegisters scalar_read_registers = 20;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarConvertIntToFloat scalar_convert_int_to_float = 21;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarConvertFloatToInt scalar_convert_float_to_int = 22;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarIntAdd scalar_int_add = 23;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarIntSub scalar_int_sub = 24;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarAnd scalar_and = 25;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarOr scalar_or = 26;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarXor scalar_xor = 27;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarFloatMul scalar_float_mul = 28;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarUintMul scalar_uint_mul = 29;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarFloatMax scalar_float_max = 30;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarFloatMin scalar_float_min = 31;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarLogicalShiftLeft scalar_logical_shift_left = 32;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarLogicalShiftRight scalar_logical_shift_right = 33;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarArithmeticShiftRight scalar_arithmetic_shift_right = 34;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarMove scalar_move = 35;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarCountLeadingZeros scalar_count_leading_zeros = 36;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarIntEqual scalar_int_equal = 37;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarIntNotEqual scalar_int_not_equal = 38;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarIntGreater scalar_int_greater = 39;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarIntGreaterEqual scalar_int_greater_equal = 40;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarIntLess scalar_int_less = 41;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarIntLessEqual scalar_int_less_equal = 42;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarIntAddCarryOut scalar_int_add_carry_out = 43;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarPredicateOr scalar_predicate_or = 44;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarFloatEqual scalar_float_equal = 45;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarFloatNotEqual scalar_float_not_equal = 46;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarFloatGreater scalar_float_greater = 47;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarFloatGreaterEqual scalar_float_greater_equal = 48;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarFloatLess scalar_float_less = 49;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarFloatLessEqual scalar_float_less_equal = 50;
+    .asic_sw.deepsea.pxc.isa.TensorCoreScalar0.ScalarIsInfOrNan scalar_is_inf_or_nan = 51;
+  }
+  optional .asic_sw.deepsea.pxc.isa.Predication predication = 1 [default = PREDICATION_ALWAYS];
+  optional uint32 latency = 2;
+  map<string, uint32> resource_usage = 3;
+  optional uint32 bit_width = 4;
+}

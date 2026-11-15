@@ -1,0 +1,10 @@
+syntax = "proto3";
+package tensorflow;
+message TensorShapeProto {
+  message Dim {
+    int64 size = 1;
+    string name = 2;
+  }
+  repeated .tensorflow.TensorShapeProto.Dim dim = 2;
+  bool unknown_rank = 3;
+}

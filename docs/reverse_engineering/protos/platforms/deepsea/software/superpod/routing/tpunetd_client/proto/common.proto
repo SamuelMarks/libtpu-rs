@@ -1,0 +1,9 @@
+syntax = "proto2";
+package superpod.tpunetd_client;
+enum SessionState {
+  SESSION_STATE_UNKNOWN = 0;
+  SESSION_STATE_STOPPED = 1;
+  SESSION_STATE_STARTED = 2;
+  SESSION_STATE_FAILING = 3;
+  SESSION_STATE_FAILED = 4;
+}

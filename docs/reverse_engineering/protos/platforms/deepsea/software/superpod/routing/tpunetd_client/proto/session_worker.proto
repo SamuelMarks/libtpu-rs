@@ -1,0 +1,45 @@
+syntax = "proto2";
+package superpod.tpunetd_client;
+import "platforms/accel_ssw/deepsea/slice_builder/proto/ici_dump.proto";
+import "platforms/accel_ssw/deepsea/slice_builder/slice_builder.proto";
+import "platforms/asic_sw/proto/chip_location.proto";
+import "platforms/asic_sw/proto/core_dump.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/chip_coordinate.proto";
+import "platforms/deepsea/software/superpod/routing/common/proto/topology.proto";
+import "platforms/deepsea/software/superpod/routing/tpunetd/proto/common.proto";
+import "util/task/status.proto";
+message CheckHeartbeatRequest {
+}
+message CheckHeartbeatResponse {
+  repeated .asic_sw.proto.ChipLocation failed_chips = 1;
+  optional .util.StatusProto injected_error = 2;
+  repeated .asic_sw.proto.ChipLocation zero_id_chips = 3;
+}
+message UpdateSessionInfoRequest {
+  optional bool in_session = 1;
+  optional string session_id = 2;
+  optional .accel_ssw.deepsea.slice_builder.SliceFailureType failure_type = 3;
+}
+message UpdateSessionInfoResponse {
+}
+message GetSessionInfoRequest {
+}
+message GetSessionInfoResponse {
+  optional bool in_session = 1;
+  optional string session_id = 2;
+}
+message CollectCoreDumpRequest {
+  optional .superpod.tpunetd.CoreDumpType core_dump_type = 1;
+}
+message CollectCoreDumpResponse {
+  optional .accel_ssw.deepsea.slice_builder.proto.IciDump ici_dump = 1;
+  repeated .asic_sw.proto.ChipCoreDump core_dumps = 2;
+  optional .superpod.routing.proto.ChipCoordinateMapping coordinate_mappings = 3;
+  optional .superpod.routing.proto.Topology topology = 4;
+}
+service TpuNetworkSessionWorker {
+  rpc CheckHeartbeat(.superpod.tpunetd_client.CheckHeartbeatRequest) returns (.superpod.tpunetd_client.CheckHeartbeatResponse);
+  rpc UpdateSessionInfo(.superpod.tpunetd_client.UpdateSessionInfoRequest) returns (.superpod.tpunetd_client.UpdateSessionInfoResponse);
+  rpc GetSessionInfo(.superpod.tpunetd_client.GetSessionInfoRequest) returns (.superpod.tpunetd_client.GetSessionInfoResponse);
+  rpc CollectCoreDump(.superpod.tpunetd_client.CollectCoreDumpRequest) returns (.superpod.tpunetd_client.CollectCoreDumpResponse);
+}

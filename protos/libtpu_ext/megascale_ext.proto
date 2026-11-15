@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package libtpu.ext.megascale;
+
+import "third_party/tensorflow/compiler/xla/megascale/addresses.proto";
+import "third_party/tensorflow/compiler/xla/megascale/dcn_topology.proto";
+
+// MegaScale per-slice device ordinal assignment list.
+message SliceDeviceListProto {
+  int32 slice_id = 1;
+  repeated int32 device_ids = 2;
+}
+
+// MegaScale multi-slice pod configuration envelope.
+message MegascaleMultiSliceConfigProto {
+  int32 num_slices = 1;
+  int32 slice_id = 2;
+  int32 num_devices_per_slice = 3;
+  string coordinator_address = 4;
+  repeated SliceDeviceListProto slice_devices = 5;
+  .xla.megascale.runtime.EndpointAddresses endpoint_addresses = 6;
+  .xla.megascale.runtime.DCNTopology dcn_topology = 7;
+}
+
+// MegaScale DCN flat cluster summary parameters.
+message MegascaleDcnTopologyProto {
+  int32 num_slices = 1;
+  int32 num_hosts_per_slice = 2;
+  int32 transport_type = 3;
+}
+
+// MegaScale runtime telemetry counters.
+message MegascaleRuntimeMetricsProto {
+  uint64 completed_barriers = 1;
+  uint64 collective_ops_count = 2;
+  int32 active_contexts = 3;
+  uint64 bytes_transferred = 4;
+}
+
+// MegaScale transport channel configuration parameters.
+message MegascaleTransportConfigProto {
+  int32 num_channels = 1;
+  int64 max_inflight_bytes = 2;
+  int64 timeout_ms = 3;
+  bool enable_zstd_compression = 4;
+  int32 zstd_compression_level = 5;
+}
+
+// MegaScale collective channel slice transfer descriptor.
+message MegascaleChannelSliceDescriptorProto {
+  uint32 channel_id = 1;
+  int32 src_slice_id = 2;
+  int32 dst_slice_id = 3;
+  uint64 payload_bytes = 4;
+  uint32 ici_ring_stage = 5;
+}
+
+// MegaScale hierarchical ICI + DCN collective schedule descriptor.
+message MegascaleCollectiveScheduleProto {
+  string collective_name = 1;
+  int32 reduction_kind = 2;
+  bool hierarchical_ici_then_dcn = 3;
+  repeated MegascaleChannelSliceDescriptorProto channel_descriptors = 4;
+}
+
+// MegaScale per-channel congestion window telemetry state.
+message MegascaleCongestionWindowStateProto {
+  uint32 channel_id = 1;
+  uint64 cwnd_bytes = 2;
+  uint64 rtt_nanoseconds = 3;
+  uint32 ecn_marked_packets = 4;
+  uint32 pacing_rate_gbps = 5;
+}
+
+// MegaScale DCN congestion control configuration.
+message MegascaleCongestionControlConfigProto {
+  string algorithm_name = 1;
+  uint64 initial_cwnd_bytes = 2;
+  uint64 min_cwnd_bytes = 3;
+  uint64 max_cwnd_bytes = 4;
+  repeated MegascaleCongestionWindowStateProto active_windows = 5;
+}

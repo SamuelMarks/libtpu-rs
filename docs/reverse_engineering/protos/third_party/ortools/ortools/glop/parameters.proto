@@ -1,0 +1,108 @@
+syntax = "proto2";
+package operations_research.glop;
+message GlopParameters {
+  enum ScalingAlgorithm {
+    DEFAULT = 0;
+    EQUILIBRATION = 1;
+    LINEAR_PROGRAM = 2;
+    RUIZ = 3;
+  }
+  enum SolverBehavior {
+    ALWAYS_DO = 0;
+    NEVER_DO = 1;
+    LET_SOLVER_DECIDE = 2;
+  }
+  enum PricingRule {
+    DANTZIG = 0;
+    STEEPEST_EDGE = 1;
+    DEVEX = 2;
+  }
+  enum InitialBasisHeuristic {
+    NONE = 0;
+    BIXBY = 1;
+    TRIANGULAR = 2;
+    MAROS = 3;
+  }
+  enum CostScalingAlgorithm {
+    NO_COST_SCALING = 0;
+    CONTAIN_ONE_COST_SCALING = 1;
+    MEAN_COST_SCALING = 2;
+    MEDIAN_COST_SCALING = 3;
+  }
+  optional .operations_research.glop.GlopParameters.ScalingAlgorithm scaling_method = 57 [default = EQUILIBRATION];
+  optional .operations_research.glop.GlopParameters.PricingRule feasibility_rule = 1 [default = STEEPEST_EDGE];
+  optional .operations_research.glop.GlopParameters.PricingRule optimization_rule = 2 [default = STEEPEST_EDGE];
+  optional double refactorization_threshold = 6 [default = 1e-09];
+  optional double recompute_reduced_costs_threshold = 8 [default = 1e-08];
+  optional double recompute_edges_norm_threshold = 9 [default = 100];
+  optional double primal_feasibility_tolerance = 10 [default = 1e-08];
+  optional double dual_feasibility_tolerance = 11 [default = 1e-08];
+  optional double ratio_test_zero_threshold = 12 [default = 1e-09];
+  optional double harris_tolerance_ratio = 13 [default = 0.5];
+  optional double small_pivot_threshold = 14 [default = 1e-06];
+  optional double minimum_acceptable_pivot = 15 [default = 1e-06];
+  optional double drop_tolerance = 52 [default = 1e-14];
+  optional bool use_scaling = 16 [default = true];
+  optional .operations_research.glop.GlopParameters.CostScalingAlgorithm cost_scaling = 60 [default = CONTAIN_ONE_COST_SCALING];
+  optional .operations_research.glop.GlopParameters.InitialBasisHeuristic initial_basis = 17 [default = TRIANGULAR];
+  optional bool use_transposed_matrix = 18 [default = true];
+  optional int32 basis_refactorization_period = 19 [default = 64];
+  optional bool dynamically_adjust_refactorization_period = 63 [default = true];
+  optional .operations_research.glop.GlopParameters.SolverBehavior solve_dual_problem = 20 [default = LET_SOLVER_DECIDE];
+  optional double dualizer_threshold = 21 [default = 1.5];
+  optional double solution_feasibility_tolerance = 22 [default = 1e-06];
+  optional bool provide_strong_optimal_guarantee = 24 [default = true];
+  optional bool change_status_to_imprecise = 58 [default = true];
+  optional double max_number_of_reoptimizations = 56 [default = 40];
+  optional double lu_factorization_pivot_threshold = 25 [default = 0.01];
+  optional double max_time_in_seconds = 26 [default = inf];
+  optional double max_deterministic_time = 45 [default = inf];
+  optional int64 max_number_of_iterations = 27 [default = -1];
+  optional int32 markowitz_zlatev_parameter = 29 [default = 3];
+  optional double markowitz_singularity_threshold = 30 [default = 1e-15];
+  optional bool use_dual_simplex = 31 [default = false];
+  optional bool allow_simplex_algorithm_change = 32 [default = false];
+  optional int32 devex_weights_reset_period = 33 [default = 150];
+  optional bool use_preprocessing = 34 [default = true];
+  optional bool use_middle_product_form_update = 35 [default = true];
+  optional bool initialize_devex_with_column_norms = 36 [default = true];
+  optional bool exploit_singleton_column_in_initial_basis = 37 [default = true];
+  optional double dual_small_pivot_threshold = 38 [default = 0.0001];
+  optional double preprocessor_zero_tolerance = 39 [default = 1e-09];
+  optional double objective_lower_limit = 40 [default = -inf];
+  optional double objective_upper_limit = 41 [default = inf];
+  optional double degenerate_ministep_factor = 42 [default = 0.01];
+  optional int32 random_seed = 43 [default = 1];
+  optional bool use_absl_random = 72 [default = false];
+  optional int32 num_omp_threads = 44 [default = 1];
+  optional bool perturb_costs_in_dual_simplex = 53 [default = false];
+  optional bool use_dedicated_dual_feasibility_algorithm = 62 [default = true];
+  optional double relative_cost_perturbation = 54 [default = 1e-05];
+  optional double relative_max_cost_perturbation = 55 [default = 1e-07];
+  optional double initial_condition_number_threshold = 59 [default = 1e+50];
+  optional bool log_search_progress = 61 [default = false];
+  optional bool log_to_stdout = 66 [default = true];
+  optional double crossover_bound_snapping_distance = 64 [default = inf];
+  optional bool push_to_vertex = 65 [default = true];
+  optional bool use_implied_free_preprocessor = 67 [default = true];
+  optional double max_valid_magnitude = 70 [default = 1e+30];
+  optional double drop_magnitude = 71 [default = 1e-30];
+  optional bool dual_price_prioritize_norm = 69 [default = false];
+  optional bool primal_polish = 73 [default = false];
+  optional bool dual_polish = 74 [default = false];
+  optional bool use_shift_variable_bounds_preprocessor = 75 [default = true];
+  optional bool use_fixed_variable_preprocessor = 76 [default = true];
+  optional bool use_singleton_preprocessor = 77 [default = true];
+  optional bool use_forcing_and_implied_free_constraint_preprocessor = 78 [default = true];
+  optional bool use_free_constraint_preprocessor = 79 [default = true];
+  optional bool use_unconstrained_variable_preprocessor = 80 [default = true];
+  optional bool use_doubleton_free_column_preprocessor = 81 [default = true];
+  optional bool use_doubleton_equality_row_preprocessor = 82 [default = true];
+  optional bool use_empty_column_preprocessor = 83 [default = true];
+  optional bool use_empty_constraint_preprocessor = 84 [default = true];
+  optional bool use_proportional_column_preprocessor = 85 [default = true];
+  optional bool use_proportional_row_preprocessor = 86 [default = true];
+  optional bool use_singleton_column_sign_preprocessor = 87 [default = true];
+  optional bool use_dualizer_preprocessor = 88 [default = true];
+  optional bool use_bound_propagation_preprocessor = 89 [default = true];
+}

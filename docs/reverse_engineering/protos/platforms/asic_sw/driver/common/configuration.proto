@@ -1,0 +1,38 @@
+syntax = "proto2";
+package asic_sw.driver;
+import "platforms/asic_sw/proto/device_identifiers.proto";
+import "platforms/direct_io/direct_io.proto";
+message Configuration {
+  enum Mode {
+    KERNEL = 1;
+    RPC = 2;
+    DEBUG = 3;
+    SMBUS = 4;
+    CORE_DUMP = 5;
+    GRM_DIRECT = 6;
+    MOCK = 7;
+  }
+  oneof Location {
+    string device_path = 1;
+    .platforms_direct_io.SmbusLocationProto smbus_location = 2;
+    .asic_sw.driver.RpcConfiguration rpc_configuration = 3;
+    string core_dump_path = 6;
+  }
+  optional .asic_sw.driver.Configuration.Mode mode = 4;
+  optional string debug_data_directory = 7;
+  optional int32 initialization_timeout_seconds = 5 [default = 60];
+  optional int32 virtual_function = 8;
+  optional .asic_sw.proto.DeviceIdentifiers cached_device_identifiers = 9;
+  optional int32 numa_node = 10;
+}
+message RpcConfiguration {
+  enum RpcSecurityMode {
+    INSECURE = 1;
+    LOAS2 = 2;
+    LOCAL_TCP = 3;
+  }
+  optional int32 rpc_timeout_seconds = 2 [default = 600];
+  optional .asic_sw.driver.RpcConfiguration.RpcSecurityMode rpc_security_mode = 3 [default = INSECURE];
+  optional string remote_address = 4;
+  optional string tachyon_local_device_path = 5;
+}

@@ -688,6 +688,13 @@ pub enum MosaicDialectAttr {
     MemorySpace(TpuMemorySpace),
     /// Core type attribute (`#tpu.core_type<tensor_core>`).
     CoreType(String),
+    /// Tiled physical layout attribute (`#tpu.tiled<(8, 128), [1, 1]>`).
+    TiledLayout {
+        /// Nested tile dimension extents (e.g., `[[8, 128]]`).
+        tiles: Vec<Vec<i64>>,
+        /// Tile strides along physical dimensions.
+        tile_strides: Vec<i64>,
+    },
     /// Pipeline schedule / window parameters dictionary.
     WindowParams(BTreeMap<String, MlirAttribute>),
 }
@@ -854,6 +861,15 @@ impl MlirAttribute {
     pub fn as_usize(&self) -> Option<usize> {
         match self {
             Self::Integer { value, .. } => usize::try_from(*value).ok(),
+            _ => None,
+        }
+    }
+
+    /// Extracts a single signed `i64` from an [`Self::Integer`] attribute.
+    #[must_use]
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            Self::Integer { value, .. } => i64::try_from(*value).ok(),
             _ => None,
         }
     }
@@ -1240,6 +1256,8 @@ pub struct AstModule {
     pub sdy_meshes: BTreeMap<String, SdyMeshAttr>,
     /// Top-level `#loc = loc(...)` location alias definitions.
     pub locations: BTreeMap<String, MlirLocation>,
+    /// Named binary resource blobs parsed from `{-# dialect_resources: { ... } #-}` or `kResource`.
+    pub dialect_resources: BTreeMap<String, Vec<u8>>,
     /// Parsed MLIR functions (`func.func`).
     pub functions: Vec<AstFunction>,
     /// Top-level module body operations outside of `func.func` (for bare MLIR snippets).

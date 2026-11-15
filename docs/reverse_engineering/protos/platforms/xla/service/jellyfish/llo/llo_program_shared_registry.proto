@@ -1,0 +1,5 @@
+syntax = "proto3";
+package xla;
+message LloProgramSharedRegistryOffsetTable {
+  map<string, int32> registry_values = 1;
+}

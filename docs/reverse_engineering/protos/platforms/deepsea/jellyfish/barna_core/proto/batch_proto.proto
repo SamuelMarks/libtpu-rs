@@ -1,0 +1,33 @@
+syntax = "proto3";
+package platforms_deepsea.jellyfish.barna_core;
+enum HbmSegmentProto {
+  HBM_SEGMENT_INVALID = 0;
+  HBM_SEGMENT_PRIMARY = 1;
+  HBM_SEGMENT_PADDING = 2;
+  HBM_SEGMENT_REPLICA = 3;
+}
+message UserBatchProto {
+  message Feature {
+    repeated int64 embedding_ids = 1;
+    repeated float weights = 2;
+  }
+  repeated .platforms_deepsea.jellyfish.barna_core.UserBatchProto.Feature features = 3;
+  int32 feature_count_per_sample = 2;
+}
+message InputBatchProto {
+  message Feature {
+    reserved 1;
+    reserved 3;
+    reserved "embedding_ids";
+    reserved "indices_within_partition_column";
+    uint32 sample_index = 5;
+    uint32 srs_id = 6;
+    uint32 user_table_id = 7;
+    repeated .platforms_deepsea.jellyfish.barna_core.HbmSegmentProto segments = 9;
+    repeated uint32 partition_columns = 2;
+    repeated uint32 indices_within_srs_column = 8;
+    repeated float weights = 4;
+  }
+  repeated .platforms_deepsea.jellyfish.barna_core.InputBatchProto.Feature features = 3;
+  int32 feature_count_per_sample = 2;
+}

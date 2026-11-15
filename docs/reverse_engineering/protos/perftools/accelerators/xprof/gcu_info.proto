@@ -1,0 +1,9 @@
+syntax = "proto2";
+package xprof;
+message GcuInfo {
+  optional double per_cpu_core_gcus = 1 [default = -1];
+  optional int64 num_cpu_cores = 2 [default = -1];
+  optional double accelerator_naps = 3 [default = -1];
+  optional double accelerator_gcus = 4 [default = -1];
+  optional string details = 5 [default = "NAP/GCU info is not available."];
+}

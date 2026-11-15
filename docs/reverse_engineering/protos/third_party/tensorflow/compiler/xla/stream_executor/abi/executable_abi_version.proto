@@ -1,0 +1,13 @@
+syntax = "proto3";
+package stream_executor;
+message ExecutableAbiVersionProto {
+  message CudaPlatformVersion {
+    bytes cuda_toolkit_version = 1;
+    bytes cudnn_version = 2;
+    bytes cub_version = 3;
+  }
+  oneof platform_specific_version {
+    .stream_executor.ExecutableAbiVersionProto.CudaPlatformVersion cuda_platform_version = 3;
+  }
+  string platform_name = 1;
+}

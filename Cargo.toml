@@ -28,6 +28,7 @@ float8 = { version = "0.7", default-features = false }
 gimli = { version = "0.34", default-features = false, features = ["read"] }
 goblin = { version = "0.10", default-features = false, features = ["archive", "elf32", "elf64", "endian_fd", "mach32", "mach64", "pe32", "pe64", "te"] }
 half = { version = "2.7", default-features = false }
+heck = { version = "0.5", default-features = false }
 iced-x86 = { version = "1.21", default-features = false, features = ["decoder", "instr_info", "std"] }
 indexmap = { version = "2.14", default-features = false, features = ["std"] }
 lexopt = { version = "0.3", default-features = false }
@@ -46,6 +47,7 @@ prost-build = { version = "0.14", default-features = false }
 prost-reflect = { version = "0.16", default-features = false, features = ["serde", "text-format"] }
 prost-types = { version = "0.14", default-features = false }
 protox = { version = "0.10", default-features = false }
+pyo3 = { version = "0.30", default-features = false, features = ["abi3-py39"] }
 rustix = { version = "1.1", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
@@ -106,3 +108,12 @@ unnecessary_safety_comment = "deny"
 unnecessary_safety_doc = "deny"
 unneeded_field_pattern = "deny"
 verbose_file_reads = "deny"
+
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false
+

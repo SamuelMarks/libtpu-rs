@@ -1,0 +1,16 @@
+syntax = "proto3";
+package tensorflow.eager;
+import "third_party/tensorflow/core/framework/tensor_shape.proto";
+import "third_party/tensorflow/core/framework/types.proto";
+message ResourceDtypeAndShape {
+  .tensorflow.DataType dtype = 1;
+  .tensorflow.TensorShapeProto shape = 2;
+}
+message RemoteTensorHandle {
+  int64 op_id = 1;
+  int32 output_num = 2;
+  string device = 3;
+  string op_device = 4;
+  .tensorflow.DataType dtype = 5;
+  repeated .tensorflow.eager.ResourceDtypeAndShape resource_dtypes_and_shapes = 6;
+}

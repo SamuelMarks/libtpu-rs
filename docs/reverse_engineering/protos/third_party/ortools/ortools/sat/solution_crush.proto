@@ -1,0 +1,213 @@
+syntax = "proto3";
+package operations_research.sat;
+import "third_party/ortools/ortools/sat/cp_model.proto";
+message Resize {
+  int64 new_size = 1;
+}
+message MaybeSetLiteralToOrderEncoding {
+  enum Relation {
+    LESS_THAN_OR_EQUAL = 0;
+    EQUAL = 1;
+    GREATER_THAN_OR_EQUAL = 2;
+  }
+  int32 literal = 1;
+  int32 var = 2;
+  int64 value = 3;
+  .operations_research.sat.MaybeSetLiteralToOrderEncoding.Relation relation = 4;
+}
+message SetVarToClause {
+  int32 var = 1;
+  repeated int32 clause = 2;
+}
+message SetVarToConjunction {
+  int32 var = 1;
+  repeated int32 conjunction = 2;
+}
+message SetVarToValueIfLinearConstraintViolated {
+  int32 var = 1;
+  int64 value = 2;
+  .operations_research.sat.LinearConstraintProto linear_constraint = 3;
+}
+message SetVarToLinearExpressionIf {
+  int32 var = 1;
+  .operations_research.sat.LinearExpressionProto expr = 2;
+  repeated int32 condition_lits = 3;
+}
+message SetVarToConditionalValue {
+  int32 var = 1;
+  repeated int32 condition_lits = 2;
+  int64 value_if_true = 3;
+  int64 value_if_false = 4;
+}
+message MakeLiteralsEqual {
+  int32 lit1 = 1;
+  int32 lit2 = 2;
+}
+message SetOrUpdateVarToDomain {
+  int32 var = 1;
+  repeated int64 domain = 2;
+}
+message SetOrUpdateVarToDomainWithOptionalEscapeValue {
+  int32 var = 1;
+  repeated int64 domain = 2;
+  optional int64 unique_escape_value = 3;
+  bool push_down_when_not_in_domain = 4;
+  map<int64, int32> encoding = 5;
+}
+message UpdateLiteralsWithDominance {
+  int32 lit = 1;
+  int32 dominating_lit = 2;
+}
+message UpdateTermsWithDominance {
+  message TermWithDomain {
+    int32 var = 1;
+    int64 coeff = 2;
+    repeated int64 domain = 3;
+  }
+  int32 var = 1;
+  int64 coeff = 2;
+  int64 min_value = 3;
+  int64 max_value = 4;
+  repeated .operations_research.sat.UpdateTermsWithDominance.TermWithDomain dominating_terms = 5;
+}
+message MaybeUpdateVarWithSymmetriesToValue {
+  int32 var = 1;
+  int64 value = 2;
+  repeated .operations_research.sat.SparsePermutationProto generators = 3;
+}
+message OrbitopeRow {
+  repeated int32 literals = 1;
+}
+message MaybeSwapOrbitopeColumns {
+  repeated .operations_research.sat.OrbitopeRow orbitope_rows = 1;
+  int32 row = 2;
+  int32 pivot_col = 3;
+  bool value = 4;
+}
+message SortOrbitopeColumns {
+  repeated .operations_research.sat.OrbitopeRow orbitope_rows = 1;
+  int32 row = 2;
+}
+message SetVarToLinearConstraintSolution {
+  repeated int32 enforcement_lits = 1;
+  optional int32 var_index = 2;
+  repeated int32 vars = 3;
+  repeated int64 default_values = 4;
+  repeated int64 coeffs = 5;
+  int64 rhs = 6;
+}
+message SetReservoirCircuitVars {
+  .operations_research.sat.ReservoirConstraintProto reservoir = 1;
+  int64 min_level = 2;
+  int64 max_level = 3;
+  repeated int32 level_vars = 4;
+  .operations_research.sat.CircuitConstraintProto circuit = 5;
+}
+message SetVarToReifiedPrecedenceLiteral {
+  int32 var = 1;
+  .operations_research.sat.LinearExpressionProto time_i = 2;
+  .operations_research.sat.LinearExpressionProto time_j = 3;
+  int32 active_i = 4;
+  int32 active_j = 5;
+}
+message SetIntModExpandedVars {
+  .operations_research.sat.ConstraintProto ct = 1;
+  int32 div_var = 2;
+  int32 prod_var = 3;
+  int64 default_div_value = 4;
+  int64 default_prod_value = 5;
+}
+message SetIntProdExpandedVars {
+  .operations_research.sat.LinearArgumentProto int_prod = 1;
+  repeated int32 prod_vars = 2;
+}
+message SetLinMaxExpandedVars {
+  .operations_research.sat.LinearArgumentProto lin_max = 1;
+  repeated int32 enforcement_lits = 2;
+}
+message SetAutomatonExpandedVars {
+  message StateVar {
+    int32 var = 1;
+    int32 time = 2;
+    int64 state = 3;
+  }
+  message TransitionVar {
+    int32 var = 1;
+    int32 time = 2;
+    int64 transition_tail = 3;
+    int64 transition_label = 4;
+  }
+  .operations_research.sat.AutomatonConstraintProto automaton = 1;
+  repeated .operations_research.sat.SetAutomatonExpandedVars.StateVar state_vars = 2;
+  repeated .operations_research.sat.SetAutomatonExpandedVars.TransitionVar transition_vars = 3;
+}
+message SetTableExpandedVars {
+  message TableRowLiteral {
+    int32 lit = 1;
+    repeated int32 vars = 2;
+    repeated int64 values = 3;
+  }
+  repeated int32 column_vars = 1;
+  repeated int32 existing_row_lits = 2;
+  repeated .operations_research.sat.SetTableExpandedVars.TableRowLiteral new_row_lits = 3;
+}
+message SetLinearWithComplexDomainExpandedVars {
+  .operations_research.sat.LinearConstraintProto linear = 1;
+  repeated int32 bucket_lits = 2;
+}
+message AssignVariableToPackingArea {
+  message Rectangle {
+    int64 x_min = 1;
+    int64 x_max = 2;
+    int64 y_min = 3;
+    int64 y_max = 4;
+  }
+  message Rectangles {
+    repeated .operations_research.sat.AssignVariableToPackingArea.Rectangle rectangles = 1;
+  }
+  message BoxInAreaLiteral {
+    int32 box_index = 1;
+    int32 area_index = 2;
+    int32 literal = 3;
+  }
+  repeated .operations_research.sat.AssignVariableToPackingArea.Rectangles areas = 1;
+  repeated .operations_research.sat.ConstraintProto x_intervals = 2;
+  repeated .operations_research.sat.ConstraintProto y_intervals = 3;
+  repeated .operations_research.sat.AssignVariableToPackingArea.BoxInAreaLiteral box_in_area_lits = 4;
+}
+message RemapVariables {
+  repeated int32 old_to_new_mapping = 1;
+}
+message SolutionCrushStep {
+  oneof step {
+    .operations_research.sat.Resize resize = 1;
+    .operations_research.sat.MaybeSetLiteralToOrderEncoding maybe_set_literal_to_order_encoding = 2;
+    .operations_research.sat.SetVarToClause set_var_to_clause = 3;
+    .operations_research.sat.SetVarToConjunction set_var_to_conjunction = 4;
+    .operations_research.sat.SetVarToValueIfLinearConstraintViolated set_var_to_value_if_linear_constraint_violated = 5;
+    .operations_research.sat.SetVarToLinearExpressionIf set_var_to_linear_expression_if = 6;
+    .operations_research.sat.SetVarToConditionalValue set_var_to_conditional_value = 7;
+    .operations_research.sat.MakeLiteralsEqual make_literals_equal = 8;
+    .operations_research.sat.SetOrUpdateVarToDomain set_or_update_var_to_domain = 9;
+    .operations_research.sat.SetOrUpdateVarToDomainWithOptionalEscapeValue set_or_update_var_to_domain_with_optional_escape_value = 10;
+    .operations_research.sat.UpdateLiteralsWithDominance update_literals_with_dominance = 11;
+    .operations_research.sat.UpdateTermsWithDominance update_terms_with_dominance = 12;
+    .operations_research.sat.MaybeUpdateVarWithSymmetriesToValue maybe_update_var_with_symmetries_to_value = 13;
+    .operations_research.sat.MaybeSwapOrbitopeColumns maybe_swap_orbitope_columns = 14;
+    .operations_research.sat.SortOrbitopeColumns sort_orbitope_columns = 26;
+    .operations_research.sat.SetVarToLinearConstraintSolution set_var_to_linear_constraint_solution = 15;
+    .operations_research.sat.SetReservoirCircuitVars set_reservoir_circuit_vars = 16;
+    .operations_research.sat.SetVarToReifiedPrecedenceLiteral set_var_to_reified_precedence_literal = 17;
+    .operations_research.sat.SetIntModExpandedVars set_int_mod_expanded_vars = 18;
+    .operations_research.sat.SetIntProdExpandedVars set_int_prod_expanded_vars = 19;
+    .operations_research.sat.SetLinMaxExpandedVars set_lin_max_expanded_vars = 20;
+    .operations_research.sat.SetAutomatonExpandedVars set_automaton_expanded_vars = 21;
+    .operations_research.sat.SetTableExpandedVars set_table_expanded_vars = 22;
+    .operations_research.sat.SetLinearWithComplexDomainExpandedVars set_linear_with_complex_domain_expanded_vars = 23;
+    .operations_research.sat.AssignVariableToPackingArea assign_variable_to_packing_area = 24;
+    .operations_research.sat.RemapVariables remap_variables = 25;
+  }
+}
+message SolutionCrushProto {
+  repeated .operations_research.sat.SolutionCrushStep steps = 1;
+}

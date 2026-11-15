@@ -1,0 +1,8 @@
+syntax = "proto2";
+package asic_sw.deepsea.pxc.pfc.isa;
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_sequencer_scalar_0.proto";
+import "platforms/asic_sw/lib/deepsea/pxc/pfc/isa/barnacore_sequencer_scalar_1.proto";
+message BarnaCoreSequencerBundle {
+  optional .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreSequencerScalar0 scalar_0 = 1;
+  optional .asic_sw.deepsea.pxc.pfc.isa.BarnaCoreSequencerScalar1 scalar_1 = 2;
+}

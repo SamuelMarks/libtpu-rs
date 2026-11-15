@@ -1,0 +1,20 @@
+syntax = "proto2";
+package file;
+import "tech/file/proto/types.proto";
+message EncryptionOptions {
+  reserved 5;
+  enum EncryptionAccess {
+    DEFAULT_ACCESS = 0;
+    RAW_CIPHERTEXT_ACCESS = 1;
+  }
+  optional int32 c_5fba3d2b_config_id = 1;
+  optional string master_key_name = 2;
+  repeated string owner = 3;
+  optional string document_id = 4;
+  optional int64 expiry = 6;
+  optional .tech.file.EncryptionMode encryption_mode = 11;
+  optional .file.EncryptionOptions.EncryptionAccess encryption_access = 7;
+  optional .tech.file.WrappedKeyType key_type = 8;
+  optional int32 encryption_key_length = 9;
+  optional bool verify_authorship = 10 [default = true];
+}

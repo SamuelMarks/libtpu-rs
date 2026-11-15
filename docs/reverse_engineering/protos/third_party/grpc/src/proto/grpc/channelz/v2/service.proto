@@ -1,0 +1,39 @@
+syntax = "proto3";
+package grpc.channelz.v2;
+import "third_party/grpc/src/proto/grpc/channelz/v2/channelz.proto";
+message QueryEntitiesRequest {
+  string kind = 1;
+  int64 parent = 2;
+  int64 start_entity_id = 3;
+}
+message QueryEntitiesResponse {
+  repeated .grpc.channelz.v2.Entity entities = 1;
+  bool end = 2;
+}
+message GetEntityRequest {
+  int64 id = 1;
+}
+message GetEntityResponse {
+  .grpc.channelz.v2.Entity entity = 1;
+}
+message QueryTraceRequest {
+  message QueryArgValue {
+    oneof value {
+      int64 int_value = 1;
+      string string_value = 2;
+      bool bool_value = 3;
+    }
+  }
+  int64 id = 1;
+  string name = 2;
+  map<string, .grpc.channelz.v2.QueryTraceRequest.QueryArgValue> args = 4;
+}
+message QueryTraceResponse {
+  repeated .grpc.channelz.v2.TraceEvent events = 1;
+  int64 num_events_matched = 2;
+}
+service Channelz {
+  rpc QueryEntities(.grpc.channelz.v2.QueryEntitiesRequest) returns (.grpc.channelz.v2.QueryEntitiesResponse);
+  rpc GetEntity(.grpc.channelz.v2.GetEntityRequest) returns (.grpc.channelz.v2.GetEntityResponse);
+  rpc QueryTrace(.grpc.channelz.v2.QueryTraceRequest) returns (stream .grpc.channelz.v2.QueryTraceResponse);
+}

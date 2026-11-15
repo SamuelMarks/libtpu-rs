@@ -1,0 +1,3 @@
+syntax = "proto3";
+package tensorflow.tpu.dummy;
+import public "third_party/tensorflow/compiler/xla/tpu/protobuf/tpu_embedding_configuration.proto";

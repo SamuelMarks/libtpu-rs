@@ -1,0 +1,11 @@
+syntax = "proto3";
+package accel_ssw.deepsea.proto;
+import "platforms/accel_ssw/deepsea/common/proto/dimension.proto";
+message LinkMap {
+  reserved 1 to 6;
+  message DirectionAndLatency {
+    .accel_ssw.deepsea.proto.Direction direction = 1;
+    bool is_high_latency = 2;
+  }
+  map<uint32, .accel_ssw.deepsea.proto.LinkMap.DirectionAndLatency> link_info = 7;
+}

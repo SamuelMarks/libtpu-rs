@@ -1,0 +1,6 @@
+syntax = "proto3";
+package xla.tpu.sparse_core;
+import "third_party/protobuf/cpp_features.proto";
+message DebugInfoProto {
+  map<int64, string> debug_id_to_debug_string = 1;
+}

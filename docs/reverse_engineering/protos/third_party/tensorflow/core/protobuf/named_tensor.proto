@@ -1,0 +1,7 @@
+syntax = "proto3";
+package tensorflow;
+import "third_party/tensorflow/core/framework/tensor.proto";
+message NamedTensorProto {
+  string name = 1;
+  .tensorflow.TensorProto tensor = 2;
+}
