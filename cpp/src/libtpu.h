@@ -1110,6 +1110,14 @@ typedef struct LibtpuSdk_Api {
 } LibtpuSdk_Api;
 
 /**
+ * @brief Argument structure for `LibtpuSdk_Error_Destroy` (`8` bytes).
+ */
+typedef struct LibtpuSdk_Error_Destroy_Args {
+  /** @brief Input `LibtpuSdk_Error*` handle to destroy. */
+  LibtpuSdk_Error *error;
+} LibtpuSdk_Error_Destroy_Args;
+
+/**
  * @brief Argument structure for `LibtpuSdk_Client_Create` and
  * `LibtpuSdk_Client_Destroy` (`8` bytes).
  */
@@ -4226,6 +4234,7 @@ static_assert(sizeof(PJRT_Buffer_Dimensions_Args) == 40, "BufDims == 40");
 static_assert(sizeof(PJRT_Buffer_CopyToDevice_Args) == 40, "BufCopy == 40");
 static_assert(sizeof(PJRT_Buffer_ToHostBuffer_Args) == 56, "BufToHost == 56");
 static_assert(sizeof(LibtpuSdk_Api) == 144, "LibtpuSdk_Api == 144");
+static_assert(sizeof(LibtpuSdk_Error_Destroy_Args) == 8, "SdkErrDel == 8");
 static_assert(sizeof(LibtpuSdk_ChipLocationToCoordinates) == 48,
               "Coords == 48");
 static_assert(sizeof(TFNPD_PluginParams) == 40, "TFNPD_PluginParams == 40");
@@ -4284,6 +4293,7 @@ _Static_assert(sizeof(PJRT_FFI_UserData_Add_Args) == 48, "FFI_UserData == 48");
 _Static_assert(sizeof(PJRT_FFI_Register_Handler_Args) == 64, "FFI_Reg == 64");
 _Static_assert(sizeof(PJRT_FFI_Extension) == 48, "PJRT_FFI_Extension == 48");
 _Static_assert(sizeof(LibtpuSdk_Api) == 144, "LibtpuSdk_Api == 144");
+_Static_assert(sizeof(LibtpuSdk_Error_Destroy_Args) == 8, "SdkErrDel == 8");
 _Static_assert(sizeof(TpuDriverFn) == 224, "TpuDriverFn == 224");
 #endif
 /** @endcond */

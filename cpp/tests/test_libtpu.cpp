@@ -80,7 +80,15 @@ int main() {
   }
   libtpu::Client moved_client(static_cast<libtpu::Client &&>(client));
   client = static_cast<libtpu::Client &&>(moved_client);
-  if (client.device_count() != 4 || client.device_attribute_count(0) != 3 ||
+  libtpu::Client overwritten_client;
+  if (!libtpu::Client::create(&overwritten_client).is_ok()) {
+    return 51;
+  }
+  overwritten_client = static_cast<libtpu::Client &&>(moved_client);
+  libtpu::LoadedExecutable uninit_exec;
+  if (overwritten_client.device_count() != -1 ||
+      uninit_exec.execute(0, nullptr, 0, nullptr, 0).is_ok() ||
+      client.device_count() != 4 || client.device_attribute_count(0) != 3 ||
       client.device_attribute_count(99) != 0) {
     return 6;
   }
@@ -265,7 +273,10 @@ int main() {
   libtpu::SdkClient sdk_client;
   libtpu::SdkClient sdk_moved(static_cast<libtpu::SdkClient &&>(sdk_client));
   sdk_client = static_cast<libtpu::SdkClient &&>(sdk_moved);
-  if (sdk_client.core_state_summary_size() == 0 ||
+  libtpu::SdkClient sdk_overwritten;
+  sdk_overwritten = static_cast<libtpu::SdkClient &&>(sdk_moved);
+  if (sdk_overwritten.chip_count() != 0 ||
+      sdk_client.core_state_summary_size() == 0 ||
       sdk_client.metric_value_count("tpu.runtime.hbm.usage_bytes") != 4 ||
       sdk_client.chip_count() != 4) {
     return 140;
