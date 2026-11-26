@@ -17,11 +17,13 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["abi3-py39"]
 abi3-py39 = ["pyo3/abi3-py39"]
-abi3-py310 = ["pyo3/abi3-py39"]
+abi3-py310 = ["pyo3/abi3-py310"]
+freethreaded = []
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
 libtpu-core.workspace = true
+parking_lot.workspace = true
 pyo3.workspace = true
 
 [lints]

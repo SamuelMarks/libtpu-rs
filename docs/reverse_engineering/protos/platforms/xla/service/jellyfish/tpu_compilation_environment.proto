@@ -1839,6 +1839,9 @@ message TpuCompilationEnvironment {
   optional .xla.jellyfish.AutoProto xla_tpu_enable_sparse_core_bf16_element_scatter_offload = 1376;
   optional .xla.jellyfish.AutoProto xla_sc_enable_barrier_tracing = 1377;
   optional .xla.jellyfish.AutoProto xla_tpu_sparse_core_reduce_scatter_stochastic_rounding_seed = 1378;
+  optional .xla.jellyfish.AutoProto xla_tpu_enable_io_fuser = 1379;
+  optional .xla.jellyfish.AutoProto xla_sc_mlo_progress_tracker = 1380;
+  optional .xla.jellyfish.AutoProto xla_tpu_sparse_core_reduce_scatter_quantized_communication_block_size = 1381;
 }
 extend .proto2.FieldOptions {
   optional .xla.jellyfish.TpuCompEnvFieldOptions tpu_comp_env_field_options = 535801365;

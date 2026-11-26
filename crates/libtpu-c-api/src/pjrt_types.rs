@@ -1,10 +1,10 @@
-//! `#[repr(C)]` PJRT C API structures matching `libtpu.so` (`PJRT_Api` v0.116, 1,144 bytes).
+//! `#[repr(C)]` PJRT C API structures matching `libtpu.so` (`PJRT_Api` v0.117, 1,144 bytes).
 //!
 //! Defines the exact binary layout of `PJRT_Api` (with all 138 function pointer slots named
 //! explicitly), `PJRT_Api_Version`, `PJRT_Extension_Base`, opaque PJRT handles, and all 138
 //! `#[repr(C)]` `PJRT_*_Args` structures with compile-time byte size assertions.
 
-/// `#[repr(C)]` `PJRT_Api` vtable (`v0.116`, 1,144 bytes), `PJRT_Api_Version`, and `PJRT_Extension_Base`.
+/// `#[repr(C)]` `PJRT_Api` vtable (`v0.117`, 1,144 bytes), `PJRT_Api_Version`, and `PJRT_Extension_Base`.
 pub mod api;
 /// `#[repr(C)]` argument structures for buffer, stream, and async transfer entrypoints.
 pub mod buffer_args;

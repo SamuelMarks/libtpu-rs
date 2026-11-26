@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import ctypes
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from libtpu.sdk.tpumonitoring import SdkClient, _check_sdk_error
+
+if TYPE_CHECKING:
+    _CDebugTrampoline = Callable[[int | None], None]
 
 
 class _RegisterDebugCallbackArgs(ctypes.Structure):
@@ -29,7 +33,7 @@ class _UnregisterDebugCallbackArgs(ctypes.Structure):
 
 
 _CDebugCallback = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
-_ACTIVE_CALLBACKS: dict[int, object] = {}
+_ACTIVE_CALLBACKS: dict[int, _CDebugTrampoline] = {}
 _SHARED_CLIENT: SdkClient | None = None
 
 

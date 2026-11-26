@@ -588,6 +588,17 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
     with patch.object(pc, "hook_fmt", side_effect=raise_called_process_error):
         assert pc.main(["fmt"]) == 3
 
+    import runpy
+
+    import pytest
+
+    with (
+        patch.object(sys, "argv", ["pre_commit.py", "--help"]),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        runpy.run_path(str(Path(pc.__file__)), run_name="__main__")
+    assert exc_info.value.code == 0
+
 
 def test_abi_compatibility_hook(tmp_path: Path) -> None:
     """Tests `hook_abi` and Google `libtpu` binary ABI compatibility verifiers.
@@ -1037,9 +1048,9 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     fake_pypi_json = json.dumps(
         {
             "urls": [
-                {"filename": "libtpu-0.0.52.tar.gz", "url": "https://x/sdist", "digests": {}},
+                {"filename": "libtpu-0.0.53.1.tar.gz", "url": "https://x/sdist", "digests": {}},
                 {
-                    "filename": "libtpu-0.0.52-cp311-manylinux_2_31_x86_64.whl",
+                    "filename": "libtpu-0.0.53.1-cp311-manylinux_2_31_x86_64.whl",
                     "url": "https://files.pythonhosted.org/libtpu.whl",
                     "digests": {"sha256": "deadbeef"},
                 },
@@ -1049,11 +1060,11 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     with patch.object(
         urllib.request, "urlopen", side_effect=lambda *_a, **_kw: _FakeResp(fake_pypi_json)
     ):
-        url, sha = re_ext.fetch_pypi_wheel_url("0.0.52", "x86_64")
+        url, sha = re_ext.fetch_pypi_wheel_url("0.0.53.1", "x86_64")
         assert url == "https://files.pythonhosted.org/libtpu.whl"
         assert sha == "deadbeef"
-        with pytest.raises(ValueError, match="No libtpu==0.0.52 wheel found"):
-            re_ext.fetch_pypi_wheel_url("0.0.52", "s390x")
+        with pytest.raises(ValueError, match="No libtpu==0.0.53.1 wheel found"):
+            re_ext.fetch_pypi_wheel_url("0.0.53.1", "s390x")
 
     with pytest.raises(ValueError, match="Invalid ELF header"):
         re_ext.parse_elf64_sections_and_dynsym(b"not-an-elf")
@@ -1280,13 +1291,13 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     toc_40 = struct.pack("<QQQQQ", 1, 15, 10, 0, 0)
     assert re_ext.extract_filewrapper_toc(toc_40, blob) == [("tpu_tiles.cfg", b"TILE_8x128")]
 
-    whl_path = tmp_path / "libtpu-0.0.52.whl"
+    whl_path = tmp_path / "libtpu-0.0.53.1.whl"
     with zipfile.ZipFile(whl_path, "w") as zf:
         zf.writestr("libtpu/__init__.py", "# init")
         zf.writestr("libtpu/libtpu.so", elf_bytes)
 
     summary = re_ext.inspect_wheel_archive(whl_path)
-    assert summary["wheel"] == "libtpu-0.0.52.whl"
+    assert summary["wheel"] == "libtpu-0.0.53.1.whl"
     assert "libtpu/libtpu.so" in summary["binaries"]  # type: ignore[operator]
 
     real_root = pc.get_repo_root()
@@ -1311,10 +1322,11 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
             "pjrt_vtable_slots": [{"min_struct_size": 24}] * 138,
             "filetoc_md5_verified": False,
         },
+        "sdk_so_freethreaded": {"sha256": "bad", "entrypoint": "bad"},
     }
     mismatch_layouts = {
         "pjrt_slots": [{"min_struct_size": None}] * 138,
-        "extension_functions": [{"ext_type": 29}],
+        "extension_functions": [{"ext_type": 24}],
     }
     (bad_re / "golden_binary_manifest.json").write_text(
         json.dumps(mismatch_manifest), encoding="utf-8"
@@ -1328,7 +1340,8 @@ def test_re_extract_forensics_and_validation(tmp_path: Path) -> None:
     (bad_re / "csr_register_map.json").write_text(json.dumps({"generations": {}}), encoding="utf-8")
     mismatch_errs = re_ext.validate_golden_manifests(tmp_path)
     assert any("min_struct_size mismatch" in e for e in mismatch_errs)
-    assert any("expected 138 extension_functions" in e for e in mismatch_errs)
+    assert any("expected 162 extension_functions" in e for e in mismatch_errs)
+    assert any("sdk_so_freethreaded mismatch" in e for e in mismatch_errs)
     assert any("incomplete descriptor closure" in e for e in mismatch_errs)
     assert any("missing TPU generation CSR maps" in e for e in mismatch_errs)
 
@@ -1386,3 +1399,56 @@ def test_verify_workspace_ast_invariants(tmp_path: Path) -> None:
     assert any("missing Doxygen `@file` header" in e for e in errs)
     assert any("forbidden pragma no cover" in e for e in errs)
     assert pc.hook_clippy(tmp_path) == 1
+
+    # Verify unwrap inside #[cfg(test)] is also caught and pointer heuristics are detected
+    test_unwrap_ws = tmp_path / "test_unwrap_ws"
+    c_api_dir = test_unwrap_ws / "crates" / "libtpu-c-api" / "src"
+    c_api_dir.mkdir(parents=True)
+    assert pc.verify_no_pointer_guessing_hacks(tmp_path / "missing_c_api") == []
+    (c_api_dir / "ext.rs").write_text(
+        "//! Ext.\n"
+        "// > 0x10000 ignored in comment\n"
+        "/// Doc.\n///\n/// # Safety\n///\n/// Safe.\n"
+        "#[allow(\n    clippy::unused_async\n)]\n"
+        "pub async unsafe fn ok_unsafe() {}\n"
+        "/// Missing safety.\npub unsafe fn bad_unsafe() { let p = 0usize; if p > 0x10000 {} }\n"
+        "#[cfg(test)]\nmod tests {\n    fn t() { let _ = Some(1).unwrap(); }\n}\n",
+        encoding="utf-8",
+    )
+    assert len(pc.verify_no_pointer_guessing_hacks(test_unwrap_ws)) == 1
+    heur_errs = pc.verify_workspace_ast_invariants(test_unwrap_ws)
+    assert any("unwrap" in e for e in heur_errs)
+    assert any("pointer-guessing heuristic" in e for e in heur_errs)
+    no_heur_errs = pc.verify_workspace_ast_invariants(
+        test_unwrap_ws, check_pointer_heuristics=False
+    )
+    assert not any("pointer-guessing heuristic" in e for e in no_heur_errs)
+    assert pc.calculate_rust_arg_doc_coverage(test_unwrap_ws) == (1, 2)
+    (c_api_dir / "top_fn.rs").write_text("/// Top.\npub fn top(a: i32) {}\n", encoding="utf-8")
+    assert pc.calculate_rust_arg_doc_coverage(test_unwrap_ws) == (1, 3)
+
+    py_ret_ws = tmp_path / "py_ret_ws"
+    py_ret_pkg = py_ret_ws / "python" / "libtpu"
+    py_ret_pkg.mkdir(parents=True)
+    (py_ret_pkg / "ret_mod.py").write_text(
+        '"""Module doc."""\n\n'
+        "class Item:\n"
+        '    """Class doc."""\n\n'
+        "    def __init__(self) -> None:\n"
+        '        """Init."""\n\n'
+        "    @property\n"
+        "    def prop(self) -> int:\n"
+        '        """Property doc."""\n'
+        "        return 1\n\n"
+        "    def stub(self) -> int:\n"
+        '        """Stub doc."""\n'
+        "        ...\n\n"
+        "    def documented_ret(self) -> int:\n"
+        '        """Doc.\n\n        Returns:\n            One.\n        """\n'
+        "        return 1\n\n"
+        "    def missing_ret(self) -> int:\n"
+        '        """Doc missing returns."""\n'
+        "        return 2\n",
+        encoding="utf-8",
+    )
+    assert pc.calculate_python_doc_coverage(py_ret_ws) == (8, 9)

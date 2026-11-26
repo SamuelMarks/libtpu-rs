@@ -225,15 +225,34 @@ def test_client_buffer_executable_and_profiler() -> None:
         assert ms.barrier() == 1
     ms.close()
 
-    with libtpu.Communicator([0, 1]) as comm:
-        assert comm.device_ids() == (0, 1)
-        assert "tpu_ici_communicator" in comm.to_string()
-        comm.all_reduce(b0, b1, reduction_op=0)
-        comm.reduce_scatter(b0, b1, reduction_op=0)
-        comm.all_gather(b0, b1)
-        comm.all_to_all(b0, b1)
-        comm.collective_permute(b0, b1)
-    comm.close()
+    with (
+        libtpu.Communicator([0, 1]) as comm0,
+        libtpu.Communicator([0, 1]) as comm1,
+        client.buffer_from_floats(0, [0.0, 0.0]) as b0_shard,
+        client.buffer_from_floats(1, [0.0, 0.0]) as b1_shard,
+        client.buffer_from_floats(0, [0.0] * 8) as b0_gat,
+        client.buffer_from_floats(1, [0.0] * 8) as b1_gat,
+        client.buffer_from_floats(1, [10.0, 20.0, 30.0, 40.0]) as b1_dev1,
+    ):
+        assert comm0.device_ids() == (0, 1)
+        assert "TpuCollectiveCommunicator" in comm0.to_string()
+        comm0.all_reduce(b0, b1, reduction_op=0)
+        comm1.all_reduce(b1_dev1, b1, reduction_op=0)
+        comm0.reduce_scatter(b0, b0_shard, reduction_op=0)
+        comm1.reduce_scatter(b1_dev1, b1_shard, reduction_op=0)
+        assert b0_shard.to_float_list() == [11.5, 22.5]
+        assert b1_shard.to_float_list() == [33.5, 44.5]
+        comm0.all_gather(b0, b0_gat)
+        comm1.all_gather(b1_dev1, b1_gat)
+        assert b0_gat.to_float_list()[:4] == [1.5, 2.5, 3.5, 4.5]
+        assert b0_gat.to_float_list()[4:] == [10.0, 20.0, 30.0, 40.0]
+        comm0.all_to_all(b0, b1)
+        comm1.all_to_all(b1_dev1, b1)
+        comm0.collective_permute(b0, b1)
+        comm1.collective_permute(b1_dev1, b1)
+        comm0.collective_permute(b0, b1, source_target_pairs=[(0, 1), (1, 0)])
+        assert b1.to_float_list() == [10.0, 20.0, 30.0, 40.0]
+    comm0.close()
     default_comm = libtpu.Communicator()
     assert default_comm.device_ids() == (0, 1, 2, 3)
     default_comm.close()
@@ -560,7 +579,7 @@ def test_sdk_submodules(tmp_path: Path) -> None:
         + _varint(4)
         + _tag(9, 0)
         + _varint(77)
-        + _ld(10, b"0.0.52")
+        + _ld(10, b"0.0.53.1")
         + _tag(11, 0)
         + _varint(0)
     )
@@ -853,9 +872,20 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
             for i in range(3, 3 + num_fns):
                 ext_fn_addrs.append(int(fn_words[i]))
         ext_ptr = int(ext_hdr[2])
-    assert ext_types == [29, 28, 26, 25, 20, 19, 18, 17, 16, 14, 9, 12, 11, 7, 6, 8, 1]
-    assert len(ext_fn_addrs) == 131
-    assert len(set(ext_fn_addrs)) == 131
+    layouts_path = (
+        Path(libtpu.__file__).resolve().parent.parent.parent
+        / "docs"
+        / "reverse_engineering"
+        / "golden_struct_layouts.json"
+    )
+    golden_layouts = json.loads(layouts_path.read_text(encoding="utf-8"))
+    expected_ext_types = [int(e["ext_type"]) for e in golden_layouts["extensions"]]
+    expected_non_prof_fns = sum(
+        int(e["num_functions"]) for e in golden_layouts["extensions"] if int(e["ext_type"]) != 1
+    )
+    assert ext_types == expected_ext_types
+    assert len(ext_fn_addrs) == expected_non_prof_fns
+    assert len(set(ext_fn_addrs)) == expected_non_prof_fns
 
     # Verify direct PJRT_Api C vtable execution
     pjrt_fn_type = ctypes.CFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p)
@@ -1011,9 +1041,19 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
     assert libtpu.lookup_csr_by_offset(0xDEAD_BEEF_FFFF) is None
     assert b"traceEvents" in tpuz.collect_profiler_tool_data("trace_viewer.json")
     assert len(libtpu.collect_profiler_tool_data("input_pipeline.pb")) > 0
-    assert libtpu.verify_protodesc_293_catalog() == 738
-    assert debug.verify_protodesc_cold_293() == 738
-    assert diagnostics.protodesc_cold_file_count() == 738
+    golden_proto_cnt = int(
+        json.loads(
+            (
+                Path(__file__).resolve().parents[2]
+                / "docs"
+                / "reverse_engineering"
+                / "golden_proto_descriptors.json"
+            ).read_text(encoding="utf-8")
+        )["proto_files_count"]
+    )
+    assert libtpu.verify_protodesc_293_catalog() == golden_proto_cnt
+    assert debug.verify_protodesc_cold_293() == golden_proto_cnt
+    assert diagnostics.protodesc_cold_file_count() == golden_proto_cnt
     assert diagnostics.compute_torus_route_hops(0, 0, 0, 3, 0, 0, True) == 1
     assert diagnostics.compute_torus_route_hops(0, 0, 0, 3, 0, 0, False) == 3
     grpc_res = diagnostics.invoke_coordination_grpc(
@@ -1114,7 +1154,7 @@ def test_dlopen_abi_symbols_and_docstring_audit() -> None:
                 doc = ast.get_docstring(node)
                 assert doc is not None, f"Missing docstring on {node.name} in {mod_path}"
                 if isinstance(node, ast.FunctionDef):
-                    params = [a.arg for a in node.args.args if a.arg != "self"]
+                    params = [a.arg for a in node.args.args if a.arg not in ("self", "cls")]
                     for param in params:
                         assert f"{param}:" in doc, (
                             f"Missing arg doc for {param} in {node.name} ({mod_path})"

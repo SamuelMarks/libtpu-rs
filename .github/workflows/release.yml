@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g., v0.0.52) for manual workflow dispatch"
+        description: "Release tag (e.g., v0.0.53.1) for manual workflow dispatch"
         required: false
-        default: "v0.0.52"
+        default: "v0.0.53.1"
 
 permissions:
   contents: write
@@ -126,7 +126,7 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
           if [[ -z "${VERSION}" || "${VERSION}" == "main" || "${VERSION}" == "master" ]]; then
-            VERSION="v0.0.52"
+            VERSION="v0.0.53.1"
           fi
           ARCHIVE_BASENAME="libtpu-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}"
           STAGE_DIR="dist/${ARCHIVE_BASENAME}"
@@ -155,7 +155,7 @@ jobs:
           python -m pip install --upgrade pip build wheel maturin
           python -m build --wheel --outdir dist/artifacts
 
-          # Smoke-test the built wheel in an isolated virtual environment
+          # Smoke-test the built abi3-py39 (>=3.9) wheel in an isolated virtual environment
           python -m venv /tmp/test-venv
           /tmp/test-venv/bin/pip install dist/artifacts/*.whl
           /tmp/test-venv/bin/python -c "import libtpu, libtpu._C, pathlib; p = libtpu.get_library_path(); assert pathlib.Path(p).exists(), p; assert (pathlib.Path(libtpu.__file__).parent / 'sdk.so').exists(); c = libtpu.TpuClient(); assert c.device_count() == 4; c.close()"
@@ -170,7 +170,7 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME:-${{ inputs.tag }}}"
           if [[ -z "${VERSION}" || "${VERSION}" == "main" || "${VERSION}" == "master" ]]; then
-            VERSION="v0.0.52"
+            VERSION="v0.0.53.1"
           fi
           ARCHIVE_BASENAME="libtpu-${VERSION}-${{ matrix.os_name }}-${{ matrix.arch }}"
           STAGE_DIR="dist/${ARCHIVE_BASENAME}"
@@ -201,9 +201,85 @@ jobs:
           path: dist/artifacts/*
           if-no-files-found: error
 
+  build-freethreaded-wheels:
+    name: "Build Free-Threaded Wheel (${{ matrix.os_name }}-${{ matrix.arch }}, Python ${{ matrix.python_version }})"
+    needs: pre-release-gates
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            os_name: linux
+            arch: x86_64
+            python_version: "3.14t"
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            os_name: linux
+            arch: x86_64
+            python_version: "3.15t"
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            os_name: macos
+            arch: arm64
+            python_version: "3.14t"
+          - runner: macos-14
+            target: aarch64-apple-darwin
+            os_name: macos
+            arch: arm64
+            python_version: "3.15t"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Free-Threaded Python ${{ matrix.python_version }}
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python_version }}
+          allow-prereleases: true
+
+      - name: Install Rust toolchain for ${{ matrix.target }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-ft-${{ matrix.target }}-${{ matrix.python_version }}
+
+      - name: Build libtpu-c-api and free-threaded wheel + smoke-test GIL disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release -p libtpu-c-api --target ${{ matrix.target }}
+          mkdir -p dist/ft-artifacts
+          if [[ "${{ matrix.os_name }}" == "linux" ]]; then
+            cp "target/${{ matrix.target }}/release/libtpu.so" "python/libtpu/libtpu.so"
+          else
+            cp "target/${{ matrix.target }}/release/libtpu.dylib" "python/libtpu/libtpu.dylib"
+          fi
+          python -m pip install --upgrade pip build wheel maturin
+          python -m build --wheel --outdir dist/ft-artifacts
+
+          python -m venv /tmp/ft-venv
+          /tmp/ft-venv/bin/pip install dist/ft-artifacts/*.whl
+          /tmp/ft-venv/bin/python -X gil=0 -c "import sys, libtpu, libtpu._C, libtpu.sdk; assert hasattr(sys, '_is_gil_enabled') and not sys._is_gil_enabled(); c = libtpu.TpuClient(); assert c.device_count() == 4; c.close()"
+
+          cd dist/ft-artifacts
+          shasum -a 256 * > "SHA256SUMS-${{ matrix.os_name }}-${{ matrix.arch }}-${{ matrix.python_version }}.txt"
+
+      - name: Upload free-threaded wheel artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-ft-${{ matrix.os_name }}-${{ matrix.arch }}-${{ matrix.python_version }}
+          path: dist/ft-artifacts/*
+          if-no-files-found: error
+
   publish-github-release:
     name: "Publish GitHub Release"
-    needs: build-binaries-and-wheels
+    needs: [build-binaries-and-wheels, build-freethreaded-wheels]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

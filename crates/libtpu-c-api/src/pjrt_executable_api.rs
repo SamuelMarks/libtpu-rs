@@ -88,15 +88,8 @@ unsafe fn invoke_pjrt_host_send_callback(
             .iter()
             .find(|i| i.channel_id == channel_id)
             .or_else(|| dev_sends.first())
-            && !info.send_callback.is_null()
+            && let Some(cb) = info.send_callback
         {
-            type SendCbFn = unsafe extern "C" fn(
-                *mut crate::pjrt_types::PJRT_Chunk,
-                unsafe extern "C" fn(i32, *const std::ffi::c_char, usize) -> *mut PJRT_Error,
-                usize,
-                bool,
-                *mut std::ffi::c_void,
-            ) -> *mut PJRT_Error;
             let mut owned = Box::new(bytes.to_vec());
             let data_ptr = owned.as_mut_ptr().cast::<std::ffi::c_void>();
             let total_len = owned.len();
@@ -107,8 +100,6 @@ unsafe fn invoke_pjrt_host_send_callback(
                 deleter: Some(free_vec_chunk_deleter),
                 deleter_arg: del_arg,
             };
-            // SAFETY: Transmuting non-null C function pointer matching `PJRT_SendCallback` ABI.
-            let cb: SendCbFn = unsafe { std::mem::transmute(info.send_callback) };
             // SAFETY: Invoking host `PJRT_SendCallback` with owned `PJRT_Chunk`.
             let err_ptr = unsafe {
                 cb(
@@ -159,19 +150,13 @@ unsafe fn invoke_pjrt_host_recv_callback(
             .iter()
             .find(|i| i.channel_id == channel_id)
             .or_else(|| dev_recvs.first())
-            && !info.recv_callback.is_null()
+            && let Some(cb) = info.recv_callback
         {
-            type RecvCbFn = unsafe extern "C" fn(
-                *mut crate::pjrt_types::PJRT_CopyToDeviceStream,
-                *mut std::ffi::c_void,
-            );
             let core_stream = libtpu_core::pjrt::PjrtCoreCopyToDeviceStream::new(1 << 30, 1);
             let shared = core_stream.shared_staged_bytes();
             let stream_ptr = Box::into_raw(Box::new(crate::pjrt_types::PJRT_CopyToDeviceStream {
                 inner: core_stream,
             }));
-            // SAFETY: Transmuting non-null C function pointer matching `PJRT_RecvCallback` ABI.
-            let cb: RecvCbFn = unsafe { std::mem::transmute(info.recv_callback) };
             // SAFETY: Invoking host `PJRT_RecvCallback` which streams bytes via `AddChunk` and destroys `stream_ptr`.
             unsafe {
                 cb(stream_ptr, info.user_arg);
@@ -1968,7 +1953,7 @@ mod tests {
                 num_options: 0,
                 kv_get_callback: ptr::null(),
                 kv_get_user_arg: ptr::null_mut(),
-                kv_put_callback: ptr::null(),
+                kv_put_callback: None,
                 kv_put_user_arg: ptr::null_mut(),
                 kv_try_get_callback: ptr::null(),
                 kv_try_get_user_arg: ptr::null_mut(),
@@ -2677,13 +2662,13 @@ mod tests {
             let null_cb_send = crate::pjrt_types::PJRT_SendCallbackInfo {
                 channel_id: 99,
                 user_arg: ptr::null_mut(),
-                send_callback: ptr::null(),
+                send_callback: None,
                 extension_start: ptr::null_mut(),
             };
             let null_cb_recv = crate::pjrt_types::PJRT_RecvCallbackInfo {
                 channel_id: 99,
                 user_arg: ptr::null_mut(),
-                recv_callback: ptr::null(),
+                recv_callback: None,
                 extension_start: ptr::null_mut(),
             };
             let null_cb_send_row = ptr::addr_of!(null_cb_send);
@@ -2702,13 +2687,13 @@ mod tests {
             let live_send_info = crate::pjrt_types::PJRT_SendCallbackInfo {
                 channel_id: 7,
                 user_arg: ptr::addr_of_mut!(send_counter).cast(),
-                send_callback: ok_send_cb as *const std::ffi::c_void,
+                send_callback: Some(ok_send_cb),
                 extension_start: ptr::null_mut(),
             };
             let live_recv_info = crate::pjrt_types::PJRT_RecvCallbackInfo {
                 channel_id: 8,
                 user_arg: ptr::null_mut(),
-                recv_callback: ok_recv_cb as *const std::ffi::c_void,
+                recv_callback: Some(ok_recv_cb),
                 extension_start: ptr::null_mut(),
             };
             let live_send_row = ptr::addr_of!(live_send_info);
@@ -2738,7 +2723,7 @@ mod tests {
                 num_options: 0,
                 kv_get_callback: ptr::null(),
                 kv_get_user_arg: ptr::null_mut(),
-                kv_put_callback: ptr::null(),
+                kv_put_callback: None,
                 kv_put_user_arg: ptr::null_mut(),
                 client: ptr::null_mut(),
                 kv_try_get_callback: ptr::null(),
@@ -2920,7 +2905,7 @@ mod tests {
             let fail_send_info = crate::pjrt_types::PJRT_SendCallbackInfo {
                 channel_id: 7,
                 user_arg: ptr::null_mut(),
-                send_callback: fail_send_cb as *const std::ffi::c_void,
+                send_callback: Some(fail_send_cb),
                 extension_start: ptr::null_mut(),
             };
             let fail_send_row = ptr::addr_of!(fail_send_info);

@@ -182,18 +182,42 @@ pub unsafe extern "C" fn ConfigureDistributedTpuOp_DoWork(
             }
             return -1;
         }
-        let topo_str = global_topology().hal.topology_spec().platform_version;
+        let mut total_cores = 0_i32;
+        if num_cores_per_host_len > 0 {
+            // SAFETY: `num_cores_per_host` is non-null with `num_cores_per_host_len` elements.
+            let cores_slice =
+                unsafe { std::slice::from_raw_parts(num_cores_per_host, num_cores_per_host_len) };
+            for &cores in cores_slice {
+                if cores <= 0 {
+                    // SAFETY: `TpuStatus_Set` checks `status` for null.
+                    unsafe {
+                        TpuStatus_Set(status, 3, c"non-positive num_cores_per_host".as_ptr(), 31);
+                    }
+                    return -1;
+                }
+                total_cores = total_cores.saturating_add(cores);
+            }
+        }
+        let spec = global_topology().hal.topology_spec();
+        let topo_str = if total_cores > 0 {
+            format!(
+                "{};hosts={num_cores_per_host_len};cores={total_cores}",
+                spec.platform_version
+            )
+        } else {
+            spec.platform_version
+        };
+        let cfg_bytes = topo_str.into_bytes();
         if !output_config_len.is_null() {
             // SAFETY: `output_config_len` is non-null.
             unsafe {
-                *output_config_len = topo_str.len();
+                *output_config_len = cfg_bytes.len();
             }
         }
         if !output_config.is_null() {
-            let cstr = to_c_string(&topo_str);
             // SAFETY: `output_config` is non-null.
             unsafe {
-                *output_config = cstr.into_raw();
+                *output_config = crate::pjrt_helpers::alloc_c_byte_buf(&cfg_bytes);
             }
         }
         0
@@ -243,11 +267,9 @@ pub unsafe extern "C" fn TfTpu_GetTpuPartitionedCallParams(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuConfigurationApi_FreeCharArray(ptr: *mut c_char) {
     crate::pjrt_helpers::ffi_catch_unwind((), || {
-        if !ptr.is_null() {
-            // SAFETY: `ptr` was allocated via `CString::into_raw`.
-            unsafe {
-                drop(CString::from_raw(ptr));
-            }
+        // SAFETY: `ptr` is null or allocated by `alloc_c_byte_buf` / `CString::into_raw`.
+        unsafe {
+            crate::pjrt_helpers::free_c_byte_buf(ptr);
         }
     });
 }
@@ -321,10 +343,45 @@ pub unsafe extern "C" fn SparseCore_GetMaxIdsAndUniques(
             }
             return -1;
         }
+        // SAFETY: `table_name` was validated non-null above.
+        let table_str = unsafe { CStr::from_ptr(table_name).to_string_lossy() };
+        if table_str.is_empty() {
+            // SAFETY: `TpuStatus_Set` checks `status` for null.
+            unsafe {
+                TpuStatus_Set(status, 3, c"empty SparseCore table_name".as_ptr(), 27);
+            }
+            return -1;
+        }
+        let sc_count = i64::from(
+            global_topology()
+                .hal
+                .topology_spec()
+                .generation
+                .sparse_cores_per_device()
+                .max(1),
+        );
+        let registered_vocab =
+            super::embedding::lookup_registered_table_vocab_size(&table_str).unwrap_or(0);
+        let name_factor = i64::try_from(
+            table_str.bytes().fold(0_u64, |acc, b| {
+                acc.wrapping_mul(31).wrapping_add(u64::from(b))
+            }) % 4,
+        )
+        .unwrap_or(0);
         let samples = num_samples_per_sparse_core.max(1);
         let width = feature_width.max(1);
-        let max_ids = (samples.saturating_mul(4)).max(128);
-        let max_uniques = (samples.saturating_mul(2).min(width.saturating_mul(16))).max(64);
+        let base_ids = (samples.saturating_mul(4).saturating_add(name_factor * 8)).max(128);
+        let max_ids = if registered_vocab > 0 {
+            base_ids.max(i64::try_from(registered_vocab).unwrap_or(base_ids) / sc_count.max(1))
+        } else {
+            base_ids
+        };
+        let max_uniques = (samples
+            .saturating_mul(2)
+            .min(width.saturating_mul(16))
+            .saturating_add(name_factor * 4))
+        .max(64)
+        .min(max_ids);
         // SAFETY: Output pointers are non-null.
         unsafe {
             *max_ids_per_partition = max_ids;
@@ -378,8 +435,8 @@ pub unsafe extern "C" fn TpuStatus_Create(code: i32, msg: *const c_char) -> *mut
 ///
 /// * `status` - Mutable pointer to [`TpuStatus`].
 /// * `code` - New status code.
-/// * `msg` - Null-terminated error message pointer (or null).
-/// * `_len` - Length hint for `msg`.
+/// * `msg` - Error message pointer (or null).
+/// * `len` - Explicit byte length of `msg` (`>= 0`), or negative (`-1`) if `msg` is null-terminated.
 ///
 /// # Safety
 ///
@@ -389,7 +446,7 @@ pub unsafe extern "C" fn TpuStatus_Set(
     status: *mut TpuStatus,
     code: i32,
     msg: *const c_char,
-    _len: i32,
+    len: i32,
 ) {
     crate::pjrt_helpers::ffi_catch_unwind((), || {
         if status.is_null() {
@@ -397,8 +454,12 @@ pub unsafe extern "C" fn TpuStatus_Set(
         }
         let text = if msg.is_null() {
             String::new()
+        } else if let Ok(explicit_len) = usize::try_from(len) {
+            // SAFETY: `msg` is non-null and `len >= 0` specifies exact readable byte count.
+            let slice = unsafe { std::slice::from_raw_parts(msg.cast::<u8>(), explicit_len) };
+            String::from_utf8_lossy(slice).into_owned()
         } else {
-            // SAFETY: `msg` is non-null.
+            // SAFETY: `msg` is non-null and `len < 0` indicates a null-terminated C string.
             unsafe { CStr::from_ptr(msg).to_string_lossy().into_owned() }
         };
         // SAFETY: `status` is non-null.

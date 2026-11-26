@@ -116,7 +116,7 @@ pub unsafe extern "C" fn LibtpuSdk_Client_Create(
         if args_ptr.is_null() {
             return box_sdk_error(&LibTpuError::NullPointer { parameter: "args" });
         }
-        let inner = LibtpuSdkCoreClient::new();
+        let inner = LibtpuSdkCoreClient::from_config(&libtpu_core::config::global_init_config());
         let mut host_names = Vec::with_capacity(inner.chip_coordinates.len());
         let mut coords_entries = Vec::with_capacity(inner.chip_coordinates.len());
         for (idx, c) in inner.chip_coordinates.iter().enumerate() {
@@ -138,6 +138,7 @@ pub unsafe extern "C" fn LibtpuSdk_Client_Create(
             coords_entries,
             metric_names: Vec::new(),
             metrics: Vec::new(),
+            c_debug_callbacks: parking_lot::Mutex::new(std::collections::BTreeMap::new()),
         }));
         // SAFETY: `args_ptr` is non-null.
         unsafe {
@@ -584,12 +585,24 @@ pub unsafe extern "C" fn LibtpuSdk_RegisterDebugCallback(
             });
         }
         // SAFETY: `client_ptr` is non-null.
+        let (cb_opt, user_data_addr) =
+            unsafe { ((*args_ptr).callback, (*args_ptr).user_data as usize) };
+        let cb_addr = cb_opt.map_or(0, |f| f as usize);
+        // SAFETY: `client_ptr` is non-null.
         let id = unsafe {
-            (*client_ptr).inner.register_debug_callback(
-                (*args_ptr).callback as usize,
-                (*args_ptr).user_data as usize,
-            )
+            (*client_ptr)
+                .inner
+                .register_debug_callback(cb_addr, user_data_addr)
         };
+        if let Some(cb_fn) = cb_opt {
+            // SAFETY: `client_ptr` is non-null.
+            unsafe {
+                (*client_ptr)
+                    .c_debug_callbacks
+                    .lock()
+                    .insert(id.0, (cb_fn, user_data_addr));
+            }
+        }
         // SAFETY: Writing output callback_id.
         unsafe {
             (*args_ptr).callback_id = i64::try_from(id.0).unwrap_or(0);
@@ -623,13 +636,18 @@ pub unsafe extern "C" fn LibtpuSdk_UnregisterDebugCallback(
                 parameter: "client",
             });
         }
+        let raw_id = u64::try_from(cb_id).unwrap_or(u64::MAX);
         // SAFETY: `client_ptr` is non-null.
         if let Err(e) = unsafe {
             (*client_ptr)
                 .inner
-                .unregister_debug_callback(CallbackId(u64::try_from(cb_id).unwrap_or(u64::MAX)))
+                .unregister_debug_callback(CallbackId(raw_id))
         } {
             return box_sdk_error(&e);
+        }
+        // SAFETY: `client_ptr` is non-null.
+        unsafe {
+            (*client_ptr).c_debug_callbacks.lock().remove(&raw_id);
         }
         ptr::null_mut()
     })
@@ -645,8 +663,7 @@ pub unsafe extern "C" fn LibtpuSdk_UnregisterDebugCallback(
 /// # Safety
 ///
 /// `client` must be null or a valid pointer to [`LibtpuSdk_Client`], and any registered
-/// non-null callback pointers with `fn_addr >= 0x10000` must be valid `extern "C" fn(*mut c_void)`
-/// function pointers.
+/// non-null callback pointers must be valid `extern "C" fn(*mut c_void)` function pointers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn LibtpuSdk_TriggerDebugCallbacks(client: *const LibtpuSdk_Client) -> usize {
     crate::pjrt_helpers::ffi_catch_unwind(0, || {
@@ -654,21 +671,21 @@ pub unsafe extern "C" fn LibtpuSdk_TriggerDebugCallbacks(client: *const LibtpuSd
             return 0;
         }
         // SAFETY: `client` is non-null.
-        let callbacks = unsafe { (*client).inner.registered_debug_callbacks() };
-        let mut invoked = 0_usize;
-        for reg_cb in callbacks {
-            if reg_cb.callback_addr >= 0x10000 {
-                // SAFETY: Caller registered a valid `extern "C" fn(*mut c_void)` function pointer.
-                let cb: unsafe extern "C" fn(*mut std::ffi::c_void) =
-                    unsafe { std::mem::transmute(reg_cb.callback_addr) };
-                // SAFETY: Invoking registered C callback with its opaque `user_data` pointer.
-                unsafe {
-                    cb(reg_cb.user_data_addr as *mut std::ffi::c_void);
-                }
+        let client_ref = unsafe { &*client };
+        let total = client_ref.inner.registered_debug_callbacks().len();
+        let typed_cbs: Vec<(crate::tpu_driver_types::SdkVoidFn, usize)> = client_ref
+            .c_debug_callbacks
+            .lock()
+            .values()
+            .copied()
+            .collect();
+        for (cb_fn, user_data_addr) in typed_cbs {
+            // SAFETY: Invoking registered C callback with its opaque `user_data` pointer.
+            unsafe {
+                cb_fn(user_data_addr as *mut std::ffi::c_void);
             }
-            invoked = invoked.saturating_add(1);
         }
-        invoked
+        total
     })
 }
 
@@ -937,7 +954,7 @@ mod tests {
             )));
             let mut reg_cb_args = LibtpuSdk_RegisterDebugCallback_Args {
                 client: ptr::null_mut(),
-                callback: ptr::null(),
+                callback: None,
                 user_data: ptr::null_mut(),
                 callback_id: 0,
             };
@@ -962,7 +979,7 @@ mod tests {
             let mut cb_counter = 0_u32;
             let mut real_cb_args = LibtpuSdk_RegisterDebugCallback_Args {
                 client: sdk_client,
-                callback: (rust_debug_cb as *const () as usize) as *const std::ffi::c_void,
+                callback: Some(rust_debug_cb),
                 user_data: ptr::addr_of_mut!(cb_counter).cast(),
                 callback_id: 0,
             };

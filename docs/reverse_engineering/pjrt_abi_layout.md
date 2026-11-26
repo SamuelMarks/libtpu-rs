@@ -1,185 +1,186 @@
-# `PJRT_Api` & `LibtpuSdk_Api` Binary Layout Specification (`libtpu-0.0.52`)
+# `PJRT_Api` & `LibtpuSdk_Api` Binary Layout Specification (`libtpu-0.0.53.1`)
 
 ## 1. `PJRT_Api` Header & Version Layout
-Disassembly of `pjrt::CreatePjrtApi` (`0x07120760`) in `libtpu.so` reveals the exact binary header of the static `PJRT_Api` structure (`_ZZN4pjrt10tpu_plugin13GetTpuPjrtApiEvE8pjrt_api` at `0x149302c0`):
+Disassembly of `pjrt::CreatePjrtApi` (`0x06f72ee0`) in `libtpu.so` reveals the exact binary header of the static `PJRT_Api` structure (`_ZZN4pjrt10tpu_plugin13GetTpuPjrtApiEvE8pjrt_api` at `0x14294e00`):
 
 - **Total `PJRT_Api` Size (`struct_size`)**: `0x478` = **1,144 bytes** (143 64-bit words)
 - **`PJRT_Api_Version`**:
   - `struct_size` (offset `0x10`): `0x18` = **24 bytes**
   - `extension_start` (offset `0x18`): `NULL` (`0x0`)
   - `major_version` (offset `0x20`, `int32_t`): **`0`**
-  - `minor_version` (offset `0x24`, `int32_t`): **`116`** (`0x74`)
+  - `minor_version` (offset `0x24`, `int32_t`): **`117`** (`0x75`)
 
 ## 2. Complete `PJRT_Api` Function Pointer Vtable (Offsets `0x000` .. `0x470`) & `Args` Struct Layouts
 | Offset | Slot # | Field Name | Internal Implementation Symbol in `libtpu.so` | `Args` Struct Size (`bytes`) |
 | :--- | ---: | :--- | :--- | ---: |
 | `0x000` | 0 | `struct_size` | `1144` (`0x478`) | — |
-| `0x008` | 1 | `extension_start` | Pointer to `xla_transform_extension` (head of 17-node linked list) | — |
-| `0x010` | 2..4 | `pjrt_api_version` | `{ struct_size: 24, extension_start: NULL, major: 0, minor: 116 }` | 24 |
-| `0x028` | 5 | `PJRT_Error_Destroy` | `pjrt::PJRT_Error_Destroy` (`0x0c591220`) | 24 |
-| `0x030` | 6 | `PJRT_Error_Message` | `pjrt::PJRT_Error_Message` (`0x0c591300`) | 40 |
-| `0x038` | 7 | `PJRT_Error_GetCode` | `pjrt::PJRT_Error_GetCode` (`0x0c5913f0`) | 32 |
-| `0x040` | 8 | `PJRT_Plugin_Initialize` | `pjrt::tpu_plugin::PJRT_Plugin_Initialize` (`0x0b4fbbd0`) | 16 |
-| `0x048` | 9 | `PJRT_Plugin_Attributes` | `pjrt::PJRT_Plugin_Attributes_Xla` (`0x0c5914c0`) | 32 |
-| `0x050` | 10 | `PJRT_Event_Destroy` | `pjrt::PJRT_Event_Destroy` (`0x0c5a12a0`) | 24 |
-| `0x058` | 11 | `PJRT_Event_IsReady` | `pjrt::PJRT_Event_IsReady` (`0x0c5a1350`) | 32 |
-| `0x060` | 12 | `PJRT_Event_Error` | `pjrt::PJRT_Event_Error` (`0x0c5a1510`) | 24 |
-| `0x068` | 13 | `PJRT_Event_Await` | `pjrt::PJRT_Event_Await` (`0x0c5a13e0`) | 24 |
-| `0x070` | 14 | `PJRT_Event_OnReady` | `pjrt::PJRT_Event_OnReady` (`0x0c5a15d0`) | 40 |
-| `0x078` | 15 | `PJRT_Client_Create` | `pjrt::tpu_plugin::PJRT_Client_Create` (`0x0b4fa500`) | 88 |
-| `0x080` | 16 | `PJRT_Client_Destroy` | `pjrt::PJRT_Client_Destroy` (`0x0c591520`) | 24 |
-| `0x088` | 17 | `PJRT_Client_PlatformName` | `pjrt::PJRT_Client_PlatformName` (`0x0c591770`) | 40 |
-| `0x090` | 18 | `PJRT_Client_ProcessIndex` | `pjrt::PJRT_Client_ProcessIndex` (`0x0c591720`) | 32 |
-| `0x098` | 19 | `PJRT_Client_PlatformVersion` | `pjrt::PJRT_Client_PlatformVersion` (`0x0c5917d0`) | 40 |
-| `0x0a0` | 20 | `PJRT_Client_Devices` | `pjrt::PJRT_Client_Devices` (`0x0c5918b0`) | 40 |
-| `0x0a8` | 21 | `PJRT_Client_AddressableDevices` | `pjrt::PJRT_Client_AddressableDevices` (`0x0c591910`) | 40 |
-| `0x0b0` | 22 | `PJRT_Client_LookupDevice` | `pjrt::PJRT_Client_LookupDevice` (`0x0c591970`) | 40 |
-| `0x0b8` | 23 | `PJRT_Client_LookupAddressableDevice` | `pjrt::PJRT_Client_LookupAddressableDevice` (`0x0c591ba0`) | 40 |
-| `0x0c0` | 24 | `PJRT_Client_AddressableMemories` | `pjrt::PJRT_Client_AddressableMemories` (`0x0c591f70`) | 40 |
-| `0x0c8` | 25 | `PJRT_Client_Compile` | `pjrt::PJRT_Client_Compile` (`0x0c593890`) | 56 |
-| `0x0d0` | 26 | `PJRT_Client_DefaultDeviceAssignment` | `pjrt::PJRT_Client_DefaultDeviceAssignment` (`0x0c595000`) | 56 |
-| `0x0d8` | 27 | `PJRT_Client_BufferFromHostBuffer` | `pjrt::PJRT_Client_BufferFromHostBuffer` (`0x0c596420`) | 112 |
-| `0x0e0` | 28 | `PJRT_DeviceDescription_Id` | `pjrt::PJRT_DeviceDescription_Id` (`0x0c5971f0`) | 32 |
-| `0x0e8` | 29 | `PJRT_DeviceDescription_ProcessIndex` | `pjrt::PJRT_DeviceDescription_ProcessIndex` (`0x0c597240`) | 32 |
-| `0x0f0` | 30 | `PJRT_DeviceDescription_Attributes` | `pjrt::PJRT_DeviceDescription_Attributes` (`0x0c597290`) | 40 |
-| `0x0f8` | 31 | `PJRT_DeviceDescription_Kind` | `pjrt::PJRT_DeviceDescription_Kind` (`0x0c5972f0`) | 40 |
-| `0x100` | 32 | `PJRT_DeviceDescription_DebugString` | `pjrt::PJRT_DeviceDescription_DebugString` (`0x0c597360`) | 40 |
-| `0x108` | 33 | `PJRT_DeviceDescription_ToString` | `pjrt::PJRT_DeviceDescription_ToString` (`0x0c5976d0`) | 40 |
-| `0x110` | 34 | `PJRT_Device_GetDescription` | `pjrt::PJRT_Device_GetDescription` (`0x0c5977b0`) | 32 |
-| `0x118` | 35 | `PJRT_Device_IsAddressable` | `pjrt::PJRT_Device_IsAddressable` (`0x0c597800`) | 32 |
-| `0x120` | 36 | `PJRT_Device_LocalHardwareId` | `pjrt::PJRT_Device_LocalHardwareId` (`0x0c597850`) | 32 |
-| `0x128` | 37 | `PJRT_Device_AddressableMemories` | `pjrt::PJRT_Device_AddressableMemories` (`0x0c5978a0`) | 40 |
-| `0x130` | 38 | `PJRT_Device_DefaultMemory` | `pjrt::PJRT_Device_DefaultMemory` (`0x0c597900`) | 32 |
-| `0x138` | 39 | `PJRT_Device_MemoryStats` | `pjrt::PJRT_Device_MemoryStats` (`0x0c5979a0`) | 192 |
-| `0x140` | 40 | `PJRT_Memory_Id` | `pjrt::PJRT_Memory_Id` (`0x0c597b70`) | 32 |
-| `0x148` | 41 | `PJRT_Memory_Kind` | `pjrt::PJRT_Memory_Kind` (`0x0c597bd0`) | 40 |
-| `0x150` | 42 | `PJRT_Memory_DebugString` | `pjrt::PJRT_Memory_DebugString` (`0x0c597ca0`) | 40 |
-| `0x158` | 43 | `PJRT_Memory_ToString` | `pjrt::PJRT_Memory_ToString` (`0x0c597d10`) | 40 |
-| `0x160` | 44 | `PJRT_Memory_AddressableByDevices` | `pjrt::PJRT_Memory_AddressableByDevices` (`0x0c597d80`) | 40 |
-| `0x168` | 45 | `PJRT_Executable_Destroy` | `pjrt::PJRT_Executable_Destroy` (`0x0c597e70`) | 24 |
-| `0x170` | 46 | `PJRT_Executable_Name` | `pjrt::PJRT_Executable_Name` (`0x0c5984c0`) | 40 |
-| `0x178` | 47 | `PJRT_Executable_NumReplicas` | `pjrt::PJRT_Executable_NumReplicas` (`0x0c598520`) | 32 |
-| `0x180` | 48 | `PJRT_Executable_NumPartitions` | `pjrt::PJRT_Executable_NumPartitions` (`0x0c598580`) | 32 |
-| `0x188` | 49 | `PJRT_Executable_NumOutputs` | `pjrt::PJRT_Executable_NumOutputs` (`0x0c5986a0`) | 32 |
-| `0x190` | 50 | `PJRT_Executable_SizeOfGeneratedCodeInBytes` | `pjrt::PJRT_Executable_SizeOfGeneratedCodeInBytes` (`0x0c598e70`) | 32 |
-| `0x198` | 51 | `PJRT_Executable_GetCostAnalysis` | `pjrt::PJRT_Executable_GetCostAnalysis` (`0x0c599740`) | 40 |
-| `0x1a0` | 52 | `PJRT_Executable_OutputMemoryKinds` | `pjrt::PJRT_Executable_OutputMemoryKinds` (`0x0c59b100`) | 48 |
-| `0x1a8` | 53 | `PJRT_Executable_OptimizedProgram` | `pjrt::PJRT_Executable_OptimizedProgram` (`0x0c598ed0`) | 32 |
-| `0x1b0` | 54 | `PJRT_Executable_Serialize` | `pjrt::PJRT_Executable_Serialize` (`0x0c59e150`) | 48 |
-| `0x1b8` | 55 | `PJRT_LoadedExecutable_Destroy` | `pjrt::PJRT_LoadedExecutable_Destroy` (`0x0c598400`) | 24 |
-| `0x1c0` | 56 | `PJRT_LoadedExecutable_GetExecutable` | `pjrt::PJRT_LoadedExecutable_GetExecutable` (`0x0c59edb0`) | 32 |
-| `0x1c8` | 57 | `PJRT_LoadedExecutable_AddressableDevices` | `pjrt::PJRT_LoadedExecutable_AddressableDevices` (`0x0c5985e0`) | 40 |
-| `0x1d0` | 58 | `PJRT_LoadedExecutable_Delete` | `pjrt::PJRT_LoadedExecutable_Delete` (`0x0c59b660`) | 24 |
-| `0x1d8` | 59 | `PJRT_LoadedExecutable_IsDeleted` | `pjrt::PJRT_LoadedExecutable_IsDeleted` (`0x0c59b6b0`) | 32 |
-| `0x1e0` | 60 | `PJRT_LoadedExecutable_Execute` | `pjrt::PJRT_LoadedExecutable_Execute` (`0x0c59b700`) | 56 |
-| `0x1e8` | 61 | `PJRT_Executable_DeserializeAndLoad` | `pjrt::PJRT_Executable_DeserializeAndLoad` (`0x0c59ea10`) | 56 |
-| `0x1f0` | 62 | `PJRT_LoadedExecutable_Fingerprint` | `pjrt::PJRT_LoadedExecutable_Fingerprint` (`0x0c591ef0`) | 40 |
-| `0x1f8` | 63 | `PJRT_Buffer_Destroy` | `pjrt::PJRT_Buffer_Destroy` (`0x0c59ee20`) | 24 |
-| `0x200` | 64 | `PJRT_Buffer_ElementType` | `pjrt::PJRT_Buffer_ElementType` (`0x0c59f000`) | 32 |
-| `0x208` | 65 | `PJRT_Buffer_Dimensions` | `pjrt::PJRT_Buffer_Dimensions` (`0x0c59f060`) | 40 |
-| `0x210` | 66 | `PJRT_Buffer_UnpaddedDimensions` | `pjrt::PJRT_Buffer_UnpaddedDimensions` (`0x0c59f0d0`) | 40 |
-| `0x218` | 67 | `PJRT_Buffer_DynamicDimensionIndices` | `pjrt::PJRT_Buffer_DynamicDimensionIndices` (`0x0c59f280`) | 40 |
-| `0x220` | 68 | `PJRT_Buffer_GetMemoryLayout` | `pjrt::PJRT_Buffer_GetMemoryLayout` (`0x0c59f3a0`) | 64 |
-| `0x228` | 69 | `PJRT_Buffer_OnDeviceSizeInBytes` | `pjrt::PJRT_Buffer_OnDeviceSizeInBytes` (`0x0c59f820`) | 32 |
-| `0x230` | 70 | `PJRT_Buffer_Device` | `pjrt::PJRT_Buffer_Device` (`0x0c59f8d0`) | 32 |
-| `0x238` | 71 | `PJRT_Buffer_Memory` | `pjrt::PJRT_Buffer_Memory` (`0x0c59f9e0`) | 32 |
-| `0x240` | 72 | `PJRT_Buffer_Delete` | `pjrt::PJRT_Buffer_Delete` (`0x0c59fbf0`) | 24 |
-| `0x248` | 73 | `PJRT_Buffer_IsDeleted` | `pjrt::PJRT_Buffer_IsDeleted` (`0x0c59fc40`) | 32 |
-| `0x250` | 74 | `PJRT_Buffer_CopyToDevice` | `pjrt::PJRT_Buffer_CopyToDevice` (`0x0c5a0040`) | 40 |
-| `0x258` | 75 | `PJRT_Buffer_ToHostBuffer` | `pjrt::PJRT_Buffer_ToHostBuffer` (`0x0c5a02f0`) | 56 |
-| `0x260` | 76 | `PJRT_Buffer_IsOnCpu` | `pjrt::PJRT_Buffer_IsOnCpu` (`0x0c5a08d0`) | 32 |
-| `0x268` | 77 | `PJRT_Buffer_ReadyEvent` | `pjrt::PJRT_Buffer_ReadyEvent` (`0x0c5a0930`) | 32 |
-| `0x270` | 78 | `PJRT_Buffer_UnsafePointer` | `pjrt::PJRT_Buffer_UnsafePointer` (`0x0c5a09b0`) | 32 |
-| `0x278` | 79 | `PJRT_Buffer_IncreaseExternalReferenceCount` | `pjrt::PJRT_Buffer_IncreaseExternalReferenceCount` (`0x0c5a0a60`) | 24 |
-| `0x280` | 80 | `PJRT_Buffer_DecreaseExternalReferenceCount` | `pjrt::PJRT_Buffer_DecreaseExternalReferenceCount` (`0x0c5a0c30`) | 24 |
-| `0x288` | 81 | `PJRT_Buffer_OpaqueDeviceMemoryDataPointer` | `pjrt::PJRT_Buffer_OpaqueDeviceMemoryDataPointer` (`0x0c5a0d20`) | 32 |
-| `0x290` | 82 | `PJRT_CopyToDeviceStream_Destroy` | `pjrt::PJRT_CopyToDeviceStream_Destroy` (`0x0c5a1060`) | 24 |
-| `0x298` | 83 | `PJRT_CopyToDeviceStream_AddChunk` | `pjrt::PJRT_CopyToDeviceStream_AddChunk` (`0x0c5a10d0`) | 40 |
-| `0x2a0` | 84 | `PJRT_CopyToDeviceStream_TotalBytes` | `pjrt::PJRT_CopyToDeviceStream_TotalBytes` (`0x0c5a1190`) | 32 |
-| `0x2a8` | 85 | `PJRT_CopyToDeviceStream_GranuleSize` | `pjrt::PJRT_CopyToDeviceStream_GranuleSize` (`0x0c5a11e0`) | 32 |
-| `0x2b0` | 86 | `PJRT_CopyToDeviceStream_CurrentBytes` | `pjrt::PJRT_CopyToDeviceStream_CurrentBytes` (`0x0c5a1230`) | 32 |
-| `0x2b8` | 87 | `PJRT_TopologyDescription_Create` | `pjrt::tpu_plugin::PJRT_TopologyDescription_Create` (`0x0b4fba20`) | 48 |
-| `0x2c0` | 88 | `PJRT_TopologyDescription_Destroy` | `pjrt::PJRT_TopologyDescription_Destroy` (`0x0c5a1900`) | 24 |
-| `0x2c8` | 89 | `PJRT_TopologyDescription_PlatformName` | `pjrt::PJRT_TopologyDescription_PlatformName` (`0x0c5a1aa0`) | 40 |
-| `0x2d0` | 90 | `PJRT_TopologyDescription_PlatformVersion` | `pjrt::PJRT_TopologyDescription_PlatformVersion` (`0x0c5a1b00`) | 40 |
-| `0x2d8` | 91 | `PJRT_TopologyDescription_GetDeviceDescriptions` | `pjrt::PJRT_TopologyDescription_GetDeviceDescriptions` (`0x0c5a1b60`) | 40 |
-| `0x2e0` | 92 | `PJRT_TopologyDescription_Serialize` | `pjrt::PJRT_TopologyDescription_Serialize` (`0x0c5a1bc0`) | 48 |
-| `0x2e8` | 93 | `PJRT_TopologyDescription_Attributes` | `pjrt::PJRT_TopologyDescription_Attributes` (`0x0c5a1e50`) | 40 |
-| `0x2f0` | 94 | `PJRT_Compile` | `pjrt::PJRT_Compile` (`0x0c5a2280`) | 56 |
-| `0x2f8` | 95 | `PJRT_Executable_OutputElementTypes` | `pjrt::PJRT_Executable_OutputElementTypes` (`0x0c59a140`) | 40 |
-| `0x300` | 96 | `PJRT_Executable_OutputDimensions` | `pjrt::PJRT_Executable_OutputDimensions` (`0x0c59a5b0`) | 48 |
-| `0x308` | 97 | `PJRT_Buffer_CopyToMemory` | `pjrt::PJRT_Buffer_CopyToMemory` (`0x0c5a01a0`) | 40 |
-| `0x310` | 98 | `PJRT_Client_CreateViewOfDeviceBuffer` | `pjrt::PJRT_Client_CreateViewOfDeviceBuffer` (`0x0c596ed0`) | 88 |
-| `0x318` | 99 | `PJRT_Executable_Fingerprint` | `pjrt::PJRT_Executable_Fingerprint` (`0x0c599690`) | 40 |
-| `0x320` | 100 | `PJRT_Client_TopologyDescription` | `pjrt::PJRT_Client_TopologyDescription` (`0x0c591830`) | 32 |
-| `0x328` | 101 | `PJRT_Executable_GetCompiledMemoryStats` | `pjrt::PJRT_Executable_GetCompiledMemoryStats` (`0x0c59e5f0`) | 64 |
-| `0x330` | 102 | `PJRT_Memory_Kind_Id` | `pjrt::PJRT_Memory_Kind_Id` (`0x0c597c40`) | 32 |
-| `0x338` | 103 | `PJRT_ExecuteContext_Create` | `pjrt::tpu_plugin::PJRT_ExecuteContext_Create` (`0x0b4fb9f0`) | 24 |
-| `0x340` | 104 | `PJRT_ExecuteContext_Destroy` | `pjrt::PJRT_ExecuteContext_Destroy` (`0x0c597de0`) | 24 |
-| `0x348` | 105 | `PJRT_Buffer_CopyRawToHost` | `pjrt::PJRT_Buffer_CopyRawToHost` (`0x0c59fca0`) | 56 |
-| `0x350` | 106 | `PJRT_AsyncHostToDeviceTransferManager_Destroy` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_Destroy` (`0x0c5928d0`) | 24 |
-| `0x358` | 107 | `PJRT_AsyncHostToDeviceTransferManager_TransferData` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_TransferData` (`0x0c592940`) | 64 |
-| `0x360` | 108 | `PJRT_Client_CreateBuffersForAsyncHostToDevice` | `pjrt::PJRT_Client_CreateBuffersForAsyncHostToDevice` (`0x0c591fd0`) | 48 |
-| `0x368` | 109 | `PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer` (`0x0c593370`) | 40 |
-| `0x370` | 110 | `PJRT_AsyncHostToDeviceTransferManager_Device` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_Device` (`0x0c593420`) | 32 |
-| `0x378` | 111 | `PJRT_AsyncHostToDeviceTransferManager_BufferCount` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_BufferCount` (`0x0c593530`) | 32 |
-| `0x380` | 112 | `PJRT_AsyncHostToDeviceTransferManager_BufferSize` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_BufferSize` (`0x0c593580`) | 40 |
-| `0x388` | 113 | `PJRT_AsyncHostToDeviceTransferManager_SetBufferError` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_SetBufferError` (`0x0c5935e0`) | 48 |
-| `0x390` | 114 | `PJRT_AsyncHostToDeviceTransferManager_AddMetadata` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_AddMetadata` (`0x0c5936a0`) | 40 |
-| `0x398` | 115 | `PJRT_Client_DmaMap` | `pjrt::PJRT_Client_DmaMap` (`0x0c592810`) | 40 |
-| `0x3a0` | 116 | `PJRT_Client_DmaUnmap` | `pjrt::PJRT_Client_DmaUnmap` (`0x0c592870`) | 32 |
-| `0x3a8` | 117 | `PJRT_Client_CreateUninitializedBuffer` | `pjrt::PJRT_Client_CreateUninitializedBuffer` (`0x0c595690`) | 72 |
-| `0x3b0` | 118 | `PJRT_Client_UpdateGlobalProcessInfo` | `pjrt::PJRT_Client_UpdateGlobalProcessInfo` (`0x0c591c50`) | 32 |
-| `0x3b8` | 119 | `PJRT_TopologyDescription_Deserialize` | `pjrt::PJRT_TopologyDescription_Deserialize` (`0x0c5a2930`) | 48 |
-| `0x3c0` | 120 | `PJRT_Client_CreateAliasBuffer` | `pjrt::PJRT_Client_CreateAliasBuffer` (`0x0c595d20`) | 72 |
-| `0x3c8` | 121 | `PJRT_Client_FulfillAliasBuffer` | `pjrt::PJRT_Client_FulfillAliasBuffer` (`0x0c596150`) | 40 |
-| `0x3d0` | 122 | `PJRT_LoadedExecutable_GetDeviceAssignment` | `pjrt::PJRT_LoadedExecutable_GetDeviceAssignment` (`0x0c5a2be0`) | 48 |
-| `0x3d8` | 123 | `PJRT_Client_CreateErrorBuffer` | `pjrt::PJRT_Client_CreateErrorBuffer` (`0x0c5958a0`) | 64 |
-| `0x3e0` | 124 | `PJRT_AsyncHostToDeviceTransferManager_TransferLiteral` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_TransferLiteral` (`0x0c592b90`) | 64 |
-| `0x3e8` | 125 | `PJRT_Buffer_CopyRawToHostFuture` | `pjrt::PJRT_Buffer_CopyRawToHostFuture` (`0x0c59fda0`) | 64 |
-| `0x3f0` | 126 | `PJRT_Device_PoisonExecution` | `pjrt::PJRT_Device_PoisonExecution` (`0x0c592f30`) | 48 |
-| `0x3f8` | 127 | `PJRT_Device_CreateAsyncTrackingEvent` | `pjrt::PJRT_Device_CreateAsyncTrackingEvent` (`0x0c593280`) | 48 |
-| `0x400` | 128 | `PJRT_AsyncTrackingEvent_Destroy` | `pjrt::PJRT_AsyncTrackingEvent_Destroy` (`0x0c593300`) | 24 |
-| `0x408` | 129 | `PJRT_Executable_GetCompileOptions` | `pjrt::PJRT_Executable_GetCompileOptions` (`0x0c59e270`) | 48 |
-| `0x410` | 130 | `PJRT_Buffer_DonateWithControlDependency` | `pjrt::PJRT_Buffer_DonateWithControlDependency` (`0x0c5a0df0`) | 48 |
-| `0x418` | 131 | `PJRT_Event_Create` | `pjrt::PJRT_Event_Create` (`0x0c5a1770`) | 24 |
-| `0x420` | 132 | `PJRT_Event_Set` | `pjrt::PJRT_Event_Set` (`0x0c5a1860`) | 40 |
-| `0x428` | 133 | `PJRT_Device_GetAttributes` | `pjrt::PJRT_Device_GetAttributes` (`0x0c5a4f80`) | 40 |
-| `0x430` | 134 | `PJRT_Client_Load` | `pjrt::PJRT_Client_Load` (`0x0c594980`) | 48 |
-| `0x438` | 135 | `PJRT_LoadedExecutable_AddressableDeviceLogicalIds` | `pjrt::PJRT_LoadedExecutable_AddressableDeviceLogicalIds` (`0x0c598640`) | 40 |
-| `0x440` | 136 | `PJRT_Buffer_Bitcast` | `pjrt::PJRT_Buffer_Bitcast` (`0x0c594ca0`) | 64 |
-| `0x448` | 137 | `PJRT_Error_ForEachPayload` | `pjrt::PJRT_Error_ForEachPayload` (`0x0c591440`) | 40 |
-| `0x450` | 138 | `PJRT_TopologyDescription_Fingerprint` | `pjrt::PJRT_TopologyDescription_Fingerprint` (`0x0c5a1da0`) | 32 |
-| `0x458` | 139 | `PJRT_Executable_ParameterMemoryKinds` | `pjrt::PJRT_Executable_ParameterMemoryKinds` (`0x0c59aba0`) | 48 |
-| `0x460` | 140 | `PJRT_Device_ClearMemoryStats` | `pjrt::PJRT_Device_ClearMemoryStats` (`0x0c592ed0`) | 24 |
-| `0x468` | 141 | `PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace` | `pjrt::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace` (`0x0c5a1eb0`) | 64 |
-| `0x470` | 142 | `PJRT_TopologyDescription_GetMemorySpaceKindIds` | `pjrt::PJRT_TopologyDescription_GetMemorySpaceKindIds` (`0x0c5a2220`) | 40 |
+| `0x008` | 1 | `extension_start` | Pointer to `ffi_extension` (head of 18-node linked list) | — |
+| `0x010` | 2..4 | `pjrt_api_version` | `{ struct_size: 24, extension_start: NULL, major: 0, minor: 117 }` | 24 |
+| `0x028` | 5 | `PJRT_Error_Destroy` | `pjrt::PJRT_Error_Destroy` (`0x06f5e950`) | 24 |
+| `0x030` | 6 | `PJRT_Error_Message` | `pjrt::PJRT_Error_Message` (`0x06f5ea30`) | 40 |
+| `0x038` | 7 | `PJRT_Error_GetCode` | `pjrt::PJRT_Error_GetCode` (`0x06f5eb20`) | 32 |
+| `0x040` | 8 | `PJRT_Plugin_Initialize` | `pjrt::tpu_plugin::PJRT_Plugin_Initialize` (`0x06078ff0`) | 16 |
+| `0x048` | 9 | `PJRT_Plugin_Attributes` | `pjrt::PJRT_Plugin_Attributes_Xla` (`0x06f5ebf0`) | 32 |
+| `0x050` | 10 | `PJRT_Event_Destroy` | `pjrt::PJRT_Event_Destroy` (`0x06f6e880`) | 24 |
+| `0x058` | 11 | `PJRT_Event_IsReady` | `pjrt::PJRT_Event_IsReady` (`0x06f6e930`) | 32 |
+| `0x060` | 12 | `PJRT_Event_Error` | `pjrt::PJRT_Event_Error` (`0x06f6eaf0`) | 24 |
+| `0x068` | 13 | `PJRT_Event_Await` | `pjrt::PJRT_Event_Await` (`0x06f6e9c0`) | 24 |
+| `0x070` | 14 | `PJRT_Event_OnReady` | `pjrt::PJRT_Event_OnReady` (`0x06f6ebb0`) | 40 |
+| `0x078` | 15 | `PJRT_Client_Create` | `pjrt::tpu_plugin::PJRT_Client_Create` (`0x060779c0`) | 88 |
+| `0x080` | 16 | `PJRT_Client_Destroy` | `pjrt::PJRT_Client_Destroy` (`0x06f5ec50`) | 24 |
+| `0x088` | 17 | `PJRT_Client_PlatformName` | `pjrt::PJRT_Client_PlatformName` (`0x06f5eea0`) | 40 |
+| `0x090` | 18 | `PJRT_Client_ProcessIndex` | `pjrt::PJRT_Client_ProcessIndex` (`0x06f5ee50`) | 32 |
+| `0x098` | 19 | `PJRT_Client_PlatformVersion` | `pjrt::PJRT_Client_PlatformVersion` (`0x06f5ef00`) | 40 |
+| `0x0a0` | 20 | `PJRT_Client_Devices` | `pjrt::PJRT_Client_Devices` (`0x06f5efe0`) | 40 |
+| `0x0a8` | 21 | `PJRT_Client_AddressableDevices` | `pjrt::PJRT_Client_AddressableDevices` (`0x06f5f040`) | 40 |
+| `0x0b0` | 22 | `PJRT_Client_LookupDevice` | `pjrt::PJRT_Client_LookupDevice` (`0x06f5f0a0`) | 40 |
+| `0x0b8` | 23 | `PJRT_Client_LookupAddressableDevice` | `pjrt::PJRT_Client_LookupAddressableDevice` (`0x06f5f2b0`) | 40 |
+| `0x0c0` | 24 | `PJRT_Client_AddressableMemories` | `pjrt::PJRT_Client_AddressableMemories` (`0x06f5f660`) | 40 |
+| `0x0c8` | 25 | `PJRT_Client_Compile` | `pjrt::PJRT_Client_Compile` (`0x06f60fc0`) | 56 |
+| `0x0d0` | 26 | `PJRT_Client_DefaultDeviceAssignment` | `pjrt::PJRT_Client_DefaultDeviceAssignment` (`0x06f62790`) | 56 |
+| `0x0d8` | 27 | `PJRT_Client_BufferFromHostBuffer` | `pjrt::PJRT_Client_BufferFromHostBuffer` (`0x06f63db0`) | 112 |
+| `0x0e0` | 28 | `PJRT_DeviceDescription_Id` | `pjrt::PJRT_DeviceDescription_Id` (`0x06f64b40`) | 32 |
+| `0x0e8` | 29 | `PJRT_DeviceDescription_ProcessIndex` | `pjrt::PJRT_DeviceDescription_ProcessIndex` (`0x06f64b90`) | 32 |
+| `0x0f0` | 30 | `PJRT_DeviceDescription_Attributes` | `pjrt::PJRT_DeviceDescription_Attributes` (`0x06f64be0`) | 40 |
+| `0x0f8` | 31 | `PJRT_DeviceDescription_Kind` | `pjrt::PJRT_DeviceDescription_Kind` (`0x06f64c40`) | 40 |
+| `0x100` | 32 | `PJRT_DeviceDescription_DebugString` | `pjrt::PJRT_DeviceDescription_DebugString` (`0x06f64cb0`) | 40 |
+| `0x108` | 33 | `PJRT_DeviceDescription_ToString` | `pjrt::PJRT_DeviceDescription_ToString` (`0x06f65040`) | 40 |
+| `0x110` | 34 | `PJRT_Device_GetDescription` | `pjrt::PJRT_Device_GetDescription` (`0x06f65120`) | 32 |
+| `0x118` | 35 | `PJRT_Device_IsAddressable` | `pjrt::PJRT_Device_IsAddressable` (`0x06f65170`) | 32 |
+| `0x120` | 36 | `PJRT_Device_LocalHardwareId` | `pjrt::PJRT_Device_LocalHardwareId` (`0x06f651c0`) | 32 |
+| `0x128` | 37 | `PJRT_Device_AddressableMemories` | `pjrt::PJRT_Device_AddressableMemories` (`0x06f65210`) | 40 |
+| `0x130` | 38 | `PJRT_Device_DefaultMemory` | `pjrt::PJRT_Device_DefaultMemory` (`0x06f65270`) | 32 |
+| `0x138` | 39 | `PJRT_Device_MemoryStats` | `pjrt::PJRT_Device_MemoryStats` (`0x06f65310`) | 192 |
+| `0x140` | 40 | `PJRT_Memory_Id` | `pjrt::PJRT_Memory_Id` (`0x06f654e0`) | 32 |
+| `0x148` | 41 | `PJRT_Memory_Kind` | `pjrt::PJRT_Memory_Kind` (`0x06f65540`) | 40 |
+| `0x150` | 42 | `PJRT_Memory_DebugString` | `pjrt::PJRT_Memory_DebugString` (`0x06f65610`) | 40 |
+| `0x158` | 43 | `PJRT_Memory_ToString` | `pjrt::PJRT_Memory_ToString` (`0x06f65680`) | 40 |
+| `0x160` | 44 | `PJRT_Memory_AddressableByDevices` | `pjrt::PJRT_Memory_AddressableByDevices` (`0x06f656f0`) | 40 |
+| `0x168` | 45 | `PJRT_Executable_Destroy` | `pjrt::PJRT_Executable_Destroy` (`0x06f657e0`) | 24 |
+| `0x170` | 46 | `PJRT_Executable_Name` | `pjrt::PJRT_Executable_Name` (`0x06f65e50`) | 40 |
+| `0x178` | 47 | `PJRT_Executable_NumReplicas` | `pjrt::PJRT_Executable_NumReplicas` (`0x06f65eb0`) | 32 |
+| `0x180` | 48 | `PJRT_Executable_NumPartitions` | `pjrt::PJRT_Executable_NumPartitions` (`0x06f65f10`) | 32 |
+| `0x188` | 49 | `PJRT_Executable_NumOutputs` | `pjrt::PJRT_Executable_NumOutputs` (`0x06f66060`) | 32 |
+| `0x190` | 50 | `PJRT_Executable_SizeOfGeneratedCodeInBytes` | `pjrt::PJRT_Executable_SizeOfGeneratedCodeInBytes` (`0x06f66800`) | 32 |
+| `0x198` | 51 | `PJRT_Executable_GetCostAnalysis` | `pjrt::PJRT_Executable_GetCostAnalysis` (`0x06f67040`) | 40 |
+| `0x1a0` | 52 | `PJRT_Executable_OutputMemoryKinds` | `pjrt::PJRT_Executable_OutputMemoryKinds` (`0x06f68950`) | 48 |
+| `0x1a8` | 53 | `PJRT_Executable_OptimizedProgram` | `pjrt::PJRT_Executable_OptimizedProgram` (`0x06f66860`) | 32 |
+| `0x1b0` | 54 | `PJRT_Executable_Serialize` | `pjrt::PJRT_Executable_Serialize` (`0x06f6b670`) | 48 |
+| `0x1b8` | 55 | `PJRT_LoadedExecutable_Destroy` | `pjrt::PJRT_LoadedExecutable_Destroy` (`0x06f65d70`) | 24 |
+| `0x1c0` | 56 | `PJRT_LoadedExecutable_GetExecutable` | `pjrt::PJRT_LoadedExecutable_GetExecutable` (`0x06f6c2f0`) | 32 |
+| `0x1c8` | 57 | `PJRT_LoadedExecutable_AddressableDevices` | `pjrt::PJRT_LoadedExecutable_AddressableDevices` (`0x06f65f70`) | 40 |
+| `0x1d0` | 58 | `PJRT_LoadedExecutable_Delete` | `pjrt::PJRT_LoadedExecutable_Delete` (`0x06f68e70`) | 24 |
+| `0x1d8` | 59 | `PJRT_LoadedExecutable_IsDeleted` | `pjrt::PJRT_LoadedExecutable_IsDeleted` (`0x06f68ec0`) | 32 |
+| `0x1e0` | 60 | `PJRT_LoadedExecutable_Execute` | `pjrt::PJRT_LoadedExecutable_Execute` (`0x06f68f10`) | 56 |
+| `0x1e8` | 61 | `PJRT_Executable_DeserializeAndLoad` | `pjrt::PJRT_Executable_DeserializeAndLoad` (`0x06f6bf30`) | 56 |
+| `0x1f0` | 62 | `PJRT_LoadedExecutable_Fingerprint` | `pjrt::PJRT_LoadedExecutable_Fingerprint` (`0x06f5f5e0`) | 40 |
+| `0x1f8` | 63 | `PJRT_Buffer_Destroy` | `pjrt::PJRT_Buffer_Destroy` (`0x06f6c360`) | 24 |
+| `0x200` | 64 | `PJRT_Buffer_ElementType` | `pjrt::PJRT_Buffer_ElementType` (`0x06f6c540`) | 32 |
+| `0x208` | 65 | `PJRT_Buffer_Dimensions` | `pjrt::PJRT_Buffer_Dimensions` (`0x06f6c5a0`) | 40 |
+| `0x210` | 66 | `PJRT_Buffer_UnpaddedDimensions` | `pjrt::PJRT_Buffer_UnpaddedDimensions` (`0x06f6c610`) | 40 |
+| `0x218` | 67 | `PJRT_Buffer_DynamicDimensionIndices` | `pjrt::PJRT_Buffer_DynamicDimensionIndices` (`0x06f6c7c0`) | 40 |
+| `0x220` | 68 | `PJRT_Buffer_GetMemoryLayout` | `pjrt::PJRT_Buffer_GetMemoryLayout` (`0x06f6c8e0`) | 64 |
+| `0x228` | 69 | `PJRT_Buffer_OnDeviceSizeInBytes` | `pjrt::PJRT_Buffer_OnDeviceSizeInBytes` (`0x06f6cd50`) | 32 |
+| `0x230` | 70 | `PJRT_Buffer_Device` | `pjrt::PJRT_Buffer_Device` (`0x06f6ce00`) | 32 |
+| `0x238` | 71 | `PJRT_Buffer_Memory` | `pjrt::PJRT_Buffer_Memory` (`0x06f6cf10`) | 32 |
+| `0x240` | 72 | `PJRT_Buffer_Delete` | `pjrt::PJRT_Buffer_Delete` (`0x06f6d120`) | 24 |
+| `0x248` | 73 | `PJRT_Buffer_IsDeleted` | `pjrt::PJRT_Buffer_IsDeleted` (`0x06f6d170`) | 32 |
+| `0x250` | 74 | `PJRT_Buffer_CopyToDevice` | `pjrt::PJRT_Buffer_CopyToDevice` (`0x06f6d570`) | 40 |
+| `0x258` | 75 | `PJRT_Buffer_ToHostBuffer` | `pjrt::PJRT_Buffer_ToHostBuffer` (`0x06f6d820`) | 56 |
+| `0x260` | 76 | `PJRT_Buffer_IsOnCpu` | `pjrt::PJRT_Buffer_IsOnCpu` (`0x06f6de10`) | 32 |
+| `0x268` | 77 | `PJRT_Buffer_ReadyEvent` | `pjrt::PJRT_Buffer_ReadyEvent` (`0x06f6de70`) | 32 |
+| `0x270` | 78 | `PJRT_Buffer_UnsafePointer` | `pjrt::PJRT_Buffer_UnsafePointer` (`0x06f6def0`) | 32 |
+| `0x278` | 79 | `PJRT_Buffer_IncreaseExternalReferenceCount` | `pjrt::PJRT_Buffer_IncreaseExternalReferenceCount` (`0x06f6dfa0`) | 24 |
+| `0x280` | 80 | `PJRT_Buffer_DecreaseExternalReferenceCount` | `pjrt::PJRT_Buffer_DecreaseExternalReferenceCount` (`0x06f6e1a0`) | 24 |
+| `0x288` | 81 | `PJRT_Buffer_OpaqueDeviceMemoryDataPointer` | `pjrt::PJRT_Buffer_OpaqueDeviceMemoryDataPointer` (`0x06f6e300`) | 32 |
+| `0x290` | 82 | `PJRT_CopyToDeviceStream_Destroy` | `pjrt::PJRT_CopyToDeviceStream_Destroy` (`0x06f6e640`) | 24 |
+| `0x298` | 83 | `PJRT_CopyToDeviceStream_AddChunk` | `pjrt::PJRT_CopyToDeviceStream_AddChunk` (`0x06f6e6b0`) | 40 |
+| `0x2a0` | 84 | `PJRT_CopyToDeviceStream_TotalBytes` | `pjrt::PJRT_CopyToDeviceStream_TotalBytes` (`0x06f6e770`) | 32 |
+| `0x2a8` | 85 | `PJRT_CopyToDeviceStream_GranuleSize` | `pjrt::PJRT_CopyToDeviceStream_GranuleSize` (`0x06f6e7c0`) | 32 |
+| `0x2b0` | 86 | `PJRT_CopyToDeviceStream_CurrentBytes` | `pjrt::PJRT_CopyToDeviceStream_CurrentBytes` (`0x06f6e810`) | 32 |
+| `0x2b8` | 87 | `PJRT_TopologyDescription_Create` | `pjrt::tpu_plugin::PJRT_TopologyDescription_Create` (`0x06078e40`) | 48 |
+| `0x2c0` | 88 | `PJRT_TopologyDescription_Destroy` | `pjrt::PJRT_TopologyDescription_Destroy` (`0x06f6eee0`) | 24 |
+| `0x2c8` | 89 | `PJRT_TopologyDescription_PlatformName` | `pjrt::PJRT_TopologyDescription_PlatformName` (`0x06f6f080`) | 40 |
+| `0x2d0` | 90 | `PJRT_TopologyDescription_PlatformVersion` | `pjrt::PJRT_TopologyDescription_PlatformVersion` (`0x06f6f0e0`) | 40 |
+| `0x2d8` | 91 | `PJRT_TopologyDescription_GetDeviceDescriptions` | `pjrt::PJRT_TopologyDescription_GetDeviceDescriptions` (`0x06f6f140`) | 40 |
+| `0x2e0` | 92 | `PJRT_TopologyDescription_Serialize` | `pjrt::PJRT_TopologyDescription_Serialize` (`0x06f6f1a0`) | 48 |
+| `0x2e8` | 93 | `PJRT_TopologyDescription_Attributes` | `pjrt::PJRT_TopologyDescription_Attributes` (`0x06f6f430`) | 40 |
+| `0x2f0` | 94 | `PJRT_Compile` | `pjrt::PJRT_Compile` (`0x06f6f8a0`) | 56 |
+| `0x2f8` | 95 | `PJRT_Executable_OutputElementTypes` | `pjrt::PJRT_Executable_OutputElementTypes` (`0x06f67a00`) | 40 |
+| `0x300` | 96 | `PJRT_Executable_OutputDimensions` | `pjrt::PJRT_Executable_OutputDimensions` (`0x06f67e40`) | 48 |
+| `0x308` | 97 | `PJRT_Buffer_CopyToMemory` | `pjrt::PJRT_Buffer_CopyToMemory` (`0x06f6d6d0`) | 40 |
+| `0x310` | 98 | `PJRT_Client_CreateViewOfDeviceBuffer` | `pjrt::PJRT_Client_CreateViewOfDeviceBuffer` (`0x06f64850`) | 88 |
+| `0x318` | 99 | `PJRT_Executable_Fingerprint` | `pjrt::PJRT_Executable_Fingerprint` (`0x06f66f90`) | 40 |
+| `0x320` | 100 | `PJRT_Client_TopologyDescription` | `pjrt::PJRT_Client_TopologyDescription` (`0x06f5ef60`) | 32 |
+| `0x328` | 101 | `PJRT_Executable_GetCompiledMemoryStats` | `pjrt::PJRT_Executable_GetCompiledMemoryStats` (`0x06f6bb20`) | 64 |
+| `0x330` | 102 | `PJRT_Memory_Kind_Id` | `pjrt::PJRT_Memory_Kind_Id` (`0x06f655b0`) | 32 |
+| `0x338` | 103 | `PJRT_ExecuteContext_Create` | `pjrt::tpu_plugin::PJRT_ExecuteContext_Create` (`0x06078e10`) | 24 |
+| `0x340` | 104 | `PJRT_ExecuteContext_Destroy` | `pjrt::PJRT_ExecuteContext_Destroy` (`0x06f65750`) | 24 |
+| `0x348` | 105 | `PJRT_Buffer_CopyRawToHost` | `pjrt::PJRT_Buffer_CopyRawToHost` (`0x06f6d1d0`) | 56 |
+| `0x350` | 106 | `PJRT_AsyncHostToDeviceTransferManager_Destroy` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_Destroy` (`0x06f5fff0`) | 24 |
+| `0x358` | 107 | `PJRT_AsyncHostToDeviceTransferManager_TransferData` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_TransferData` (`0x06f60060`) | 64 |
+| `0x360` | 108 | `PJRT_Client_CreateBuffersForAsyncHostToDevice` | `pjrt::PJRT_Client_CreateBuffersForAsyncHostToDevice` (`0x06f5f6c0`) | 48 |
+| `0x368` | 109 | `PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_RetrieveBuffer` (`0x06f60a90`) | 40 |
+| `0x370` | 110 | `PJRT_AsyncHostToDeviceTransferManager_Device` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_Device` (`0x06f60b40`) | 32 |
+| `0x378` | 111 | `PJRT_AsyncHostToDeviceTransferManager_BufferCount` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_BufferCount` (`0x06f60c50`) | 32 |
+| `0x380` | 112 | `PJRT_AsyncHostToDeviceTransferManager_BufferSize` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_BufferSize` (`0x06f60ca0`) | 40 |
+| `0x388` | 113 | `PJRT_AsyncHostToDeviceTransferManager_SetBufferError` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_SetBufferError` (`0x06f60d00`) | 48 |
+| `0x390` | 114 | `PJRT_AsyncHostToDeviceTransferManager_AddMetadata` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_AddMetadata` (`0x06f60dc0`) | 40 |
+| `0x398` | 115 | `PJRT_Client_DmaMap` | `pjrt::PJRT_Client_DmaMap` (`0x06f5ff30`) | 40 |
+| `0x3a0` | 116 | `PJRT_Client_DmaUnmap` | `pjrt::PJRT_Client_DmaUnmap` (`0x06f5ff90`) | 32 |
+| `0x3a8` | 117 | `PJRT_Client_CreateUninitializedBuffer` | `pjrt::PJRT_Client_CreateUninitializedBuffer` (`0x06f62e70`) | 72 |
+| `0x3b0` | 118 | `PJRT_Client_UpdateGlobalProcessInfo` | `pjrt::PJRT_Client_UpdateGlobalProcessInfo` (`0x06f5f360`) | 32 |
+| `0x3b8` | 119 | `PJRT_TopologyDescription_Deserialize` | `pjrt::PJRT_TopologyDescription_Deserialize` (`0x06f6ff80`) | 48 |
+| `0x3c0` | 120 | `PJRT_Client_CreateAliasBuffer` | `pjrt::PJRT_Client_CreateAliasBuffer` (`0x06f636b0`) | 72 |
+| `0x3c8` | 121 | `PJRT_Client_FulfillAliasBuffer` | `pjrt::PJRT_Client_FulfillAliasBuffer` (`0x06f63ae0`) | 40 |
+| `0x3d0` | 122 | `PJRT_LoadedExecutable_GetDeviceAssignment` | `pjrt::PJRT_LoadedExecutable_GetDeviceAssignment` (`0x06f70250`) | 48 |
+| `0x3d8` | 123 | `PJRT_Client_CreateErrorBuffer` | `pjrt::PJRT_Client_CreateErrorBuffer` (`0x06f63080`) | 64 |
+| `0x3e0` | 124 | `PJRT_AsyncHostToDeviceTransferManager_TransferLiteral` | `pjrt::PJRT_AsyncHostToDeviceTransferManager_TransferLiteral` (`0x06f602b0`) | 64 |
+| `0x3e8` | 125 | `PJRT_Buffer_CopyRawToHostFuture` | `pjrt::PJRT_Buffer_CopyRawToHostFuture` (`0x06f6d2d0`) | 64 |
+| `0x3f0` | 126 | `PJRT_Device_PoisonExecution` | `pjrt::PJRT_Device_PoisonExecution` (`0x06f60650`) | 48 |
+| `0x3f8` | 127 | `PJRT_Device_CreateAsyncTrackingEvent` | `pjrt::PJRT_Device_CreateAsyncTrackingEvent` (`0x06f609a0`) | 48 |
+| `0x400` | 128 | `PJRT_AsyncTrackingEvent_Destroy` | `pjrt::PJRT_AsyncTrackingEvent_Destroy` (`0x06f60a20`) | 24 |
+| `0x408` | 129 | `PJRT_Executable_GetCompileOptions` | `pjrt::PJRT_Executable_GetCompileOptions` (`0x06f6b790`) | 48 |
+| `0x410` | 130 | `PJRT_Buffer_DonateWithControlDependency` | `pjrt::PJRT_Buffer_DonateWithControlDependency` (`0x06f6e3d0`) | 48 |
+| `0x418` | 131 | `PJRT_Event_Create` | `pjrt::PJRT_Event_Create` (`0x06f6ed50`) | 24 |
+| `0x420` | 132 | `PJRT_Event_Set` | `pjrt::PJRT_Event_Set` (`0x06f6ee40`) | 40 |
+| `0x428` | 133 | `PJRT_Device_GetAttributes` | `pjrt::PJRT_Device_GetAttributes` (`0x06f726b0`) | 40 |
+| `0x430` | 134 | `PJRT_Client_Load` | `pjrt::PJRT_Client_Load` (`0x06f620d0`) | 48 |
+| `0x438` | 135 | `PJRT_LoadedExecutable_AddressableDeviceLogicalIds` | `pjrt::PJRT_LoadedExecutable_AddressableDeviceLogicalIds` (`0x06f65fd0`) | 40 |
+| `0x440` | 136 | `PJRT_Buffer_Bitcast` | `pjrt::PJRT_Buffer_Bitcast` (`0x06f62400`) | 64 |
+| `0x448` | 137 | `PJRT_Error_ForEachPayload` | `pjrt::PJRT_Error_ForEachPayload` (`0x06f5eb70`) | 40 |
+| `0x450` | 138 | `PJRT_TopologyDescription_Fingerprint` | `pjrt::PJRT_TopologyDescription_Fingerprint` (`0x06f6f380`) | 32 |
+| `0x458` | 139 | `PJRT_Executable_ParameterMemoryKinds` | `pjrt::PJRT_Executable_ParameterMemoryKinds` (`0x06f68430`) | 48 |
+| `0x460` | 140 | `PJRT_Device_ClearMemoryStats` | `pjrt::PJRT_Device_ClearMemoryStats` (`0x06f605f0`) | 24 |
+| `0x468` | 141 | `PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace` | `pjrt::PJRT_TopologyDescription_MakeCanonicalShapeForMemorySpace` (`0x06f6f490`) | 64 |
+| `0x470` | 142 | `PJRT_TopologyDescription_GetMemorySpaceKindIds` | `pjrt::PJRT_TopologyDescription_GetMemorySpaceKindIds` (`0x06f6f840`) | 40 |
 
 ## 3. PJRT Extension Chain (`PJRT_Extension_Base` Linked List)
-`GetTpuPjrtApi()` (`0x0b4fb4e0`) links 17 extension nodes starting at `extension_start` (each beginning with `PJRT_Extension_Base { size_t struct_size; PJRT_Extension_Type type; PJRT_Extension_Base* next; }` = 24 bytes):
+`GetTpuPjrtApi()` (`0x060788b0`) links 18 extension nodes starting at `extension_start` (each beginning with `PJRT_Extension_Base { size_t struct_size; PJRT_Extension_Type type; PJRT_Extension_Base* next; }` = 24 bytes):
 
 | Node | Variable Name in `libtpu.so` | `struct_size` | `PJRT_Extension_Type` (`offset 0x08`) | Function Pointer Slots (`offset 0x18..`) |
 | ---: | :--- | ---: | ---: | :--- |
-| 1 | `xla_transform_extension` | `56` (`0x38`) | `29` (`0x1d`) | `0x18`: `register_xla_transform`, `0x20`: `wait_for_all_transforms`, `0x28`: `unregister_xla_transform`, `0x30`: `list_xla_transforms` |
-| 2 | `host_memory_allocator_extension` | `32` (`0x20`) | `28` (`0x1c`) | `0x18`: `get_host_memory_allocator` |
-| 3 | `multi_slice_extension` | `64` (`0x40`) | `26` (`0x1a`) | `0x18`: `config_destroy`, `0x20`: `config_num_slices`, `0x28`: `config_num_devices_per_slice`, `0x30`: `config_slice_id`, `0x38`: `config_serialize` |
-| 4 | `collectives_extension` | `96` (`0x60`) | `25` (`0x19`) | `0x18`: `collectives_destroy`, `0x20`: `create_communicator`, `0x28`: `communicator_destroy`, `0x30`: `communicator_all_reduce`, `0x38`: `communicator_reduce_scatter`, `0x40`: `communicator_all_gather`, `0x48`: `communicator_collective_permute`, `0x50`: `communicator_all_to_all`, `0x58`: `communicator_to_string` |
-| 5 | `abi_version_extension` | `120` (`0x78`) | `20` (`0x14`) | `0x18`: `client_runtime_abi_version`, `0x20`: `executable_get_abi_version`, `0x28`: `runtime_abi_version_destroy`, `0x30`: `runtime_abi_version_is_compatible_with_runtime`, `0x38`: `runtime_abi_version_is_compatible_with_executable`, `0x40`: `runtime_abi_version_to_proto`, `0x48`: `runtime_abi_version_platform_id`, `0x50`: `executable_abi_version_destroy`, `0x58`: `executable_abi_version_to_proto`, `0x60`: `executable_abi_version_platform_id`, `0x68`: `runtime_abi_version_from_proto`, `0x70`: `executable_abi_version_from_proto` |
-| 6 | `shardings_extension` | `40` (`0x28`) | `19` (`0x13`) | `0x18`: `parameter_shardings`, `0x20`: `output_shardings` |
-| 7 | `megascale_extension` | `248` (`0xf8`) | `18` (`0x12`) | 28 function pointers (`0x18..0xf0`): `create_client_context`, `delete_client_context`, `create_default_config`, `create_aot_config`, `create_multi_slice_config`, `delete_multi_slice_config`, `multi_slice_config_num_slices`, `multi_slice_config_num_devices_per_slice`, `multi_slice_config_slice_id`, `multi_slice_config_serialized_slice_key_value`, `multi_slice_config_serialize`, `deserialize_multi_slice_config`, `megascale_addresses`, `barrier`, `log_error`, `get_megascale_dcn_topology`, `get_slice_id`, `get_num_slices`, `initialize_slice`, `finalize_slice`, `register_error_handler`, `unregister_error_handler`, `collect_metrics`, `reset_metrics`, `get_transport_type`, `set_transport_type`, `wait_for_barrier`, `abort_collectives` |
-| 8 | `tpu_executable_extension` | `96` (`0x60`) | `17` (`0x11`) | `0x18`: `get_target_arguments`, `0x20`: `get_hlo_module_with_config`, `0x28`: `reserved (NULL)`, `0x30`: `get_compiled_memory_stats`, `0x38`: `run_hlo_cost_analysis`, `0x40`: `set_tpu_compilation_env`, `0x48`: `get_tpu_compilation_env_field_as_string`, `0x50`: `is_tpu_predetermined_error`, `0x58`: `is_tpu_cancellation_placeholder_error` |
-| 9 | `tpu_topology_extension` | `272` (`0x110`) | `16` (`0x10`) | 31 function pointers (`0x18..0x108`): `subslice`, `is_subslice_topology`, `subslice_device_id_from_full_device_id`, `replace_host_bounds`, `is_enhanced_barrier_enabled`, `has_limited_ici_connectivity`, `is_reachable_over_limited_ici`, `process_count`, `chips_per_process`, `core_count_per_chip`, `chip_count`, `core_count`, `logi_device_count_per_process`, `logi_device_count`, `logi_device_count_per_chip`, `core_count_per_process`, `process_ids`, `logi_device_ids_on_process`, `proc_id_and_idx_on_proc_for_chip`, `proc_id_and_idx_on_proc_for_logi_device`, `process_coord_from_id`, `chip_id_from_coord`, `logi_device_id_from_chip_coord_and_idx`, `chip_coord_and_idx_for_logi_device`, `chips_per_process_bounds`, `chip_bounds`, `process_bounds`, `get_routing_strategy`, `get_slice_config`, `get_slice_configs`, `get_default_platform_config` |
-| 10 | `callback_extension` | `40` (`0x28`) | `14` (`0x0e`) | `0x18`: `register_callback`, `0x20`: `invoke_callback` |
-| 11 | `phase_compile_extension` | `64` (`0x40`) | `9` (`0x09`) | `0x18`: `phase_compile_get_compiler`, `0x20`: `phase_compile_destroy_compiler`, `0x28`: `phase_compile_run_phase`, `0x30`: `phase_compile_get_phase_names`, `0x38`: `phase_compile_c_buffers_destroy` |
-| 12 | `cross_host_transfers_extension` | `56` (`0x38`) | `12` (`0x0c`) | `0x18`: `make_cross_host_receive_buffers`, `0x20`: `copy_to_remote_device`, `0x28`: `cross_host_receive_buffers`, `0x30`: `cross_host_send_buffers` |
-| 13 | `executable_metadata_extension` | `40` (`0x28`) | `11` (`0x0b`) | `0x18`: `get_executable_metadata`, `0x20`: `destroy_executable_metadata` |
-| 14 | `mem_desc_extension` | `40` (`0x28`) | `7` (`0x07`) | `0x18`: `get_memory_descriptions`, `0x20`: `destroy_memory_descriptions` |
-| 15 | `layouts_extension` | `80` (`0x50`) | `6` (`0x06`) | `0x18`: `memory_layout_destroy`, `0x20`: `memory_layout_serialize`, `0x28`: `client_get_default_layout`, `0x30`: `buffer_memory_layout`, `0x38`: `topology_get_default_layout`, `0x40`: `executable_get_output_layouts`, `0x48`: `executable_get_parameter_layouts` |
-| 16 | `raw_buffer_extension` | `80` (`0x50`) | `8` (`0x08`) | `0x18`: `create_raw_alias_of_buffer`, `0x20`: `destroy`, `0x28`: `get_host_pointer`, `0x30`: `get_on_device_size_in_bytes`, `0x38`: `get_memory_space`, `0x40`: `copy_raw_host_to_device`, `0x48`: `copy_raw_device_to_host` |
-| 17 | `profiler_extension` | `40` (`0x28`) | `1` (`0x01`) | `0x18`: `profiler_api` (`*const PLUGIN_Profiler_Api`), `0x20`: `traceme_context_id` (`int64_t`) |
+| 1 | `ffi_extension` | `48` (`0x30`) | `5` (`0x05`) | `0x18`: `type_register`, `0x20`: `user_data_add`, `0x28`: `register_handler` |
+| 2 | `xla_transform_extension` | `56` (`0x38`) | `24` (`0x18`) | `0x18`: `register_xla_transform`, `0x20`: `wait_for_all_transforms`, `0x28`: `unregister_xla_transform`, `0x30`: `list_xla_transforms` |
+| 3 | `host_memory_allocator_extension` | `32` (`0x20`) | `23` (`0x17`) | `0x18`: `get_host_memory_allocator` |
+| 4 | `multi_slice_extension` | `64` (`0x40`) | `22` (`0x16`) | `0x18`: `config_destroy`, `0x20`: `config_num_slices`, `0x28`: `config_num_devices_per_slice`, `0x30`: `config_slice_id`, `0x38`: `config_serialize` |
+| 5 | `collectives_extension` | `96` (`0x60`) | `21` (`0x15`) | `0x18`: `collectives_destroy`, `0x20`: `create_communicator`, `0x28`: `communicator_destroy`, `0x30`: `communicator_all_reduce`, `0x38`: `communicator_reduce_scatter`, `0x40`: `communicator_all_gather`, `0x48`: `communicator_collective_permute`, `0x50`: `communicator_all_to_all`, `0x58`: `communicator_to_string` |
+| 6 | `abi_version_extension` | `120` (`0x78`) | `20` (`0x14`) | 12 ABI version handles, compatibility checks, platform IDs, and proto codecs (`0x18..0x70`) |
+| 7 | `shardings_extension` | `40` (`0x28`) | `19` (`0x13`) | `0x18`: `parameter_shardings`, `0x20`: `output_shardings` |
+| 8 | `megascale_extension` | `288` (`0x120`) | `18` (`0x12`) | 33 slots (`0x18..0x118`, with `0x40..0x60` reserved NULL; adds `discover_slices`, `multi_slice_config_get_incarnation_id`, `multi_slice_config_get_local_host_id`, `multi_slice_config_get_num_hosts`, `global_barrier`) |
+| 9 | `tpu_executable_extension` | `96` (`0x60`) | `17` (`0x11`) | 9 slots (`0x18..0x58`, `0x28` reserved NULL) |
+| 10 | `tpu_topology_extension` | `280` (`0x118`) | `16` (`0x10`) | 32 function pointers (`0x18..0x110`) |
+| 11 | `callback_extension` | `40` (`0x28`) | `14` (`0x0e`) | `0x18`: `register_callback`, `0x20`: `invoke_callback` |
+| 12 | `phase_compile_extension` | `192` (`0xc0`) | `9` (`0x09`) | 21 slots (`0x18..0xb8`, adding `PJRT_Relocatable_*` and `CompileToRelocatable` / `DeserializeRelocatable` / `LinkRelocatables`) |
+| 13 | `cross_host_transfers_extension` | `56` (`0x38`) | `12` (`0x0c`) | 4 function pointers (`0x18..0x30`) |
+| 14 | `executable_metadata_extension` | `40` (`0x28`) | `13` (`0x0d`) | `0x18`: `get_executable_metadata`, `0x20`: `destroy_executable_metadata` |
+| 15 | `mem_desc_extension` | `40` (`0x28`) | `6` (`0x06`) | `0x18`: `get_memory_descriptions`, `0x20`: `destroy_memory_descriptions` |
+| 16 | `layouts_extension` | `80` (`0x50`) | `4` (`0x04`) | 7 function pointers (`0x18..0x48`) |
+| 17 | `raw_buffer_extension` | `80` (`0x50`) | `8` (`0x08`) | 7 function pointers (`0x18..0x48`) |
+| 18 | `profiler_extension` | `40` (`0x28`) | `1` (`0x01`) | `0x18`: `profiler_api` (`*const PLUGIN_Profiler_Api`, `104` bytes / 11 functions at `0x13e99190`), `0x20`: `traceme_context_id` (`int64_t`) |
 
-## 4. `LibtpuSdk_Api` Vtable & Argument Structs (`GetLibtpuSdkApi` @ `0x0d3e07d8`)
-`CreateLibtpuSdkApi` (`0x0d3e05e0`) allocates a `0x90` (144-byte) structure containing:
+## 4. `LibtpuSdk_Api` Vtable & Argument Structs (`GetLibtpuSdkApi` @ `0x07fccb78`)
+`CreateLibtpuSdkApi` (`0x07fcc980`) allocates a `0x90` (144-byte) structure containing:
 - Offset `0x00`: Version header (`0x0000000100000000` -> `major = 0`, `minor = 1`)
 - Offset `0x08`: `LibtpuSdk_Error_GetMessage(LibtpuSdk_Error_GetMessage_Args*)` — `{ const LibtpuSdk_Error* error; const char* message; size_t message_size; }` (24 bytes, returns `void`)
 - Offset `0x10`: `LibtpuSdk_Error_Destroy(LibtpuSdk_Error_Destroy_Args*)` — `{ LibtpuSdk_Error* error; }` (8 bytes, returns `void`)
@@ -245,8 +246,8 @@ Followed by input fields and output fields at 8-byte aligned offsets:
   - `PJRT_Client_BufferFromHostBuffer_Args`: `0x10` `client`, `0x18` `data`, `0x20` `element_type`, `0x28` `dims`, `0x30` `num_dims`, `0x38` `byte_strides`, `0x40` `num_byte_strides`, `0x48` `host_buffer_semantics`, `0x50` `device`, `0x58` `memory`, `0x60` `device_layout`, `0x68` `done_with_host_buffer` / `buffer`.
   - `PJRT_Device_MemoryStats_Args`: `0x10` `device`, `0x18` `bytes_in_use`, `0x20` `peak_bytes_in_use`, `0x28` `peak_bytes_in_use_is_set`, `0x30` `num_allocs`, `0x38` `num_allocs_is_set`, `0x40` `largest_alloc_size`, `0x48` `largest_alloc_size_is_set`, `0x50` `bytes_limit`, `0x58` `bytes_limit_is_set`, `0x60` `bytes_reserved`, `0x68` `bytes_reserved_is_set`.
 
-## 6. Extension & Profiler `Args` Struct Layouts (113 Functions Across 17 Extensions)
-Every extension function in the 17-node `PJRT_Extension_Base` chain takes a `#[repr(C)]` `Args` struct beginning with `size_t struct_size` (`0x00`) and `PJRT_Extension_Base* extension_start` (`0x08`, or `void* priv` for `PLUGIN_Profiler_Api` which is `80` bytes with `struct_size`, `priv`, `error_destroy`, `error_message`, `error_get_code`, `create`, `destroy`, `start`, `stop`, `collect_data`):
+## 6. Extension & Profiler `Args` Struct Layouts (162 Active Functions Across 18 Extensions)
+Every extension function in the 18-node `PJRT_Extension_Base` chain takes a `#[repr(C)]` `Args` struct beginning with `size_t struct_size` (`0x00`) and `PJRT_Extension_Base* extension_start` (`0x08`, or `void* priv` for `PLUGIN_Profiler_Api` which is `104` bytes with `struct_size`, `priv`, `error_destroy`, `error_message`, `error_get_code`, `create`, `destroy`, `start`, `stop`, `collect_data`):
 - **Node 1 (`PJRT_XlaTransform_Extension`, `ext_type = 29`, `56` B)**: `Register` (`40` B: `name`, `name_size`, `transform_fn`), `WaitForAll` (`24` B: `client`), `Unregister` (`32` B: `name`, `name_size`), `List` (`32` B: `names_out`, `num_names_out`).
 - **Node 2 (`PJRT_HostMemoryAllocator_Extension`, `ext_type = 28`, `32` B)**: `Get` (`32` B: `client`, `allocator_out`).
 - **Node 3 (`PJRT_MultiSlice_Extension`, `ext_type = 26`, `64` B)**: `Config_Destroy` (`24` B: `config`), `Config_NumSlices` (`32` B: `config`, `num_slices_out`), `Config_NumDevicesPerSlice` (`40` B: `config`, `slice_ids`, `num_devices_out`), `Config_SliceId` (`32` B: `config`, `slice_id_out`), `Config_Serialize` (`48` B: `config`, `bytes_out`, `size_out`, `deleter_out`).

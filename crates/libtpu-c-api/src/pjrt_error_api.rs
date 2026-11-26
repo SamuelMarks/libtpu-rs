@@ -210,7 +210,11 @@ pub(crate) fn immortal_ready_pjrt_event_ptr() -> *mut crate::pjrt_types::PJRT_Ev
 unsafe fn handle_event_destroy(
     args: &mut crate::pjrt_types::PJRT_Event_Destroy_Args,
 ) -> Result<(), LibTpuError> {
-    if !args.event.is_null() && args.event != immortal_ready_pjrt_event_ptr() {
+    if !args.event.is_null()
+        && args.event != immortal_ready_pjrt_event_ptr()
+        && crate::pjrt_helpers::take_live_handle::<crate::pjrt_types::PJRT_Event>(args.event)
+            .is_none()
+    {
         // SAFETY: `args.event` was allocated as `Box<PJRT_Event>`.
         unsafe {
             drop(Box::from_raw(args.event));

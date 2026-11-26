@@ -106,14 +106,17 @@ pub struct GoldenSdkSo {
 pub struct GoldenBinaryManifest {
     /// `PyPI` package name (`"libtpu"`).
     pub package: String,
-    /// Package version (`"0.0.52"`).
+    /// Package version (`"0.0.53.1"`).
     pub version: String,
     /// Wheel filename.
     pub wheel: String,
     /// `libtpu/libtpu.so` manifest.
     pub libtpu_so: GoldenLibtpuSo,
-    /// `libtpu/sdk.so` manifest.
+    /// Standard-GIL `libtpu/sdk.so` manifest.
     pub sdk_so: GoldenSdkSo,
+    /// Optional free-threaded (`cp314t`/`cp315t`) `libtpu/sdk.so` manifest.
+    #[serde(default)]
+    pub sdk_so_freethreaded: Option<GoldenSdkSo>,
 }
 
 /// Strongly-typed deserialized representation of `docs/reverse_engineering/golden_struct_layouts.json`.
@@ -125,13 +128,13 @@ pub struct GoldenStructLayouts {
     pub pjrt_api_version_size: usize,
     /// `PJRT_Extension_Base` struct size (`24`).
     pub pjrt_extension_base_size: usize,
-    /// `PLUGIN_Profiler_Api` struct size (`80`).
+    /// `PLUGIN_Profiler_Api` struct size (`104`).
     pub plugin_profiler_api_size: usize,
     /// `LibtpuSdk_Api` struct size (`144`).
     pub libtpu_sdk_api_size: usize,
     /// `TpuDriverFn` struct size (`224`).
     pub tpu_driver_fn_size: usize,
-    /// 17 `PJRT_Extension_Base` nodes.
+    /// 18 `PJRT_Extension_Base` nodes.
     pub extensions: Vec<GoldenExtensionNode>,
     /// 138 `PJRT_Api` vtable slots.
     pub pjrt_slots: Vec<GoldenPjrtSlot>,
@@ -235,7 +238,7 @@ pub fn parse_golden_struct_layouts(json_str: &str) -> LibTpuResult<GoldenStructL
             reason: format!("golden_struct_layouts.json parse error: {err}"),
         })?;
     if layouts.pjrt_api_size != 1144
-        || layouts.extensions.len() != 17
+        || layouts.extensions.len() != 18
         || layouts.pjrt_slots.len() != 138
     {
         return Err(LibTpuError::BinaryFormatError {
@@ -272,8 +275,8 @@ mod tests {
 
     #[test]
     fn test_digests_and_golden_manifests() {
-        let digests = compute_artifact_digests(b"libtpu-0.0.52");
-        assert_eq!(digests.size_bytes, 13);
+        let digests = compute_artifact_digests(b"libtpu-0.0.53.1");
+        assert_eq!(digests.size_bytes, 15);
         assert_eq!(digests.sha256_hex.len(), 64);
         assert_eq!(digests.blake3_hex.len(), 64);
         assert_eq!(digests.clone(), digests);
@@ -281,11 +284,13 @@ mod tests {
 
         let manifest_json =
             include_str!("../../../../docs/reverse_engineering/golden_binary_manifest.json");
+        assert!(parse_golden_binary_manifest(manifest_json).is_ok());
         if let Ok(manifest) = parse_golden_binary_manifest(manifest_json) {
             assert_eq!(manifest.package, "libtpu");
-            assert_eq!(manifest.version, "0.0.52");
+            assert_eq!(manifest.version, "0.0.53.1");
             assert_eq!(manifest.libtpu_so.exported_functions_count, 75);
             assert_eq!(manifest.libtpu_so.pjrt_vtable_slots.len(), 138);
+            assert!(manifest.sdk_so_freethreaded.is_some());
             assert_eq!(manifest.clone(), manifest);
             assert_ne!(format!("{manifest:?}"), "");
             if let Some(fn_sym) = manifest.libtpu_so.exported_functions.first() {
@@ -301,7 +306,7 @@ mod tests {
         }
         assert!(parse_golden_binary_manifest("not-json").is_err());
         let bad_manifest1 = manifest_json.replace(
-            r#""f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077""#,
+            r#""9b098d865d7ed58592646df3d7ebe988dadfb3f444011ddae99b230bbfcb3dc8""#,
             r#""short""#,
         );
         assert!(parse_golden_binary_manifest(&bad_manifest1).is_err());
@@ -318,9 +323,11 @@ mod tests {
 
         let layouts_json =
             include_str!("../../../../docs/reverse_engineering/golden_struct_layouts.json");
+        assert!(parse_golden_struct_layouts(layouts_json).is_ok());
         if let Ok(layouts) = parse_golden_struct_layouts(layouts_json) {
             assert_eq!(layouts.pjrt_api_size, 1144);
-            assert_eq!(layouts.extensions.len(), 17);
+            assert_eq!(layouts.plugin_profiler_api_size, 104);
+            assert_eq!(layouts.extensions.len(), 18);
             assert_eq!(layouts.pjrt_slots.len(), 138);
             assert_eq!(layouts.clone(), layouts);
             assert_ne!(format!("{layouts:?}"), "");

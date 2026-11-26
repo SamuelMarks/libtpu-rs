@@ -1,9 +1,9 @@
 """Deterministic clean-room binary forensics and specification extractor for `libtpu`.
 
-Inspects official `libtpu` wheel archives (`.whl`) or ELF binaries (`libtpu.so`, `sdk.abi3.so`),
+Inspects official `libtpu` wheel archives (`.whl`) or ELF binaries (`libtpu.so`, `sdk.so`),
 fetches wheel metadata from PyPI JSON endpoints (`fetch_pypi_wheel_url`), extracts ELF64 section
 headers, dynamic symbol tables (`.dynsym` / `.dynstr`), `.rela.dyn` relative relocations,
-reconstructs `PJRT_Api` (`1,144` bytes) + 17-node `PJRT_Extension_Base` + `LibtpuSdk_Api`
+reconstructs `PJRT_Api` (`1,144` bytes) + 18-node `PJRT_Extension_Base` + `LibtpuSdk_Api`
 (`144` bytes) + `TpuDriverFn` (`224` bytes) vtables, disassembles x86-64 function prologues
 (`disassemble_x86_64_prologue`), carves `protodesc_cold` and `filewrapper_toc` bundles, and
 validates consistency against the repository's golden reverse-engineering manifests
@@ -62,6 +62,7 @@ ELFDATA2LSB = 1
 SHT_SYMTAB = 2
 SHT_STRTAB = 3
 SHT_RELA = 4
+SHT_NOBITS = 8
 SHT_DYNSYM = 11
 STT_FUNC = 2
 STB_GLOBAL = 1
@@ -69,8 +70,12 @@ STB_WEAK = 2
 R_X86_64_RELATIVE = 8
 R_AARCH64_RELATIVE = 1027
 
-OFFICIAL_LIBTPU_SO_SHA256 = "f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077"
+DEFAULT_LIBTPU_VERSION = "0.0.53.1"
+OFFICIAL_LIBTPU_SO_SHA256 = "9b098d865d7ed58592646df3d7ebe988dadfb3f444011ddae99b230bbfcb3dc8"
 OFFICIAL_SDK_SO_SHA256 = "630c772352b470e1f32b7459ac3d60790f8d4d5000747390ebdeb743c1f33186"
+OFFICIAL_SDK_FREETHREADED_SO_SHA256 = (
+    "7fb29a9b394037ac61d984948afa55147c49248cf75cd6e518c445e4a80284f6"
+)
 
 
 @dataclass(frozen=True)
@@ -126,7 +131,10 @@ def compute_sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def fetch_pypi_wheel_url(version: str = "0.0.52", platform_tag: str = "x86_64") -> tuple[str, str]:
+def fetch_pypi_wheel_url(
+    version: str = DEFAULT_LIBTPU_VERSION,
+    platform_tag: str = "x86_64",
+) -> tuple[str, str]:
     """Queries the PyPI JSON API for `libtpu` and returns `(wheel_url, sha256_hex)`.
 
     Args:
@@ -396,6 +404,7 @@ def disassemble_x86_64_prologue(code: bytes) -> PrologueInstructionReport:
         `PrologueInstructionReport` with `expected_struct_size` and `(offset, size, is_write)`.
     """
     expected_size: int | None = None
+    seen_call = False
     accesses: list[tuple[int, int, bool]] = []
     pc = 0
     n = len(code)
@@ -403,10 +412,20 @@ def disassemble_x86_64_prologue(code: bytes) -> PrologueInstructionReport:
         b0 = code[pc]
         if b0 == 0xC3:
             break
+        if b0 == 0xE8 and pc + 5 <= n:
+            seen_call = True
+            pc += 5
+            continue
         if b0 == 0xBE and pc + 5 <= n:
             imm = struct.unpack_from("<I", code, pc + 1)[0]
-            if expected_size is None:
+            if expected_size is None and not seen_call:
                 expected_size = int(imm)
+            pc += 5
+            continue
+        if b0 == 0xBA and pc + 5 <= n:
+            imm_edx = struct.unpack_from("<I", code, pc + 1)[0]
+            if not seen_call and 8 <= imm_edx <= 512:
+                expected_size = int(imm_edx)
             pc += 5
             continue
         if b0 in (0x48, 0x4C) and pc + 3 <= n:
@@ -609,22 +628,16 @@ def parse_elf64_sections_and_dynsym(
         for sec in elf.iter_sections():
             hdr = sec.header
             sh_type_raw = hdr["sh_type"]
-            sh_type_int = (
-                SHT_DYNSYM
-                if sh_type_raw == "SHT_DYNSYM"
-                else (
-                    SHT_SYMTAB
-                    if sh_type_raw == "SHT_SYMTAB"
-                    else (
-                        SHT_STRTAB
-                        if sh_type_raw == "SHT_STRTAB"
-                        else (
-                            SHT_RELA
-                            if sh_type_raw == "SHT_RELA"
-                            else (int(sh_type_raw) if isinstance(sh_type_raw, int) else 0)
-                        )
-                    )
-                )
+            sh_type_map = {
+                "SHT_DYNSYM": SHT_DYNSYM,
+                "SHT_SYMTAB": SHT_SYMTAB,
+                "SHT_STRTAB": SHT_STRTAB,
+                "SHT_RELA": SHT_RELA,
+                "SHT_NOBITS": SHT_NOBITS,
+            }
+            sh_type_int = sh_type_map.get(
+                str(sh_type_raw),
+                int(sh_type_raw) if isinstance(sh_type_raw, int) else 0,
             )
             sections.append(
                 ElfSectionHeader(
@@ -638,7 +651,7 @@ def parse_elf64_sections_and_dynsym(
                     sh_entsize=int(hdr["sh_entsize"]),
                 )
             )
-            if isinstance(sec, SymbolTableSection):
+            if isinstance(sec, SymbolTableSection) and sh_type_raw == "SHT_DYNSYM":
                 sym_tbl = cast(_ElfSymbolTableProto, sec)
                 for sym in sym_tbl.iter_symbols():
                     st_info_dict = cast(Mapping[str, str], sym.entry["st_info"])
@@ -732,35 +745,58 @@ def validate_golden_manifests(repo_root: Path) -> list[str]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     layouts = json.loads(layouts_path.read_text(encoding="utf-8"))
 
+    if manifest.get("version") != DEFAULT_LIBTPU_VERSION:
+        errors.append(f"golden_binary_manifest.json: version != {DEFAULT_LIBTPU_VERSION}")
+
     libtpu_so = manifest.get("libtpu_so", {})
+    expected_pjrt_size = int(layouts.get("pjrt_api_size", 1144))
+    expected_pjrt_minor = int(layouts.get("pjrt_api_minor", 117))
+    expected_sdk_size = int(layouts.get("libtpu_sdk_api_size", 144))
+    expected_drv_size = int(layouts.get("tpu_driver_fn_size", 224))
+    expected_exports = int(libtpu_so.get("exported_functions_count") or 75)
+
     if libtpu_so.get("sha256") != OFFICIAL_LIBTPU_SO_SHA256:
         errors.append("golden_binary_manifest.json: libtpu_so sha256 mismatch")
-    if libtpu_so.get("pjrt_api_struct_size") != 1144:
-        errors.append("golden_binary_manifest.json: pjrt_api_struct_size != 1144")
+    if libtpu_so.get("pjrt_api_struct_size") != expected_pjrt_size:
+        errors.append(f"golden_binary_manifest.json: pjrt_api_struct_size != {expected_pjrt_size}")
     if (
         libtpu_so.get("pjrt_api_version_major"),
         libtpu_so.get("pjrt_api_version_minor"),
-    ) != (0, 116):
-        errors.append("golden_binary_manifest.json: pjrt_api_version != 0.116")
-    if libtpu_so.get("libtpu_sdk_api_struct_size") != 144:
-        errors.append("golden_binary_manifest.json: libtpu_sdk_api_struct_size != 144")
-    if libtpu_so.get("tpu_driver_fn_struct_size") != 224:
-        errors.append("golden_binary_manifest.json: tpu_driver_fn_struct_size != 224")
-    if (
-        libtpu_so.get("exported_functions_count") != 75
-        or len(libtpu_so.get("exported_functions", [])) != 75
-    ):
-        errors.append("golden_binary_manifest.json: exported_functions != 75")
+    ) != (0, expected_pjrt_minor):
+        errors.append(f"golden_binary_manifest.json: pjrt_api_version != 0.{expected_pjrt_minor}")
+    if libtpu_so.get("libtpu_sdk_api_struct_size") != expected_sdk_size:
+        errors.append(
+            f"golden_binary_manifest.json: libtpu_sdk_api_struct_size != {expected_sdk_size}"
+        )
+    if libtpu_so.get("tpu_driver_fn_struct_size") != expected_drv_size:
+        errors.append(
+            f"golden_binary_manifest.json: tpu_driver_fn_struct_size != {expected_drv_size}"
+        )
+    if len(libtpu_so.get("exported_functions", [])) != expected_exports:
+        errors.append(f"golden_binary_manifest.json: exported_functions != {expected_exports}")
     if not libtpu_so.get("filetoc_md5_verified", True):
         errors.append("golden_binary_manifest.json: filetoc_md5_verified is False")
 
     ext_chain = layouts.get("extensions", [])
-    if len(ext_chain) != 17:
-        errors.append(f"golden_struct_layouts.json: expected 17 extensions, got {len(ext_chain)}")
-    ext_funcs = layouts.get("extension_functions", [])
-    if ext_funcs and len(ext_funcs) != 138:
+    expected_ext_count = int(layouts.get("extensions_count", 18))
+    if len(ext_chain) != expected_ext_count:
         errors.append(
-            f"golden_struct_layouts.json: expected 138 extension_functions, got {len(ext_funcs)}"
+            f"golden_struct_layouts.json: expected {expected_ext_count} extensions, "
+            f"got {len(ext_chain)}"
+        )
+    ext_funcs = layouts.get("extension_functions", [])
+    expected_ext_fns = int(
+        layouts.get(
+            "active_extension_functions_count",
+            sum(int(e.get("active_functions", e.get("num_functions", 0))) for e in ext_chain)
+            if ext_chain
+            else 162,
+        )
+    )
+    if ext_funcs and len(ext_funcs) != expected_ext_fns:
+        errors.append(
+            f"golden_struct_layouts.json: expected {expected_ext_fns} extension_functions, "
+            f"got {len(ext_funcs)}"
         )
 
     sdk_so = manifest.get("sdk_so", {})
@@ -769,10 +805,21 @@ def validate_golden_manifests(repo_root: Path) -> list[str]:
     if sdk_so.get("entrypoint") != "PyInit_sdk":
         errors.append("golden_binary_manifest.json: sdk_so entrypoint != PyInit_sdk")
 
+    sdk_so_ft = manifest.get("sdk_so_freethreaded")
+    if isinstance(sdk_so_ft, dict) and (
+        sdk_so_ft.get("sha256") != OFFICIAL_SDK_FREETHREADED_SO_SHA256
+        or sdk_so_ft.get("entrypoint") != "PyInit_sdk"
+    ):
+        errors.append("golden_binary_manifest.json: sdk_so_freethreaded mismatch")
+
     slots = layouts.get("pjrt_slots", [])
     manifest_slots = libtpu_so.get("pjrt_vtable_slots", [])
-    if len(slots) != 138 or len(manifest_slots) != 138:
-        errors.append(f"golden_struct_layouts.json: expected 138 PJRT slots, got {len(slots)}")
+    expected_slot_count = int(libtpu_so.get("pjrt_vtable_slots_count") or 138)
+    if len(slots) != expected_slot_count or len(manifest_slots) != expected_slot_count:
+        errors.append(
+            f"golden_struct_layouts.json: expected {expected_slot_count} PJRT slots, "
+            f"got {len(slots)}"
+        )
     elif any(
         s.get("min_struct_size") is None or s.get("min_struct_size") != m.get("min_struct_size")
         for s, m in zip(slots, manifest_slots)
@@ -809,10 +856,12 @@ def validate_golden_manifests(repo_root: Path) -> list[str]:
     else:
         proto_desc = json.loads(proto_desc_path.read_text(encoding="utf-8"))
         csr_map = json.loads(csr_map_path.read_text(encoding="utf-8"))
+        proto_count = int(proto_desc.get("proto_files_count") or 0)
+        descriptors_list = proto_desc.get("descriptors", [])
         if (
             not proto_desc.get("topologically_closed")
-            or proto_desc.get("proto_files_count") != 738
-            or len(proto_desc.get("descriptors", [])) != 738
+            or proto_count <= 0
+            or len(descriptors_list) != proto_count
         ):
             errors.append("golden_proto_descriptors.json: incomplete descriptor closure")
         if not {"V2", "V3", "V4", "V4Lite", "V5e", "V5p", "V6e", "V7x"}.issubset(

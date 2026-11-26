@@ -50,7 +50,7 @@ pub struct ExtractedExtensionNode {
 /// Reconstructed `PJRT_Api` vtable and extension linked list from relocated binary words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReconstructedPjrtVtable {
-    /// Total byte size of `PJRT_Api` (`1,144` bytes in `libtpu-0.0.52`).
+    /// Total byte size of `PJRT_Api` (`1,176` bytes in `libtpu-0.0.53.1`).
     pub struct_size: u64,
     /// Head virtual address of the `PJRT_Extension_Base` linked list (`+0x08`).
     pub extension_start_vaddr: u64,
@@ -58,7 +58,7 @@ pub struct ReconstructedPjrtVtable {
     pub version_struct_size: u64,
     /// Embedded `PJRT_Api_Version.major_version` (`0` at `+0x18`).
     pub major_version: i32,
-    /// Embedded `PJRT_Api_Version.minor_version` (`116` at `+0x1c`).
+    /// Embedded `PJRT_Api_Version.minor_version` (`117` at `+0x1c`).
     pub minor_version: i32,
     /// Function pointer virtual addresses for all `PJRT_Api` slots (`+0x28..`).
     pub slot_vaddrs: Vec<u64>,

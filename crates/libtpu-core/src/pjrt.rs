@@ -94,6 +94,19 @@ impl PjrtCoreEvent {
         self.ready.load(Ordering::Acquire)
     }
 
+    /// Dispatches a boxed ready callback either immediately or on completion.
+    ///
+    /// # Arguments
+    ///
+    /// * `callback` - Boxed closure receiving `None` on success or `Some(LibTpuError)` on failure.
+    fn on_ready_boxed(&self, callback: EventReadyCallback) {
+        if self.is_ready() {
+            callback(self.get_error());
+        } else {
+            self.callbacks.lock().push(callback);
+        }
+    }
+
     /// Registers a callback to be invoked when this event becomes ready (`PJRT_Event_OnReady`).
     ///
     /// If the event is already ready, `callback` is invoked immediately on the calling thread;
@@ -106,11 +119,7 @@ impl PjrtCoreEvent {
     where
         F: FnOnce(Option<LibTpuError>) + Send + 'static,
     {
-        if self.is_ready() {
-            callback(self.get_error());
-        } else {
-            self.callbacks.lock().push(Box::new(callback));
-        }
+        self.on_ready_boxed(Box::new(callback));
     }
 
     /// Marks this event as complete with an optional [`LibTpuError`] (`PJRT_Event_Set`)
@@ -2723,6 +2732,10 @@ mod tests {
             })
             .collect();
         assert_eq!(vals, vec![11.0_f32, 22.0, 33.0, 44.0]);
+        let stream = PjrtCoreCopyToDeviceStream::new(16, 4);
+        let staged = stream.shared_staged_bytes();
+        staged.lock().extend_from_slice(&[1, 2, 3, 4]);
+        assert_eq!(stream.shared_staged_bytes().lock().len(), 4);
         Ok(())
     }
 }

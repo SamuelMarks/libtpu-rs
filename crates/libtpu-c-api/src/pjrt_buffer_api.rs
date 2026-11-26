@@ -56,7 +56,7 @@ mod tests {
                 num_options: 0,
                 kv_get_callback: ptr::null(),
                 kv_get_user_arg: ptr::null_mut(),
-                kv_put_callback: ptr::null(),
+                kv_put_callback: None,
                 kv_put_user_arg: ptr::null_mut(),
                 kv_try_get_callback: ptr::null(),
                 kv_try_get_user_arg: ptr::null_mut(),
@@ -495,18 +495,51 @@ mod tests {
                 Box::into_raw(Box::new(crate::pjrt_types::PJRT_CopyToDeviceStream {
                     inner: libtpu_core::pjrt::PjrtCoreCopyToDeviceStream::new(256, 128),
                 }));
-            for st_fn in [
-                PJRT_CopyToDeviceStream_AddChunk
-                    as unsafe extern "C" fn(*mut std::ffi::c_void) -> *mut PJRT_Error,
-                PJRT_CopyToDeviceStream_TotalBytes,
-                PJRT_CopyToDeviceStream_GranuleSize,
-                PJRT_CopyToDeviceStream_CurrentBytes,
-            ] {
-                let mut st_args = [0_usize; 8];
-                st_args[0] = 64;
-                st_args[2] = sample_stream as usize;
-                assert!(st_fn(st_args.as_mut_ptr().cast()).is_null());
-            }
+            let mut null_chunk_args = crate::pjrt_types::PJRT_CopyToDeviceStream_AddChunk_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_CopyToDeviceStream_AddChunk_Args>(),
+                extension_start: ptr::null_mut(),
+                stream: sample_stream,
+                chunk: ptr::null(),
+                transfer_complete: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_CopyToDeviceStream_AddChunk(ptr::addr_of_mut!(null_chunk_args).cast())
+                    .is_null()
+            );
+            drop(Box::from_raw(null_chunk_args.transfer_complete));
+            let mut tot_args = crate::pjrt_types::PJRT_CopyToDeviceStream_TotalBytes_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_CopyToDeviceStream_TotalBytes_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                stream: sample_stream,
+                total_bytes: 0,
+            };
+            assert!(
+                PJRT_CopyToDeviceStream_TotalBytes(ptr::addr_of_mut!(tot_args).cast()).is_null()
+            );
+            assert_eq!(tot_args.total_bytes, 256);
+            let mut gran_args = crate::pjrt_types::PJRT_CopyToDeviceStream_GranuleSize_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_CopyToDeviceStream_GranuleSize_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                stream: sample_stream,
+                granule_size_in_bytes: 0,
+            };
+            assert!(
+                PJRT_CopyToDeviceStream_GranuleSize(ptr::addr_of_mut!(gran_args).cast()).is_null()
+            );
+            assert_eq!(gran_args.granule_size_in_bytes, 128);
+            let mut cur_args = crate::pjrt_types::PJRT_CopyToDeviceStream_CurrentBytes_Args {
+                struct_size: size_of::<crate::pjrt_types::PJRT_CopyToDeviceStream_CurrentBytes_Args>(
+                ),
+                extension_start: ptr::null_mut(),
+                stream: sample_stream,
+                current_bytes: -1,
+            };
+            assert!(
+                PJRT_CopyToDeviceStream_CurrentBytes(ptr::addr_of_mut!(cur_args).cast()).is_null()
+            );
+            assert_eq!(cur_args.current_bytes, 128);
             let mut chunk_del_hits: u32 = 0;
             let mut chunk_payload = [42_u8; 64];
             let mut chunk_val = crate::pjrt_types::PJRT_Chunk {
@@ -526,7 +559,12 @@ mod tests {
                 PJRT_CopyToDeviceStream_AddChunk(ptr::addr_of_mut!(add_chunk_args).cast())
                     .is_null()
             );
+            drop(Box::from_raw(add_chunk_args.transfer_complete));
             assert_eq!(chunk_del_hits, 1);
+            assert!(
+                PJRT_CopyToDeviceStream_CurrentBytes(ptr::addr_of_mut!(cur_args).cast()).is_null()
+            );
+            assert_eq!(cur_args.current_bytes, 192);
             let mut chunk_val_no_del = crate::pjrt_types::PJRT_Chunk {
                 data: ptr::null_mut(),
                 size: 64,

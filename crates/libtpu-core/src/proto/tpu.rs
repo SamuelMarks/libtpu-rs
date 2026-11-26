@@ -10,12 +10,13 @@ use crate::config::TpuInitConfig;
 use crate::proto::descriptor::ProtoSchemaMessage;
 
 pub use super::descriptor::generated_prost_schemas::libtpu::ext::tpu::{
-    ChipThermalThrottleSummaryProto, FrequencyScalingTelemetryProto, HloModuleFingerprintProto,
-    MosaicBackendConfigProto, MosaicDmaDescriptorProto, MosaicScratchpadLayoutProto,
-    TpuCompilationFingerprintProto, TpuCompilerEnvironmentFingerprintProto,
-    TpuEmbeddingHostNetworkConfigProto, TpuEmbeddingMemoryConfigProto,
-    TpuEmbeddingPartitionedConfigProto, TpuPowerStateProto, TpuzActiveHloExecutionTraceProto,
-    TpuzCoreTelemetrySnapshotProto, TpuzLiveBufferAllocationProto,
+    ChipThermalThrottleSummaryProto, CollatedTpuEmbeddingMemoryProto,
+    FrequencyScalingTelemetryProto, HloModuleFingerprintProto, MosaicBackendConfigProto,
+    MosaicDmaDescriptorProto, MosaicScratchpadLayoutProto, TpuCompilationFingerprintProto,
+    TpuCompilerEnvironmentFingerprintProto, TpuEmbeddingHostNetworkConfigProto,
+    TpuEmbeddingMemoryConfigProto, TpuEmbeddingPartitionedConfigProto, TpuPowerStateProto,
+    TpuzActiveHloExecutionTraceProto, TpuzCoreTelemetrySnapshotProto,
+    TpuzLiveBufferAllocationProto,
 };
 pub use super::descriptor::generated_prost_schemas::asic_sw::{
     AnalyzerInfo as CoredumpAnalyzerInfoProto, CoreDump as CoreDumpProto,
@@ -670,6 +671,27 @@ impl TpuEmbeddingMemoryConfigProto {
     /// # Arguments
     ///
     /// * `bytes` - Serialized `TpuEmbeddingMemoryConfigProto` payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::LibTpuError::ProtobufDecodeError`] if decoding fails.
+    pub fn decode(bytes: &[u8]) -> crate::error::LibTpuResult<Self> {
+        Self::decode_proto(bytes)
+    }
+}
+
+impl CollatedTpuEmbeddingMemoryProto {
+    /// Serializes this [`CollatedTpuEmbeddingMemoryProto`] into Protobuf wire bytes.
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        self.encode_proto()
+    }
+
+    /// Deserializes a [`CollatedTpuEmbeddingMemoryProto`] from Protobuf wire bytes.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - Serialized `CollatedTpuEmbeddingMemoryProto` payload.
     ///
     /// # Errors
     ///

@@ -65,6 +65,14 @@ message TpuEmbeddingMemoryConfigProto {
   repeated bytes segment_blobs = 2;
 }
 
+// Collated multi-task TPU embedding HBM/SPMEM memory configuration.
+message CollatedTpuEmbeddingMemoryProto {
+  int32 num_tasks = 1;
+  int32 total_segments = 2;
+  uint64 total_hbm_bytes = 3;
+  repeated TpuEmbeddingMemoryConfigProto task_configs = 4;
+}
+
 // TPU embedding cross-host network coordination configuration.
 message TpuEmbeddingHostNetworkConfigProto {
   string endpoint_address = 1;

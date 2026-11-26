@@ -151,7 +151,7 @@ jobs:
           fi
           python -m pip install --upgrade pip pytest pytest-cov pyelftools numpy ml_dtypes maturin jax
 
-      - name: Build workspace and run ABI, proto-sync, ASan/UBSan, and test hooks
+      - name: Build workspace and run ABI, proto-sync, ASan/LSan/UBSan, and test hooks
         env:
           CC: clang
           CXX: clang++
@@ -160,9 +160,13 @@ jobs:
           python3 scripts/pre_commit.py abi --check
           python3 scripts/pre_commit.py proto-sync --check
           python3 scripts/pre_commit.py test --check
-          cmake -B cpp/build-asan -S cpp -DENABLE_SANITIZERS=ON
+          cmake -B cpp/build-asan -S cpp -DENABLE_COVERAGE=OFF -DENABLE_SANITIZERS=ON
           cmake --build cpp/build-asan
-          ctest --test-dir cpp/build-asan --output-on-failure
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ctest --test-dir cpp/build-asan --output-on-failure
+          else
+            ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 ctest --test-dir cpp/build-asan --output-on-failure
+          fi
           rm -rf cpp/build-asan
 
   coverage-and-shields:

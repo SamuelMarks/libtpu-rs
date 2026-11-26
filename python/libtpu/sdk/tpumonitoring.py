@@ -7,6 +7,7 @@ Provides `ChipCoordinates`, `LibtpuSdkMetric`, `SdkClient`, `list_supported_metr
 from __future__ import annotations
 
 import ctypes
+import types
 from collections.abc import Sequence
 
 import libtpu
@@ -378,31 +379,39 @@ class SdkClient:
             _check_sdk_error(self._cdll, err)
 
     def __enter__(self) -> SdkClient:
-        """Enters a context manager block returning `self`."""
+        """Enters a context manager block returning `self`.
+
+        Returns:
+            This `SdkClient` instance.
+        """
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `SdkClient` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
+        _ = (exc_type, exc_val, exc_tb)
         self.close()
 
 
 def list_supported_metrics() -> list[str]:
-    """Returns the list of supported TPU runtime telemetry metric names.
+    """Queries the live list of supported TPU runtime telemetry metric names from `sdk.so`.
 
     Returns:
-        Sorted list of supported metric identifier strings.
+        Sorted list of supported metric identifier strings from the native runtime.
     """
-    return [
-        "tpu.runtime.compile.time_micros",
-        "tpu.runtime.dma.throughput_bytes",
-        "tpu.runtime.hbm.usage_bytes",
-        "tpu.runtime.ici.link_bandwidth_bytes",
-        "tpu.runtime.tensorcore.utilization",
-    ]
+    sdk_mod = libtpu.load_native_sdk_module()
+    names: list[str] = list(sdk_mod.list_supported_metrics())
+    return sorted(names)
 
 
 Metric = LibtpuSdkMetric

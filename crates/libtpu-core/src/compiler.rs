@@ -33,6 +33,7 @@ pub mod parser;
 pub mod passes;
 pub mod serialization;
 pub mod sparsecore;
+pub mod transform_registry;
 pub mod vliw;
 
 #[cfg(test)]
@@ -43,6 +44,10 @@ mod phase5_tests;
 mod phase6_tests;
 
 use crate::proto::{CompileOptionsProtoExt as _, ProtoSchemaMessage as _};
+
+pub use self::transform_registry::{
+    XlaTransformEntry, XlaTransformHook, XlaTransformRegistry, global_xla_transform_registry,
+};
 
 pub use self::middle_end::{
     AlgebraicSimplifierPass, AsyncCollectiveFusionPass, AsyncCollectiveReport,
@@ -267,6 +272,7 @@ impl CompiledProgram {
     /// `compile_options` is malformed, or lexical/syntactic validation fails.
     #[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
     pub fn compile(format: &str, code: &[u8], compile_options: &[u8]) -> LibTpuResult<Self> {
+        let compile_start = std::time::Instant::now();
         let program_format = ProgramFormat::from_str_checked(format)?;
         let fmt_lower = String::from(program_format.as_str());
         if code.is_empty() {
@@ -318,7 +324,8 @@ impl CompiledProgram {
             });
         }
         let mosaic_metadata = Self::parse_mosaic_metadata(&text);
-        if let Ok(ast_mod) = parse_unified_ast_module(&text) {
+        let mut parsed_ast_for_transforms = parse_unified_ast_module(&text).ok();
+        if let Some(ast_mod) = parsed_ast_for_transforms.as_ref() {
             if num_partitions == 1
                 && let Some(mesh) = ast_mod.sdy_meshes.values().next()
             {
@@ -456,6 +463,13 @@ impl CompiledProgram {
             buffer_assignment_proto: crate::proto::BufferAssignmentProto::default(),
         };
         compiled.run_all_passes();
+        let _ = global_xla_transform_registry().apply_registered_transforms(
+            parsed_ast_for_transforms.as_mut(),
+            &mut compiled.hlo_module_proto,
+        )?;
+        let elapsed_ns = u64::try_from(compile_start.elapsed().as_nanos()).unwrap_or(1);
+        crate::runtime_state::global_shared_runtime_state()
+            .record_compilation(&compiled.name, elapsed_ns.max(1));
         Ok(compiled)
     }
 }

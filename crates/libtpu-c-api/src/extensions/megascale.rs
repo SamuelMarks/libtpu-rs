@@ -1,16 +1,26 @@
-//! PJRT Multi-Slice (`PJRT_MultiSlice_Extension`) and Megascale (`PJRT_Megascale_Extension`) entrypoints.
+//! PJRT Multi-Slice and Megascale extension entrypoints (`0.0.53.1`).
+//!
+//! Implements `PJRT_MultiSlice_Extension` (`64` bytes) and `PJRT_Megascale_Extension` (`288` bytes).
 
 use super::args::*;
 use super::collectives::COLLECTIVE_OPS_EXECUTED;
-use super::dispatch_typed_extension_args;
-use crate::pjrt_helpers::box_serialized_artifact;
+use super::{dispatch_typed_extension_args, dispatch_typed_fallible_extension_args};
+use crate::pjrt_helpers::{
+    borrow_live_handle, box_registered_handle, box_serialized_artifact, ffi_catch_unwind,
+    take_live_handle,
+};
 use crate::pjrt_types::{PJRT_Error, PJRT_Megascale_ClientContext, PJRT_MultiSlice_Config};
 use libtpu_core::config::global_init_config;
+use libtpu_core::error::LibTpuError;
+use libtpu_core::proto::ProtoSchemaMessage;
 use std::ptr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Monotonic sequence counter for [`PJRT_Megascale_ClientContext`] instances.
 static MEGASCALE_CTX_SEQ: AtomicUsize = AtomicUsize::new(0);
+/// Monotonic incarnation ID counter for [`PJRT_MultiSlice_Config`] instances.
+static MULTISLICE_INCARNATION_SEQ: AtomicU64 = AtomicU64::new(100);
 /// Active context count across live [`PJRT_Megascale_ClientContext`] handles.
 static MEGASCALE_ACTIVE_CTXS: AtomicUsize = AtomicUsize::new(0);
 /// Default transport mode (`0` = Default/ICI, `1` = DCN) for context-free queries.
@@ -19,10 +29,88 @@ static MEGASCALE_DEFAULT_TRANSPORT: AtomicUsize = AtomicUsize::new(0);
 static MEGASCALE_BARRIER_SEQ: AtomicUsize = AtomicUsize::new(0);
 /// Active error handler count for context-free `RegisterErrorHandler`/`UnregisterErrorHandler`.
 static MEGASCALE_ERROR_HANDLERS: AtomicUsize = AtomicUsize::new(0);
-/// Registered C error callback address (`void (*)(void*)`) for context-free error reporting.
-static MEGASCALE_ERROR_CB_FN: AtomicUsize = AtomicUsize::new(0);
 /// Static wire-encoded default `MegascaleRuntimeMetricsProto` bytes for context-free probes.
 static DEFAULT_MEGASCALE_METRICS_WIRE: [u8; 4] = [0x08, 0x01, 0x10, 0x01];
+
+/// Registered Megascale C error callback slot (`void (*)(void*)`).
+static MEGASCALE_ERROR_CALLBACK: OnceLock<
+    parking_lot::Mutex<Option<unsafe extern "C" fn(*mut std::ffi::c_void)>>,
+> = OnceLock::new();
+
+/// Returns a reference to [`MEGASCALE_ERROR_CALLBACK`].
+fn megascale_error_callback()
+-> &'static parking_lot::Mutex<Option<unsafe extern "C" fn(*mut std::ffi::c_void)>> {
+    MEGASCALE_ERROR_CALLBACK.get_or_init(|| parking_lot::Mutex::new(None))
+}
+
+/// Resolves a [`PJRT_MultiSlice_Config`] snapshot from `config_ptr`, falling back to [`global_init_config`] when null.
+///
+/// # Arguments
+///
+/// * `config_ptr` - Optional `const PJRT_MultiSlice_Config*` handle.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] when `config_ptr` is non-null and unregistered.
+pub(crate) fn resolve_multislice_config(
+    config_ptr: *const PJRT_MultiSlice_Config,
+) -> Result<PJRT_MultiSlice_Config, LibTpuError> {
+    if config_ptr.is_null() {
+        let cfg = global_init_config();
+        let devs_per_slice =
+            cfg.chips_per_host().max(1) * cfg.generation.logical_devices_per_chip().max(1);
+        Ok(PJRT_MultiSlice_Config {
+            num_slices: cfg.megascale_num_slices.max(1),
+            slice_id: cfg.megascale_slice_id,
+            num_devices_per_slice: devs_per_slice,
+            incarnation_id: 1,
+            local_host_id: cfg.process_index.0,
+            num_hosts: i32::try_from(cfg.total_hosts().max(1)).unwrap_or(1),
+        })
+    } else {
+        borrow_live_handle(config_ptr)
+            .cloned()
+            .ok_or_else(|| LibTpuError::InvalidArgument {
+                parameter: "config",
+                reason: String::from("unregistered PJRT_MultiSlice_Config handle"),
+            })
+    }
+}
+
+/// Allocates a new registered [`PJRT_MultiSlice_Config`] handle from optional topology or global configuration.
+///
+/// # Arguments
+///
+/// * `topology` - Optional `const PJRT_TopologyDescription*` handle.
+///
+/// # Safety
+///
+/// If non-null, `topology` must point to a valid [`crate::pjrt_types::PJRT_TopologyDescription`].
+pub(crate) unsafe fn alloc_multislice_config_handle(
+    topology: *const crate::pjrt_types::PJRT_TopologyDescription,
+) -> *mut PJRT_MultiSlice_Config {
+    let cfg = global_init_config();
+    // SAFETY: `topology` is null or a valid `PJRT_TopologyDescription*`.
+    let (devs_per_slice, num_hosts) = if let Some(topo) = unsafe { topology.as_ref() } {
+        let devs = u32::try_from(topo.inner.spec.devices.len().max(1)).unwrap_or(4);
+        let hosts = topo.inner.spec.host_bounds.x
+            * topo.inner.spec.host_bounds.y
+            * topo.inner.spec.host_bounds.z;
+        (devs, i32::try_from(hosts.max(1)).unwrap_or(1))
+    } else {
+        let devs = cfg.chips_per_host().max(1) * cfg.generation.logical_devices_per_chip().max(1);
+        (devs, i32::try_from(cfg.total_hosts().max(1)).unwrap_or(1))
+    };
+    let inc = MULTISLICE_INCARNATION_SEQ.fetch_add(1, Ordering::Relaxed);
+    box_registered_handle(PJRT_MultiSlice_Config {
+        num_slices: cfg.megascale_num_slices.max(1),
+        slice_id: cfg.megascale_slice_id,
+        num_devices_per_slice: devs_per_slice,
+        incarnation_id: inc,
+        local_host_id: cfg.process_index.0,
+        num_hosts,
+    })
+}
 
 /// Strongly-typed handler for [`PJRT_MultiSlice_Config_Destroy`].
 ///
@@ -30,17 +118,24 @@ static DEFAULT_MEGASCALE_METRICS_WIRE: [u8; 4] = [0x08, 0x01, 0x10, 0x01];
 ///
 /// * `args` - Validated [`PJRT_MultiSlice_Config_Destroy_Args`] structure.
 ///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] if `args.config` is non-null and unregistered.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_MultiSlice_Config_Destroy_Args`].
-unsafe fn handle_multislice_config_destroy(args: &mut PJRT_MultiSlice_Config_Destroy_Args) {
-    if !args.config.is_null() {
-        // SAFETY: `args.config` was allocated as a `Box<PJRT_MultiSlice_Config>`.
-        unsafe {
-            drop(Box::from_raw(args.config.cast::<PJRT_MultiSlice_Config>()));
-        }
+unsafe fn handle_multislice_config_destroy(
+    args: &mut PJRT_MultiSlice_Config_Destroy_Args,
+) -> Result<(), LibTpuError> {
+    if !args.config.is_null() && take_live_handle(args.config).is_none() {
+        return Err(LibTpuError::InvalidArgument {
+            parameter: "config",
+            reason: String::from("unregistered PJRT_MultiSlice_Config handle"),
+        });
     }
     args.config = ptr::null_mut();
+    Ok(())
 }
 
 /// Destroys a `PJRT_MultiSlice_Config` (`PJRT_MultiSlice_Config_Destroy`).
@@ -56,9 +151,9 @@ unsafe fn handle_multislice_config_destroy(args: &mut PJRT_MultiSlice_Config_Des
 pub unsafe extern "C" fn PJRT_MultiSlice_Config_Destroy(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_MultiSlice_Config_Destroy_Args>(
+        dispatch_typed_fallible_extension_args::<PJRT_MultiSlice_Config_Destroy_Args>(
             raw_args,
             handle_multislice_config_destroy,
         )
@@ -71,12 +166,19 @@ pub unsafe extern "C" fn PJRT_MultiSlice_Config_Destroy(
 ///
 /// * `args` - Validated [`PJRT_MultiSlice_Config_NumSlices_Args`] structure.
 ///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] when `args.config` is non-null and unregistered.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_MultiSlice_Config_NumSlices_Args`].
-unsafe fn handle_multislice_config_num_slices(args: &mut PJRT_MultiSlice_Config_NumSlices_Args) {
-    args.num_slices =
-        usize::try_from(global_init_config().megascale_num_slices.max(1)).unwrap_or(1);
+unsafe fn handle_multislice_config_num_slices(
+    args: &mut PJRT_MultiSlice_Config_NumSlices_Args,
+) -> Result<(), LibTpuError> {
+    let ms = resolve_multislice_config(args.config)?;
+    args.num_slices = usize::try_from(ms.num_slices.max(1)).unwrap_or(1);
+    Ok(())
 }
 
 /// Queries slice count from a `PJRT_MultiSlice_Config` (`PJRT_MultiSlice_Config_NumSlices`).
@@ -92,9 +194,9 @@ unsafe fn handle_multislice_config_num_slices(args: &mut PJRT_MultiSlice_Config_
 pub unsafe extern "C" fn PJRT_MultiSlice_Config_NumSlices(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_MultiSlice_Config_NumSlices_Args>(
+        dispatch_typed_fallible_extension_args::<PJRT_MultiSlice_Config_NumSlices_Args>(
             raw_args,
             handle_multislice_config_num_slices,
         )
@@ -107,15 +209,20 @@ pub unsafe extern "C" fn PJRT_MultiSlice_Config_NumSlices(
 ///
 /// * `args` - Validated [`PJRT_MultiSlice_Config_NumDevicesPerSlice_Args`] structure.
 ///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] when `args.config` is non-null and unregistered.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_MultiSlice_Config_NumDevicesPerSlice_Args`].
 unsafe fn handle_multislice_config_num_devices_per_slice(
     args: &mut PJRT_MultiSlice_Config_NumDevicesPerSlice_Args,
-) {
-    let cfg = global_init_config();
-    args.num_devices_per_slice_map = usize::try_from(cfg.chips_per_host()).unwrap_or(4);
-    args.num_slices = usize::try_from(cfg.megascale_num_slices.max(1)).unwrap_or(1);
+) -> Result<(), LibTpuError> {
+    let ms = resolve_multislice_config(args.config)?;
+    args.num_devices_per_slice_map = usize::try_from(ms.num_devices_per_slice.max(1)).unwrap_or(4);
+    args.num_slices = usize::try_from(ms.num_slices.max(1)).unwrap_or(1);
+    Ok(())
 }
 
 /// Queries per-slice device counts from a `PJRT_MultiSlice_Config` (`PJRT_MultiSlice_Config_NumDevicesPerSlice`).
@@ -131,9 +238,9 @@ unsafe fn handle_multislice_config_num_devices_per_slice(
 pub unsafe extern "C" fn PJRT_MultiSlice_Config_NumDevicesPerSlice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_MultiSlice_Config_NumDevicesPerSlice_Args>(
+        dispatch_typed_fallible_extension_args::<PJRT_MultiSlice_Config_NumDevicesPerSlice_Args>(
             raw_args,
             handle_multislice_config_num_devices_per_slice,
         )
@@ -146,33 +253,19 @@ pub unsafe extern "C" fn PJRT_MultiSlice_Config_NumDevicesPerSlice(
 ///
 /// * `args` - Validated [`PJRT_MultiSlice_Config_SliceId_Args`] structure.
 ///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] when `args.config` is non-null and unregistered.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_MultiSlice_Config_SliceId_Args`].
-unsafe fn handle_multislice_config_slice_id(args: &mut PJRT_MultiSlice_Config_SliceId_Args) {
-    args.slice_id = usize::try_from(global_init_config().megascale_slice_id).unwrap_or(0);
-}
-
-/// Queries the local slice ID from a `PJRT_MultiSlice_Config` (`PJRT_MultiSlice_Config_SliceId`).
-///
-/// # Arguments
-///
-/// * `raw_args` - Pointer to [`PJRT_MultiSlice_Config_SliceId_Args`].
-///
-/// # Safety
-///
-/// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_SliceId_Args`].
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn PJRT_MultiSlice_Config_Serialize(
-    raw_args: *mut std::ffi::c_void,
-) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
-    unsafe {
-        dispatch_typed_extension_args::<PJRT_MultiSlice_Config_Serialize_Args>(
-            raw_args,
-            handle_multislice_config_serialize,
-        )
-    }
+unsafe fn handle_multislice_config_slice_id(
+    args: &mut PJRT_MultiSlice_Config_SliceId_Args,
+) -> Result<(), LibTpuError> {
+    let ms = resolve_multislice_config(args.config)?;
+    args.slice_id = usize::try_from(ms.slice_id).unwrap_or(0);
+    Ok(())
 }
 
 /// Queries the local slice ID from a `PJRT_MultiSlice_Config` (`PJRT_MultiSlice_Config_SliceId`).
@@ -188,9 +281,9 @@ pub unsafe extern "C" fn PJRT_MultiSlice_Config_Serialize(
 pub unsafe extern "C" fn PJRT_MultiSlice_Config_SliceId(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_MultiSlice_Config_SliceId_Args>(
+        dispatch_typed_fallible_extension_args::<PJRT_MultiSlice_Config_SliceId_Args>(
             raw_args,
             handle_multislice_config_slice_id,
         )
@@ -203,15 +296,21 @@ pub unsafe extern "C" fn PJRT_MultiSlice_Config_SliceId(
 ///
 /// * `args` - Validated [`PJRT_MultiSlice_Config_Serialize_Args`] structure.
 ///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] when `args.config` is non-null and unregistered.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_MultiSlice_Config_Serialize_Args`].
-unsafe fn handle_multislice_config_serialize(args: &mut PJRT_MultiSlice_Config_Serialize_Args) {
-    let cfg = global_init_config();
+unsafe fn handle_multislice_config_serialize(
+    args: &mut PJRT_MultiSlice_Config_Serialize_Args,
+) -> Result<(), LibTpuError> {
+    let ms = resolve_multislice_config(args.config)?;
     let encoded = libtpu_core::proto::MegascaleMultiSliceConfigProto {
-        num_slices: i32::try_from(cfg.megascale_num_slices.max(1)).unwrap_or(1),
-        slice_id: i32::try_from(cfg.megascale_slice_id).unwrap_or(0),
-        num_devices_per_slice: i32::try_from(cfg.chips_per_host()).unwrap_or(4),
+        num_slices: i32::try_from(ms.num_slices.max(1)).unwrap_or(1),
+        slice_id: i32::try_from(ms.slice_id).unwrap_or(0),
+        num_devices_per_slice: i32::try_from(ms.num_devices_per_slice.max(1)).unwrap_or(4),
         coordinator_address: String::from("127.0.0.1:8080"),
         slice_devices: Vec::new(),
         endpoint_addresses: None,
@@ -222,6 +321,29 @@ unsafe fn handle_multislice_config_serialize(args: &mut PJRT_MultiSlice_Config_S
     args.serialized_bytes = ptr;
     args.serialized_bytes_size = len;
     args.serialized_config = holder.cast::<std::ffi::c_void>();
+    Ok(())
+}
+
+/// Serializes a `PJRT_MultiSlice_Config` (`PJRT_MultiSlice_Config_Serialize`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to [`PJRT_MultiSlice_Config_Serialize_Args`].
+///
+/// # Safety
+///
+/// `raw_args` must be null or a valid pointer to [`PJRT_MultiSlice_Config_Serialize_Args`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PJRT_MultiSlice_Config_Serialize(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
+    unsafe {
+        dispatch_typed_fallible_extension_args::<PJRT_MultiSlice_Config_Serialize_Args>(
+            raw_args,
+            handle_multislice_config_serialize,
+        )
+    }
 }
 
 /// Strongly-typed handler for [`PJRT_Megascale_CreateClientContext`].
@@ -239,11 +361,10 @@ unsafe fn handle_megascale_create_client_context(
     let seq = MEGASCALE_CTX_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
     MEGASCALE_ACTIVE_CTXS.fetch_add(1, Ordering::Relaxed);
     let tr = MEGASCALE_DEFAULT_TRANSPORT.load(Ordering::Relaxed);
-    let ctx = Box::into_raw(Box::new(PJRT_Megascale_ClientContext::new(
+    args.context_out = box_registered_handle(PJRT_Megascale_ClientContext::new(
         u64::try_from(seq).unwrap_or(1),
         tr,
-    )));
-    args.context_out = ctx as usize;
+    ));
 }
 
 /// Creates a Megascale client context (`PJRT_Megascale_CreateClientContext`).
@@ -280,13 +401,7 @@ pub unsafe extern "C" fn PJRT_Megascale_CreateClientContext(
 unsafe fn handle_megascale_delete_client_context(
     args: &mut PJRT_Megascale_DeleteClientContext_Args,
 ) {
-    if !args.context.is_null() {
-        // SAFETY: `args.context` was allocated by `PJRT_Megascale_CreateClientContext`.
-        unsafe {
-            drop(Box::from_raw(
-                args.context.cast::<PJRT_Megascale_ClientContext>(),
-            ));
-        }
+    if take_live_handle(args.context).is_some() {
         let cur = MEGASCALE_ACTIVE_CTXS.load(Ordering::Relaxed);
         MEGASCALE_ACTIVE_CTXS.store(cur.saturating_sub(1), Ordering::Relaxed);
     }
@@ -315,7 +430,7 @@ pub unsafe extern "C" fn PJRT_Megascale_DeleteClientContext(
     }
 }
 
-/// Strongly-typed handler for Megascale config creation entrypoints.
+/// Strongly-typed handler for Megascale multi-slice config creation entrypoints.
 ///
 /// # Arguments
 ///
@@ -323,15 +438,10 @@ pub unsafe extern "C" fn PJRT_Megascale_DeleteClientContext(
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_Megascale_CreateMultiSliceConfig_Args`].
+/// If non-null, `args.topology` must point to a valid [`crate::pjrt_types::PJRT_TopologyDescription`].
 unsafe fn handle_megascale_create_config(args: &mut PJRT_Megascale_CreateMultiSliceConfig_Args) {
-    let cfg = global_init_config();
-    let ms_cfg = Box::into_raw(Box::new(PJRT_MultiSlice_Config {
-        num_slices: cfg.megascale_num_slices.max(1),
-        slice_id: cfg.megascale_slice_id,
-        num_devices_per_slice: cfg.chips_per_host(),
-    }));
-    args.config_out = ms_cfg as usize;
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
+    args.config_out = unsafe { alloc_multislice_config_handle(args.topology) };
 }
 
 /// Creates a default Megascale config (`PJRT_Megascale_CreateDefaultConfig`).
@@ -406,17 +516,24 @@ pub unsafe extern "C" fn PJRT_Megascale_CreateMultiSliceConfig(
 ///
 /// * `args` - Validated [`PJRT_Megascale_DeleteMultiSliceConfig_Args`] structure.
 ///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] if `args.config` is non-null and unregistered.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_DeleteMultiSliceConfig_Args`].
-unsafe fn handle_megascale_delete_config(args: &mut PJRT_Megascale_DeleteMultiSliceConfig_Args) {
-    if !args.config.is_null() {
-        // SAFETY: `args.config` was allocated by `handle_megascale_create_config`.
-        unsafe {
-            drop(Box::from_raw(args.config.cast::<PJRT_MultiSlice_Config>()));
-        }
+unsafe fn handle_megascale_delete_config(
+    args: &mut PJRT_Megascale_DeleteMultiSliceConfig_Args,
+) -> Result<(), LibTpuError> {
+    if !args.config.is_null() && take_live_handle(args.config).is_none() {
+        return Err(LibTpuError::InvalidArgument {
+            parameter: "config",
+            reason: String::from("unregistered PJRT_MultiSlice_Config handle"),
+        });
     }
     args.config = ptr::null_mut();
+    Ok(())
 }
 
 /// Deletes a Megascale multi-slice config (`PJRT_Megascale_DeleteMultiSliceConfig`).
@@ -432,27 +549,34 @@ unsafe fn handle_megascale_delete_config(args: &mut PJRT_Megascale_DeleteMultiSl
 pub unsafe extern "C" fn PJRT_Megascale_DeleteMultiSliceConfig(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_DeleteMultiSliceConfig_Args>(
+        dispatch_typed_fallible_extension_args::<PJRT_Megascale_DeleteMultiSliceConfig_Args>(
             raw_args,
             handle_megascale_delete_config,
         )
     }
 }
 
-/// Strongly-typed handler for [`PJRT_Megascale_ConfigNumSlices`] and [`PJRT_Megascale_GetNumSlices`].
+/// Strongly-typed handler for [`PJRT_Megascale_ConfigNumSlices`].
 ///
 /// # Arguments
 ///
 /// * `args` - Validated [`PJRT_Megascale_ConfigNumSlices_Args`] structure.
 ///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] when `args.config` is non-null and unregistered.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_ConfigNumSlices_Args`].
-unsafe fn handle_megascale_num_slices(args: &mut PJRT_Megascale_ConfigNumSlices_Args) {
-    args.num_slices =
-        usize::try_from(global_init_config().megascale_num_slices.max(1)).unwrap_or(1);
+unsafe fn handle_megascale_config_num_slices(
+    args: &mut PJRT_Megascale_ConfigNumSlices_Args,
+) -> Result<(), LibTpuError> {
+    let ms = resolve_multislice_config(args.config)?;
+    args.num_slices = usize::try_from(ms.num_slices.max(1)).unwrap_or(1);
+    Ok(())
 }
 
 /// Queries slice count from Megascale config (`PJRT_Megascale_ConfigNumSlices`).
@@ -468,11 +592,11 @@ unsafe fn handle_megascale_num_slices(args: &mut PJRT_Megascale_ConfigNumSlices_
 pub unsafe extern "C" fn PJRT_Megascale_ConfigNumSlices(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_ConfigNumSlices_Args>(
+        dispatch_typed_fallible_extension_args::<PJRT_Megascale_ConfigNumSlices_Args>(
             raw_args,
-            handle_megascale_num_slices,
+            handle_megascale_config_num_slices,
         )
     }
 }
@@ -483,14 +607,19 @@ pub unsafe extern "C" fn PJRT_Megascale_ConfigNumSlices(
 ///
 /// * `args` - Validated [`PJRT_Megascale_ConfigNumDevicesPerSlice_Args`] structure.
 ///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] when `args.config` is non-null and unregistered.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_ConfigNumDevicesPerSlice_Args`].
 unsafe fn handle_megascale_num_devices_per_slice(
     args: &mut PJRT_Megascale_ConfigNumDevicesPerSlice_Args,
-) {
-    args.num_devices_per_slice =
-        usize::try_from(global_init_config().chips_per_host()).unwrap_or(4);
+) -> Result<(), LibTpuError> {
+    let ms = resolve_multislice_config(args.config)?;
+    args.num_devices_per_slice = usize::try_from(ms.num_devices_per_slice.max(1)).unwrap_or(4);
+    Ok(())
 }
 
 /// Queries devices per slice from Megascale config (`PJRT_Megascale_ConfigNumDevicesPerSlice`).
@@ -506,26 +635,34 @@ unsafe fn handle_megascale_num_devices_per_slice(
 pub unsafe extern "C" fn PJRT_Megascale_ConfigNumDevicesPerSlice(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_ConfigNumDevicesPerSlice_Args>(
+        dispatch_typed_fallible_extension_args::<PJRT_Megascale_ConfigNumDevicesPerSlice_Args>(
             raw_args,
             handle_megascale_num_devices_per_slice,
         )
     }
 }
 
-/// Strongly-typed handler for [`PJRT_Megascale_ConfigSliceId`] and [`PJRT_Megascale_GetSliceId`].
+/// Strongly-typed handler for [`PJRT_Megascale_ConfigSliceId`].
 ///
 /// # Arguments
 ///
 /// * `args` - Validated [`PJRT_Megascale_ConfigSliceId_Args`] structure.
 ///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] when `args.config` is non-null and unregistered.
+///
 /// # Safety
 ///
 /// `args` must be a valid [`PJRT_Megascale_ConfigSliceId_Args`].
-unsafe fn handle_megascale_slice_id(args: &mut PJRT_Megascale_ConfigSliceId_Args) {
-    args.slice_id = usize::try_from(global_init_config().megascale_slice_id).unwrap_or(0);
+unsafe fn handle_megascale_config_slice_id(
+    args: &mut PJRT_Megascale_ConfigSliceId_Args,
+) -> Result<(), LibTpuError> {
+    let ms = resolve_multislice_config(args.config)?;
+    args.slice_id = usize::try_from(ms.slice_id).unwrap_or(0);
+    Ok(())
 }
 
 /// Queries slice ID from Megascale config (`PJRT_Megascale_ConfigSliceId`).
@@ -541,11 +678,11 @@ unsafe fn handle_megascale_slice_id(args: &mut PJRT_Megascale_ConfigSliceId_Args
 pub unsafe extern "C" fn PJRT_Megascale_ConfigSliceId(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_ConfigSliceId_Args>(
+        dispatch_typed_fallible_extension_args::<PJRT_Megascale_ConfigSliceId_Args>(
             raw_args,
-            handle_megascale_slice_id,
+            handle_megascale_config_slice_id,
         )
     }
 }
@@ -562,8 +699,14 @@ pub unsafe extern "C" fn PJRT_Megascale_ConfigSliceId(
 unsafe fn handle_megascale_serialized_kv(
     args: &mut PJRT_Megascale_ConfigSerializedSliceKeyValue_Args,
 ) {
-    args.serialized_kv_out = global_init_config().extra_flags.len().saturating_add(16);
-    args.num_entries_out = 1;
+    let slice_count = borrow_live_handle(args.config).map_or(1_usize, |c| {
+        usize::try_from(c.num_slices.max(1)).unwrap_or(1)
+    });
+    args.serialized_kv_out = global_init_config()
+        .extra_flags
+        .len()
+        .saturating_add(16 * slice_count);
+    args.num_entries_out = slice_count;
 }
 
 /// Queries serialized slice key-values from Megascale config (`PJRT_Megascale_ConfigSerializedSliceKeyValue`).
@@ -601,33 +744,49 @@ pub unsafe extern "C" fn PJRT_Megascale_ConfigSerializedSliceKeyValue(
 pub unsafe extern "C" fn PJRT_Megascale_ConfigSerialize(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
-    // SAFETY: Delegated to `dispatch_typed_extension_args`.
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_ConfigSerialize_Args>(
+        dispatch_typed_fallible_extension_args::<PJRT_Megascale_ConfigSerialize_Args>(
             raw_args,
             handle_multislice_config_serialize,
         )
     }
 }
 
+/// Strongly-typed handler for [`PJRT_Megascale_DeserializeMultiSliceConfig`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_DeserializeMultiSliceConfig_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Megascale_DeserializeMultiSliceConfig_Args`].
+unsafe fn handle_megascale_deserialize_config(
+    args: &mut PJRT_Megascale_DeserializeMultiSliceConfig_Args,
+) {
+    // SAFETY: Passing null topology uses global defaults.
+    args.config_out = unsafe { alloc_multislice_config_handle(ptr::null()) };
+}
+
 /// Deserializes a Megascale multi-slice config (`PJRT_Megascale_DeserializeMultiSliceConfig`).
 ///
 /// # Arguments
 ///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_CreateMultiSliceConfig_Args`].
+/// * `raw_args` - Pointer to [`PJRT_Megascale_DeserializeMultiSliceConfig_Args`].
 ///
 /// # Safety
 ///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_CreateMultiSliceConfig_Args`].
+/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_DeserializeMultiSliceConfig_Args`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_DeserializeMultiSliceConfig(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_CreateMultiSliceConfig_Args>(
+        dispatch_typed_extension_args::<PJRT_Megascale_DeserializeMultiSliceConfig_Args>(
             raw_args,
-            handle_megascale_create_config,
+            handle_megascale_deserialize_config,
         )
     }
 }
@@ -658,7 +817,7 @@ unsafe fn handle_megascale_addresses(args: &mut PJRT_Megascale_Addresses_Args) {
             })
             .collect(),
     };
-    let _addr_proto_len = <libtpu_core::proto::EndpointAddressesProto as libtpu_core::proto::ProtoSchemaMessage>::encode_proto(&addr_bytes).len();
+    let _ = addr_bytes.encode_proto();
     args.num_addresses = usize::try_from(total_hosts).unwrap_or(1);
 }
 
@@ -695,9 +854,7 @@ pub unsafe extern "C" fn PJRT_Megascale_Addresses(
 /// `args` must be a valid [`PJRT_Megascale_Barrier_Args`].
 unsafe fn handle_megascale_barrier(args: &mut PJRT_Megascale_Barrier_Args) {
     let total = MEGASCALE_BARRIER_SEQ.fetch_add(1, Ordering::Relaxed) + 1;
-    if args.barrier_id > 0x10000 {
-        // SAFETY: `args.barrier_id` carries a `PJRT_Megascale_ClientContext*` handle.
-        let ctx = unsafe { &*(args.barrier_id as *const PJRT_Megascale_ClientContext) };
+    if let Some(ctx) = borrow_live_handle(args.context.cast_const()) {
         args.completed_barriers = ctx.completed_barriers.fetch_add(1, Ordering::Relaxed) + 1;
     } else {
         args.completed_barriers = total;
@@ -726,8 +883,7 @@ pub unsafe extern "C" fn PJRT_Megascale_Barrier(
     }
 }
 
-/// Strongly-typed handler for [`PJRT_Megascale_LogError`], recording a [`libtpu_core::proto::MegaScaleRuntimeErrorProto`]
-/// event, invoking any registered C error callback, and incrementing the registered error-handler counter.
+/// Strongly-typed handler for [`PJRT_Megascale_LogError`].
 ///
 /// # Arguments
 ///
@@ -739,13 +895,8 @@ pub unsafe extern "C" fn PJRT_Megascale_Barrier(
 unsafe fn handle_megascale_log_error(args: &mut PJRT_Megascale_LogError_Args) {
     MEGASCALE_ERROR_HANDLERS.fetch_add(1, Ordering::Relaxed);
     MEGASCALE_BARRIER_SEQ.fetch_add(1, Ordering::Relaxed);
-    let cb_fn = MEGASCALE_ERROR_CB_FN.load(Ordering::Acquire);
-    if cb_fn > 0x10000 {
-        let ptr_void = cb_fn as *const std::ffi::c_void;
-        // SAFETY: `cb_fn` was registered via `PJRT_Megascale_RegisterErrorHandler`.
-        let cb: unsafe extern "C" fn(*mut std::ffi::c_void) = unsafe {
-            *std::ptr::addr_of!(ptr_void).cast::<unsafe extern "C" fn(*mut std::ffi::c_void)>()
-        };
+    let cb_opt = *megascale_error_callback().lock();
+    if let Some(cb) = cb_opt {
         // SAFETY: Invoking caller-provided C error callback with `args.handle`.
         unsafe {
             cb(args.handle);
@@ -787,13 +938,10 @@ pub unsafe extern "C" fn PJRT_Megascale_LogError(
 /// `args` must be a valid [`PJRT_Megascale_GetDcnTopology_Args`].
 unsafe fn handle_megascale_dcn_topology(args: &mut PJRT_Megascale_GetDcnTopology_Args) {
     let cfg = global_init_config();
-    let tr = if args.context > 0x10000 {
-        // SAFETY: `args.context` is a valid `PJRT_Megascale_ClientContext*`.
-        let ctx = unsafe { &*(args.context as *const PJRT_Megascale_ClientContext) };
-        ctx.transport_type.load(Ordering::Relaxed).max(1)
-    } else {
-        MEGASCALE_DEFAULT_TRANSPORT.load(Ordering::Relaxed).max(1)
-    };
+    let tr = borrow_live_handle(args.context.cast_const()).map_or_else(
+        || MEGASCALE_DEFAULT_TRANSPORT.load(Ordering::Relaxed).max(1),
+        |ctx| ctx.transport_type.load(Ordering::Relaxed).max(1),
+    );
     let dcn_bytes = libtpu_core::proto::MegascaleDcnTopologyProto {
         num_slices: i32::try_from(cfg.megascale_num_slices.max(1)).unwrap_or(1),
         num_hosts_per_slice: i32::try_from(cfg.total_hosts()).unwrap_or(1),
@@ -825,46 +973,73 @@ pub unsafe extern "C" fn PJRT_Megascale_GetDcnTopology(
     }
 }
 
+/// Strongly-typed handler for [`PJRT_Megascale_GetSliceId`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_GetSliceId_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Megascale_GetSliceId_Args`].
+unsafe fn handle_megascale_get_slice_id(args: &mut PJRT_Megascale_GetSliceId_Args) {
+    args.slice_id = usize::try_from(global_init_config().megascale_slice_id).unwrap_or(0);
+}
+
 /// Queries the active Megascale slice ID (`PJRT_Megascale_GetSliceId`).
 ///
 /// # Arguments
 ///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_ConfigSliceId_Args`].
+/// * `raw_args` - Pointer to [`PJRT_Megascale_GetSliceId_Args`].
 ///
 /// # Safety
 ///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_ConfigSliceId_Args`].
+/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_GetSliceId_Args`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_GetSliceId(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_ConfigSliceId_Args>(
+        dispatch_typed_extension_args::<PJRT_Megascale_GetSliceId_Args>(
             raw_args,
-            handle_megascale_slice_id,
+            handle_megascale_get_slice_id,
         )
     }
+}
+
+/// Strongly-typed handler for [`PJRT_Megascale_GetNumSlices`].
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_GetNumSlices_Args`] structure.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Megascale_GetNumSlices_Args`].
+unsafe fn handle_megascale_get_num_slices(args: &mut PJRT_Megascale_GetNumSlices_Args) {
+    args.num_slices =
+        usize::try_from(global_init_config().megascale_num_slices.max(1)).unwrap_or(1);
 }
 
 /// Queries the total Megascale slice count (`PJRT_Megascale_GetNumSlices`).
 ///
 /// # Arguments
 ///
-/// * `raw_args` - Pointer to [`PJRT_Megascale_ConfigNumSlices_Args`].
+/// * `raw_args` - Pointer to [`PJRT_Megascale_GetNumSlices_Args`].
 ///
 /// # Safety
 ///
-/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_ConfigNumSlices_Args`].
+/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_GetNumSlices_Args`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn PJRT_Megascale_GetNumSlices(
     raw_args: *mut std::ffi::c_void,
 ) -> *mut PJRT_Error {
     // SAFETY: Delegated to `dispatch_typed_extension_args`.
     unsafe {
-        dispatch_typed_extension_args::<PJRT_Megascale_ConfigNumSlices_Args>(
+        dispatch_typed_extension_args::<PJRT_Megascale_GetNumSlices_Args>(
             raw_args,
-            handle_megascale_num_slices,
+            handle_megascale_get_num_slices,
         )
     }
 }
@@ -953,9 +1128,7 @@ unsafe fn handle_megascale_register_error_handler(
     args: &mut PJRT_Megascale_RegisterErrorHandler_Args,
 ) {
     let count = MEGASCALE_ERROR_HANDLERS.fetch_add(1, Ordering::Relaxed) + 1;
-    if args.callback_fn > 0x10000 {
-        MEGASCALE_ERROR_CB_FN.store(args.callback_fn, Ordering::Release);
-    }
+    *megascale_error_callback().lock() = args.callback_fn;
     args.handler_id_out = count;
 }
 
@@ -989,7 +1162,7 @@ pub unsafe extern "C" fn PJRT_Megascale_RegisterErrorHandler(
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_Megascale_UnregisterErrorHandler_Args`].
+/// `_args` must be a valid [`PJRT_Megascale_UnregisterErrorHandler_Args`].
 unsafe fn handle_megascale_unregister_error_handler(
     _args: &mut PJRT_Megascale_UnregisterErrorHandler_Args,
 ) {
@@ -997,7 +1170,7 @@ unsafe fn handle_megascale_unregister_error_handler(
     let next = prev.saturating_sub(1);
     MEGASCALE_ERROR_HANDLERS.store(next, Ordering::Release);
     if next == 0 {
-        MEGASCALE_ERROR_CB_FN.store(0, Ordering::Release);
+        *megascale_error_callback().lock() = None;
     }
 }
 
@@ -1033,9 +1206,7 @@ pub unsafe extern "C" fn PJRT_Megascale_UnregisterErrorHandler(
 ///
 /// `args` must be a valid [`PJRT_Megascale_CollectMetrics_Args`].
 unsafe fn handle_megascale_collect_metrics(args: &mut PJRT_Megascale_CollectMetrics_Args) {
-    if args.context > 0x10000 {
-        // SAFETY: `args.context` is a valid `PJRT_Megascale_ClientContext*`.
-        let ctx = unsafe { &*(args.context as *const PJRT_Megascale_ClientContext) };
+    if let Some(ctx) = borrow_live_handle(args.context.cast_const()) {
         let coll_ops = COLLECTIVE_OPS_EXECUTED.load(Ordering::Relaxed);
         let encoded = libtpu_core::proto::MegascaleRuntimeMetricsProto {
             completed_barriers: u64::try_from(ctx.completed_barriers.load(Ordering::Relaxed))
@@ -1047,13 +1218,13 @@ unsafe fn handle_megascale_collect_metrics(args: &mut PJRT_Megascale_CollectMetr
         }
         .encode()
         .into_boxed_slice();
-        let ptr = encoded.as_ptr() as usize;
+        let ptr = encoded.as_ptr();
         let len = encoded.len();
         ctx.metrics_arena.lock().push(encoded);
         args.serialized_metrics_ptr = ptr;
         args.serialized_metrics_size = len;
     } else {
-        args.serialized_metrics_ptr = DEFAULT_MEGASCALE_METRICS_WIRE.as_ptr() as usize;
+        args.serialized_metrics_ptr = DEFAULT_MEGASCALE_METRICS_WIRE.as_ptr();
         args.serialized_metrics_size = DEFAULT_MEGASCALE_METRICS_WIRE.len();
     }
 }
@@ -1091,9 +1262,7 @@ pub unsafe extern "C" fn PJRT_Megascale_CollectMetrics(
 /// `args` must be a valid [`PJRT_Megascale_ResetMetrics_Args`].
 unsafe fn handle_megascale_reset_metrics(args: &mut PJRT_Megascale_ResetMetrics_Args) {
     MEGASCALE_BARRIER_SEQ.store(0, Ordering::Relaxed);
-    if (args.handle as usize) > 0x10000 {
-        // SAFETY: `args.handle` is a valid `PJRT_Megascale_ClientContext*`.
-        let ctx = unsafe { &*args.handle.cast::<PJRT_Megascale_ClientContext>() };
+    if let Some(ctx) = borrow_live_handle(args.handle.cast_const()) {
         ctx.completed_barriers.store(0, Ordering::Relaxed);
         ctx.metrics_arena.lock().clear();
     }
@@ -1131,13 +1300,10 @@ pub unsafe extern "C" fn PJRT_Megascale_ResetMetrics(
 ///
 /// `args` must be a valid [`PJRT_Megascale_GetTransportType_Args`].
 unsafe fn handle_megascale_get_transport_type(args: &mut PJRT_Megascale_GetTransportType_Args) {
-    args.transport_type_out = if args.context > 0x10000 {
-        // SAFETY: `args.context` is a valid `PJRT_Megascale_ClientContext*`.
-        let ctx = unsafe { &*(args.context as *const PJRT_Megascale_ClientContext) };
-        ctx.transport_type.load(Ordering::Relaxed)
-    } else {
-        MEGASCALE_DEFAULT_TRANSPORT.load(Ordering::Relaxed)
-    };
+    args.transport_type_out = borrow_live_handle(args.context.cast_const()).map_or_else(
+        || MEGASCALE_DEFAULT_TRANSPORT.load(Ordering::Relaxed),
+        |ctx| ctx.transport_type.load(Ordering::Relaxed),
+    );
 }
 
 /// Queries Megascale transport type (`PJRT_Megascale_GetTransportType`).
@@ -1172,7 +1338,17 @@ pub unsafe extern "C" fn PJRT_Megascale_GetTransportType(
 ///
 /// `args` must be a valid [`PJRT_Megascale_SetTransportType_Args`].
 unsafe fn handle_megascale_set_transport_type(args: &mut PJRT_Megascale_SetTransportType_Args) {
-    let requested = if args.requested_transport_type == 0 {
+    let requested = if let Some(ctx) =
+        borrow_live_handle(args.requested_transport_type as *const PJRT_Megascale_ClientContext)
+    {
+        let next = if args.transport_type_out == 0 {
+            1
+        } else {
+            args.transport_type_out
+        };
+        ctx.transport_type.store(next, Ordering::Relaxed);
+        next
+    } else if args.requested_transport_type == 0 {
         1
     } else {
         args.requested_transport_type
@@ -1250,16 +1426,11 @@ pub unsafe extern "C" fn PJRT_Megascale_WaitForBarrier(
 /// `args` must be a valid [`PJRT_Megascale_AbortCollectives_Args`].
 unsafe fn handle_megascale_abort_collectives(args: &mut PJRT_Megascale_AbortCollectives_Args) {
     MEGASCALE_BARRIER_SEQ.fetch_add(1, Ordering::Relaxed);
-    let cb_fn = MEGASCALE_ERROR_CB_FN.load(Ordering::Acquire);
-    if cb_fn > 0x10000 {
-        let ptr_void = cb_fn as *const std::ffi::c_void;
-        // SAFETY: `cb_fn` was registered via `PJRT_Megascale_RegisterErrorHandler`.
-        let cb: unsafe extern "C" fn(*mut std::ffi::c_void) = unsafe {
-            *std::ptr::addr_of!(ptr_void).cast::<unsafe extern "C" fn(*mut std::ffi::c_void)>()
-        };
+    let cb_opt = *megascale_error_callback().lock();
+    if let Some(cb) = cb_opt {
         // SAFETY: Invoking caller-provided C error callback with `args.handle`.
         unsafe {
-            cb(args.handle);
+            cb(args.handle.cast::<std::ffi::c_void>());
         }
     }
     args.handle = ptr::null_mut();
@@ -1283,6 +1454,237 @@ pub unsafe extern "C" fn PJRT_Megascale_AbortCollectives(
         dispatch_typed_extension_args::<PJRT_Megascale_AbortCollectives_Args>(
             raw_args,
             handle_megascale_abort_collectives,
+        )
+    }
+}
+
+/// Strongly-typed handler for [`PJRT_Megascale_DiscoverSlices`] (`0.0.53.1`).
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_DiscoverSlices_Args`] structure.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] when `args.client_context` is non-null and unregistered.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Megascale_DiscoverSlices_Args`].
+unsafe fn handle_megascale_discover_slices(
+    args: &mut PJRT_Megascale_DiscoverSlices_Args,
+) -> Result<(), LibTpuError> {
+    if !args.client_context.is_null()
+        && borrow_live_handle(args.client_context.cast_const()).is_none()
+    {
+        return Err(LibTpuError::InvalidArgument {
+            parameter: "client_context",
+            reason: String::from("unregistered PJRT_Megascale_ClientContext handle"),
+        });
+    }
+    // SAFETY: Passing null topology uses global defaults.
+    args.multi_slice_config = unsafe { alloc_multislice_config_handle(ptr::null()) };
+    Ok(())
+}
+
+/// Discovers active multi-slice topology configuration (`PJRT_Megascale_DiscoverSlices`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to [`PJRT_Megascale_DiscoverSlices_Args`].
+///
+/// # Safety
+///
+/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_DiscoverSlices_Args`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PJRT_Megascale_DiscoverSlices(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
+    unsafe {
+        dispatch_typed_fallible_extension_args::<PJRT_Megascale_DiscoverSlices_Args>(
+            raw_args,
+            handle_megascale_discover_slices,
+        )
+    }
+}
+
+/// Strongly-typed handler for [`PJRT_Megascale_MultiSliceConfig_GetIncarnationId`] (`0.0.53.1`).
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_MultiSliceConfig_GetIncarnationId_Args`] structure.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] when `args.config` is non-null and unregistered.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Megascale_MultiSliceConfig_GetIncarnationId_Args`].
+unsafe fn handle_megascale_get_incarnation_id(
+    args: &mut PJRT_Megascale_MultiSliceConfig_GetIncarnationId_Args,
+) -> Result<(), LibTpuError> {
+    let ms = resolve_multislice_config(args.config)?;
+    args.incarnation_id = ms.incarnation_id;
+    Ok(())
+}
+
+/// Queries slice incarnation ID from a `PJRT_MultiSlice_Config` (`PJRT_Megascale_MultiSliceConfig_GetIncarnationId`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to [`PJRT_Megascale_MultiSliceConfig_GetIncarnationId_Args`].
+///
+/// # Safety
+///
+/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_MultiSliceConfig_GetIncarnationId_Args`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PJRT_Megascale_MultiSliceConfig_GetIncarnationId(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
+    unsafe {
+        dispatch_typed_fallible_extension_args::<
+            PJRT_Megascale_MultiSliceConfig_GetIncarnationId_Args,
+        >(raw_args, handle_megascale_get_incarnation_id)
+    }
+}
+
+/// Queries local host ID from a `PJRT_MultiSlice_Config` (`PJRT_Megascale_MultiSliceConfig_GetLocalHostId`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to [`PJRT_Megascale_MultiSliceConfig_GetLocalHostId_Args`] (`>= 20` bytes).
+///
+/// # Safety
+///
+/// `raw_args` must be null or point to at least 20 writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PJRT_Megascale_MultiSliceConfig_GetLocalHostId(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    ffi_catch_unwind(ptr::null_mut(), || {
+        if raw_args.is_null() {
+            return crate::pjrt_helpers::box_pjrt_error(LibTpuError::NullPointer {
+                parameter: "args",
+            });
+        }
+        // SAFETY: `raw_args` is non-null.
+        let actual_size = unsafe { *raw_args.cast::<usize>() };
+        if actual_size < PJRT_Megascale_MultiSliceConfig_GetLocalHostId_Args::MIN_STRUCT_SIZE {
+            return crate::pjrt_helpers::box_pjrt_error(LibTpuError::InvalidStructSize {
+                struct_name: "PJRT_Megascale_MultiSliceConfig_GetLocalHostId_Args",
+                expected_min: PJRT_Megascale_MultiSliceConfig_GetLocalHostId_Args::MIN_STRUCT_SIZE,
+                actual: actual_size,
+            });
+        }
+        // SAFETY: `actual_size >= 20` covers `config` (`+8`) and `int32_t local_host_id` (`+16`).
+        let cfg_ptr = unsafe { *raw_args.byte_add(8).cast::<*const PJRT_MultiSlice_Config>() };
+        match resolve_multislice_config(cfg_ptr) {
+            Ok(ms) => {
+                // SAFETY: Offset `+16` is `int32_t local_host_id`.
+                unsafe {
+                    *raw_args.byte_add(16).cast::<i32>() = ms.local_host_id;
+                }
+                ptr::null_mut()
+            }
+            Err(err) => crate::pjrt_helpers::box_pjrt_error(err),
+        }
+    })
+}
+
+/// Queries total host count from a `PJRT_MultiSlice_Config` (`PJRT_Megascale_MultiSliceConfig_GetNumHosts`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to [`PJRT_Megascale_MultiSliceConfig_GetNumHosts_Args`] (`>= 20` bytes).
+///
+/// # Safety
+///
+/// `raw_args` must be null or point to at least 20 writable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PJRT_Megascale_MultiSliceConfig_GetNumHosts(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    ffi_catch_unwind(ptr::null_mut(), || {
+        if raw_args.is_null() {
+            return crate::pjrt_helpers::box_pjrt_error(LibTpuError::NullPointer {
+                parameter: "args",
+            });
+        }
+        // SAFETY: `raw_args` is non-null.
+        let actual_size = unsafe { *raw_args.cast::<usize>() };
+        if actual_size < PJRT_Megascale_MultiSliceConfig_GetNumHosts_Args::MIN_STRUCT_SIZE {
+            return crate::pjrt_helpers::box_pjrt_error(LibTpuError::InvalidStructSize {
+                struct_name: "PJRT_Megascale_MultiSliceConfig_GetNumHosts_Args",
+                expected_min: PJRT_Megascale_MultiSliceConfig_GetNumHosts_Args::MIN_STRUCT_SIZE,
+                actual: actual_size,
+            });
+        }
+        // SAFETY: `actual_size >= 20` covers `config` (`+8`) and `int32_t num_hosts` (`+16`).
+        let cfg_ptr = unsafe { *raw_args.byte_add(8).cast::<*const PJRT_MultiSlice_Config>() };
+        match resolve_multislice_config(cfg_ptr) {
+            Ok(ms) => {
+                // SAFETY: Offset `+16` is `int32_t num_hosts`.
+                unsafe {
+                    *raw_args.byte_add(16).cast::<i32>() = ms.num_hosts;
+                }
+                ptr::null_mut()
+            }
+            Err(err) => crate::pjrt_helpers::box_pjrt_error(err),
+        }
+    })
+}
+
+/// Strongly-typed handler for [`PJRT_Megascale_GlobalBarrier`] (`0.0.53.1`).
+///
+/// # Arguments
+///
+/// * `args` - Validated [`PJRT_Megascale_GlobalBarrier_Args`] structure.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::InvalidArgument`] if `args.config` is unregistered or `args.timeout_ms < 0`.
+///
+/// # Safety
+///
+/// `args` must be a valid [`PJRT_Megascale_GlobalBarrier_Args`].
+unsafe fn handle_megascale_global_barrier(
+    args: &mut PJRT_Megascale_GlobalBarrier_Args,
+) -> Result<(), LibTpuError> {
+    let _ms = resolve_multislice_config(args.config)?;
+    if args.timeout_ms < 0 {
+        return Err(LibTpuError::InvalidArgument {
+            parameter: "timeout_ms",
+            reason: format!(
+                "global barrier timeout_ms ({}) cannot be negative",
+                args.timeout_ms
+            ),
+        });
+    }
+    MEGASCALE_BARRIER_SEQ.fetch_add(1, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Executes a named global multi-slice barrier (`PJRT_Megascale_GlobalBarrier`).
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to [`PJRT_Megascale_GlobalBarrier_Args`].
+///
+/// # Safety
+///
+/// `raw_args` must be null or a valid pointer to [`PJRT_Megascale_GlobalBarrier_Args`].
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn PJRT_Megascale_GlobalBarrier(
+    raw_args: *mut std::ffi::c_void,
+) -> *mut PJRT_Error {
+    // SAFETY: Delegated to `dispatch_typed_fallible_extension_args`.
+    unsafe {
+        dispatch_typed_fallible_extension_args::<PJRT_Megascale_GlobalBarrier_Args>(
+            raw_args,
+            handle_megascale_global_barrier,
         )
     }
 }

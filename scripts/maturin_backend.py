@@ -14,11 +14,54 @@ import hashlib
 import io
 import os
 import subprocess
+import sysconfig
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Union
 
 import maturin
+
+ConfigSettingValue = Union[str, list[str]]
+ConfigSettings = Mapping[str, ConfigSettingValue]
+
+
+def _is_free_threaded_python() -> bool:
+    """Returns `True` when the active CPython interpreter is free-threaded (`Py_GIL_DISABLED == 1`).
+
+    Returns:
+        `True` for PEP 703 free-threaded CPython builds (`cp314t`, `cp315t`), `False` otherwise.
+    """
+    return bool(sysconfig.get_config_var("Py_GIL_DISABLED"))
+
+
+def _effective_config_settings(
+    config_settings: ConfigSettings | None,
+) -> dict[str, ConfigSettingValue] | None:
+    """Injects `--no-default-features --features=extension-module,freethreaded` when free-threaded.
+
+    Standard GIL builds (`>=3.9`) return `config_settings` unchanged so `abi3-py39` remains active.
+
+    Args:
+        config_settings: Optional PEP 517 configuration dictionary supplied by the frontend.
+
+    Returns:
+        Normalized configuration settings dictionary or `None`.
+    """
+    if not _is_free_threaded_python():
+        return dict(config_settings) if config_settings is not None else None
+    merged: dict[str, ConfigSettingValue] = (
+        dict(config_settings) if config_settings is not None else {}
+    )
+    existing = merged.get("build-args")
+    extra_flags = ["--no-default-features", "--features=extension-module,freethreaded"]
+    if isinstance(existing, str):
+        merged["build-args"] = f"{existing} {' '.join(extra_flags)}".strip()
+    elif isinstance(existing, Sequence):
+        merged["build-args"] = [*list(existing), *extra_flags]
+    else:
+        merged["build-args"] = extra_flags
+    return merged
 
 
 def _urlsafe_sha256_digest(payload: bytes) -> str:
@@ -159,7 +202,7 @@ def inject_dropin_binaries_into_wheel(wheel_path: Path, repo_root: Path) -> None
     tmp_wheel.replace(wheel_path)
 
 
-def get_requires_for_build_wheel(config_settings: Mapping[str, object] | None = None) -> list[str]:
+def get_requires_for_build_wheel(config_settings: ConfigSettings | None = None) -> list[str]:
     """Returns extra build requirements for wheel builds via `maturin`.
 
     Args:
@@ -171,7 +214,7 @@ def get_requires_for_build_wheel(config_settings: Mapping[str, object] | None = 
     return list(maturin.get_requires_for_build_wheel(config_settings))
 
 
-def get_requires_for_build_sdist(config_settings: Mapping[str, object] | None = None) -> list[str]:
+def get_requires_for_build_sdist(config_settings: ConfigSettings | None = None) -> list[str]:
     """Returns extra build requirements for sdist builds via `maturin`.
 
     Args:
@@ -184,7 +227,7 @@ def get_requires_for_build_sdist(config_settings: Mapping[str, object] | None = 
 
 
 def get_requires_for_build_editable(
-    config_settings: Mapping[str, object] | None = None,
+    config_settings: ConfigSettings | None = None,
 ) -> list[str]:
     """Returns extra build requirements for editable installs via `maturin`.
 
@@ -199,7 +242,7 @@ def get_requires_for_build_editable(
 
 def prepare_metadata_for_build_wheel(
     metadata_directory: str,
-    config_settings: Mapping[str, object] | None = None,
+    config_settings: ConfigSettings | None = None,
 ) -> str:
     """Prepares `.dist-info` metadata directory for wheel builds via `maturin`.
 
@@ -210,12 +253,13 @@ def prepare_metadata_for_build_wheel(
     Returns:
         Basename of the created `.dist-info` directory.
     """
-    return str(maturin.prepare_metadata_for_build_wheel(metadata_directory, config_settings))
+    eff = _effective_config_settings(config_settings)
+    return str(maturin.prepare_metadata_for_build_wheel(metadata_directory, eff))
 
 
 def prepare_metadata_for_build_editable(
     metadata_directory: str,
-    config_settings: Mapping[str, object] | None = None,
+    config_settings: ConfigSettings | None = None,
 ) -> str:
     """Prepares `.dist-info` metadata directory for editable installs via `maturin`.
 
@@ -226,12 +270,13 @@ def prepare_metadata_for_build_editable(
     Returns:
         Basename of the created `.dist-info` directory.
     """
-    return str(maturin.prepare_metadata_for_build_editable(metadata_directory, config_settings))
+    eff = _effective_config_settings(config_settings)
+    return str(maturin.prepare_metadata_for_build_editable(metadata_directory, eff))
 
 
 def build_wheel(
     wheel_directory: str,
-    config_settings: Mapping[str, object] | None = None,
+    config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
     """Builds a `libtpu` wheel bundling `libtpu._C`, `libtpu/libtpu.so`, and `libtpu/sdk.so`.
@@ -244,7 +289,8 @@ def build_wheel(
     Returns:
         Basename of the built `.whl` archive inside `wheel_directory`.
     """
-    wheel_filename = str(maturin.build_wheel(wheel_directory, config_settings, metadata_directory))
+    eff = _effective_config_settings(config_settings)
+    wheel_filename = str(maturin.build_wheel(wheel_directory, eff, metadata_directory))
     repo_root = Path(__file__).resolve().parent.parent
     inject_dropin_binaries_into_wheel(Path(wheel_directory) / wheel_filename, repo_root)
     return wheel_filename
@@ -252,7 +298,7 @@ def build_wheel(
 
 def build_editable(
     wheel_directory: str,
-    config_settings: Mapping[str, object] | None = None,
+    config_settings: ConfigSettings | None = None,
     metadata_directory: str | None = None,
 ) -> str:
     """Builds an editable `libtpu` wheel via `maturin`.
@@ -265,12 +311,13 @@ def build_editable(
     Returns:
         Basename of the built editable `.whl` archive inside `wheel_directory`.
     """
-    return str(maturin.build_editable(wheel_directory, config_settings, metadata_directory))
+    eff = _effective_config_settings(config_settings)
+    return str(maturin.build_editable(wheel_directory, eff, metadata_directory))
 
 
 def build_sdist(
     sdist_directory: str,
-    config_settings: Mapping[str, object] | None = None,
+    config_settings: ConfigSettings | None = None,
 ) -> str:
     """Builds a source distribution (`.tar.gz`) archive via `maturin`.
 

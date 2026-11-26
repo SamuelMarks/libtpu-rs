@@ -322,6 +322,7 @@ message BlockScalingConfig {
     optional int32 zero_idx = 2;
     repeated int64 strides = 3;
     repeated int64 steps = 4;
+    repeated int64 block_sizes = 5;
   }
   .xla.BlockScalingConfig.TensorBlockScalingConfig lhs = 1;
   .xla.BlockScalingConfig.TensorBlockScalingConfig rhs = 2;

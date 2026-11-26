@@ -1,7 +1,7 @@
 """Drop-in `libtpu.sdk.diagnostics` module providing offline parsers for TPU diagnostic artifacts.
 
 Replicates the exact functions (`read_compiler_metadata`, `read_stall_summaries`,
-`read_core_dump`) and protobuf wire schemas of `libtpu.sdk.diagnostics` in `sdk.so` (`v0.0.52`).
+`read_core_dump`) and protobuf wire schemas of `libtpu.sdk.diagnostics` in `sdk.so` (`v0.0.53.1`).
 """
 
 from __future__ import annotations
@@ -25,16 +25,112 @@ class CompilerMetadataReport(TypedDict):
     executable_fingerprint: str
 
 
+class CoreIdentifierDict(TypedDict):
+    """Parsed `TpuCoreIdentifier` dictionary in `CoreStateSummaryDict`."""
+
+    global_core_id: int
+    chip_id: int
+    core_on_chip_type: str
+    core_on_chip_index: int
+
+
+class _SequencerInfoRequired(TypedDict):
+    """Required fields of `SequencerInfoDict`."""
+
+    sequencer_type: str
+    sequencer_index: int
+
+
+class SequencerInfoDict(_SequencerInfoRequired, total=False):
+    """Parsed `SequencerInfo` dictionary in `CoreStateSummaryDict`."""
+
+    pc: int
+    tag: int
+    tracemark: int
+    program_id: int
+    run_id: int
+    hlo_location: str
+    hlo_detailed_info: str
+
+
+class QueuedProgramInfoDict(TypedDict):
+    """Parsed `QueuedProgramInfo` dictionary in `CoreStateSummaryDict`."""
+
+    run_id: int
+    launch_id: int
+    program_fingerprint: bytes
+
+
+class CompletedProgramInfoDict(TypedDict):
+    """Parsed `CompletedProgramInfo` dictionary in `CoreStateSummaryDict`."""
+
+    run_id: int
+    launch_id: int
+    name: str
+    program_fingerprint: bytes
+
+
+class _CoreStateSummaryRequired(TypedDict):
+    """Required fields of `CoreStateSummaryDict`."""
+
+    core_id: CoreIdentifierDict
+    xdb_server_running: bool
+    sequencer_info: list[SequencerInfoDict]
+    queued_program_info: list[QueuedProgramInfoDict]
+    recent_completions: list[CompletedProgramInfoDict]
+
+
+class CoreStateSummaryDict(_CoreStateSummaryRequired, total=False):
+    """Parsed `CurrentCoreStateSummary` dictionary in `StallSummaryReportDict`."""
+
+    program_fingerprint: bytes
+    launch_id: int
+    error_message: str
+
+
+class StallTriggerInfoDict(TypedDict):
+    """Parsed `StallTriggerInfo` dictionary in `StallArtifactMetadataDict`."""
+
+    source: str
+    description: str
+    timeout_ms: int
+    posted_host_id: int
+    trigger_time_unix_micros: int
+
+
+class _StallArtifactMetadataRequired(TypedDict):
+    """Required fields of `StallArtifactMetadataDict`."""
+
+    harvest_start_time_unix_micros: int
+    harvest_end_time_unix_micros: int
+    hostname: str
+    pid: int
+    local_host_id: int
+    host_count: int
+    chips_per_host: int
+    libtpu_build: str
+    triggers: list[StallTriggerInfoDict]
+
+
+class StallArtifactMetadataDict(_StallArtifactMetadataRequired, total=False):
+    """Parsed `StallArtifactMetadata` dictionary in `StallSummaryReportDict`."""
+
+    launch_id: int
+
+
 class _StallSummariesOptional(TypedDict, total=False):
-    """Optional `artifact_metadata` field for `StallSummariesReport`."""
+    """Optional `artifact_metadata` field for `StallSummaryReportDict`."""
 
-    artifact_metadata: dict[str, object]
+    artifact_metadata: StallArtifactMetadataDict
 
 
-class StallSummariesReport(_StallSummariesOptional):
+class StallSummaryReportDict(_StallSummariesOptional):
     """Stall summary dictionary returned by `read_stall_summaries`."""
 
-    core_states: dict[str, dict[str, object]]
+    core_states: dict[str, CoreStateSummaryDict]
+
+
+StallSummariesReport = StallSummaryReportDict
 
 
 class CoreDumpMachineInfo(TypedDict):
@@ -429,14 +525,15 @@ def read_compiler_metadata(path: str | os.PathLike[str]) -> CompilerMetadataRepo
     }
 
 
-def _parse_core_identifier(data: bytes) -> dict[str, object]:
+def _parse_core_identifier(data: bytes) -> CoreIdentifierDict:
     """Parses a `TpuCoreIdentifier` submessage into a dictionary.
 
     Args:
         data: Wire-encoded `TpuCoreIdentifier` bytes.
 
     Returns:
-        Dictionary with `global_core_id`, `chip_id`, `core_on_chip_type`, and `core_on_chip_index`.
+        `CoreIdentifierDict` with `global_core_id`, `chip_id`, `core_on_chip_type`,
+        and `core_on_chip_index`.
     """
     global_core_id = 0
     chip_id = 0
@@ -461,14 +558,14 @@ def _parse_core_identifier(data: bytes) -> dict[str, object]:
     }
 
 
-def _parse_sequencer_info(data: bytes) -> dict[str, object]:
+def _parse_sequencer_info(data: bytes) -> SequencerInfoDict:
     """Parses a `SequencerInfo` submessage into a dictionary.
 
     Args:
         data: Wire-encoded `SequencerInfo` bytes.
 
     Returns:
-        Dictionary with sequencer state fields.
+        `SequencerInfoDict` with sequencer state fields.
     """
     seq_type_num = 0
     seq_index = 0
@@ -500,7 +597,7 @@ def _parse_sequencer_info(data: bytes) -> dict[str, object]:
         elif fnum == 9 and wtype == 2 and isinstance(val, bytes):
             hlo_detailed_info = val.decode("utf-8")
 
-    out: dict[str, object] = {
+    out: SequencerInfoDict = {
         "sequencer_type": _SEQUENCER_TYPE_NAMES.get(seq_type_num, "TPU_SEQUENCER_TYPE_INVALID"),
         "sequencer_index": seq_index,
     }
@@ -521,14 +618,14 @@ def _parse_sequencer_info(data: bytes) -> dict[str, object]:
     return out
 
 
-def _parse_queued_program_info(data: bytes) -> dict[str, object]:
+def _parse_queued_program_info(data: bytes) -> QueuedProgramInfoDict:
     """Parses a `QueuedProgramInfo` submessage into a dictionary.
 
     Args:
         data: Wire-encoded `QueuedProgramInfo` bytes.
 
     Returns:
-        Dictionary with `run_id`, `launch_id`, and `program_fingerprint`.
+        `QueuedProgramInfoDict` with `run_id`, `launch_id`, and `program_fingerprint`.
     """
     run_id = 0
     launch_id = 0
@@ -547,14 +644,14 @@ def _parse_queued_program_info(data: bytes) -> dict[str, object]:
     }
 
 
-def _parse_completed_program_info(data: bytes) -> dict[str, object]:
+def _parse_completed_program_info(data: bytes) -> CompletedProgramInfoDict:
     """Parses a `CompletedProgramInfo` submessage into a dictionary.
 
     Args:
         data: Wire-encoded `CompletedProgramInfo` bytes.
 
     Returns:
-        Dictionary with `run_id`, `launch_id`, `name`, and `program_fingerprint`.
+        `CompletedProgramInfoDict` with `run_id`, `launch_id`, `name`, and `program_fingerprint`.
     """
     run_id = 0
     launch_id = 0
@@ -577,23 +674,23 @@ def _parse_completed_program_info(data: bytes) -> dict[str, object]:
     }
 
 
-def _parse_core_state_summary(data: bytes) -> dict[str, object]:
+def _parse_core_state_summary(data: bytes) -> CoreStateSummaryDict:
     """Parses a `CurrentCoreStateSummary` submessage into a dictionary.
 
     Args:
         data: Wire-encoded `CurrentCoreStateSummary` bytes.
 
     Returns:
-        Dictionary matching `ConvertCoreStateSummaryToDict` in `sdk.so`.
+        `CoreStateSummaryDict` matching `ConvertCoreStateSummaryToDict` in `sdk.so`.
     """
     core_id_bytes = b""
-    sequencer_info: list[dict[str, object]] = []
+    sequencer_info: list[SequencerInfoDict] = []
     xdb_server_running = False
     program_fingerprint: bytes | None = None
     launch_id: int | None = None
-    queued_programs: list[dict[str, object]] = []
+    queued_programs: list[QueuedProgramInfoDict] = []
     error_message: str | None = None
-    recent_completions: list[dict[str, object]] = []
+    recent_completions: list[CompletedProgramInfoDict] = []
 
     for fnum, wtype, val in _iter_proto_fields(data):
         if fnum == 1 and wtype == 2 and isinstance(val, bytes):
@@ -613,7 +710,7 @@ def _parse_core_state_summary(data: bytes) -> dict[str, object]:
         elif fnum == 8 and wtype == 2 and isinstance(val, bytes):
             recent_completions.append(_parse_completed_program_info(val))
 
-    out: dict[str, object] = {
+    out: CoreStateSummaryDict = {
         "core_id": _parse_core_identifier(core_id_bytes),
         "xdb_server_running": xdb_server_running,
         "sequencer_info": sequencer_info,
@@ -629,14 +726,14 @@ def _parse_core_state_summary(data: bytes) -> dict[str, object]:
     return out
 
 
-def _parse_stall_trigger_info(data: bytes) -> dict[str, object]:
+def _parse_stall_trigger_info(data: bytes) -> StallTriggerInfoDict:
     """Parses a `StallTriggerInfo` submessage into a dictionary.
 
     Args:
         data: Wire-encoded `StallTriggerInfo` bytes.
 
     Returns:
-        Dictionary with `source`, `description`, `timeout_ms`, `posted_host_id`,
+        `StallTriggerInfoDict` with `source`, `description`, `timeout_ms`, `posted_host_id`,
         and `trigger_time_unix_micros`.
     """
     source = ""
@@ -664,18 +761,18 @@ def _parse_stall_trigger_info(data: bytes) -> dict[str, object]:
     }
 
 
-def _parse_stall_artifact_metadata(data: bytes) -> dict[str, object]:
+def _parse_stall_artifact_metadata(data: bytes) -> StallArtifactMetadataDict:
     """Parses a `StallArtifactMetadata` submessage into a dictionary.
 
     Args:
         data: Wire-encoded `StallArtifactMetadata` bytes.
 
     Returns:
-        Dictionary matching `ConvertStallArtifactMetadataToDict` in `sdk.so`.
+        `StallArtifactMetadataDict` matching `ConvertStallArtifactMetadataToDict` in `sdk.so`.
     """
     harvest_start = 0
     harvest_end = 0
-    triggers: list[dict[str, object]] = []
+    triggers: list[StallTriggerInfoDict] = []
     hostname = ""
     pid = 0
     local_host_id = 0
@@ -706,7 +803,7 @@ def _parse_stall_artifact_metadata(data: bytes) -> dict[str, object]:
         elif fnum == 10 and wtype == 2 and isinstance(val, bytes):
             libtpu_build = val.decode("utf-8")
 
-    out: dict[str, object] = {
+    out: StallArtifactMetadataDict = {
         "harvest_start_time_unix_micros": harvest_start,
         "harvest_end_time_unix_micros": harvest_end,
         "hostname": hostname,
@@ -722,7 +819,7 @@ def _parse_stall_artifact_metadata(data: bytes) -> dict[str, object]:
     return out
 
 
-def read_stall_summaries(path: str | os.PathLike[str]) -> StallSummariesReport:
+def read_stall_summaries(path: str | os.PathLike[str]) -> StallSummaryReportDict:
     """Read an `AllCoreStateSummaries` binary proto from disk.
 
     Args:
@@ -741,8 +838,8 @@ def read_stall_summaries(path: str | os.PathLike[str]) -> StallSummariesReport:
     raw = _unwrap_riegeli_records(file_path.read_bytes())
     try:
         fields = _iter_proto_fields(raw)
-        core_states: dict[str, dict[str, object]] = {}
-        artifact_metadata: dict[str, object] | None = None
+        core_states: dict[str, CoreStateSummaryDict] = {}
+        artifact_metadata: StallArtifactMetadataDict | None = None
         for fnum, wtype, val in fields:
             if fnum == 1 and wtype == 2 and isinstance(val, bytes):
                 entry_key = ""
@@ -758,7 +855,7 @@ def read_stall_summaries(path: str | os.PathLike[str]) -> StallSummariesReport:
     except ValueError as err:
         raise ValueError(f"Failed to parse AllCoreStateSummaries from {file_path}") from err
 
-    out: StallSummariesReport = {"core_states": core_states}
+    out: StallSummaryReportDict = {"core_states": core_states}
     if artifact_metadata is not None:
         out["artifact_metadata"] = artifact_metadata
     return out
@@ -1100,13 +1197,21 @@ def compute_torus_route_hops(
 
 __all__: list[str] = [
     "CompilerMetadataReport",
+    "CompletedProgramInfoDict",
     "CoreDumpAnalyzerReport",
     "CoreDumpCoreStateEntry",
     "CoreDumpHardware",
     "CoreDumpMachineInfo",
     "CoreDumpReport",
     "CoreDumpTimestamps",
+    "CoreIdentifierDict",
+    "CoreStateSummaryDict",
+    "QueuedProgramInfoDict",
+    "SequencerInfoDict",
+    "StallArtifactMetadataDict",
     "StallSummariesReport",
+    "StallSummaryReportDict",
+    "StallTriggerInfoDict",
     "compute_torus_route_hops",
     "emit_proto_schema",
     "invoke_coordination_grpc",

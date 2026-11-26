@@ -1559,6 +1559,39 @@ pub fn extract_elf64_static_csr_maps(
     Ok(result)
 }
 
+/// Decompiles all carved [`DescriptorTableRecord`] schemas and writes each `.proto` file under `out_dir`.
+///
+/// # Arguments
+///
+/// * `records` - Slice of carved [`DescriptorTableRecord`] entries from `protodesc_cold`.
+/// * `out_dir` - Root output directory where relative `.proto` paths are written.
+///
+/// # Errors
+///
+/// Returns [`LibTpuError::IoError`] if creating parent directories or writing a `.proto` file fails.
+pub fn export_decompiled_protos_to_dir(
+    records: &[DescriptorTableRecord],
+    out_dir: &std::path::Path,
+) -> LibTpuResult<usize> {
+    let mut written = 0usize;
+    for rec in records {
+        let Some(rel_name) = rec.file_descriptor.name.as_deref() else {
+            continue;
+        };
+        let target_path = out_dir.join(rel_name);
+        let parent = target_path.parent().unwrap_or(out_dir);
+        std::fs::create_dir_all(parent)?;
+        let rendered = decompile_file_descriptor_to_proto(&rec.file_descriptor);
+        let unchanged =
+            std::fs::read_to_string(&target_path).is_ok_and(|existing| existing == rendered);
+        if !unchanged {
+            std::fs::write(&target_path, rendered)?;
+        }
+        written += 1;
+    }
+    Ok(written)
+}
+
 #[cfg(test)]
 #[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -2439,19 +2472,79 @@ mod tests {
         );
         assert!(decode_encoded_gcsr_brotli_csr_map(b"invalid-brotli").is_err());
 
-        // Verify against the real cached 467.5 MB official libtpu.so when present on disk
+        let expected_proto_count = crate::elf::parse_golden_proto_descriptors(include_str!(
+            "../../../../docs/reverse_engineering/golden_proto_descriptors.json"
+        ))?
+        .proto_files_count;
+
+        let tmp_export_dir =
+            std::env::temp_dir().join(format!("libtpu_proto_export_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_export_dir);
+        let synth_records = vec![
+            DescriptorTableRecord {
+                table_vaddr: 0,
+                descriptor_vaddr: 0,
+                descriptor_size: 0,
+                file_descriptor: FileDescriptorProto::default(),
+                raw_wire_bytes: Vec::new(),
+            },
+            DescriptorTableRecord {
+                table_vaddr: 8,
+                descriptor_vaddr: 16,
+                descriptor_size: 12,
+                file_descriptor: FileDescriptorProto {
+                    name: Some(String::from("sub/sample.proto")),
+                    package: Some(String::from("sample")),
+                    syntax: Some(String::from("proto3")),
+                    ..FileDescriptorProto::default()
+                },
+                raw_wire_bytes: Vec::new(),
+            },
+            DescriptorTableRecord {
+                table_vaddr: 16,
+                descriptor_vaddr: 32,
+                descriptor_size: 12,
+                file_descriptor: FileDescriptorProto {
+                    name: Some(String::from("root_only.proto")),
+                    syntax: Some(String::from("proto3")),
+                    ..FileDescriptorProto::default()
+                },
+                raw_wire_bytes: Vec::new(),
+            },
+        ];
+        assert_eq!(
+            export_decompiled_protos_to_dir(&synth_records, &tmp_export_dir)?,
+            2
+        );
+        assert_eq!(
+            export_decompiled_protos_to_dir(&synth_records, &tmp_export_dir)?,
+            2
+        );
+        let blocker_file = tmp_export_dir.join("blocker_file");
+        std::fs::write(&blocker_file, b"x")?;
+        assert!(export_decompiled_protos_to_dir(&synth_records, &blocker_file).is_err());
+        let dir_target = tmp_export_dir.join("dir_target");
+        std::fs::create_dir_all(dir_target.join("root_only.proto"))?;
+        assert!(export_decompiled_protos_to_dir(&synth_records, &dir_target).is_err());
+        let _ = std::fs::remove_dir_all(&tmp_export_dir);
+
+        // Verify against the real cached 451.9 MB official 0.0.53.1 libtpu.so when present on disk
         let real_so = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.cache/wheels/extracted/0.0.52/cp311/manylinux_2_31_x86_64/libtpu.so");
+            .join("../../.cache/wheels/0.0.53.1/libtpu.so");
         if real_so.exists() {
             let raw_elf = std::fs::read(&real_so).map_err(|e| LibTpuError::BinaryFormatError {
                 reason: format!("read real libtpu.so failed: {e}"),
             })?;
             let protos = extract_elf64_descriptor_table_protos(&raw_elf)?;
-            assert_eq!(protos.len(), 738);
+            assert_eq!(protos.len(), expected_proto_count);
+            let proto_out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/reverse_engineering/protos");
+            let exported = export_decompiled_protos_to_dir(&protos, &proto_out)?;
+            assert_eq!(exported, expected_proto_count);
             let fds: Vec<FileDescriptorProto> =
                 protos.into_iter().map(|r| r.file_descriptor).collect();
             let topo = topological_sort_file_descriptors(&fds)?;
-            assert_eq!(topo.len(), 738);
+            assert_eq!(topo.len(), expected_proto_count);
 
             let toc = extract_elf64_filewrapper_toc_entries(&raw_elf)?;
             assert_eq!(toc.len(), 229);
@@ -2766,9 +2859,9 @@ mod tests {
         assert_eq!(synth_maps.get(&StaticCsrFamily::Vlc).map(Vec::len), Some(1));
         assert_eq!(synth_maps.get(&StaticCsrFamily::Pfc).map(Vec::len), Some(0));
 
-        // 5. Real cached 467.5 MB libtpu.so verification
+        // 5. Real cached 451.9 MB libtpu.so (0.0.53.1) verification
         let real_so = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.cache/wheels/extracted/0.0.52/cp311/manylinux_2_31_x86_64/libtpu.so");
+            .join("../../.cache/wheels/0.0.53.1/libtpu.so");
         if real_so.exists() {
             let raw_elf = std::fs::read(&real_so).map_err(|e| LibTpuError::BinaryFormatError {
                 reason: format!("read real libtpu.so failed: {e}"),
@@ -3061,8 +3154,12 @@ mod tests {
         .map_err(|e| LibTpuError::BinaryFormatError {
             reason: e.to_string(),
         })?;
+        let expected_proto_count = crate::elf::parse_golden_proto_descriptors(include_str!(
+            "../../../../docs/reverse_engineering/golden_proto_descriptors.json"
+        ))?
+        .proto_files_count;
         let sorted = topological_sort_file_descriptors(&embedded.file)?;
-        assert_eq!(sorted.len(), 738);
+        assert_eq!(sorted.len(), expected_proto_count);
         for fd in &sorted {
             let text = decompile_file_descriptor_to_proto(fd);
             assert!(text.starts_with("syntax = "));

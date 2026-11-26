@@ -2,11 +2,14 @@
 
 import enum
 import types
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Protocol, TypeAlias, TypedDict, overload, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
+
+from libtpu._interop import PyCapsule as PyCapsule
 
 __version__: str
 
@@ -28,13 +31,18 @@ _NumericScalar: TypeAlias = (
 )
 TpuArray: TypeAlias = npt.NDArray[_NumericScalar]
 
-class ArrayInterfaceDict(TypedDict):
-    """NumPy `__array_interface__` v3 descriptor dictionary."""
+class _ArrayInterfaceRequired(TypedDict):
+    """Required keys of `ArrayInterfaceDict`."""
 
     shape: tuple[int, ...]
     typestr: str
-    data: tuple[int, bool]
+    data: bytes | tuple[int, bool]
     version: int
+
+class ArrayInterfaceDict(_ArrayInterfaceRequired, total=False):
+    """NumPy `__array_interface__` v3 descriptor dictionary."""
+
+    readonly: bool
 
 class ExecutableCostAnalysis(TypedDict, total=False):
     """Cost analysis dictionary returned by `TpuExecutable.cost_analysis()`."""
@@ -48,33 +56,14 @@ class ExecutableCostAnalysis(TypedDict, total=False):
 class SupportsDLPack(Protocol):
     """Protocol for DLPack v1.0 tensor producers implementing `__dlpack__`."""
 
-    def __dlpack__(
-        self,
-        stream: int | None = None,
-        *,
-        max_version: tuple[int, int] | None = None,
-        dl_device: tuple[int, int] | None = None,
-        copy: bool | None = None,
-    ) -> object:
-        """Exports a `"dltensor"` `PyCapsule` wrapping a `DLManagedTensor`.
-
-        Args:
-            stream: Optional stream identifier.
-            max_version: Optional maximum `(major, minor)` DLPack version.
-            dl_device: Optional target `(device_type, device_id)` tuple.
-            copy: Optional copy control flag.
-        """
-        ...
-
-    def __dlpack_device__(self) -> tuple[int, int]:
-        """Returns the `(device_type, device_id)` DLPack device tuple."""
-        ...
+    __dlpack__: Callable[..., PyCapsule]
+    __dlpack_device__: Callable[[], tuple[int, int]]
 
 class SupportsArrayInterface(Protocol):
     """Protocol for host array producers exposing `__array_interface__`."""
 
     @property
-    def __array_interface__(self) -> Mapping[str, object]:
+    def __array_interface__(self) -> ArrayInterfaceDict:
         """Returns the NumPy `__array_interface__` descriptor mapping."""
         ...
 
@@ -281,7 +270,7 @@ class TpuBuffer:
         max_version: tuple[int, int] | None = None,
         dl_device: tuple[int, int] | None = None,
         copy: bool | None = None,
-    ) -> object:
+    ) -> PyCapsule:
         """Returns a `CPython` `PyCapsule` (`"dltensor"`) wrapping a heap `DLManagedTensor`.
 
         Args:
@@ -300,11 +289,18 @@ class TpuBuffer:
         """Enters a context manager block returning `self`."""
         ...
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `TpuBuffer` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
         ...
 
@@ -388,11 +384,18 @@ class TpuExecutable:
         """Enters a context manager block returning `self`."""
         ...
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `TpuExecutable` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
         ...
 
@@ -423,11 +426,18 @@ class TpuProfiler:
         """Enters a context manager block returning `self`."""
         ...
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `TpuProfiler` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
         ...
 
@@ -515,11 +525,18 @@ class TpuTopology:
         """Enters a context manager block returning `self`."""
         ...
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `TpuTopology` upon exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
         ...
 
@@ -648,11 +665,18 @@ class TpuClient:
         """Enters a context manager block returning `self`."""
         ...
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `TpuClient` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
         ...
 
@@ -755,11 +779,18 @@ class PhaseCompiler:
         """Enters a context manager block returning `self`."""
         ...
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `PhaseCompiler` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
         ...
 
@@ -799,11 +830,18 @@ class MegascaleContext:
         """Enters a context manager block returning `self`."""
         ...
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `MegascaleContext` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
         ...
 
@@ -862,12 +900,18 @@ class Communicator:
         """
         ...
 
-    def collective_permute(self, send_buf: TpuBuffer, recv_buf: TpuBuffer) -> None:
+    def collective_permute(
+        self,
+        send_buf: TpuBuffer,
+        recv_buf: TpuBuffer,
+        source_target_pairs: Sequence[tuple[int, int]] | None = None,
+    ) -> None:
         """Executes a `CollectivePermute` via `PJRT_Communicator_CollectivePermute`.
 
         Args:
             send_buf: Source `TpuBuffer`.
             recv_buf: Destination `TpuBuffer`.
+            source_target_pairs: Optional `(src_rank, dst_rank)` routing pairs.
         """
         ...
 
@@ -883,11 +927,18 @@ class Communicator:
         """Enters a context manager block returning `self`."""
         ...
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `Communicator` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
         ...
 
@@ -915,6 +966,31 @@ class EmbeddingEngine:
         """
         ...
 
+    def execute_partitioner(self, config_bytes: bytes) -> bytes:
+        """Executes `TpuEmbeddingEngine_ExecutePartitioner` preserving binary protobuf bytes.
+
+        Args:
+            config_bytes: Binary `TpuEmbeddingConfigurationProto` wire bytes.
+        """
+        ...
+
+    def configure_memory(self, config_bytes: bytes, num_inputs: int = 1) -> bytes:
+        """Executes `TpuEmbeddingEngine_ConfigureMemory` preserving `0x00`/`0xFF` binary bytes.
+
+        Args:
+            config_bytes: Binary common configuration wire bytes.
+            num_inputs: Number of embedding table inputs.
+        """
+        ...
+
+    def collate_memory(self, task_configs: Sequence[bytes]) -> bytes:
+        """Collates per-task HBM memory configs via `TpuEmbeddingEngine_CollateMemory`.
+
+        Args:
+            task_configs: Sequence of serialized per-task memory config protobufs.
+        """
+        ...
+
     def close(self) -> None:
         """Frees the native `TpuEmbeddingEngineState*` handle."""
         ...
@@ -923,19 +999,170 @@ class EmbeddingEngine:
         """Enters a context manager block returning `self`."""
         ...
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `EmbeddingEngine` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
         ...
 
-def get_pjrt_c_api_capsule() -> object:
+class RawBuffer:
+    """Strongly-typed RAII wrapper over `PJRT_RawBuffer*` (`PJRT_RawBuffer_Extension`)."""
+
+    @classmethod
+    def from_buffer(cls, buffer: TpuBuffer) -> RawBuffer:
+        """Creates a `RawBuffer` alias of `buffer` via `PJRT_RawBuffer_CreateRawAliasOfBuffer`.
+
+        Args:
+            buffer: Backing `TpuBuffer` handle.
+        """
+        ...
+
+    def host_pointer(self) -> int:
+        """Queries the raw device/host address via `PJRT_RawBuffer_GetHostPointer`."""
+        ...
+
+    def on_device_size_bytes(self) -> int:
+        """Queries aligned HBM byte size via `PJRT_RawBuffer_GetOnDeviceSizeInBytes`."""
+        ...
+
+    def memory_space(self) -> int:
+        """Queries the owning `PJRT_Memory*` pointer via `PJRT_RawBuffer_GetMemorySpace`."""
+        ...
+
+    def copy_raw_host_to_device(self, src: bytes, offset: int = 0) -> None:
+        """Writes `src` into device HBM at byte `offset` via `PJRT_RawBuffer_CopyRawHostToDevice`.
+
+        Args:
+            src: Source host byte slice.
+            offset: Byte offset within the raw device buffer.
+        """
+        ...
+
+    def copy_raw_device_to_host(self, size: int, offset: int = 0) -> bytes:
+        """Reads `size` bytes from device HBM at `offset` via `PJRT_RawBuffer_CopyRawDeviceToHost`.
+
+        Args:
+            size: Number of bytes to read from device HBM.
+            offset: Byte offset within the raw device buffer.
+        """
+        ...
+
+    def close(self) -> None:
+        """Destroys the `PJRT_RawBuffer*` handle via `PJRT_RawBuffer_Destroy`."""
+        ...
+
+    def __enter__(self) -> RawBuffer:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
+        """Closes this `RawBuffer` when exiting a context manager block.
+
+        Args:
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
+        """
+        ...
+
+TpuRawBuffer = RawBuffer
+
+class MultiSliceConfig:
+    """Strongly-typed RAII wrapper over `PJRT_MultiSlice_Config*`."""
+
+    def __init__(self) -> None:
+        """Creates a `PJRT_MultiSlice_Config*` handle via `PJRT_Megascale_CreateDefaultConfig`."""
+        ...
+
+    def num_slices(self) -> int:
+        """Queries slice count via `PJRT_MultiSlice_Config_NumSlices`."""
+        ...
+
+    def num_devices_per_slice(self) -> int:
+        """Queries devices-per-slice via `PJRT_MultiSlice_Config_NumDevicesPerSlice`."""
+        ...
+
+    def slice_id(self) -> int:
+        """Queries local slice ID via `PJRT_MultiSlice_Config_SliceId`."""
+        ...
+
+    def serialize(self) -> bytes:
+        """Serializes this configuration via `PJRT_MultiSlice_Config_Serialize`."""
+        ...
+
+    def close(self) -> None:
+        """Destroys the `PJRT_MultiSlice_Config*` via `PJRT_MultiSlice_Config_Destroy`."""
+        ...
+
+    def __enter__(self) -> MultiSliceConfig:
+        """Enters a context manager block returning `self`."""
+        ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
+        """Closes this `MultiSliceConfig` when exiting a context manager block.
+
+        Args:
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
+        """
+        ...
+
+TpuMultiSliceConfig = MultiSliceConfig
+
+def register_xla_transform(name: str, pass_id: int = 1) -> None:
+    """Registers a custom XLA HLO transform pass via `PJRT_XlaTransform_Register`.
+
+    Args:
+        name: Unique transform pass name.
+        pass_id: Non-zero opaque pass identifier (`1` by default).
+    """
+    ...
+
+def unregister_xla_transform(name: str) -> None:
+    """Unregisters a custom XLA HLO transform pass via `PJRT_XlaTransform_Unregister`.
+
+    Args:
+        name: Previously registered transform pass name.
+    """
+    ...
+
+def list_xla_transforms() -> list[str]:
+    """Lists all registered XLA HLO transform pass names via `PJRT_XlaTransform_List`."""
+    ...
+
+def _cargo_target_roots(repo_root: Path) -> list[Path]:
+    """Returns candidate Cargo `target` directories for local workspace builds.
+
+    Args:
+        repo_root: Repository root directory.
+    """
+    ...
+
+def get_pjrt_c_api_capsule() -> PyCapsule:
     """Returns a `PyCapsule` (`"pjrt_c_api"`) wrapping `GetPjrtApi()`."""
     ...
 
-def get_sdk_c_api_capsule() -> object:
+def get_sdk_c_api_capsule() -> PyCapsule:
     """Returns a `PyCapsule` (`"libtpu.sdk._C_API"`) wrapping `GetLibtpuSdkApi()`."""
     ...
 
@@ -1049,7 +1276,7 @@ def execute_barnacore_program(executable: TpuExecutable, optimizer_algorithm: in
     ...
 
 def from_dlpack(
-    ext_tensor: SupportsDLPack | object,
+    ext_tensor: SupportsDLPack | npt.NDArray[np.generic] | PyCapsule,
     *,
     client: TpuClient | None = None,
     device_id: int = 0,
@@ -1057,7 +1284,7 @@ def from_dlpack(
     """Imports an external tensor or `"dltensor"` `PyCapsule` into a `TpuBuffer` via `DLPack` v1.0.
 
     Args:
-        ext_tensor: Producer object implementing `__dlpack__()` or a raw `"dltensor"` `PyCapsule`.
+        ext_tensor: Producer implementing `__dlpack__()` or a raw `"dltensor"` `PyCapsule`.
         client: Optional existing `TpuClient`.
         device_id: Destination logical TPU device ID.
     """

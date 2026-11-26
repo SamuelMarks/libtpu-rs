@@ -1,8 +1,8 @@
 //! Shared PJRT and `LibtpuSdk` FFI dispatchers and error/buffer helpers.
 
 use crate::pjrt_types::{
-    PJRT_Buffer, PJRT_Client, PJRT_Device, PJRT_DeviceDescription, PJRT_Error, PJRT_Memory,
-    PJRT_TopologyDescription,
+    PJRT_Buffer, PJRT_Client, PJRT_Device, PJRT_DeviceDescription, PJRT_Error, PJRT_Event,
+    PJRT_Memory, PJRT_TopologyDescription,
 };
 use crate::tpu_driver_types::LibtpuSdk_Error;
 use libtpu_core::error::LibTpuError;
@@ -40,6 +40,14 @@ pub(crate) fn to_c_string(text: &str) -> CString {
 pub fn box_pjrt_error(error: LibTpuError) -> *mut PJRT_Error {
     let c_message = to_c_string(&error.to_string());
     Box::into_raw(Box::new(PJRT_Error { error, c_message }))
+}
+
+/// Allocates a heap-backed, immediately completed [`PJRT_Event`].
+#[must_use]
+pub(crate) fn box_ready_event() -> *mut PJRT_Event {
+    Box::into_raw(Box::new(PJRT_Event {
+        inner: libtpu_core::pjrt::PjrtCoreEvent::ready_ok(),
+    }))
 }
 
 /// Allocates a heap-backed [`LibtpuSdk_Error`] from a [`LibTpuError`].
@@ -520,7 +528,7 @@ pub(crate) fn alloc_shaped_pjrt_buffer(
     let on_dev = shape.on_device_byte_size();
     let addr = hal
         .allocate_device_memory(dev_id, libtpu_core::types::MemoryKind::DeviceHbm, on_dev)
-        .unwrap_or(libtpu_core::types::DeviceAddress(0x1000));
+        .unwrap_or(libtpu_core::types::DeviceAddress(0x10_0000));
     let core_buf = libtpu_core::pjrt::PjrtCoreBuffer::new(dev_id, mem_id, shape, addr, hal);
     Box::into_raw(Box::new(PJRT_Buffer::new(
         core_buf,
@@ -540,6 +548,160 @@ pub(crate) fn alloc_default_pjrt_buffer(
     memory_ptr: *mut PJRT_Memory,
 ) -> *mut PJRT_Buffer {
     alloc_shaped_pjrt_buffer(ptr::null_mut(), device_ptr, memory_ptr, 11, ptr::null(), 0)
+}
+
+/// Global registry of binary-safe heap byte buffers allocated via [`alloc_c_byte_buf`].
+static LIVE_C_BYTE_BUFS: std::sync::OnceLock<
+    parking_lot::Mutex<std::collections::BTreeMap<usize, Box<[u8]>>>,
+> = std::sync::OnceLock::new();
+
+/// Returns a reference to the process-wide [`LIVE_C_BYTE_BUFS`] map.
+fn live_c_byte_bufs() -> &'static parking_lot::Mutex<std::collections::BTreeMap<usize, Box<[u8]>>> {
+    LIVE_C_BYTE_BUFS.get_or_init(|| parking_lot::Mutex::new(std::collections::BTreeMap::new()))
+}
+
+/// Allocates a binary-safe heap byte buffer preserving embedded `0x00` and `0x80..=0xFF` bytes
+/// verbatim while appending a trailing `0x00` sentinel for C-string callers (`TpuConfigurationApi_FreeCharArray`).
+///
+/// # Arguments
+///
+/// * `bytes` - Raw binary payload slice to copy into heap storage.
+#[must_use]
+pub(crate) fn alloc_c_byte_buf(bytes: &[u8]) -> *mut c_char {
+    let mut vec_buf = Vec::with_capacity(bytes.len().saturating_add(1));
+    vec_buf.extend_from_slice(bytes);
+    vec_buf.push(0);
+    let mut boxed = vec_buf.into_boxed_slice();
+    let raw_ptr = boxed.as_mut_ptr().cast::<c_char>();
+    live_c_byte_bufs().lock().insert(raw_ptr as usize, boxed);
+    raw_ptr
+}
+
+/// Frees a heap buffer previously returned by [`alloc_c_byte_buf`] or `CString::into_raw`.
+///
+/// # Arguments
+///
+/// * `ptr` - Pointer to heap buffer, or null.
+///
+/// # Safety
+///
+/// If `ptr` is non-null and was not allocated by [`alloc_c_byte_buf`], it must have been allocated
+/// via `CString::into_raw`.
+pub(crate) unsafe fn free_c_byte_buf(ptr: *mut c_char) {
+    if ptr.is_null() {
+        return;
+    }
+    if live_c_byte_bufs().lock().remove(&(ptr as usize)).is_some() {
+        return;
+    }
+    // SAFETY: Caller guarantees non-registry `ptr` originated from `CString::into_raw`.
+    unsafe {
+        drop(CString::from_raw(ptr));
+    }
+}
+
+/// Global type-indexed set of live opaque extension/driver handles allocated on the Rust heap.
+static LIVE_TYPED_HANDLES: std::sync::OnceLock<
+    parking_lot::Mutex<std::collections::BTreeSet<(std::any::TypeId, usize)>>,
+> = std::sync::OnceLock::new();
+
+/// Returns a reference to the process-wide [`LIVE_TYPED_HANDLES`] registry.
+fn live_typed_handles()
+-> &'static parking_lot::Mutex<std::collections::BTreeSet<(std::any::TypeId, usize)>> {
+    LIVE_TYPED_HANDLES.get_or_init(|| parking_lot::Mutex::new(std::collections::BTreeSet::new()))
+}
+
+/// Inserts `(type_id, addr)` into [`LIVE_TYPED_HANDLES`].
+///
+/// # Arguments
+///
+/// * `type_id` - Rust [`std::any::TypeId`] of the boxed handle type.
+/// * `addr` - Heap pointer address cast to `usize`.
+fn register_live_handle_entry(type_id: std::any::TypeId, addr: usize) {
+    live_typed_handles().lock().insert((type_id, addr));
+}
+
+/// Checks whether `(type_id, addr)` is non-zero and present in [`LIVE_TYPED_HANDLES`].
+///
+/// # Arguments
+///
+/// * `type_id` - Rust [`std::any::TypeId`] of the boxed handle type.
+/// * `addr` - Candidate pointer address cast to `usize`.
+#[must_use]
+fn contains_live_handle_entry(type_id: std::any::TypeId, addr: usize) -> bool {
+    addr != 0 && live_typed_handles().lock().contains(&(type_id, addr))
+}
+
+/// Removes `(type_id, addr)` from [`LIVE_TYPED_HANDLES`], returning `true` when it was present.
+///
+/// # Arguments
+///
+/// * `type_id` - Rust [`std::any::TypeId`] of the boxed handle type.
+/// * `addr` - Candidate pointer address cast to `usize`.
+#[must_use]
+fn remove_live_handle_entry(type_id: std::any::TypeId, addr: usize) -> bool {
+    addr != 0 && live_typed_handles().lock().remove(&(type_id, addr))
+}
+
+/// Boxes `value` on the heap, records its typed address in [`LIVE_TYPED_HANDLES`], and returns `*mut T`.
+///
+/// # Arguments
+///
+/// * `value` - Owned handle instance to box and register.
+#[must_use]
+pub(crate) fn box_registered_handle<T: 'static>(value: T) -> *mut T {
+    let raw = Box::into_raw(Box::new(value));
+    register_live_handle_entry(std::any::TypeId::of::<T>(), raw as usize);
+    raw
+}
+
+/// Checks whether `ptr` is currently registered as a live `T` handle in [`LIVE_TYPED_HANDLES`].
+///
+/// # Arguments
+///
+/// * `ptr` - Candidate handle pointer to validate.
+#[must_use]
+pub(crate) fn is_live_handle<T: 'static>(ptr: *const T) -> bool {
+    contains_live_handle_entry(std::any::TypeId::of::<T>(), ptr as usize)
+}
+
+/// Borrows `ptr` as `&T` if and only if `ptr` is registered in [`LIVE_TYPED_HANDLES`].
+///
+/// # Arguments
+///
+/// * `ptr` - Candidate handle pointer to validate and borrow.
+#[must_use]
+pub(crate) fn borrow_live_handle<'a, T: 'static>(ptr: *const T) -> Option<&'a T> {
+    is_live_handle(ptr).then(|| {
+        // SAFETY: `ptr` was allocated via `box_registered_handle::<T>` and has not been reclaimed.
+        unsafe { &*ptr }
+    })
+}
+
+/// Mutably borrows `ptr` as `&mut T` if and only if `ptr` is registered in [`LIVE_TYPED_HANDLES`].
+///
+/// # Arguments
+///
+/// * `ptr` - Candidate handle pointer to validate and mutably borrow.
+#[must_use]
+pub(crate) fn borrow_live_handle_mut<'a, T: 'static>(ptr: *mut T) -> Option<&'a mut T> {
+    is_live_handle(ptr.cast_const()).then(|| {
+        // SAFETY: `ptr` was allocated via `box_registered_handle::<T>` and caller holds exclusive C API access.
+        unsafe { &mut *ptr }
+    })
+}
+
+/// Unregisters and reclaims `Box<T>` if `ptr` is currently live in [`LIVE_TYPED_HANDLES`].
+///
+/// # Arguments
+///
+/// * `ptr` - Candidate handle pointer to unregister and reclaim.
+#[must_use]
+pub(crate) fn take_live_handle<T: 'static>(ptr: *mut T) -> Option<Box<T>> {
+    remove_live_handle_entry(std::any::TypeId::of::<T>(), ptr as usize).then(|| {
+        // SAFETY: `ptr` was allocated via `box_registered_handle::<T>` and was just removed once.
+        unsafe { Box::from_raw(ptr) }
+    })
 }
 
 /// Wrapper allowing static `*const c_char` arrays in `static` items.
@@ -583,7 +745,7 @@ pub(crate) static GLOBAL_PLUGIN_ATTRIBUTES: [crate::pjrt_types::PJRT_NamedValue;
         name: c"xla_tpu_version".as_ptr(),
         name_size: 15,
         value_type_and_pad: 1,
-        value_payload: 52,
+        value_payload: 53,
         value_size: 1,
     },
     crate::pjrt_types::PJRT_NamedValue {

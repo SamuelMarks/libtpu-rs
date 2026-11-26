@@ -6,7 +6,31 @@
 
 #include "libtpu.hpp"
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+
+/**
+ * @brief Reads `"proto_files_count"` from `golden_proto_descriptors.json`.
+ * @return Parsed descriptor count (or `0` if missing).
+ */
+static size_t read_golden_proto_files_count() {
+  std::FILE *fp = std::fopen(LIBTPU_GOLDEN_PROTO_DESC_PATH, "rb");
+  if (fp == nullptr) {
+    return 0;
+  }
+  char header_buf[512] = {0};
+  const size_t nread = std::fread(header_buf, 1, sizeof(header_buf) - 1, fp);
+  std::fclose(fp);
+  header_buf[nread] = '\0';
+  const char *key = "\"proto_files_count\":";
+  const char *pos = std::strstr(header_buf, key);
+  if (pos == nullptr) {
+    return 0;
+  }
+  return static_cast<size_t>(
+      std::strtoull(pos + std::strlen(key), nullptr, 10));
+}
 
 /**
  * @brief C debug callback trampoline incrementing an `int32_t` counter at
@@ -49,7 +73,7 @@ int main() {
   // 1. Verify C ABI PJRT vtable header
   const PJRT_Api *api = GetPjrtApi();
   if (api == nullptr || api->struct_size != 1144 ||
-      api->pjrt_api_version.minor_version != 116) {
+      api->pjrt_api_version.minor_version != 117) {
     return 1;
   }
   TfTpu_Initialize(true, 0, nullptr);
@@ -395,9 +419,9 @@ int main() {
       -1,
       0};
   (void)PJRT_MemoryDescription_Kind(&kind_args);
-  if (api_view.struct_size() != 1144 || api_view.minor_version() != 116 ||
-      api_view.extension_count() != 17 ||
-      api_view.memory_description_count() != 4 || kind_args.kind_id != 1 ||
+  if (api_view.struct_size() != 1144 || api_view.minor_version() != 117 ||
+      api_view.extension_count() != 18 ||
+      api_view.memory_description_count() != 3 || kind_args.kind_id != 1 ||
       api_view.find_extension(16) == nullptr ||
       api_view.find_extension(999) != nullptr) {
     return 25;
@@ -406,6 +430,9 @@ int main() {
   libtpu::Device dev_view(nullptr);
   libtpu::Memory mem_view(nullptr);
   libtpu::Executable exec_view(nullptr);
+  libtpu::Executable raw_exec_moved(
+      static_cast<libtpu::Executable &&>(exec_view));
+  exec_view = static_cast<libtpu::Executable &&>(raw_exec_moved);
   libtpu::PhaseCompiler phase_compiler;
   libtpu::PhaseCompiler phase_moved(
       static_cast<libtpu::PhaseCompiler &&>(phase_compiler));
@@ -424,7 +451,7 @@ int main() {
       exec_view.raw() != nullptr || !comm.all_reduce(b0, &b1, 4).is_ok() ||
       !b1.to_host(reinterpret_cast<uint8_t *>(ar_out), sizeof(ar_out))
            .is_ok() ||
-      ar_out[0] != 11.0F || ar_out[3] != 44.0F) {
+      ar_out[0] != 10.0F || ar_out[3] != 40.0F) {
     return 26;
   }
   if (phase_compiler.phase_count() != 5 ||
@@ -632,10 +659,11 @@ int main() {
       host_cmd_pb, sizeof(host_cmd_pb), &ack_sync_val);
   const libtpu::Status hc_bad =
       libtpu::service_host_command(nullptr, 0, nullptr);
-  if (catalog_293_cnt != 738 || !mc_ok.is_ok() || mc_bad.is_ok() ||
-      asm_imem.empty() || !bad_asm_imem.empty() || dis_llo.empty() ||
-      !bad_dis_llo.empty() || !hc_ok.is_ok() || ack_sync_val != 7 ||
-      hc_bad.is_ok()) {
+  const size_t expected_proto_cnt = read_golden_proto_files_count();
+  if (expected_proto_cnt == 0 || catalog_293_cnt != expected_proto_cnt ||
+      !mc_ok.is_ok() || mc_bad.is_ok() || asm_imem.empty() ||
+      !bad_asm_imem.empty() || dis_llo.empty() || !bad_dis_llo.empty() ||
+      !hc_ok.is_ok() || ack_sync_val != 7 || hc_bad.is_ok()) {
     return 35;
   }
 
@@ -766,6 +794,173 @@ int main() {
       });
   if (doc_scaled.value_or(0.0F) != 64.0F) {
     return 45;
+  }
+
+  /* Phase 5.3: RawBuffer RAII, offset H2D/D2H, OOB error, & move semantics */
+  libtpu::RawBuffer rb_empty;
+  libtpu::RawBuffer rb_live;
+  libtpu::RawBuffer rb_live2;
+  if (!libtpu::RawBuffer::create_from_buffer(doc_b0, &rb_live).is_ok() ||
+      !libtpu::RawBuffer::create_from_buffer(doc_b1, &rb_live2).is_ok() ||
+      rb_empty.raw() != nullptr || rb_live.raw() == nullptr ||
+      rb_live.host_pointer() == nullptr ||
+      rb_live.on_device_size_bytes() != 256U ||
+      rb_live.memory_space() == nullptr) {
+    return 46;
+  }
+  libtpu::RawBuffer rb_moved(static_cast<libtpu::RawBuffer &&>(rb_live));
+  rb_empty = static_cast<libtpu::RawBuffer &&>(rb_moved);
+  rb_live2 = static_cast<libtpu::RawBuffer &&>(rb_empty);
+  const float rb_patch[2] = {77.0F, 88.0F};
+  float rb_read[4] = {};
+  if (!rb_live2.copy_raw_host_to_device(rb_patch, 4, 8).is_ok() ||
+      !rb_live2.copy_raw_device_to_host(rb_read, 0, 16).is_ok() ||
+      rb_read[0] != 1.0F || rb_read[1] != 77.0F || rb_read[2] != 88.0F ||
+      rb_read[3] != 4.0F ||
+      rb_live2.copy_raw_device_to_host(rb_read, 252, 8).is_ok()) {
+    return 47;
+  }
+
+  /* MultiSliceConfig & XlaTransform RAII + move-assign over live & empty */
+  libtpu::MultiSliceConfig msc1;
+  libtpu::MultiSliceConfig msc2;
+  libtpu::MultiSliceConfig msc_moved(
+      static_cast<libtpu::MultiSliceConfig &&>(msc1));
+  msc1 = static_cast<libtpu::MultiSliceConfig &&>(msc_moved);
+  msc2 = static_cast<libtpu::MultiSliceConfig &&>(msc1);
+  if (msc2.raw() == nullptr || msc2.num_slices() < 1U ||
+      msc2.num_devices_per_slice() < 1U || msc2.slice_id() != 0U ||
+      msc2.serialize().empty() || msc1.raw() != nullptr) {
+    return 48;
+  }
+
+  const size_t base_xt_count = libtpu::XlaTransform::registered_count();
+  libtpu::XlaTransform xt_empty;
+  libtpu::XlaTransform xt1;
+  libtpu::XlaTransform xt2;
+  if (libtpu::XlaTransform::register_pass("", 1U, &xt_empty).is_ok() ||
+      !libtpu::XlaTransform::register_pass("cpp_pass_1", 101U, &xt1).is_ok() ||
+      !libtpu::XlaTransform::register_pass("cpp_pass_2", 102U, &xt2).is_ok() ||
+      libtpu::XlaTransform::registered_count() != base_xt_count + 2U ||
+      xt1.name() != "cpp_pass_1") {
+    return 49;
+  }
+  libtpu::XlaTransform xt_moved(static_cast<libtpu::XlaTransform &&>(xt1));
+  xt_empty = static_cast<libtpu::XlaTransform &&>(xt_moved);
+  xt2 = static_cast<libtpu::XlaTransform &&>(xt_empty);
+  if (libtpu::XlaTransform::registered_count() != base_xt_count + 1U) {
+    return 50;
+  }
+
+  /* Event::set error message roundtrip + LoadedExecutable null/live flops &
+   * num_outputs */
+  libtpu::Event err_ev;
+  (void)libtpu::Event::create(&err_ev);
+  if (!err_ev.set(3, "custom_cpp_event_error").is_ok()) {
+    return 51;
+  }
+  const libtpu::Status awaited_st = err_ev.await();
+  libtpu::LoadedExecutable null_lex;
+  if (awaited_st.is_ok() ||
+      std::strstr(awaited_st.message(), "custom_cpp_event_error") == nullptr ||
+      libtpu::find_named_float_property(nullptr, 0, "flops") != 0.0F ||
+      null_lex.flops() != 0.0F || doc_exec.flops() <= 0.0F ||
+      doc_exec.num_outputs() != 1U) {
+    return 52;
+  }
+
+  /* Multi-rank Communicator collectives + moved-from Communicator::to_string
+   * null guard */
+  const int32_t two_devs[2] = {0, 1};
+  libtpu::Communicator rank0(two_devs);
+  libtpu::Communicator rank1(two_devs);
+  const float r0_vals[4] = {1.0F, 2.0F, 3.0F, 4.0F};
+  const float r1_vals[4] = {10.0F, 20.0F, 30.0F, 40.0F};
+  libtpu::Buffer r0_in;
+  libtpu::Buffer r1_in;
+  libtpu::Buffer r0_shard;
+  libtpu::Buffer r1_shard;
+  const int64_t shard_dims[1] = {2};
+  const int64_t gat_dims[1] = {8};
+  const float zero8[8] = {};
+  libtpu::Buffer r0_gat;
+  libtpu::Buffer r1_gat;
+  (void)client.buffer_from_host(0, libtpu::DataType::F32, doc_dims, 1,
+                                reinterpret_cast<const uint8_t *>(r0_vals),
+                                sizeof(r0_vals), &r0_in);
+  (void)client.buffer_from_host(1, libtpu::DataType::F32, doc_dims, 1,
+                                reinterpret_cast<const uint8_t *>(r1_vals),
+                                sizeof(r1_vals), &r1_in);
+  (void)client.buffer_from_host(0, libtpu::DataType::F32, shard_dims, 1,
+                                reinterpret_cast<const uint8_t *>(r0_vals), 8U,
+                                &r0_shard);
+  (void)client.buffer_from_host(1, libtpu::DataType::F32, shard_dims, 1,
+                                reinterpret_cast<const uint8_t *>(r1_vals), 8U,
+                                &r1_shard);
+  (void)client.buffer_from_host(0, libtpu::DataType::F32, gat_dims, 1,
+                                reinterpret_cast<const uint8_t *>(zero8),
+                                sizeof(zero8), &r0_gat);
+  (void)client.buffer_from_host(1, libtpu::DataType::F32, gat_dims, 1,
+                                reinterpret_cast<const uint8_t *>(zero8),
+                                sizeof(zero8), &r1_gat);
+  const int32_t swap_pairs[4] = {0, 1, 1, 0};
+  libtpu::Buffer r0_perm;
+  libtpu::Buffer r1_perm;
+  (void)client.buffer_from_host(0, libtpu::DataType::F32, doc_dims, 1,
+                                reinterpret_cast<const uint8_t *>(r0_vals),
+                                sizeof(r0_vals), &r0_perm);
+  (void)client.buffer_from_host(1, libtpu::DataType::F32, doc_dims, 1,
+                                reinterpret_cast<const uint8_t *>(r1_vals),
+                                sizeof(r1_vals), &r1_perm);
+  if (!rank0.reduce_scatter(r0_in, &r0_shard, 2).is_ok() ||
+      !rank1.reduce_scatter(r1_in, &r1_shard, 2).is_ok() ||
+      !rank0.all_gather(r0_in, &r0_gat, 4).is_ok() ||
+      !rank1.all_gather(r1_in, &r1_gat, 4).is_ok() ||
+      !rank0.collective_permute(r0_in, &r0_perm, 4, swap_pairs).is_ok() ||
+      !rank1.collective_permute(r1_in, &r1_perm, 4, swap_pairs).is_ok()) {
+    return 53;
+  }
+  float perm_host[4] = {};
+  (void)r0_perm.to_host(reinterpret_cast<uint8_t *>(perm_host),
+                        sizeof(perm_host));
+  libtpu::Communicator rank_moved(static_cast<libtpu::Communicator &&>(rank1));
+  if (perm_host[0] != 10.0F || perm_host[3] != 40.0F ||
+      rank_moved.to_string().empty() || !rank1.to_string().empty()) {
+    return 54;
+  }
+
+  /* Topology span overload, null DlPackTensor fallback, & live SdkClient HBM
+   * telemetry */
+  const int32_t span_dims[3] = {1, 1, 1};
+  int32_t span_origin[3] = {-1, -1, -1};
+  const int32_t dev0_id[1] = {0};
+  libtpu::Buffer null_buf;
+  libtpu::DlPackTensor null_dlp(null_buf);
+  const double hbm_before =
+      sdk_client.metric_sum("tpu.runtime.hbm.usage_bytes");
+  {
+    const float big_hbm[64] = {1.0F};
+    const int64_t big_dims[1] = {64};
+    libtpu::Buffer live_hbm_buf;
+    if (!client
+             .buffer_from_host(0, libtpu::DataType::F32, big_dims, 1,
+                               reinterpret_cast<const uint8_t *>(big_hbm),
+                               sizeof(big_hbm), &live_hbm_buf)
+             .is_ok()) {
+      return 55;
+    }
+    const double hbm_during =
+        sdk_client.metric_sum("tpu.runtime.hbm.usage_bytes");
+    if (hbm_during <= hbm_before) {
+      return 56;
+    }
+  }
+  const double hbm_after = sdk_client.metric_sum("tpu.runtime.hbm.usage_bytes");
+  if (!topo.compute_subslice_for_devices(std::span<const int32_t, 3>(span_dims),
+                                         dev0_id, 1U, span_origin)
+           .is_ok() ||
+      null_dlp.data_address() != 0U || hbm_after >= hbm_before + 256.0) {
+    return 57;
   }
 
   return 0;

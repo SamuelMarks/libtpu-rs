@@ -12,6 +12,10 @@ use crate::proto::{
     HloComputationProto, HloInstructionProto, HloModuleProto, ProtoSchemaMessage as _, ShapeProto,
     XEventProto, XLineProto, XPlaneProto, XSpaceProto, XStatProto,
 };
+pub use crate::runtime_state::{
+    CoreProgramSummary, DebugCallbackEntry, DebugCallbackInvoker, RecordedTraceSpan,
+    SharedDeviceHbmSnapshot, SharedTpuRuntimeState, TracePlaneKind, global_shared_runtime_state,
+};
 use crate::types::{
     ByteSize, CallbackId, ChipCoordinates, DeviceAddress, DeviceId, MemoryKind, TpuGeneration,
 };
@@ -174,6 +178,16 @@ pub struct TpuCoreProfiler {
     vmem_bytes: AtomicU64,
     /// Total async DMA transfers executed across recorded hardware steps.
     dma_transfers: AtomicU64,
+    /// Shared runtime telemetry and live `XSpace` trace ring.
+    runtime_state: Arc<SharedTpuRuntimeState>,
+}
+
+impl Drop for TpuCoreProfiler {
+    fn drop(&mut self) {
+        if self.active.swap(false, Ordering::AcqRel) {
+            self.runtime_state.end_profiler_session();
+        }
+    }
 }
 
 impl Default for TpuCoreProfiler {
@@ -183,9 +197,19 @@ impl Default for TpuCoreProfiler {
 }
 
 impl TpuCoreProfiler {
-    /// Creates a new inactive [`TpuCoreProfiler`] session.
+    /// Creates a new inactive [`TpuCoreProfiler`] session attached to [`global_shared_runtime_state`].
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        Self::with_runtime_state(Arc::clone(global_shared_runtime_state()))
+    }
+
+    /// Creates a new inactive [`TpuCoreProfiler`] bound to an explicit [`SharedTpuRuntimeState`].
+    ///
+    /// # Arguments
+    ///
+    /// * `runtime_state` - Shared telemetry and `XSpace` trace state.
+    #[must_use]
+    pub const fn with_runtime_state(runtime_state: Arc<SharedTpuRuntimeState>) -> Self {
         Self {
             active: AtomicBool::new(false),
             recorded_events: AtomicU32::new(0),
@@ -194,6 +218,7 @@ impl TpuCoreProfiler {
             bytes_accessed: AtomicU64::new(0),
             vmem_bytes: AtomicU64::new(0),
             dma_transfers: AtomicU64::new(0),
+            runtime_state,
         }
     }
 
@@ -236,6 +261,7 @@ impl TpuCoreProfiler {
             return Err(LibTpuError::ProfilerAlreadyActive);
         }
         self.recorded_events.fetch_add(1, Ordering::Relaxed);
+        self.runtime_state.begin_profiler_session();
         Ok(())
     }
 
@@ -248,6 +274,7 @@ impl TpuCoreProfiler {
         if !self.active.swap(false, Ordering::AcqRel) {
             return Err(LibTpuError::ProfilerNotActive);
         }
+        self.runtime_state.end_profiler_session();
         Ok(())
     }
 
@@ -336,15 +363,46 @@ impl TpuCoreProfiler {
     }
 
     /// Serializes collected `tensorflow.profiler.XSpace` profiling data into wire-compatible protobuf bytes
-    /// (`TpuProfiler_CollectData`).
+    /// (`TpuProfiler_CollectData`), incorporating live host and TPU trace spans from [`SharedTpuRuntimeState`].
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn collect_xspace_bytes(&self) -> Vec<u8> {
-        let count = i64::from(self.recorded_events.load(Ordering::Relaxed));
-        let rec_flops = self.flops.load(Ordering::Relaxed).max(1024);
-        let rec_bytes = self.bytes_accessed.load(Ordering::Relaxed);
+        use crate::proto::XEventMetadataProto;
+
+        let live_spans = self.runtime_state.snapshot_trace_spans();
+        let live_span_count = i64::try_from(live_spans.len()).unwrap_or(0);
+        let count =
+            i64::from(self.recorded_events.load(Ordering::Relaxed)).saturating_add(live_span_count);
+        let (_, _, exec_flops) = self.runtime_state.execution_counters();
+        let (host_to_dev, dev_to_host, dev_to_dev, _) = self.runtime_state.dma_counters();
+        let rec_flops = self
+            .flops
+            .load(Ordering::Relaxed)
+            .saturating_add(exec_flops)
+            .max(1024);
+        let rec_bytes = self
+            .bytes_accessed
+            .load(Ordering::Relaxed)
+            .saturating_add(host_to_dev)
+            .saturating_add(dev_to_host)
+            .saturating_add(dev_to_dev);
         let rec_vmem = self.vmem_bytes.load(Ordering::Relaxed);
         let rec_bundles = self.bundles_retired.load(Ordering::Relaxed);
-        let (event_metadata, stat_metadata) = Self::build_xplane_metadata_maps();
+
+        let (mut tpu_event_meta, stat_metadata) = Self::build_xplane_metadata_maps();
+        let mut cpu_event_meta: BTreeMap<i64, XEventMetadataProto> = BTreeMap::new();
+        cpu_event_meta.insert(
+            1,
+            XEventMetadataProto {
+                id: 1,
+                name: String::from("pjrt_host_dispatch"),
+                metadata: Vec::new(),
+                display_name: String::from("PJRT Host Compile/Execute Dispatch"),
+                stats: Vec::new(),
+                child_id: Vec::new(),
+            },
+        );
+
         let tc_stats = vec![
             XStatProto {
                 metadata_id: 1,
@@ -367,18 +425,72 @@ impl TpuCoreProfiler {
                 value: Some(crate::proto::x_stat::Value::DoubleValue(98.5)),
             },
         ];
+
+        let mut tpu_lane_0 = Self::build_xline(0, "TensorCore 0", 1_000_000, 1, tc_stats.clone());
+        let mut tpu_lane_1 = Self::build_xline(1, "TensorCore 1", 1_000_000, 1, tc_stats);
+        let mut tpu_lane_2 = Self::build_xline(2, "SparseCore 0", 500_000, 2, Vec::new());
+        let mut tpu_lane_3 = Self::build_xline(3, "DMA Engine", 250_000, 3, Vec::new());
+        let mut tpu_lane_4 = Self::build_xline(4, "ICI Router", 200_000, 4, Vec::new());
+        let mut host_lane = Self::build_xline(0, "Host Threads", 1_000_000, 1, Vec::new());
+
+        for (dyn_id, span) in (100_i64..).zip(live_spans.iter()) {
+            let ev = XEventProto {
+                metadata_id: dyn_id,
+                duration_ps: span.duration_ps,
+                stats: vec![
+                    XStatProto {
+                        metadata_id: 3,
+                        value: Some(crate::proto::x_stat::Value::Uint64Value(span.flops)),
+                    },
+                    XStatProto {
+                        metadata_id: 4,
+                        value: Some(crate::proto::x_stat::Value::Uint64Value(span.bytes)),
+                    },
+                ],
+                data: Some(crate::proto::x_event::Data::OffsetPs(span.offset_ps)),
+            };
+            let meta = XEventMetadataProto {
+                id: dyn_id,
+                name: span.event_name.clone(),
+                metadata: Vec::from(&b"live"[..]),
+                display_name: span.event_name.clone(),
+                stats: Vec::new(),
+                child_id: Vec::new(),
+            };
+            match span.plane {
+                TracePlaneKind::HostCpu => {
+                    cpu_event_meta.insert(dyn_id, meta);
+                    host_lane.events.push(ev);
+                    host_lane.duration_ps = host_lane.duration_ps.saturating_add(span.duration_ps);
+                }
+                TracePlaneKind::TpuDevice => {
+                    tpu_event_meta.insert(dyn_id, meta);
+                    let line = if span.lane_name == "TensorCore 1" {
+                        &mut tpu_lane_1
+                    } else if span.lane_name.starts_with("SparseCore") {
+                        &mut tpu_lane_2
+                    } else if span.lane_name == "DMA Engine" {
+                        &mut tpu_lane_3
+                    } else if span.lane_name == "ICI Router" {
+                        &mut tpu_lane_4
+                    } else {
+                        &mut tpu_lane_0
+                    };
+                    line.events.push(ev);
+                    line.duration_ps = line.duration_ps.saturating_add(span.duration_ps);
+                }
+            }
+        }
+
+        let tpu_lines = vec![tpu_lane_0, tpu_lane_1, tpu_lane_2, tpu_lane_3, tpu_lane_4];
+        let cpu_lines = vec![host_lane];
+
         let tpu_plane = XPlaneProto {
             id: 1,
             name: String::from("/device:TPU:0"),
-            lines: vec![
-                Self::build_xline(0, "TensorCore 0", 1_000_000, 1, tc_stats.clone()),
-                Self::build_xline(1, "TensorCore 1", 1_000_000, 1, tc_stats),
-                Self::build_xline(2, "SparseCore 0", 500_000, 2, Vec::new()),
-                Self::build_xline(3, "DMA Engine", 250_000, 3, Vec::new()),
-                Self::build_xline(4, "ICI Router", 200_000, 4, Vec::new()),
-            ],
-            event_metadata,
-            stat_metadata,
+            lines: tpu_lines,
+            event_metadata: tpu_event_meta,
+            stat_metadata: stat_metadata.clone(),
             stats: vec![XStatProto {
                 metadata_id: 1,
                 value: Some(crate::proto::x_stat::Value::Int64Value(count)),
@@ -387,15 +499,9 @@ impl TpuCoreProfiler {
         let cpu_plane = XPlaneProto {
             id: 2,
             name: String::from("/host:CPU"),
-            lines: vec![Self::build_xline(
-                0,
-                "PJRT Host Launcher",
-                1_000_000,
-                1,
-                Vec::new(),
-            )],
-            event_metadata: BTreeMap::new(),
-            stat_metadata: BTreeMap::new(),
+            lines: cpu_lines,
+            event_metadata: cpu_event_meta,
+            stat_metadata,
             stats: Vec::new(),
         };
         let xspace = XSpaceProto {
@@ -462,14 +568,21 @@ impl TpuCoreProfiler {
         if trimmed.contains("input_pipeline") {
             self.analyze_input_pipeline().encode()
         } else if trimmed.contains("trace_viewer") {
-            let count = self.recorded_events.load(Ordering::Relaxed);
+            let live_len =
+                u32::try_from(self.runtime_state.snapshot_trace_spans().len()).unwrap_or(0);
+            let count = self
+                .recorded_events
+                .load(Ordering::Relaxed)
+                .saturating_add(live_len);
             format!(
                 "{{\"traceEvents\":[{{\"name\":\"TensorCore 0\",\"cat\":\"Op\",\"ph\":\"X\",\"ts\":1000,\"dur\":1000,\"pid\":1,\"tid\":0,\"args\":{{\"events\":{count}}}}}]}}"
             )
             .into_bytes()
         } else if trimmed.contains("memory_profile") {
-            String::from(
-                "{\"memoryProfilePerAllocator\":{\"HBM0\":{\"profileSummary\":{\"peakBytesInUse\":16777216}}}}",
+            let (_, peak_hbm, _, _, _) = self.runtime_state.aggregate_hbm_totals();
+            let peak_bytes = peak_hbm.max(16_777_216);
+            format!(
+                "{{\"memoryProfilePerAllocator\":{{\"HBM0\":{{\"profileSummary\":{{\"peakBytesInUse\":{peak_bytes}}}}}}}}}"
             )
             .into_bytes()
         } else {
@@ -568,6 +681,9 @@ impl TpuCoreProfiler {
     }
 }
 
+/// Type alias exposing [`TpuCoreEmbeddingEngine`] under its canonical `TpuEmbeddingEngine` name.
+pub type TpuEmbeddingEngine = TpuCoreEmbeddingEngine;
+
 /// Core backing state for `TpuEmbeddingEngineState` and `TpuEmbeddingEngine_*` C APIs.
 #[derive(Debug, Default)]
 pub struct TpuCoreEmbeddingEngine {
@@ -577,8 +693,10 @@ pub struct TpuCoreEmbeddingEngine {
     pub hosts_connected: bool,
     /// Stored embedding parameter tables indexed by table name.
     pub tables: BTreeMap<String, Vec<u8>>,
-    /// Configured HBM memory slices per host.
+    /// Configured HBM memory protobuf slices per host/task.
     pub host_memory_configs: Vec<Vec<u8>>,
+    /// Validated peer host network endpoint addresses connected via [`Self::connect_hosts`].
+    pub connected_host_addresses: Vec<String>,
     /// Enqueued sparse lookup batches (`(batch_id, indices_count, weights_count)`).
     pub enqueued_batches: Vec<(i32, usize, usize)>,
 }
@@ -592,16 +710,29 @@ impl TpuCoreEmbeddingEngine {
             hosts_connected: false,
             tables: BTreeMap::new(),
             host_memory_configs: Vec::new(),
+            connected_host_addresses: Vec::new(),
             enqueued_batches: Vec::new(),
         }
     }
 
-    /// Executes the `SparseCore` table partitioner (`TpuEmbeddingEngine_ExecutePartitioner`).
+    /// Executes the `SparseCore` table partitioner (`TpuEmbeddingEngine_ExecutePartitioner`),
+    /// parsing `config_bytes` and producing a deterministic binary `TpuEmbeddingPartitionedConfigProto`
+    /// without UTF-8 lossiness.
     ///
     /// # Arguments
     ///
-    /// * `config_bytes` - Serialized `TPUEmbeddingConfiguration` bytes.
-    pub fn execute_partitioner(&mut self, config_bytes: &[u8]) -> Vec<u8> {
+    /// * `config_bytes` - Non-empty serialized `TPUEmbeddingConfiguration` or binary partition seed bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `config_bytes` is empty.
+    pub fn execute_partitioner(&mut self, config_bytes: &[u8]) -> LibTpuResult<Vec<u8>> {
+        if config_bytes.is_empty() {
+            return Err(LibTpuError::InvalidArgument {
+                parameter: "tpu_embedding_config",
+                reason: String::from("TPUEmbeddingConfiguration payload cannot be empty"),
+            });
+        }
         let mut table_names = Vec::new();
         if let Ok(cfg) = crate::proto::TpuEmbeddingConfigurationProto::decode_proto(config_bytes) {
             for tbl in &cfg.table_descriptor {
@@ -615,49 +746,166 @@ impl TpuCoreEmbeddingEngine {
                     .or_insert_with(|| vec![0_u8; count * 4]);
             }
         }
+        if table_names.is_empty() {
+            table_names.push(String::from("default_sparsecore_table"));
+        }
         let part_proto = crate::proto::TpuEmbeddingPartitionedConfigProto {
             num_partitions: i32::try_from(table_names.len().max(1)).unwrap_or(1),
             table_names,
             raw_config_bytes: config_bytes.to_vec(),
         };
-        part_proto.encode()
+        Ok(part_proto.encode())
     }
 
-    /// Configures `SparseCore` HBM memory for embedding tables (`TpuEmbeddingEngine_ConfigureMemory`).
+    /// Encodes and records per-task `SparseCore` HBM memory configuration protobuf bytes
+    /// (`TpuEmbeddingEngine_ConfigureMemory`) without UTF-8 lossiness.
     ///
     /// # Arguments
     ///
-    /// * `memory_config` - Serialized memory configuration bytes.
-    pub fn configure_memory(&mut self, memory_config: Vec<u8>) {
-        self.host_memory_configs.push(memory_config);
-    }
-
-    /// Collates per-host `SparseCore` HBM memory configurations (`TpuEmbeddingEngine_CollateMemory`).
-    #[must_use]
-    pub fn collate_memory(&self) -> Vec<u8> {
+    /// * `memory_config` - Non-empty binary partition config or HBM descriptor bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `memory_config` is empty.
+    pub fn configure_memory(&mut self, memory_config: &[u8]) -> LibTpuResult<Vec<u8>> {
+        if memory_config.is_empty() {
+            return Err(LibTpuError::InvalidArgument {
+                parameter: "memory_config",
+                reason: String::from("SparseCore memory_config payload cannot be empty"),
+            });
+        }
         let mem_proto = crate::proto::TpuEmbeddingMemoryConfigProto {
-            num_segments: i32::try_from(self.host_memory_configs.len().max(1)).unwrap_or(1),
-            segment_blobs: self.host_memory_configs.clone(),
+            num_segments: 1,
+            segment_blobs: vec![memory_config.to_vec()],
         };
-        mem_proto.encode()
+        let encoded = mem_proto.encode();
+        self.host_memory_configs.push(encoded.clone());
+        Ok(encoded)
     }
 
-    /// Configures host communication channels for `SparseCore` (`TpuEmbeddingEngine_ConfigureHost`).
+    /// Merges per-task `TpuEmbeddingMemoryConfigProto` buffers into a binary
+    /// `CollatedTpuEmbeddingMemoryProto` (`TpuEmbeddingEngine_CollateMemory`).
     ///
     /// # Arguments
     ///
-    /// * `host_config` - Serialized host configuration bytes.
-    pub fn configure_host(&mut self, host_config: &[u8]) -> Vec<u8> {
+    /// * `task_configs` - Slice of per-task memory config byte buffers (falls back to recorded
+    ///   `self.host_memory_configs` when empty).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if any supplied slice in `task_configs` is empty.
+    pub fn collate_memory(&self, task_configs: &[&[u8]]) -> LibTpuResult<Vec<u8>> {
+        let mut parsed_tasks = Vec::new();
+        if task_configs.is_empty() {
+            for saved in &self.host_memory_configs {
+                let task = crate::proto::TpuEmbeddingMemoryConfigProto::decode(saved)
+                    .unwrap_or_else(|_| crate::proto::TpuEmbeddingMemoryConfigProto {
+                        num_segments: 1,
+                        segment_blobs: vec![saved.clone()],
+                    });
+                parsed_tasks.push(task);
+            }
+        } else {
+            for &raw in task_configs {
+                if raw.is_empty() {
+                    return Err(LibTpuError::InvalidArgument {
+                        parameter: "memory_configs",
+                        reason: String::from("Per-task memory_config entry cannot be empty"),
+                    });
+                }
+                let task = crate::proto::TpuEmbeddingMemoryConfigProto::decode(raw)
+                    .ok()
+                    .filter(|m| !m.segment_blobs.is_empty())
+                    .unwrap_or_else(|| crate::proto::TpuEmbeddingMemoryConfigProto {
+                        num_segments: 1,
+                        segment_blobs: vec![raw.to_vec()],
+                    });
+                parsed_tasks.push(task);
+            }
+        }
+
+        let mut total_segments = 0_i32;
+        let mut total_hbm_bytes = 0_u64;
+        for task in &parsed_tasks {
+            total_segments = total_segments.saturating_add(task.num_segments.max(1));
+            for seg in &task.segment_blobs {
+                let seg_bytes = u64::try_from(seg.len().max(256)).unwrap_or(256);
+                total_hbm_bytes = total_hbm_bytes.saturating_add(seg_bytes);
+            }
+        }
+        let collated = crate::proto::CollatedTpuEmbeddingMemoryProto {
+            num_tasks: i32::try_from(parsed_tasks.len()).unwrap_or(0),
+            total_segments,
+            total_hbm_bytes,
+            task_configs: parsed_tasks,
+        };
+        Ok(collated.encode())
+    }
+
+    /// Validates `host_config` and produces a binary `TpuEmbeddingHostNetworkConfigProto`
+    /// (`TpuEmbeddingEngine_ConfigureHost`).
+    ///
+    /// # Arguments
+    ///
+    /// * `host_config` - Non-empty serialized common/collated memory configuration bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if `host_config` is empty.
+    pub fn configure_host(&mut self, host_config: &[u8]) -> LibTpuResult<Vec<u8>> {
+        if host_config.is_empty() {
+            return Err(LibTpuError::InvalidArgument {
+                parameter: "host_config",
+                reason: String::from("SparseCore host_config payload cannot be empty"),
+            });
+        }
+        let port = 8471_usize.saturating_add(self.connected_host_addresses.len());
         let net_proto = crate::proto::TpuEmbeddingHostNetworkConfigProto {
-            endpoint_address: String::from("127.0.0.1:8471"),
+            endpoint_address: format!("127.0.0.1:{port}"),
             partition_payload: host_config.to_vec(),
         };
-        net_proto.encode()
+        Ok(net_proto.encode())
     }
 
-    /// Connects all participating host channels (`TpuEmbeddingEngine_ConnectHosts`).
-    pub const fn connect_hosts(&mut self) {
+    /// Validates and records peer host network endpoint configurations (`TpuEmbeddingEngine_ConnectHosts`).
+    ///
+    /// # Arguments
+    ///
+    /// * `host_configs` - Slice of serialized `TpuEmbeddingHostNetworkConfigProto` or `host:port` buffers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::InvalidArgument`] if any supplied host configuration slice is empty
+    /// or contains no valid network endpoint address.
+    pub fn connect_hosts(&mut self, host_configs: &[&[u8]]) -> LibTpuResult<()> {
+        for &raw in host_configs {
+            if raw.is_empty() {
+                return Err(LibTpuError::InvalidArgument {
+                    parameter: "network_configs",
+                    reason: String::from("Host network configuration slice cannot be empty"),
+                });
+            }
+            let endpoint = if let Ok(proto) =
+                crate::proto::TpuEmbeddingHostNetworkConfigProto::decode(raw)
+                && !proto.endpoint_address.is_empty()
+            {
+                proto.endpoint_address
+            } else if let Ok(s) = std::str::from_utf8(raw)
+                && s.contains(':')
+            {
+                String::from(s.trim())
+            } else {
+                return Err(LibTpuError::InvalidArgument {
+                    parameter: "network_configs",
+                    reason: String::from("Invalid TpuEmbeddingHostNetworkConfigProto payload"),
+                });
+            };
+            if !self.connected_host_addresses.contains(&endpoint) {
+                self.connected_host_addresses.push(endpoint);
+            }
+        }
         self.hosts_connected = true;
+        Ok(())
     }
 
     /// Finalizes the embedding engine initialization (`TpuEmbeddingEngine_Finalize`).
@@ -1421,8 +1669,8 @@ pub struct LibtpuSdkCoreClient {
     pub metrics: Mutex<BTreeMap<String, (String, Vec<f64>)>>,
     /// Registered debug callbacks (`callback_id -> RegisteredDebugCallback`).
     pub debug_callbacks: Mutex<BTreeMap<CallbackId, RegisteredDebugCallback>>,
-    /// Monotonic counter for assigning debug callback IDs.
-    next_callback_id: AtomicU64,
+    /// Shared process-wide telemetry and callback state.
+    runtime_state: Arc<SharedTpuRuntimeState>,
 }
 
 impl Default for LibtpuSdkCoreClient {
@@ -1432,55 +1680,106 @@ impl Default for LibtpuSdkCoreClient {
 }
 
 impl LibtpuSdkCoreClient {
-    /// Creates a new [`LibtpuSdkCoreClient`] with default telemetry metrics.
+    /// Creates a new [`LibtpuSdkCoreClient`] attached to [`global_shared_runtime_state`].
     #[must_use]
     pub fn new() -> Self {
         Self::from_config(&TpuInitConfig::default())
     }
 
-    /// Creates a new [`LibtpuSdkCoreClient`] configured from an explicit [`TpuInitConfig`] snapshot.
+    /// Creates a new [`LibtpuSdkCoreClient`] configured from `config` and attached to
+    /// [`global_shared_runtime_state`].
     ///
     /// # Arguments
     ///
     /// * `config` - TPU initialization configuration snapshot.
     #[must_use]
     pub fn from_config(config: &TpuInitConfig) -> Self {
+        Self::with_runtime_state(config, Arc::clone(global_shared_runtime_state()))
+    }
+
+    /// Creates a new [`LibtpuSdkCoreClient`] bound to an explicit [`SharedTpuRuntimeState`].
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - TPU initialization configuration snapshot.
+    /// * `runtime_state` - Shared telemetry and callback state.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
+    pub fn with_runtime_state(
+        config: &TpuInitConfig,
+        runtime_state: Arc<SharedTpuRuntimeState>,
+    ) -> Self {
+        let cap_f64 = config.generation.hbm_capacity_bytes().0 as f64;
         let mut metrics = BTreeMap::new();
-        metrics.insert(
-            String::from("tpu.runtime.hbm.usage_bytes"),
+        for (name, desc, defaults) in [
             (
-                String::from("Current HBM memory usage in bytes across TPU cores"),
-                vec![0.0, 0.0, 0.0, 0.0],
+                "tpu.runtime.hbm.usage_bytes",
+                "Current HBM memory usage in bytes across TPU cores",
+                vec![0.0; 4],
             ),
-        );
-        metrics.insert(
-            String::from("tpu.runtime.tensorcore.utilization"),
             (
-                String::from("TensorCore MXU duty cycle percentage"),
-                vec![100.0, 100.0, 100.0, 100.0],
+                "tpu.runtime.hbm.total_bytes",
+                "Total HBM memory capacity in bytes per TPU core",
+                vec![cap_f64; 4],
             ),
-        );
-        metrics.insert(
-            String::from("tpu.runtime.ici.link_bandwidth_bytes"),
             (
-                String::from("Inter-Chip Interconnect link throughput in bytes/sec"),
-                vec![1.6e11, 1.6e11, 1.6e11, 1.6e11],
+                "tpu.runtime.hbm.peak_bytes",
+                "Peak HBM memory bytes in use per TPU core",
+                vec![0.0; 4],
             ),
-        );
-        metrics.insert(
-            String::from("tpu.runtime.dma.throughput_bytes"),
             (
-                String::from("PCIe DMA host-to-device and device-to-host bytes transferred"),
-                vec![4096.0, 4096.0, 4096.0, 4096.0],
+                "tpu.runtime.tensorcore.utilization",
+                "TensorCore MXU duty cycle percentage",
+                vec![100.0; 4],
             ),
-        );
-        metrics.insert(
-            String::from("tpu.runtime.compile.time_micros"),
             (
-                String::from("XLA HLO / StableHLO compilation time in microseconds"),
+                "tpu.runtime.tensorcore.duty_cycle_pct",
+                "TensorCore active execution duty cycle percentage",
+                vec![0.0; 4],
+            ),
+            (
+                "tpu.runtime.compile.count",
+                "Cumulative HLO / StableHLO compilation count",
+                vec![0.0],
+            ),
+            (
+                "tpu.runtime.compile.time_micros",
+                "XLA HLO / StableHLO compilation time in microseconds",
                 vec![125.0],
             ),
-        );
+            (
+                "tpu.runtime.execute.count",
+                "Cumulative TPU program execution count",
+                vec![0.0],
+            ),
+            (
+                "tpu.runtime.dma.h2d_bytes",
+                "Cumulative PCIe DMA host-to-device bytes transferred",
+                vec![0.0],
+            ),
+            (
+                "tpu.runtime.dma.d2h_bytes",
+                "Cumulative PCIe DMA device-to-host bytes transferred",
+                vec![0.0],
+            ),
+            (
+                "tpu.runtime.dma.d2d_bytes",
+                "Cumulative on-device / ICI DMA device-to-device bytes transferred",
+                vec![0.0],
+            ),
+            (
+                "tpu.runtime.dma.throughput_bytes",
+                "PCIe DMA host-to-device and device-to-host bytes transferred",
+                vec![4096.0; 4],
+            ),
+            (
+                "tpu.runtime.ici.link_bandwidth_bytes",
+                "Inter-Chip Interconnect link throughput in bytes/sec",
+                vec![1.6e11; 4],
+            ),
+        ] {
+            metrics.insert(String::from(name), (String::from(desc), defaults));
+        }
         let mut chip_coordinates = Vec::new();
         for z in 0..config.chips_per_host_bounds.z {
             for y in 0..config.chips_per_host_bounds.y {
@@ -1495,8 +1794,14 @@ impl LibtpuSdkCoreClient {
             chip_coordinates,
             metrics: Mutex::new(metrics),
             debug_callbacks: Mutex::new(BTreeMap::new()),
-            next_callback_id: AtomicU64::new(1),
+            runtime_state,
         }
+    }
+
+    /// Returns a reference to the attached [`SharedTpuRuntimeState`].
+    #[must_use]
+    pub const fn runtime_state(&self) -> &Arc<SharedTpuRuntimeState> {
+        &self.runtime_state
     }
 
     /// Looks up the 3D coordinates of `chip_index` (`LibtpuSdk_GetChipCoordinates`).
@@ -1543,7 +1848,8 @@ impl LibtpuSdkCoreClient {
         self.metrics.lock().keys().cloned().collect()
     }
 
-    /// Queries the description and values of a named runtime metric (`LibtpuSdk_GetMetric`).
+    /// Queries the description and live values of a named runtime metric (`LibtpuSdk_GetMetric`),
+    /// reading live HBM, DMA, compilation, and execution telemetry from [`SharedTpuRuntimeState`].
     ///
     /// # Arguments
     ///
@@ -1552,17 +1858,64 @@ impl LibtpuSdkCoreClient {
     /// # Errors
     ///
     /// Returns [`LibTpuError::MetricNotFound`] if the metric name does not exist.
+    #[allow(clippy::cast_precision_loss)]
     pub fn get_metric(&self, metric_name: &str) -> LibTpuResult<(String, Vec<f64>)> {
-        self.metrics
+        let (desc, base_vals) = self
+            .metrics
             .lock()
             .get(metric_name)
             .cloned()
             .ok_or_else(|| LibTpuError::MetricNotFound {
                 metric_name: String::from(metric_name),
-            })
+            })?;
+
+        let snapshots = self.runtime_state.all_device_hbm_snapshots();
+        let (compile_cnt, compile_ns) = self.runtime_state.compilation_counters();
+        let (exec_cnt, exec_cycles, _) = self.runtime_state.execution_counters();
+        let (host_to_dev, dev_to_host, dev_to_dev, _) = self.runtime_state.dma_counters();
+        let default_cap = self.generation.hbm_capacity_bytes().0 as f64;
+        let num_chips = self.chip_coordinates.len().max(1);
+
+        let live_vals = match metric_name {
+            "tpu.runtime.hbm.usage_bytes" if !snapshots.is_empty() => {
+                snapshots.values().map(|s| s.bytes_in_use as f64).collect()
+            }
+            "tpu.runtime.hbm.total_bytes" => {
+                if snapshots.is_empty() {
+                    vec![default_cap; num_chips]
+                } else {
+                    snapshots
+                        .values()
+                        .map(|s| s.capacity_bytes.max(1) as f64)
+                        .collect()
+                }
+            }
+            "tpu.runtime.hbm.peak_bytes" if !snapshots.is_empty() => snapshots
+                .values()
+                .map(|s| s.peak_bytes_in_use as f64)
+                .collect(),
+            "tpu.runtime.tensorcore.duty_cycle_pct" => {
+                let pct = if exec_cycles > 0 { 98.5 } else { 0.0 };
+                vec![pct; num_chips]
+            }
+            "tpu.runtime.compile.count" => vec![compile_cnt as f64],
+            "tpu.runtime.compile.time_micros" if compile_ns > 0 => {
+                vec![(compile_ns as f64) / 1_000.0]
+            }
+            "tpu.runtime.execute.count" => vec![exec_cnt as f64],
+            "tpu.runtime.dma.h2d_bytes" => vec![host_to_dev as f64],
+            "tpu.runtime.dma.d2h_bytes" => vec![dev_to_host as f64],
+            "tpu.runtime.dma.d2d_bytes" => vec![dev_to_dev as f64],
+            "tpu.runtime.dma.throughput_bytes" if (host_to_dev + dev_to_host + dev_to_dev) > 0 => {
+                vec![(host_to_dev + dev_to_host + dev_to_dev) as f64; num_chips]
+            }
+            _ => base_vals,
+        };
+        Ok((desc, live_vals))
     }
 
-    /// Registers a debug callback and returns its unique [`CallbackId`] (`LibtpuSdk_RegisterDebugCallback`).
+    /// Registers a debug callback in both this client and [`SharedTpuRuntimeState`]
+    /// (`LibtpuSdk_RegisterDebugCallback`).
     ///
     /// # Arguments
     ///
@@ -1574,7 +1927,10 @@ impl LibtpuSdkCoreClient {
         callback_addr: usize,
         user_data_addr: usize,
     ) -> CallbackId {
-        let id = CallbackId(self.next_callback_id.fetch_add(1, Ordering::Relaxed));
+        let shared_id = self
+            .runtime_state
+            .register_debug_callback(callback_addr, user_data_addr);
+        let id = CallbackId(u64::try_from(shared_id).unwrap_or(1));
         self.debug_callbacks.lock().insert(
             id,
             RegisteredDebugCallback {
@@ -1596,6 +1952,9 @@ impl LibtpuSdkCoreClient {
     ///
     /// Returns [`LibTpuError::CallbackNotFound`] if `id` is not registered.
     pub fn unregister_debug_callback(&self, id: CallbackId) -> LibTpuResult<()> {
+        let _ = self
+            .runtime_state
+            .unregister_debug_callback(i64::try_from(id.0).unwrap_or(0));
         self.debug_callbacks
             .lock()
             .remove(&id)
@@ -1609,11 +1968,21 @@ impl LibtpuSdkCoreClient {
         self.debug_callbacks.lock().values().copied().collect()
     }
 
-    /// Returns a human-readable core state summary string (`LibtpuSdk_RuntimeStatus_GetCoreStateSummary`).
+    /// Returns a human-readable core state summary string incorporating live HBM, compilation,
+    /// execution, and recent program summaries from [`SharedTpuRuntimeState`]
+    /// (`LibtpuSdk_RuntimeStatus_GetCoreStateSummary`).
     #[must_use]
     pub fn core_state_summary(&self) -> String {
+        let (hbm_used, _, _, _, _) = self.runtime_state.aggregate_hbm_totals();
+        let (compiles, _) = self.runtime_state.compilation_counters();
+        let (executes, _, _) = self.runtime_state.execution_counters();
+        let last_prog = self
+            .runtime_state
+            .recent_core_programs()
+            .last()
+            .map_or_else(|| String::from("idle"), |p| p.program_name.clone());
         format!(
-            "host={} gen={} chips={} state=READY",
+            "host={} gen={} chips={} state=READY hbm_used_bytes={hbm_used} compiles={compiles} executes={executes} last_program={last_prog}",
             self.hostname,
             self.generation,
             self.chip_coordinates.len()
@@ -1753,19 +2122,54 @@ mod tests {
             feature_descriptor: Vec::new(),
             spmd_sharding: None,
         };
+        assert!(emb.execute_partitioner(b"").is_err());
         assert_ne!(
-            emb.execute_partitioner(&crate::proto::ProtoSchemaMessage::encode_proto(&proto_cfg)),
+            emb.execute_partitioner(&crate::proto::ProtoSchemaMessage::encode_proto(&proto_cfg))
+                .unwrap_or_default(),
             [] as [u8; 0]
         );
         assert!(emb.read_parameters("proto_tbl").is_some());
-        let part_out = emb.execute_partitioner(b"cfg");
+        let bin_seed = [0x00_u8, 0xFF, 0x80, 0x7F];
+        let part_out = emb.execute_partitioner(&bin_seed).unwrap_or_default();
         assert_ne!(part_out, [] as [u8; 0]);
-        emb.configure_memory(vec![10, 20]);
+        let decoded_part = crate::proto::TpuEmbeddingPartitionedConfigProto::decode(&part_out);
+        assert!(decoded_part.is_ok());
+        assert_eq!(
+            decoded_part.map(|p| p.raw_config_bytes).unwrap_or_default(),
+            bin_seed
+        );
+        assert!(emb.configure_memory(b"").is_err());
+        let mem_cfg_0 = emb
+            .configure_memory(&[10, 0x00, 0xFF, 20])
+            .unwrap_or_default();
         assert_eq!(emb.host_memory_configs.len(), 1);
-        assert_ne!(emb.collate_memory(), [] as [u8; 0]);
-        assert_ne!(emb.configure_host(b"host0"), [] as [u8; 0]);
-        emb.connect_hosts();
+        emb.host_memory_configs.push(vec![0xFF, 0xFE]);
+        assert_ne!(emb.collate_memory(&[]).unwrap_or_default(), [] as [u8; 0]);
+        assert!(emb.collate_memory(&[b""]).is_err());
+        let collated_explicit = emb
+            .collate_memory(&[&mem_cfg_0, &[0xAA, 0x00, 0xBB]])
+            .unwrap_or_default();
+        let decoded_collated =
+            crate::proto::CollatedTpuEmbeddingMemoryProto::decode(&collated_explicit);
+        assert_eq!(decoded_collated.map(|c| c.num_tasks).ok(), Some(2));
+        assert!(emb.configure_host(b"").is_err());
+        let host_net_pb = emb.configure_host(&bin_seed).unwrap_or_default();
+        assert_ne!(host_net_pb, [] as [u8; 0]);
+        assert!(emb.connect_hosts(&[b""]).is_err());
+        assert!(emb.connect_hosts(&[b"not_an_endpoint"]).is_err());
+        let empty_ep_pb = crate::proto::TpuEmbeddingHostNetworkConfigProto {
+            endpoint_address: String::new(),
+            partition_payload: vec![1],
+        }
+        .encode();
+        assert!(emb.connect_hosts(&[&empty_ep_pb]).is_err());
+        assert!(emb.connect_hosts(&[&[0xFF, 0xFE]]).is_err());
+        assert!(
+            emb.connect_hosts(&[&host_net_pb, b"127.0.0.1:8479", b"127.0.0.1:8479"])
+                .is_ok()
+        );
         assert!(emb.hosts_connected);
+        assert_eq!(emb.connected_host_addresses.len(), 2);
         emb.enqueue_tensor_batch(1, 8, 8);
         assert_eq!(emb.enqueued_batches.len(), 1);
         let hlo_bytes = emb.generate_xla_computation("recv_activations");
@@ -1976,13 +2380,80 @@ mod tests {
             sdk.chip_index_for_coords(ChipCoordinates::new(9, 9, 9))
                 .is_err()
         );
-        assert_eq!(sdk.list_metric_names().len(), 5);
+        assert_eq!(sdk.list_metric_names().len(), 13);
         assert!(sdk.refresh_from_hal(&*drv.hal).is_ok());
         let mut sdk_bad = LibtpuSdkCoreClient::new();
         sdk_bad.chip_coordinates.push(ChipCoordinates::new(9, 9, 9));
         assert!(sdk_bad.refresh_from_hal(&*drv.hal).is_err());
-        assert!(sdk.get_metric("tpu.runtime.hbm.usage_bytes").is_ok());
+        for m_name in sdk.list_metric_names() {
+            assert!(sdk.get_metric(&m_name).is_ok());
+        }
         assert!(sdk.get_metric("unknown").is_err());
+
+        // Hermetic SharedTpuRuntimeState end-to-end test across SimulatedTpuHal + Profiler + SDK
+        let isolated = Arc::new(SharedTpuRuntimeState::new());
+        let sdk_empty = LibtpuSdkCoreClient::with_runtime_state(
+            &TpuInitConfig::default(),
+            Arc::clone(&isolated),
+        );
+        for m_name in sdk_empty.list_metric_names() {
+            assert!(sdk_empty.get_metric(&m_name).is_ok());
+        }
+        assert!(sdk_empty.core_state_summary().contains("last_program=idle"));
+
+        let iso_hal =
+            SimulatedTpuHal::with_runtime_state(&TpuInitConfig::default(), Arc::clone(&isolated));
+        let sc_hlo = TpuCoreEmbeddingEngine::new().generate_xla_computation("SparseCoreLookup");
+        if let Ok(sc_prog) = CompiledProgram::compile("hlo", &sc_hlo, b"") {
+            let sc_buf = iso_hal
+                .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(256))
+                .unwrap_or(DeviceAddress(0));
+            let _ = iso_hal.execute_program(DeviceId(0), &sc_prog, &[sc_buf], &[sc_buf]);
+        }
+        assert_eq!(Arc::as_ptr(iso_hal.runtime_state()), Arc::as_ptr(&isolated));
+        assert_eq!(
+            Arc::as_ptr(sdk_empty.runtime_state()),
+            Arc::as_ptr(&isolated)
+        );
+        let iso_prof = TpuCoreProfiler::with_runtime_state(Arc::clone(&isolated));
+        assert!(iso_prof.start().is_ok());
+        let iso_addr = iso_hal
+            .allocate_device_memory(DeviceId(0), MemoryKind::DeviceHbm, ByteSize(512))
+            .unwrap_or(DeviceAddress(0));
+        let _ = iso_hal.write_device_memory(DeviceId(0), iso_addr, &[1, 2, 3, 4]);
+        let mut tmp_read = [0_u8; 4];
+        let _ = iso_hal.read_device_memory(DeviceId(0), iso_addr, &mut tmp_read);
+        isolated.record_compilation("iso_mod", 2_000);
+        isolated.record_collective("all_reduce", 64);
+        isolated.record_execution(
+            DeviceId(1),
+            crate::types::CoreIndex(1),
+            true,
+            "iso_exec",
+            2,
+            50,
+            1024,
+            512,
+        );
+        isolated.push_trace_span(
+            TracePlaneKind::TpuDevice,
+            "TensorCore 0",
+            "tc0_op",
+            1,
+            2_000,
+            128,
+            256,
+        );
+        let iso_xs = iso_prof.collect_xspace_bytes();
+        assert!(<XSpaceProto as crate::proto::ProtoSchemaMessage>::decode_proto(&iso_xs).is_ok());
+        for m_name in sdk_empty.list_metric_names() {
+            assert!(sdk_empty.get_metric(&m_name).is_ok());
+        }
+        assert!(sdk_empty.core_state_summary().contains("iso_exec"));
+        // Drop iso_prof while still active to exercise Drop session cleanup
+        drop(iso_prof);
+        assert!(!isolated.is_profiling_active());
+
         let cb_id = sdk.register_debug_callback(0x1234, 0x5678);
         let expected_cb = RegisteredDebugCallback {
             id: cb_id,

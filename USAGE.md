@@ -1,6 +1,6 @@
 # `libtpu-rs` Usage & Integration Guide
 
-`libtpu-rs` is a clean-room, pure-Rust drop-in replacement for the Google Cloud TPU runtime library (`libtpu` v0.0.52). It exports the exact C11 binary ABI expected by OpenXLA PJRT (`GetPjrtApi` v0.116 + 17 TPU extensions + `PJRT_FFI_Extension`), the TPU monitoring SDK (`GetLibtpuSdkApi`), legacy TensorFlow TPU symbols (`TfTpu_*`, `TpuDriver_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*`), a zero-exception C++20 RAII + `Result<T>` SDK, and `PyO3` (`abi3-py39`) native Python extensions (`libtpu._C` and `libtpu/sdk.so`) with zero-copy NumPy / PEP 3118 / DLPack interop.
+`libtpu-rs` is a clean-room, pure-Rust drop-in replacement for the Google Cloud TPU runtime library (`libtpu` v0.0.53.1). It exports the exact C11 binary ABI expected by OpenXLA PJRT (`GetPjrtApi` v0.117 + 18 chained TPU extensions), the TPU monitoring SDK (`GetLibtpuSdkApi`), legacy TensorFlow TPU symbols (`TfTpu_*`, `TpuDriver_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*`), a zero-exception C++20 RAII + `Result<T>` SDK, and `PyO3` (`abi3-py39` + PEP 703 `cp314t`/`cp315t` free-threaded) native Python extensions (`libtpu._C` and `libtpu/sdk.so`) with unified `SharedTpuRuntimeState` telemetry and zero-copy NumPy / PEP 3118 / DLPack interop.
 
 By default, `libtpu-rs` executes programs through `LinuxDeviceHal` (speaking real `VFIO` `0x3B` and `Gasket` `0xDC` kernel ioctls, IOMMU DMA mappings, authentic `csr_register_map.json` BAR0/GCSR register doorbells, and generation-exact binary VLIW/SparseCore bitstreams), automatically attaching to `/dev/vfio/*` or `/dev/accel*` on Cloud TPU hosts and seamlessly falling back to the cycle-accurate `VirtualVfioGasketDevice` architectural emulator on developer workstations and CI runners (macOS and Linux).
 
@@ -25,7 +25,7 @@ By default, `libtpu-rs` executes programs through `LinuxDeviceHal` (speaking rea
 ### Prerequisites
 
 - **Rust**: Toolchain supporting Rust 2024 edition (`rustc >= 1.85`; nightly + `cargo-llvm-cov` only required for branch coverage reports).
-- **Python** *(for Python wheel, SDK, and JAX integration)*: Python `>= 3.9` (`abi3-py39` wheels via `maturin`), `numpy`, `ml_dtypes`, `pytest`, `ruff`, `mypy`.
+- **Python** *(for Python wheel, SDK, and JAX integration)*: Python `>= 3.9` (`abi3-py39` standard wheels + `3.14t`/`3.15t` free-threaded wheels via `maturin`), `numpy`, `ml_dtypes`, `pytest`, `ruff`, `mypy`.
 - **C/C++** *(optional, for C11/C++20 SDK)*: `cmake >= 3.20`, C11 & C++20 compiler (`clang` / `clang++`), and `doxygen`.
 
 ### Build the Shared & Static Libraries (`libtpu.so` / `libtpu.dylib` / `tpu.dll` / `libtpu.a`)
@@ -276,33 +276,34 @@ int verify_pjrt_c11_lifecycle(void) {
 }
 ```
 
-- **OpenXLA PJRT v0.116 (`GetPjrtApi()`)**:
-  - `PJRT_Api` (`1,144` bytes, 138 function pointers) + `PJRT_FFI_GetExtension()` (`PJRT_FFI_Extension`, `ext_type = 3`, `48` bytes).
-  - All **17 chained TPU extensions**:
-    1. `PJRT_XlaTransform_Extension` (`ext_type = 29`, `56` B)
-    2. `PJRT_HostMemoryAllocator_Extension` (`ext_type = 28`, `32` B)
-    3. `PJRT_MultiSlice_Extension` (`ext_type = 26`, `64` B)
-    4. `PJRT_Collectives_Extension` (`ext_type = 25`, `96` B)
-    5. `PJRT_AbiVersion_Extension` (`ext_type = 20`, `120` B)
-    6. `PJRT_Shardings_Extension` (`ext_type = 19`, `40` B)
-    7. `PJRT_Megascale_Extension` (`ext_type = 18`, `248` B)
-    8. `PJRT_TpuExecutable_Extension` (`ext_type = 17`, `96` B)
-    9. `PJRT_TpuTopology_Extension` (`ext_type = 16`, `280` B)
-    10. `PJRT_Callback_Extension` (`ext_type = 14`, `40` B)
-    11. `PJRT_PhaseCompile_Extension` (`ext_type = 9`, `64` B)
-    12. `PJRT_CrossHostTransfers_Extension` (`ext_type = 12`, `56` B)
-    13. `PJRT_ExecutableMetadata_Extension` (`ext_type = 11`, `40` B)
-    14. `PJRT_MemoryDescriptions_Extension` (`ext_type = 7`, `40` B)
-    15. `PJRT_Layouts_Extension` (`ext_type = 6`, `80` B)
-    16. `PJRT_RawBuffer_Extension` (`ext_type = 8`, `80` B)
-    17. `PJRT_Profiler_Extension` (`ext_type = 1`, `40` B) + `PLUGIN_Profiler_Api` (`80` B)
+- **OpenXLA PJRT v0.117 (`GetPjrtApi()`)**:
+  - `PJRT_Api` (`1,144` bytes, 138 function pointers).
+  - All **18 chained TPU extensions**:
+    1. `PJRT_FFI_Extension` (`ext_type = 5`, `48` B)
+    2. `PJRT_XlaTransform_Extension` (`ext_type = 24`, `56` B)
+    3. `PJRT_HostMemoryAllocator_Extension` (`ext_type = 23`, `32` B)
+    4. `PJRT_MultiSlice_Extension` (`ext_type = 22`, `64` B)
+    5. `PJRT_Collectives_Extension` (`ext_type = 21`, `96` B)
+    6. `PJRT_AbiVersion_Extension` (`ext_type = 20`, `120` B)
+    7. `PJRT_Shardings_Extension` (`ext_type = 19`, `40` B)
+    8. `PJRT_Megascale_Extension` (`ext_type = 18`, `288` B)
+    9. `PJRT_TpuExecutable_Extension` (`ext_type = 17`, `96` B)
+    10. `PJRT_TpuTopology_Extension` (`ext_type = 16`, `280` B)
+    11. `PJRT_Callback_Extension` (`ext_type = 14`, `40` B)
+    12. `PJRT_PhaseCompile_Extension` (`ext_type = 9`, `192` B)
+    13. `PJRT_CrossHostTransfers_Extension` (`ext_type = 12`, `56` B)
+    14. `PJRT_ExecutableMetadata_Extension` (`ext_type = 13`, `40` B)
+    15. `PJRT_MemoryDescriptions_Extension` (`ext_type = 6`, `40` B)
+    16. `PJRT_Layouts_Extension` (`ext_type = 4`, `80` B)
+    17. `PJRT_RawBuffer_Extension` (`ext_type = 8`, `80` B)
+    18. `PJRT_Profiler_Extension` (`ext_type = 1`, `40` B) + `PLUGIN_Profiler_Api` (`104` B)
 - **TPU SDK, Driver & Legacy TensorFlow C Symbols**: `GetLibtpuSdkApi()` (`144` B, 17 slots), `TpuDriver_Open` (`TpuDriverFn`, `224` B, 28 slots), `TfTpu_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*`, and ergonomic `libtpu_rs_*` C helpers.
 
 ---
 
 ## 7. C++20 Zero-Exception RAII & `Result<T>` SDK (`libtpu.hpp`)
 
-`cpp/src/libtpu.hpp` and `cpp/src/libtpu.cpp` build with `-std=c++20 -fno-exceptions -fno-rtti -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror` and provide move-only RAII wrappers (`Plugin`, `Client`, `TopologyDescription`, `Device`, `DeviceDescription`, `Memory`, `Buffer`, `AsyncTransferManager`, `CopyToDeviceStream`, `DlPackTensor`, `Executable`, `LoadedExecutable`, `PhaseCompiler`, `ExecuteContext`, `Event`, `CollectiveCommunicator`, `MegaScaleContext`, `FfiCustomCallRegistry`, `Profiler`, `EmbeddingEngine`, `SdkClient`) plus monadic `libtpu::Result<T>`:
+`cpp/src/libtpu.hpp` and `cpp/src/libtpu.cpp` build with `-std=c++20 -fno-exceptions -fno-rtti -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror` and provide move-only RAII wrappers (`Plugin`, `Client`, `TopologyDescription`, `Device`, `DeviceDescription`, `Memory`, `Buffer`, `RawBuffer`, `AsyncTransferManager`, `CopyToDeviceStream`, `DlPackTensor`, `Executable`, `LoadedExecutable`, `PhaseCompiler`, `XlaTransform`, `ExecuteContext`, `Event`, `CollectiveCommunicator`, `MegaScaleContext`, `MultiSliceConfig`, `FfiCustomCallRegistry`, `Profiler`, `EmbeddingEngine`, `SdkClient`) plus monadic `libtpu::Result<T>`:
 
 ```cpp
 #include "libtpu.hpp"

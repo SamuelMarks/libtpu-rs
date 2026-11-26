@@ -107,6 +107,7 @@ message TpuChipConfigProto {
     int32 tile_overlay = 5;
     int32 global_barrier_sflag = 6;
     int32 local_barrier_sflag = 7;
+    int32 compute_mode = 8;
   }
   message UhiSyncFlags {
     int32 imem_transfer = 1;

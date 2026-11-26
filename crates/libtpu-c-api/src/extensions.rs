@@ -1,30 +1,31 @@
-//! `#[repr(C)]` PJRT extension structures for all 17 TPU extensions linked from `PJRT_Api.extension_start`.
+//! `#[repr(C)]` PJRT extension structures for `libtpu==0.0.53.1` (`PJRT_Api` `v0.117`).
 //!
-//! Matches the exact byte sizes, type discriminants (`PJRT_Extension_Type`), and named function pointer
-//! fields disassembled from `GetTpuPjrtApi()` (`0x0b4fb4e0`) in `libtpu.so`:
-//! 1. `PJRT_XlaTransform_Extension` (`56` bytes, `ext_type = 29`)
-//! 2. `PJRT_HostMemoryAllocator_Extension` (`32` bytes, `ext_type = 28`)
-//! 3. `PJRT_MultiSlice_Extension` (`64` bytes, `ext_type = 26`)
-//! 4. `PJRT_Collectives_Extension` (`96` bytes, `ext_type = 25`)
-//! 5. `PJRT_AbiVersion_Extension` (`120` bytes, `ext_type = 20`)
-//! 6. `PJRT_Shardings_Extension` (`40` bytes, `ext_type = 19`)
-//! 7. `PJRT_Megascale_Extension` (`248` bytes, `ext_type = 18`)
-//! 8. `PJRT_TpuExecutable_Extension` (`96` bytes, `ext_type = 17`)
-//! 9. `PJRT_TpuTopology_Extension` (`280` bytes, `ext_type = 16`)
-//! 10. `PJRT_Callback_Extension` (`40` bytes, `ext_type = 14`)
-//! 11. `PJRT_PhaseCompile_Extension` (`64` bytes, `ext_type = 9`)
-//! 12. `PJRT_CrossHostTransfers_Extension` (`56` bytes, `ext_type = 12`)
-//! 13. `PJRT_ExecutableMetadata_Extension` (`40` bytes, `ext_type = 11`)
-//! 14. `PJRT_MemoryDescriptions_Extension` (`40` bytes, `ext_type = 7`)
-//! 15. `PJRT_Layouts_Extension` (`80` bytes, `ext_type = 6`)
-//! 16. `PJRT_RawBuffer_Extension` (`80` bytes, `ext_type = 8`)
-//! 17. `PJRT_Profiler_Extension` (`40` bytes, `ext_type = 1`)
+//! Defines all 18 TPU extensions linked from `PJRT_Api.extension_start` matching the exact byte sizes,
+//! type discriminants (`PJRT_Extension_Type`), and named function pointer fields lifted from `libtpu.so`:
+//! 1. `PJRT_FFI_Extension` (`48` bytes, `ext_type = 5`)
+//! 2. `PJRT_XlaTransform_Extension` (`56` bytes, `ext_type = 24`)
+//! 3. `PJRT_HostMemoryAllocator_Extension` (`32` bytes, `ext_type = 23`)
+//! 4. `PJRT_MultiSlice_Extension` (`64` bytes, `ext_type = 22`)
+//! 5. `PJRT_Collectives_Extension` (`96` bytes, `ext_type = 21`)
+//! 6. `PJRT_AbiVersion_Extension` (`120` bytes, `ext_type = 20`)
+//! 7. `PJRT_Shardings_Extension` (`40` bytes, `ext_type = 19`)
+//! 8. `PJRT_Megascale_Extension` (`288` bytes, `ext_type = 18`)
+//! 9. `PJRT_TpuExecutable_Extension` (`96` bytes, `ext_type = 17`)
+//! 10. `PJRT_TpuTopology_Extension` (`280` bytes, `ext_type = 16`)
+//! 11. `PJRT_Callback_Extension` (`40` bytes, `ext_type = 14`)
+//! 12. `PJRT_PhaseCompile_Extension` (`192` bytes, `ext_type = 9`)
+//! 13. `PJRT_CrossHostTransfers_Extension` (`56` bytes, `ext_type = 12`)
+//! 14. `PJRT_ExecutableMetadata_Extension` (`40` bytes, `ext_type = 13`)
+//! 15. `PJRT_MemoryDescriptions_Extension` (`40` bytes, `ext_type = 6`)
+//! 16. `PJRT_Layouts_Extension` (`80` bytes, `ext_type = 4`)
+//! 17. `PJRT_RawBuffer_Extension` (`80` bytes, `ext_type = 8`)
+//! 18. `PJRT_Profiler_Extension` (`40` bytes, `ext_type = 1`)
 
 /// `#[repr(C)]` argument structures, enums, and size assertions for PJRT extensions.
 pub mod args;
 /// PJRT Collectives and Cross-Host Transfers extension entrypoints.
 pub mod collectives;
-/// PJRT XLA Transform, Callback, PhaseCompile, and Triton extension entrypoints.
+/// PJRT FFI, XLA Transform, Callback, PhaseCompile/Relocatable, and Triton extension entrypoints.
 pub mod compiler;
 /// PJRT ABI Version, Shardings, and TPU Executable extension entrypoints.
 pub mod executable;
@@ -128,13 +129,40 @@ pub(super) fn alloc_phase_compile_buffer(
     (handle, ptr, len)
 }
 
-/// Frees a phase compilation buffer handle previously allocated by [`alloc_phase_compile_buffer`].
+/// Allocates an owned, pointer-aligned `[*mut PJRT_Relocatable]` slice freed by [`free_phase_compile_buffer`].
 ///
 /// # Arguments
 ///
-/// * `handle` - Heap handle returned by [`alloc_phase_compile_buffer`].
+/// * `relocatables` - Relocatable handles to expose as a contiguous C pointer array.
+pub(super) fn alloc_phase_compile_relocatable_array(
+    relocatables: Vec<*mut crate::pjrt_types::PJRT_Relocatable>,
+) -> (
+    *mut std::ffi::c_void,
+    *const *mut crate::pjrt_types::PJRT_Relocatable,
+    usize,
+) {
+    let boxed: Box<[*mut crate::pjrt_types::PJRT_Relocatable]> = relocatables.into_boxed_slice();
+    let ptr = boxed.as_ptr();
+    let len = boxed.len();
+    let typed_handle = crate::pjrt_helpers::box_registered_handle(boxed);
+    (typed_handle.cast::<std::ffi::c_void>(), ptr, len)
+}
+
+/// Frees a phase compilation buffer handle previously allocated by [`alloc_phase_compile_buffer`]
+/// or [`alloc_phase_compile_relocatable_array`].
+///
+/// # Arguments
+///
+/// * `handle` - Heap handle returned by [`alloc_phase_compile_buffer`] or [`alloc_phase_compile_relocatable_array`].
 pub(super) fn free_phase_compile_buffer(handle: *mut std::ffi::c_void) {
     if !handle.is_null() {
+        if crate::pjrt_helpers::take_live_handle::<Box<[*mut crate::pjrt_types::PJRT_Relocatable]>>(
+            handle.cast(),
+        )
+        .is_some()
+        {
+            return;
+        }
         // SAFETY: `handle` was allocated via `Box::into_raw(Box::new(Box<[u8]>))` in `alloc_phase_compile_buffer`.
         unsafe {
             drop(Box::from_raw(handle.cast::<Box<[u8]>>()));
@@ -164,12 +192,35 @@ unsafe fn invoke_typed_extension_handler<T>(
     }
 }
 
+/// Invokes a strongly-typed fallible `unsafe fn(&mut T) -> Result<(), LibTpuError>` from a type-erased reference.
+///
+/// # Arguments
+///
+/// * `raw_args` - Raw pointer to the validated extension `_Args` structure of type `T`.
+/// * `handler_ref` - Type-erased pointer to the `unsafe fn(&mut T) -> Result<(), LibTpuError>` callback.
+///
+/// # Safety
+///
+/// `raw_args` must point to a valid `T` and `handler_ref` must point to `unsafe fn(&mut T) -> Result<(), LibTpuError>`.
+unsafe fn invoke_typed_fallible_extension_handler<T>(
+    raw_args: *mut std::ffi::c_void,
+    handler_ref: *const std::ffi::c_void,
+) -> *mut PJRT_Error {
+    // SAFETY: `handler_ref` points to `handler` on the stack of `dispatch_typed_fallible_extension_args`.
+    let handler = unsafe { *handler_ref.cast::<unsafe fn(&mut T) -> Result<(), LibTpuError>>() };
+    // SAFETY: `raw_args` was validated non-null by `dispatch_erased_fallible_extension_args`.
+    match unsafe { handler(&mut *raw_args.cast::<T>()) } {
+        Ok(()) => ptr::null_mut(),
+        Err(err) => box_pjrt_error(err),
+    }
+}
+
 /// Non-generic validation and invocation dispatcher backing [`dispatch_typed_extension_args`].
 ///
 /// # Arguments
 ///
 /// * `raw_args` - Raw pointer to the extension `_Args` structure.
-/// * `min_size` - Minimum required `struct_size` in bytes (`size_of::<T>()`).
+/// * `min_size` - Minimum required `struct_size` in bytes (`T::MIN_STRUCT_SIZE`).
 /// * `handler_ref` - Type-erased pointer to the strongly-typed callback.
 /// * `invoker` - Monomorphized trampoline invoking the strongly-typed callback.
 ///
@@ -196,6 +247,37 @@ pub(crate) unsafe fn dispatch_erased_extension_args(
     .unwrap_or_else(|_| ffi_panic_pjrt_error())
 }
 
+/// Non-generic validation and invocation dispatcher backing [`dispatch_typed_fallible_extension_args`].
+///
+/// # Arguments
+///
+/// * `raw_args` - Raw pointer to the extension `_Args` structure.
+/// * `min_size` - Minimum required `struct_size` in bytes (`T::MIN_STRUCT_SIZE`).
+/// * `handler_ref` - Type-erased pointer to the strongly-typed fallible callback.
+/// * `invoker` - Monomorphized trampoline invoking the strongly-typed fallible callback.
+///
+/// # Safety
+///
+/// `raw_args` must be null or point to a valid extension `_Args` structure of type `T`.
+pub(crate) unsafe fn dispatch_erased_fallible_extension_args(
+    raw_args: *mut std::ffi::c_void,
+    min_size: usize,
+    handler_ref: *const std::ffi::c_void,
+    invoker: unsafe fn(*mut std::ffi::c_void, *const std::ffi::c_void) -> *mut PJRT_Error,
+) -> *mut PJRT_Error {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: Caller upholds `raw_args` precondition.
+        let err = unsafe { validate_extension_args_size(raw_args, min_size) };
+        if err.is_null() {
+            // SAFETY: `raw_args` was validated non-null and `>= min_size` by `validate_extension_args_size`.
+            unsafe { invoker(raw_args, handler_ref) }
+        } else {
+            err
+        }
+    }))
+    .unwrap_or_else(|_| ffi_panic_pjrt_error())
+}
+
 /// Validates a typed `#[repr(C)]` PJRT extension argument structure and invokes `handler(&mut T)`.
 ///
 /// # Arguments
@@ -207,7 +289,7 @@ pub(crate) unsafe fn dispatch_erased_extension_args(
 ///
 /// `raw_args` must be null or point to a valid extension `_Args` struct of type `T`.
 #[inline]
-pub(super) unsafe fn dispatch_typed_extension_args<T>(
+pub(super) unsafe fn dispatch_typed_extension_args<T: ExtensionArgsStruct>(
     raw_args: *mut std::ffi::c_void,
     handler: unsafe fn(&mut T),
 ) -> *mut PJRT_Error {
@@ -216,14 +298,58 @@ pub(super) unsafe fn dispatch_typed_extension_args<T>(
     unsafe {
         dispatch_erased_extension_args(
             raw_args,
-            size_of::<T>(),
+            T::MIN_STRUCT_SIZE,
             handler_ref,
             invoke_typed_extension_handler::<T>,
         )
     }
 }
 
-/// Node 1 (`ext_type = 29`, `56` bytes): `PJRT_XlaTransform_Extension`.
+/// Validates a typed `#[repr(C)]` PJRT extension argument structure and invokes fallible `handler(&mut T)`.
+///
+/// # Arguments
+///
+/// * `raw_args` - Pointer to the typed extension `_Args` structure of type `T`.
+/// * `handler` - Strongly-typed fallible callback operating on `&mut T`.
+///
+/// # Safety
+///
+/// `raw_args` must be null or point to a valid extension `_Args` struct of type `T`.
+#[inline]
+pub(super) unsafe fn dispatch_typed_fallible_extension_args<T: ExtensionArgsStruct>(
+    raw_args: *mut std::ffi::c_void,
+    handler: unsafe fn(&mut T) -> Result<(), LibTpuError>,
+) -> *mut PJRT_Error {
+    let handler_ref = ptr::from_ref(&handler).cast::<std::ffi::c_void>();
+    // SAFETY: Caller upholds `raw_args` contract; `handler_ref` points to `handler`.
+    unsafe {
+        dispatch_erased_fallible_extension_args(
+            raw_args,
+            T::MIN_STRUCT_SIZE,
+            handler_ref,
+            invoke_typed_fallible_extension_handler::<T>,
+        )
+    }
+}
+
+/// Node 1 (`ext_type = 5`, `48` bytes): `PJRT_FFI_Extension` for `xla::ffi` custom calls.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct PJRT_FFI_Extension {
+    /// 24-byte `PJRT_Extension_Base` header (`ext_type = 5`).
+    pub base: PJRT_Extension_Base,
+    /// Slot 1 (`0x18`): `PJRT_FFI_TypeID_Register`.
+    pub type_id_register: PjrtFn,
+    /// Slot 2 (`0x20`): `PJRT_FFI_UserData_Add`.
+    pub user_data_add: PjrtFn,
+    /// Slot 3 (`0x28`): `PJRT_FFI_Register_Handler`.
+    pub register_handler: PjrtFn,
+}
+
+// SAFETY: Immutable static vtable structure.
+unsafe impl Sync for PJRT_FFI_Extension {}
+
+/// Node 2 (`ext_type = 24`, `56` bytes): `PJRT_XlaTransform_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_XlaTransform_Extension {
@@ -242,7 +368,7 @@ pub struct PJRT_XlaTransform_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_XlaTransform_Extension {}
 
-/// Node 2 (`ext_type = 28`, `32` bytes): `PJRT_HostMemoryAllocator_Extension`.
+/// Node 3 (`ext_type = 23`, `32` bytes): `PJRT_HostMemoryAllocator_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_HostMemoryAllocator_Extension {
@@ -255,7 +381,7 @@ pub struct PJRT_HostMemoryAllocator_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_HostMemoryAllocator_Extension {}
 
-/// Node 3 (`ext_type = 26`, `64` bytes): `PJRT_MultiSlice_Extension`.
+/// Node 4 (`ext_type = 22`, `64` bytes): `PJRT_MultiSlice_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_MultiSlice_Extension {
@@ -276,7 +402,7 @@ pub struct PJRT_MultiSlice_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_MultiSlice_Extension {}
 
-/// Node 4 (`ext_type = 25`, `96` bytes): `PJRT_Collectives_Extension`.
+/// Node 5 (`ext_type = 21`, `96` bytes): `PJRT_Collectives_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_Collectives_Extension {
@@ -305,7 +431,7 @@ pub struct PJRT_Collectives_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_Collectives_Extension {}
 
-/// Node 5 (`ext_type = 20`, `120` bytes): `PJRT_AbiVersion_Extension`.
+/// Node 6 (`ext_type = 20`, `120` bytes): `PJRT_AbiVersion_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_AbiVersion_Extension {
@@ -340,7 +466,7 @@ pub struct PJRT_AbiVersion_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_AbiVersion_Extension {}
 
-/// Node 6 (`ext_type = 19`, `40` bytes): `PJRT_Shardings_Extension`.
+/// Node 7 (`ext_type = 19`, `40` bytes): `PJRT_Shardings_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_Shardings_Extension {
@@ -355,7 +481,7 @@ pub struct PJRT_Shardings_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_Shardings_Extension {}
 
-/// Node 7 (`ext_type = 18`, `248` bytes): `PJRT_Megascale_Extension`.
+/// Node 8 (`ext_type = 18`, `288` bytes): `PJRT_Megascale_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_Megascale_Extension {
@@ -417,12 +543,22 @@ pub struct PJRT_Megascale_Extension {
     pub wait_for_barrier: PjrtFn,
     /// Slot 28 (`0xf0`): `abort_collectives`.
     pub abort_collectives: PjrtFn,
+    /// Slot 29 (`0xf8`): `discover_slices`.
+    pub discover_slices: PjrtFn,
+    /// Slot 30 (`0x100`): `multi_slice_config_get_incarnation_id`.
+    pub multi_slice_config_get_incarnation_id: PjrtFn,
+    /// Slot 31 (`0x108`): `multi_slice_config_get_local_host_id`.
+    pub multi_slice_config_get_local_host_id: PjrtFn,
+    /// Slot 32 (`0x110`): `multi_slice_config_get_num_hosts`.
+    pub multi_slice_config_get_num_hosts: PjrtFn,
+    /// Slot 33 (`0x118`): `global_barrier`.
+    pub global_barrier: PjrtFn,
 }
 
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_Megascale_Extension {}
 
-/// Node 8 (`ext_type = 17`, `96` bytes): `PJRT_TpuExecutable_Extension`.
+/// Node 9 (`ext_type = 17`, `96` bytes): `PJRT_TpuExecutable_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_TpuExecutable_Extension {
@@ -451,7 +587,7 @@ pub struct PJRT_TpuExecutable_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_TpuExecutable_Extension {}
 
-/// Node 9 (`ext_type = 16`, `280` bytes): `PJRT_TpuTopology_Extension`.
+/// Node 10 (`ext_type = 16`, `280` bytes): `PJRT_TpuTopology_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_TpuTopology_Extension {
@@ -526,7 +662,7 @@ pub struct PJRT_TpuTopology_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_TpuTopology_Extension {}
 
-/// Node 10 (`ext_type = 14`, `40` bytes): `PJRT_Callback_Extension`.
+/// Node 11 (`ext_type = 14`, `40` bytes): `PJRT_Callback_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_Callback_Extension {
@@ -541,7 +677,7 @@ pub struct PJRT_Callback_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_Callback_Extension {}
 
-/// Node 11 (`ext_type = 9`, `64` bytes): `PJRT_PhaseCompile_Extension`.
+/// Node 12 (`ext_type = 9`, `192` bytes): `PJRT_PhaseCompile_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_PhaseCompile_Extension {
@@ -557,12 +693,44 @@ pub struct PJRT_PhaseCompile_Extension {
     pub phase_compile_get_phase_names: PjrtFn,
     /// Slot 5 (`0x38`): `phase_compile_c_buffers_destroy`.
     pub phase_compile_c_buffers_destroy: PjrtFn,
+    /// Slot 6 (`0x40`): `relocatable_destroy`.
+    pub relocatable_destroy: PjrtFn,
+    /// Slot 7 (`0x48`): `relocatable_name`.
+    pub relocatable_name: PjrtFn,
+    /// Slot 8 (`0x50`): `relocatable_build_id`.
+    pub relocatable_build_id: PjrtFn,
+    /// Slot 9 (`0x58`): `relocatable_call_backend_config`.
+    pub relocatable_call_backend_config: PjrtFn,
+    /// Slot 10 (`0x60`): `relocatable_has_side_effects`.
+    pub relocatable_has_side_effects: PjrtFn,
+    /// Slot 11 (`0x68`): `relocatable_serialize`.
+    pub relocatable_serialize: PjrtFn,
+    /// Slot 12 (`0x70`): `relocatable_parameter_element_types`.
+    pub relocatable_parameter_element_types: PjrtFn,
+    /// Slot 13 (`0x78`): `relocatable_output_element_types`.
+    pub relocatable_output_element_types: PjrtFn,
+    /// Slot 14 (`0x80`): `relocatable_parameter_dimensions`.
+    pub relocatable_parameter_dimensions: PjrtFn,
+    /// Slot 15 (`0x88`): `relocatable_output_dimensions`.
+    pub relocatable_output_dimensions: PjrtFn,
+    /// Slot 16 (`0x90`): `relocatable_parameter_layouts`.
+    pub relocatable_parameter_layouts: PjrtFn,
+    /// Slot 17 (`0x98`): `relocatable_output_layouts`.
+    pub relocatable_output_layouts: PjrtFn,
+    /// Slot 18 (`0xa0`): `relocatable_parameter_output_aliases`.
+    pub relocatable_parameter_output_aliases: PjrtFn,
+    /// Slot 19 (`0xa8`): `phase_compile_compile_to_relocatable`.
+    pub phase_compile_compile_to_relocatable: PjrtFn,
+    /// Slot 20 (`0xb0`): `phase_compile_deserialize_relocatable`.
+    pub phase_compile_deserialize_relocatable: PjrtFn,
+    /// Slot 21 (`0xb8`): `phase_compile_link_relocatables`.
+    pub phase_compile_link_relocatables: PjrtFn,
 }
 
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_PhaseCompile_Extension {}
 
-/// Node 12 (`ext_type = 12`, `56` bytes): `PJRT_CrossHostTransfers_Extension`.
+/// Node 13 (`ext_type = 12`, `56` bytes): `PJRT_CrossHostTransfers_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_CrossHostTransfers_Extension {
@@ -581,7 +749,7 @@ pub struct PJRT_CrossHostTransfers_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_CrossHostTransfers_Extension {}
 
-/// Node 13 (`ext_type = 11`, `40` bytes): `PJRT_ExecutableMetadata_Extension`.
+/// Node 14 (`ext_type = 13`, `40` bytes): `PJRT_ExecutableMetadata_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_ExecutableMetadata_Extension {
@@ -596,7 +764,7 @@ pub struct PJRT_ExecutableMetadata_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_ExecutableMetadata_Extension {}
 
-/// Node 14 (`ext_type = 7`, `40` bytes): `PJRT_MemoryDescriptions_Extension`.
+/// Node 15 (`ext_type = 6`, `40` bytes): `PJRT_MemoryDescriptions_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_MemoryDescriptions_Extension {
@@ -611,7 +779,7 @@ pub struct PJRT_MemoryDescriptions_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_MemoryDescriptions_Extension {}
 
-/// Node 15 (`ext_type = 6`, `80` bytes): `PJRT_Layouts_Extension`.
+/// Node 16 (`ext_type = 4`, `80` bytes): `PJRT_Layouts_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_Layouts_Extension {
@@ -636,7 +804,7 @@ pub struct PJRT_Layouts_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_Layouts_Extension {}
 
-/// Node 16 (`ext_type = 8`, `80` bytes): `PJRT_RawBuffer_Extension`.
+/// Node 17 (`ext_type = 8`, `80` bytes): `PJRT_RawBuffer_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_RawBuffer_Extension {
@@ -661,7 +829,7 @@ pub struct PJRT_RawBuffer_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_RawBuffer_Extension {}
 
-/// Node 17 (`ext_type = 1`, `40` bytes): `PJRT_Profiler_Extension`.
+/// Node 18 (`ext_type = 1`, `40` bytes): `PJRT_Profiler_Extension`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_Profiler_Extension {
@@ -676,6 +844,8 @@ pub struct PJRT_Profiler_Extension {
 // SAFETY: Immutable static vtable structure.
 unsafe impl Sync for PJRT_Profiler_Extension {}
 
+const _: () = assert!(size_of::<PJRT_FFI_Extension>() == 48);
+const _: () = assert!(std::mem::offset_of!(PJRT_FFI_Extension, register_handler) == 0x28);
 const _: () = assert!(size_of::<PJRT_XlaTransform_Extension>() == 56);
 const _: () =
     assert!(std::mem::offset_of!(PJRT_XlaTransform_Extension, register_xla_transform) == 0x18);
@@ -697,8 +867,8 @@ const _: () = assert!(
 );
 const _: () = assert!(size_of::<PJRT_Shardings_Extension>() == 40);
 const _: () = assert!(std::mem::offset_of!(PJRT_Shardings_Extension, output_shardings) == 0x20);
-const _: () = assert!(size_of::<PJRT_Megascale_Extension>() == 248);
-const _: () = assert!(std::mem::offset_of!(PJRT_Megascale_Extension, abort_collectives) == 0xf0);
+const _: () = assert!(size_of::<PJRT_Megascale_Extension>() == 288);
+const _: () = assert!(std::mem::offset_of!(PJRT_Megascale_Extension, global_barrier) == 0x118);
 const _: () = assert!(size_of::<PJRT_TpuExecutable_Extension>() == 96);
 const _: () = assert!(
     std::mem::offset_of!(
@@ -712,9 +882,9 @@ const _: () = assert!(
 );
 const _: () = assert!(size_of::<PJRT_Callback_Extension>() == 40);
 const _: () = assert!(std::mem::offset_of!(PJRT_Callback_Extension, invoke_callback) == 0x20);
-const _: () = assert!(size_of::<PJRT_PhaseCompile_Extension>() == 64);
+const _: () = assert!(size_of::<PJRT_PhaseCompile_Extension>() == 192);
 const _: () = assert!(
-    std::mem::offset_of!(PJRT_PhaseCompile_Extension, phase_compile_c_buffers_destroy) == 0x38
+    std::mem::offset_of!(PJRT_PhaseCompile_Extension, phase_compile_link_relocatables) == 0xb8
 );
 const _: () = assert!(size_of::<PJRT_CrossHostTransfers_Extension>() == 56);
 const _: () = assert!(
@@ -743,31 +913,11 @@ const _: () =
 const _: () = assert!(size_of::<PJRT_Profiler_Extension>() == 40);
 const _: () = assert!(std::mem::offset_of!(PJRT_Profiler_Extension, traceme_context_id) == 0x20);
 
-/// `OpenXLA` `PJRT_FFI_Extension` (`ext_type = 3`, `48` bytes) for `xla::ffi` custom calls.
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct PJRT_FFI_Extension {
-    /// 24-byte `PJRT_Extension_Base` header (`ext_type = 3`).
-    pub base: PJRT_Extension_Base,
-    /// Slot 1 (`0x18`): `PJRT_FFI_TypeID_Register`.
-    pub type_id_register: PjrtFn,
-    /// Slot 2 (`0x20`): `PJRT_FFI_UserData_Add`.
-    pub user_data_add: PjrtFn,
-    /// Slot 3 (`0x28`): `PJRT_FFI_Register_Handler`.
-    pub register_handler: PjrtFn,
-}
-
-// SAFETY: Immutable static vtable structure.
-unsafe impl Sync for PJRT_FFI_Extension {}
-
-const _: () = assert!(size_of::<PJRT_FFI_Extension>() == 48);
-const _: () = assert!(std::mem::offset_of!(PJRT_FFI_Extension, register_handler) == 0x28);
-
-/// Static `PJRT_FFI_Extension` descriptor (`ext_type = 3`, `48` bytes).
+/// Standalone `PJRT_FFI_Extension` descriptor (`ext_type = 5`, `48` bytes).
 pub static GLOBAL_PJRT_FFI_EXTENSION: PJRT_FFI_Extension = PJRT_FFI_Extension {
     base: PJRT_Extension_Base {
         struct_size: 48,
-        ext_type: 3,
+        ext_type: 5,
         pad: 0,
         next: ptr::null(),
     },
@@ -783,8 +933,8 @@ pub extern "C" fn PJRT_FFI_GetExtension() -> *const PJRT_FFI_Extension {
     ffi_catch_unwind(ptr::null(), || ptr::addr_of!(GLOBAL_PJRT_FFI_EXTENSION))
 }
 
-/// Static Node 17 (`PJRT_Profiler_Extension`).
-pub static EXT_17_PROFILER: PJRT_Profiler_Extension = PJRT_Profiler_Extension {
+/// Static Node 18 (`PJRT_Profiler_Extension`, `ext_type = 1`, `40` bytes).
+pub static EXT_18_PROFILER: PJRT_Profiler_Extension = PJRT_Profiler_Extension {
     base: PJRT_Extension_Base {
         struct_size: 40,
         ext_type: 1,
@@ -795,13 +945,13 @@ pub static EXT_17_PROFILER: PJRT_Profiler_Extension = PJRT_Profiler_Extension {
     traceme_context_id: 0,
 };
 
-/// Static Node 16 (`PJRT_RawBuffer_Extension`).
-pub static EXT_16_RAW_BUFFER: PJRT_RawBuffer_Extension = PJRT_RawBuffer_Extension {
+/// Static Node 17 (`PJRT_RawBuffer_Extension`, `ext_type = 8`, `80` bytes).
+pub static EXT_17_RAW_BUFFER: PJRT_RawBuffer_Extension = PJRT_RawBuffer_Extension {
     base: PJRT_Extension_Base {
         struct_size: 80,
         ext_type: 8,
         pad: 0,
-        next: ptr::addr_of!(EXT_17_PROFILER.base),
+        next: ptr::addr_of!(EXT_18_PROFILER.base),
     },
     create_raw_alias_of_buffer: PJRT_RawBuffer_CreateRawAliasOfBuffer,
     destroy: PJRT_RawBuffer_Destroy,
@@ -812,13 +962,13 @@ pub static EXT_16_RAW_BUFFER: PJRT_RawBuffer_Extension = PJRT_RawBuffer_Extensio
     copy_raw_device_to_host: PJRT_RawBuffer_CopyRawDeviceToHost,
 };
 
-/// Static Node 15 (`PJRT_Layouts_Extension`).
-pub static EXT_15_LAYOUTS: PJRT_Layouts_Extension = PJRT_Layouts_Extension {
+/// Static Node 16 (`PJRT_Layouts_Extension`, `ext_type = 4`, `80` bytes).
+pub static EXT_16_LAYOUTS: PJRT_Layouts_Extension = PJRT_Layouts_Extension {
     base: PJRT_Extension_Base {
         struct_size: 80,
-        ext_type: 6,
+        ext_type: 4,
         pad: 0,
-        next: ptr::addr_of!(EXT_16_RAW_BUFFER.base),
+        next: ptr::addr_of!(EXT_17_RAW_BUFFER.base),
     },
     memory_layout_destroy: PJRT_Layouts_MemoryLayout_Destroy,
     memory_layout_serialize: PJRT_Layouts_MemoryLayout_Serialize,
@@ -829,39 +979,39 @@ pub static EXT_15_LAYOUTS: PJRT_Layouts_Extension = PJRT_Layouts_Extension {
     executable_get_parameter_layouts: PJRT_Layouts_Executable_GetParameterLayouts,
 };
 
-/// Static Node 14 (`PJRT_MemoryDescriptions_Extension`).
-pub static EXT_14_MEM_DESC: PJRT_MemoryDescriptions_Extension = PJRT_MemoryDescriptions_Extension {
+/// Static Node 15 (`PJRT_MemoryDescriptions_Extension`, `ext_type = 6`, `40` bytes).
+pub static EXT_15_MEM_DESC: PJRT_MemoryDescriptions_Extension = PJRT_MemoryDescriptions_Extension {
     base: PJRT_Extension_Base {
         struct_size: 40,
-        ext_type: 7,
+        ext_type: 6,
         pad: 0,
-        next: ptr::addr_of!(EXT_15_LAYOUTS.base),
+        next: ptr::addr_of!(EXT_16_LAYOUTS.base),
     },
     get_memory_descriptions: PJRT_MemoryDescriptions_Get,
     destroy_memory_descriptions: PJRT_MemoryDescriptions_Destroy,
 };
 
-/// Static Node 13 (`PJRT_ExecutableMetadata_Extension`).
-pub static EXT_13_EXEC_METADATA: PJRT_ExecutableMetadata_Extension =
+/// Static Node 14 (`PJRT_ExecutableMetadata_Extension`, `ext_type = 13`, `40` bytes).
+pub static EXT_14_EXEC_METADATA: PJRT_ExecutableMetadata_Extension =
     PJRT_ExecutableMetadata_Extension {
         base: PJRT_Extension_Base {
             struct_size: 40,
-            ext_type: 11,
+            ext_type: 13,
             pad: 0,
-            next: ptr::addr_of!(EXT_14_MEM_DESC.base),
+            next: ptr::addr_of!(EXT_15_MEM_DESC.base),
         },
         get_executable_metadata: PJRT_ExecutableMetadata_Get,
         destroy_executable_metadata: PJRT_ExecutableMetadata_Destroy,
     };
 
-/// Static Node 12 (`PJRT_CrossHostTransfers_Extension`).
-pub static EXT_12_CROSS_HOST: PJRT_CrossHostTransfers_Extension =
+/// Static Node 13 (`PJRT_CrossHostTransfers_Extension`, `ext_type = 12`, `56` bytes).
+pub static EXT_13_CROSS_HOST: PJRT_CrossHostTransfers_Extension =
     PJRT_CrossHostTransfers_Extension {
         base: PJRT_Extension_Base {
             struct_size: 56,
             ext_type: 12,
             pad: 0,
-            next: ptr::addr_of!(EXT_13_EXEC_METADATA.base),
+            next: ptr::addr_of!(EXT_14_EXEC_METADATA.base),
         },
         make_cross_host_receive_buffers: PJRT_CrossHostTransfers_MakeReceiveBuffers,
         copy_to_remote_device: PJRT_CrossHostTransfers_CopyToRemoteDevice,
@@ -869,40 +1019,56 @@ pub static EXT_12_CROSS_HOST: PJRT_CrossHostTransfers_Extension =
         cross_host_send_buffers: PJRT_CrossHostTransfers_SendBuffers,
     };
 
-/// Static Node 11 (`PJRT_PhaseCompile_Extension`).
-pub static EXT_11_PHASE_COMPILE: PJRT_PhaseCompile_Extension = PJRT_PhaseCompile_Extension {
+/// Static Node 12 (`PJRT_PhaseCompile_Extension`, `ext_type = 9`, `192` bytes).
+pub static EXT_12_PHASE_COMPILE: PJRT_PhaseCompile_Extension = PJRT_PhaseCompile_Extension {
     base: PJRT_Extension_Base {
-        struct_size: 64,
+        struct_size: 192,
         ext_type: 9,
         pad: 0,
-        next: ptr::addr_of!(EXT_12_CROSS_HOST.base),
+        next: ptr::addr_of!(EXT_13_CROSS_HOST.base),
     },
     phase_compile_get_compiler: PJRT_PhaseCompile_GetCompiler,
     phase_compile_destroy_compiler: PJRT_PhaseCompile_DestroyCompiler,
     phase_compile_run_phase: PJRT_PhaseCompile_RunPhase,
     phase_compile_get_phase_names: PJRT_PhaseCompile_GetPhaseNames,
     phase_compile_c_buffers_destroy: PJRT_PhaseCompile_CBuffersDestroy,
+    relocatable_destroy: PJRT_Relocatable_Destroy,
+    relocatable_name: PJRT_Relocatable_Name,
+    relocatable_build_id: PJRT_Relocatable_BuildId,
+    relocatable_call_backend_config: PJRT_Relocatable_CallBackendConfig,
+    relocatable_has_side_effects: PJRT_Relocatable_HasSideEffects,
+    relocatable_serialize: PJRT_Relocatable_Serialize,
+    relocatable_parameter_element_types: PJRT_Relocatable_ParameterElementTypes,
+    relocatable_output_element_types: PJRT_Relocatable_OutputElementTypes,
+    relocatable_parameter_dimensions: PJRT_Relocatable_ParameterDimensions,
+    relocatable_output_dimensions: PJRT_Relocatable_OutputDimensions,
+    relocatable_parameter_layouts: PJRT_Relocatable_ParameterLayouts,
+    relocatable_output_layouts: PJRT_Relocatable_OutputLayouts,
+    relocatable_parameter_output_aliases: PJRT_Relocatable_ParameterOutputAliases,
+    phase_compile_compile_to_relocatable: PJRT_PhaseCompile_CompileToRelocatable,
+    phase_compile_deserialize_relocatable: PJRT_PhaseCompile_DeserializeRelocatable,
+    phase_compile_link_relocatables: PJRT_PhaseCompile_LinkRelocatables,
 };
 
-/// Static Node 10 (`PJRT_Callback_Extension`).
-pub static EXT_10_CALLBACK: PJRT_Callback_Extension = PJRT_Callback_Extension {
+/// Static Node 11 (`PJRT_Callback_Extension`, `ext_type = 14`, `40` bytes).
+pub static EXT_11_CALLBACK: PJRT_Callback_Extension = PJRT_Callback_Extension {
     base: PJRT_Extension_Base {
         struct_size: 40,
         ext_type: 14,
         pad: 0,
-        next: ptr::addr_of!(EXT_11_PHASE_COMPILE.base),
+        next: ptr::addr_of!(EXT_12_PHASE_COMPILE.base),
     },
     register_callback: PJRT_Callback_RegisterCallback,
     invoke_callback: PJRT_Callback_InvokeCallback,
 };
 
-/// Static Node 9 (`PJRT_TpuTopology_Extension`).
-pub static EXT_09_TPU_TOPOLOGY: PJRT_TpuTopology_Extension = PJRT_TpuTopology_Extension {
+/// Static Node 10 (`PJRT_TpuTopology_Extension`, `ext_type = 16`, `280` bytes).
+pub static EXT_10_TPU_TOPOLOGY: PJRT_TpuTopology_Extension = PJRT_TpuTopology_Extension {
     base: PJRT_Extension_Base {
         struct_size: 280,
         ext_type: 16,
         pad: 0,
-        next: ptr::addr_of!(EXT_10_CALLBACK.base),
+        next: ptr::addr_of!(EXT_11_CALLBACK.base),
     },
     subslice: PJRT_TpuTopology_Subslice,
     is_subslice_topology: PJRT_TpuTopology_IsSubsliceTopology,
@@ -938,13 +1104,13 @@ pub static EXT_09_TPU_TOPOLOGY: PJRT_TpuTopology_Extension = PJRT_TpuTopology_Ex
     compute_subslice_for_devices: PJRT_TpuTopology_ComputeSubsliceForDevices,
 };
 
-/// Static Node 8 (`PJRT_TpuExecutable_Extension`).
-pub static EXT_08_TPU_EXECUTABLE: PJRT_TpuExecutable_Extension = PJRT_TpuExecutable_Extension {
+/// Static Node 9 (`PJRT_TpuExecutable_Extension`, `ext_type = 17`, `96` bytes).
+pub static EXT_09_TPU_EXECUTABLE: PJRT_TpuExecutable_Extension = PJRT_TpuExecutable_Extension {
     base: PJRT_Extension_Base {
         struct_size: 96,
         ext_type: 17,
         pad: 0,
-        next: ptr::addr_of!(EXT_09_TPU_TOPOLOGY.base),
+        next: ptr::addr_of!(EXT_10_TPU_TOPOLOGY.base),
     },
     get_target_arguments: PJRT_TpuExecutable_GetTargetArguments,
     get_hlo_module_with_config: PJRT_TpuExecutable_GetHloModuleWithConfig,
@@ -957,13 +1123,13 @@ pub static EXT_08_TPU_EXECUTABLE: PJRT_TpuExecutable_Extension = PJRT_TpuExecuta
     is_tpu_cancellation_placeholder_error: PJRT_TpuExecutable_IsCancellationPlaceholderError,
 };
 
-/// Static Node 7 (`PJRT_Megascale_Extension`).
-pub static EXT_07_MEGASCALE: PJRT_Megascale_Extension = PJRT_Megascale_Extension {
+/// Static Node 8 (`PJRT_Megascale_Extension`, `ext_type = 18`, `288` bytes).
+pub static EXT_08_MEGASCALE: PJRT_Megascale_Extension = PJRT_Megascale_Extension {
     base: PJRT_Extension_Base {
-        struct_size: 248,
+        struct_size: 288,
         ext_type: 18,
         pad: 0,
-        next: ptr::addr_of!(EXT_08_TPU_EXECUTABLE.base),
+        next: ptr::addr_of!(EXT_09_TPU_EXECUTABLE.base),
     },
     create_client_context: PJRT_Megascale_CreateClientContext,
     delete_client_context: PJRT_Megascale_DeleteClientContext,
@@ -993,27 +1159,32 @@ pub static EXT_07_MEGASCALE: PJRT_Megascale_Extension = PJRT_Megascale_Extension
     set_transport_type: PJRT_Megascale_SetTransportType,
     wait_for_barrier: PJRT_Megascale_WaitForBarrier,
     abort_collectives: PJRT_Megascale_AbortCollectives,
+    discover_slices: PJRT_Megascale_DiscoverSlices,
+    multi_slice_config_get_incarnation_id: PJRT_Megascale_MultiSliceConfig_GetIncarnationId,
+    multi_slice_config_get_local_host_id: PJRT_Megascale_MultiSliceConfig_GetLocalHostId,
+    multi_slice_config_get_num_hosts: PJRT_Megascale_MultiSliceConfig_GetNumHosts,
+    global_barrier: PJRT_Megascale_GlobalBarrier,
 };
 
-/// Static Node 6 (`PJRT_Shardings_Extension`).
-pub static EXT_06_SHARDINGS: PJRT_Shardings_Extension = PJRT_Shardings_Extension {
+/// Static Node 7 (`PJRT_Shardings_Extension`, `ext_type = 19`, `40` bytes).
+pub static EXT_07_SHARDINGS: PJRT_Shardings_Extension = PJRT_Shardings_Extension {
     base: PJRT_Extension_Base {
         struct_size: 40,
         ext_type: 19,
         pad: 0,
-        next: ptr::addr_of!(EXT_07_MEGASCALE.base),
+        next: ptr::addr_of!(EXT_08_MEGASCALE.base),
     },
     parameter_shardings: PJRT_Shardings_ParameterShardings,
     output_shardings: PJRT_Shardings_OutputShardings,
 };
 
-/// Static Node 5 (`PJRT_AbiVersion_Extension`).
-pub static EXT_05_ABI_VERSION: PJRT_AbiVersion_Extension = PJRT_AbiVersion_Extension {
+/// Static Node 6 (`PJRT_AbiVersion_Extension`, `ext_type = 20`, `120` bytes).
+pub static EXT_06_ABI_VERSION: PJRT_AbiVersion_Extension = PJRT_AbiVersion_Extension {
     base: PJRT_Extension_Base {
         struct_size: 120,
         ext_type: 20,
         pad: 0,
-        next: ptr::addr_of!(EXT_06_SHARDINGS.base),
+        next: ptr::addr_of!(EXT_07_SHARDINGS.base),
     },
     client_runtime_abi_version: PJRT_AbiVersion_ClientRuntime,
     executable_get_abi_version: PJRT_AbiVersion_ExecutableGet,
@@ -1030,13 +1201,13 @@ pub static EXT_05_ABI_VERSION: PJRT_AbiVersion_Extension = PJRT_AbiVersion_Exten
     executable_abi_version_from_proto: PJRT_AbiVersion_ExecutableFromProto,
 };
 
-/// Static Node 4 (`PJRT_Collectives_Extension`).
-pub static EXT_04_COLLECTIVES: PJRT_Collectives_Extension = PJRT_Collectives_Extension {
+/// Static Node 5 (`PJRT_Collectives_Extension`, `ext_type = 21`, `96` bytes).
+pub static EXT_05_COLLECTIVES: PJRT_Collectives_Extension = PJRT_Collectives_Extension {
     base: PJRT_Extension_Base {
         struct_size: 96,
-        ext_type: 25,
+        ext_type: 21,
         pad: 0,
-        next: ptr::addr_of!(EXT_05_ABI_VERSION.base),
+        next: ptr::addr_of!(EXT_06_ABI_VERSION.base),
     },
     collectives_destroy: PJRT_Collectives_Destroy,
     create_communicator: PJRT_Collectives_CreateCommunicator,
@@ -1049,13 +1220,13 @@ pub static EXT_04_COLLECTIVES: PJRT_Collectives_Extension = PJRT_Collectives_Ext
     communicator_to_string: PJRT_Communicator_ToString,
 };
 
-/// Static Node 3 (`PJRT_MultiSlice_Extension`).
-pub static EXT_03_MULTI_SLICE: PJRT_MultiSlice_Extension = PJRT_MultiSlice_Extension {
+/// Static Node 4 (`PJRT_MultiSlice_Extension`, `ext_type = 22`, `64` bytes).
+pub static EXT_04_MULTI_SLICE: PJRT_MultiSlice_Extension = PJRT_MultiSlice_Extension {
     base: PJRT_Extension_Base {
         struct_size: 64,
-        ext_type: 26,
+        ext_type: 22,
         pad: 0,
-        next: ptr::addr_of!(EXT_04_COLLECTIVES.base),
+        next: ptr::addr_of!(EXT_05_COLLECTIVES.base),
     },
     config_destroy: PJRT_MultiSlice_Config_Destroy,
     config_num_slices: PJRT_MultiSlice_Config_NumSlices,
@@ -1064,25 +1235,25 @@ pub static EXT_03_MULTI_SLICE: PJRT_MultiSlice_Extension = PJRT_MultiSlice_Exten
     config_serialize: PJRT_MultiSlice_Config_Serialize,
 };
 
-/// Static Node 2 (`PJRT_HostMemoryAllocator_Extension`).
-pub static EXT_02_HOST_ALLOCATOR: PJRT_HostMemoryAllocator_Extension =
+/// Static Node 3 (`PJRT_HostMemoryAllocator_Extension`, `ext_type = 23`, `32` bytes).
+pub static EXT_03_HOST_ALLOCATOR: PJRT_HostMemoryAllocator_Extension =
     PJRT_HostMemoryAllocator_Extension {
         base: PJRT_Extension_Base {
             struct_size: 32,
-            ext_type: 28,
+            ext_type: 23,
             pad: 0,
-            next: ptr::addr_of!(EXT_03_MULTI_SLICE.base),
+            next: ptr::addr_of!(EXT_04_MULTI_SLICE.base),
         },
         get_host_memory_allocator: PJRT_HostMemoryAllocator_Get,
     };
 
-/// Static Node 1 (`PJRT_XlaTransform_Extension`), head of the 17-node TPU extension chain.
-pub static EXT_01_XLA_TRANSFORM: PJRT_XlaTransform_Extension = PJRT_XlaTransform_Extension {
+/// Static Node 2 (`PJRT_XlaTransform_Extension`, `ext_type = 24`, `56` bytes).
+pub static EXT_02_XLA_TRANSFORM: PJRT_XlaTransform_Extension = PJRT_XlaTransform_Extension {
     base: PJRT_Extension_Base {
         struct_size: 56,
-        ext_type: 29,
+        ext_type: 24,
         pad: 0,
-        next: ptr::addr_of!(EXT_02_HOST_ALLOCATOR.base),
+        next: ptr::addr_of!(EXT_03_HOST_ALLOCATOR.base),
     },
     register_xla_transform: PJRT_XlaTransform_Register,
     wait_for_all_transforms: PJRT_XlaTransform_WaitForAll,
@@ -1090,1846 +1261,18 @@ pub static EXT_01_XLA_TRANSFORM: PJRT_XlaTransform_Extension = PJRT_XlaTransform
     list_xla_transforms: PJRT_XlaTransform_List,
 };
 
+/// Static Node 1 (`PJRT_FFI_Extension`, `ext_type = 5`, `48` bytes), head of the 18-node TPU extension chain.
+pub static EXT_01_FFI: PJRT_FFI_Extension = PJRT_FFI_Extension {
+    base: PJRT_Extension_Base {
+        struct_size: 48,
+        ext_type: 5,
+        pad: 0,
+        next: ptr::addr_of!(EXT_02_XLA_TRANSFORM.base),
+    },
+    type_id_register: PJRT_FFI_TypeID_Register,
+    user_data_add: PJRT_FFI_UserData_Add,
+    register_handler: PJRT_FFI_Register_Handler,
+};
+
 #[cfg(test)]
-#[allow(
-    clippy::cognitive_complexity,
-    clippy::too_many_lines,
-    clippy::similar_names,
-    clippy::items_after_statements,
-    clippy::float_cmp
-)]
-#[cfg_attr(coverage_nightly, coverage(off))]
-mod tests {
-    use super::*;
-    use crate::pjrt_buffer_api::{PJRT_Buffer_Destroy, PJRT_Buffer_IsDeleted};
-    use crate::pjrt_client_api::{
-        PJRT_Client_BufferFromHostBuffer, PJRT_Client_Compile, PJRT_Client_Create,
-        PJRT_Client_Destroy, PJRT_Client_LookupDevice,
-    };
-    use crate::pjrt_device_api::{
-        PJRT_Device_GetDescription, PJRT_DeviceDescription_Id, PJRT_Memory_Id,
-    };
-    use crate::pjrt_error_api::PJRT_Plugin_Attributes;
-    use crate::pjrt_executable_api::{PJRT_Executable_Name, PJRT_LoadedExecutable_Destroy};
-    use crate::pjrt_helpers::box_pjrt_error;
-    use crate::pjrt_types::{
-        PJRT_Buffer_Destroy_Args, PJRT_Client_BufferFromHostBuffer_Args, PJRT_Client_Compile_Args,
-        PJRT_Client_Create_Args, PJRT_Client_Destroy_Args, PJRT_Client_LookupDevice_Args,
-        PJRT_LoadedExecutable_Destroy_Args, PJRT_Program, PjrtFn,
-    };
-    use libtpu_core::error::LibTpuError;
-
-    #[test]
-    fn test_pjrt_extensions_vtable_and_behavioral_operations() {
-        assert_ne!(
-            format!(
-                "{GLOBAL_PLUGIN_PROFILER_API:?}{EXT_01_XLA_TRANSFORM:?}{EXT_02_HOST_ALLOCATOR:?}{EXT_03_MULTI_SLICE:?}{EXT_04_COLLECTIVES:?}{EXT_05_ABI_VERSION:?}{EXT_06_SHARDINGS:?}{EXT_07_MEGASCALE:?}{EXT_08_TPU_EXECUTABLE:?}{EXT_09_TPU_TOPOLOGY:?}{EXT_10_CALLBACK:?}{EXT_11_PHASE_COMPILE:?}{EXT_12_CROSS_HOST:?}{EXT_13_EXEC_METADATA:?}{EXT_14_MEM_DESC:?}{EXT_15_LAYOUTS:?}{EXT_16_RAW_BUFFER:?}{EXT_17_PROFILER:?}"
-            ),
-            ""
-        );
-
-        // SAFETY: Testing all 138 PJRT extension entrypoints and argument validation paths.
-        unsafe {
-            let ext_null_err = PJRT_Extension_ValidateArgs(ptr::null_mut());
-            drop(Box::from_raw(ext_null_err));
-            drop(Box::from_raw(PJRT_Plugin_Attributes(ptr::null_mut())));
-            drop(Box::from_raw(PJRT_DeviceDescription_Id(ptr::null_mut())));
-            drop(Box::from_raw(PJRT_Device_GetDescription(ptr::null_mut())));
-            drop(Box::from_raw(PJRT_Memory_Id(ptr::null_mut())));
-            drop(Box::from_raw(PJRT_Executable_Name(ptr::null_mut())));
-            drop(Box::from_raw(PJRT_Buffer_IsDeleted(ptr::null_mut())));
-            drop(Box::from_raw(
-                PLUGIN_Profiler_Error_Destroy(ptr::null_mut()),
-            ));
-            let mut zero_sz: usize = 0;
-            let ext_sz_err = PJRT_Extension_ValidateArgs(ptr::addr_of_mut!(zero_sz).cast());
-            drop(Box::from_raw(ext_sz_err));
-            let mut valid_sz: [usize; 12] = [96, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-            assert!(PJRT_Extension_ValidateArgs(valid_sz.as_mut_ptr().cast()).is_null());
-
-            let ext_fns: [PjrtFn; 139] = [
-                GLOBAL_PLUGIN_PROFILER_API.error_destroy,
-                GLOBAL_PLUGIN_PROFILER_API.error_message,
-                GLOBAL_PLUGIN_PROFILER_API.error_get_code,
-                GLOBAL_PLUGIN_PROFILER_API.create,
-                GLOBAL_PLUGIN_PROFILER_API.destroy,
-                GLOBAL_PLUGIN_PROFILER_API.start,
-                GLOBAL_PLUGIN_PROFILER_API.stop,
-                GLOBAL_PLUGIN_PROFILER_API.collect_data,
-                EXT_01_XLA_TRANSFORM.register_xla_transform,
-                EXT_01_XLA_TRANSFORM.wait_for_all_transforms,
-                EXT_01_XLA_TRANSFORM.unregister_xla_transform,
-                EXT_01_XLA_TRANSFORM.list_xla_transforms,
-                EXT_02_HOST_ALLOCATOR.get_host_memory_allocator,
-                EXT_03_MULTI_SLICE.config_destroy,
-                EXT_03_MULTI_SLICE.config_num_slices,
-                EXT_03_MULTI_SLICE.config_num_devices_per_slice,
-                EXT_03_MULTI_SLICE.config_slice_id,
-                EXT_03_MULTI_SLICE.config_serialize,
-                EXT_04_COLLECTIVES.collectives_destroy,
-                EXT_04_COLLECTIVES.create_communicator,
-                EXT_04_COLLECTIVES.communicator_destroy,
-                EXT_04_COLLECTIVES.communicator_all_reduce,
-                EXT_04_COLLECTIVES.communicator_reduce_scatter,
-                EXT_04_COLLECTIVES.communicator_all_gather,
-                EXT_04_COLLECTIVES.communicator_collective_permute,
-                EXT_04_COLLECTIVES.communicator_all_to_all,
-                EXT_04_COLLECTIVES.communicator_to_string,
-                EXT_05_ABI_VERSION.client_runtime_abi_version,
-                EXT_05_ABI_VERSION.executable_get_abi_version,
-                EXT_05_ABI_VERSION.runtime_abi_version_destroy,
-                EXT_05_ABI_VERSION.runtime_abi_version_is_compatible_with_runtime,
-                EXT_05_ABI_VERSION.runtime_abi_version_is_compatible_with_executable,
-                EXT_05_ABI_VERSION.runtime_abi_version_to_proto,
-                EXT_05_ABI_VERSION.runtime_abi_version_platform_id,
-                EXT_05_ABI_VERSION.executable_abi_version_destroy,
-                EXT_05_ABI_VERSION.executable_abi_version_to_proto,
-                EXT_05_ABI_VERSION.executable_abi_version_platform_id,
-                EXT_05_ABI_VERSION.runtime_abi_version_from_proto,
-                EXT_05_ABI_VERSION.executable_abi_version_from_proto,
-                EXT_06_SHARDINGS.parameter_shardings,
-                EXT_06_SHARDINGS.output_shardings,
-                EXT_07_MEGASCALE.create_client_context,
-                EXT_07_MEGASCALE.delete_client_context,
-                EXT_07_MEGASCALE.create_default_config,
-                EXT_07_MEGASCALE.create_aot_config,
-                EXT_07_MEGASCALE.create_multi_slice_config,
-                EXT_07_MEGASCALE.delete_multi_slice_config,
-                EXT_07_MEGASCALE.multi_slice_config_num_slices,
-                EXT_07_MEGASCALE.multi_slice_config_num_devices_per_slice,
-                EXT_07_MEGASCALE.multi_slice_config_slice_id,
-                EXT_07_MEGASCALE.multi_slice_config_serialized_slice_key_value,
-                EXT_07_MEGASCALE.multi_slice_config_serialize,
-                EXT_07_MEGASCALE.deserialize_multi_slice_config,
-                EXT_07_MEGASCALE.megascale_addresses,
-                EXT_07_MEGASCALE.barrier,
-                EXT_07_MEGASCALE.log_error,
-                EXT_07_MEGASCALE.get_megascale_dcn_topology,
-                EXT_07_MEGASCALE.get_slice_id,
-                EXT_07_MEGASCALE.get_num_slices,
-                EXT_07_MEGASCALE.initialize_slice,
-                EXT_07_MEGASCALE.finalize_slice,
-                EXT_07_MEGASCALE.register_error_handler,
-                EXT_07_MEGASCALE.unregister_error_handler,
-                EXT_07_MEGASCALE.collect_metrics,
-                EXT_07_MEGASCALE.reset_metrics,
-                EXT_07_MEGASCALE.get_transport_type,
-                EXT_07_MEGASCALE.set_transport_type,
-                EXT_07_MEGASCALE.wait_for_barrier,
-                EXT_07_MEGASCALE.abort_collectives,
-                EXT_08_TPU_EXECUTABLE.get_target_arguments,
-                EXT_08_TPU_EXECUTABLE.get_hlo_module_with_config,
-                EXT_08_TPU_EXECUTABLE.reserved,
-                EXT_08_TPU_EXECUTABLE.get_compiled_memory_stats,
-                EXT_08_TPU_EXECUTABLE.run_hlo_cost_analysis,
-                EXT_08_TPU_EXECUTABLE.set_tpu_compilation_env,
-                EXT_08_TPU_EXECUTABLE.get_tpu_compilation_env_field_as_string,
-                EXT_08_TPU_EXECUTABLE.is_tpu_predetermined_error,
-                EXT_08_TPU_EXECUTABLE.is_tpu_cancellation_placeholder_error,
-                EXT_09_TPU_TOPOLOGY.subslice,
-                EXT_09_TPU_TOPOLOGY.is_subslice_topology,
-                EXT_09_TPU_TOPOLOGY.subslice_device_id_from_full_device_id,
-                EXT_09_TPU_TOPOLOGY.replace_host_bounds,
-                EXT_09_TPU_TOPOLOGY.is_enhanced_barrier_enabled,
-                EXT_09_TPU_TOPOLOGY.has_limited_ici_connectivity,
-                EXT_09_TPU_TOPOLOGY.is_reachable_over_limited_ici,
-                EXT_09_TPU_TOPOLOGY.process_count,
-                EXT_09_TPU_TOPOLOGY.chips_per_process,
-                EXT_09_TPU_TOPOLOGY.core_count_per_chip,
-                EXT_09_TPU_TOPOLOGY.chip_count,
-                EXT_09_TPU_TOPOLOGY.core_count,
-                EXT_09_TPU_TOPOLOGY.logi_device_count_per_process,
-                EXT_09_TPU_TOPOLOGY.logi_device_count,
-                EXT_09_TPU_TOPOLOGY.logi_device_count_per_chip,
-                EXT_09_TPU_TOPOLOGY.core_count_per_process,
-                EXT_09_TPU_TOPOLOGY.process_ids,
-                EXT_09_TPU_TOPOLOGY.logi_device_ids_on_process,
-                EXT_09_TPU_TOPOLOGY.proc_id_and_idx_on_proc_for_chip,
-                EXT_09_TPU_TOPOLOGY.proc_id_and_idx_on_proc_for_logi_device,
-                EXT_09_TPU_TOPOLOGY.process_coord_from_id,
-                EXT_09_TPU_TOPOLOGY.chip_id_from_coord,
-                EXT_09_TPU_TOPOLOGY.logi_device_id_from_chip_coord_and_idx,
-                EXT_09_TPU_TOPOLOGY.chip_coord_and_idx_for_logi_device,
-                EXT_09_TPU_TOPOLOGY.chips_per_process_bounds,
-                EXT_09_TPU_TOPOLOGY.chip_bounds,
-                EXT_09_TPU_TOPOLOGY.process_bounds,
-                EXT_09_TPU_TOPOLOGY.get_routing_strategy,
-                EXT_09_TPU_TOPOLOGY.get_slice_config,
-                EXT_09_TPU_TOPOLOGY.get_slice_configs,
-                EXT_09_TPU_TOPOLOGY.get_default_platform_config,
-                EXT_09_TPU_TOPOLOGY.compute_subslice_for_devices,
-                EXT_10_CALLBACK.register_callback,
-                EXT_10_CALLBACK.invoke_callback,
-                EXT_11_PHASE_COMPILE.phase_compile_get_compiler,
-                EXT_11_PHASE_COMPILE.phase_compile_destroy_compiler,
-                EXT_11_PHASE_COMPILE.phase_compile_run_phase,
-                EXT_11_PHASE_COMPILE.phase_compile_get_phase_names,
-                EXT_11_PHASE_COMPILE.phase_compile_c_buffers_destroy,
-                EXT_12_CROSS_HOST.make_cross_host_receive_buffers,
-                EXT_12_CROSS_HOST.copy_to_remote_device,
-                EXT_12_CROSS_HOST.cross_host_receive_buffers,
-                EXT_12_CROSS_HOST.cross_host_send_buffers,
-                EXT_13_EXEC_METADATA.get_executable_metadata,
-                EXT_13_EXEC_METADATA.destroy_executable_metadata,
-                EXT_14_MEM_DESC.get_memory_descriptions,
-                EXT_14_MEM_DESC.destroy_memory_descriptions,
-                EXT_15_LAYOUTS.memory_layout_destroy,
-                EXT_15_LAYOUTS.memory_layout_serialize,
-                EXT_15_LAYOUTS.client_get_default_layout,
-                EXT_15_LAYOUTS.buffer_memory_layout,
-                EXT_15_LAYOUTS.topology_get_default_layout,
-                EXT_15_LAYOUTS.executable_get_output_layouts,
-                EXT_15_LAYOUTS.executable_get_parameter_layouts,
-                EXT_16_RAW_BUFFER.create_raw_alias_of_buffer,
-                EXT_16_RAW_BUFFER.destroy,
-                EXT_16_RAW_BUFFER.get_host_pointer,
-                EXT_16_RAW_BUFFER.get_on_device_size_in_bytes,
-                EXT_16_RAW_BUFFER.get_memory_space,
-                EXT_16_RAW_BUFFER.copy_raw_host_to_device,
-                EXT_16_RAW_BUFFER.copy_raw_device_to_host,
-            ];
-            for ext_fn in ext_fns {
-                valid_sz = [96, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-                assert!(ext_fn(valid_sz.as_mut_ptr().cast()).is_null());
-            }
-
-            drop(Box::from_raw(PLUGIN_Profiler_CollectData(ptr::null_mut())));
-            let mut prof_create_args = PLUGIN_Profiler_Create_Args {
-                struct_size: size_of::<PLUGIN_Profiler_Create_Args>(),
-                extension_start: ptr::null_mut(),
-                options: ptr::null(),
-                options_size: 0,
-                profiler: ptr::null_mut(),
-            };
-            assert!(PLUGIN_Profiler_Create(ptr::addr_of_mut!(prof_create_args).cast()).is_null());
-            assert!(!prof_create_args.profiler.is_null());
-            let mut prof_start_args = PLUGIN_Profiler_Start_Args {
-                struct_size: size_of::<PLUGIN_Profiler_Start_Args>(),
-                extension_start: ptr::null_mut(),
-                profiler: prof_create_args.profiler,
-            };
-            assert!(PLUGIN_Profiler_Start(ptr::addr_of_mut!(prof_start_args).cast()).is_null());
-            assert!(PLUGIN_Profiler_Start(ptr::addr_of_mut!(prof_start_args).cast()).is_null());
-
-            let mut prof_collect_null = PLUGIN_Profiler_CollectData_Args {
-                struct_size: size_of::<PLUGIN_Profiler_CollectData_Args>(),
-                extension_start: ptr::null_mut(),
-                profiler: prof_create_args.profiler as usize,
-                buffer: ptr::null_mut(),
-                size_in_bytes: ptr::null_mut(),
-            };
-            assert_ne!(format!("{prof_collect_null:?}"), "");
-            assert!(
-                PLUGIN_Profiler_CollectData(ptr::addr_of_mut!(prof_collect_null).cast()).is_null()
-            );
-            let mut xspace_sz: usize = 0;
-            let mut xspace_buf = vec![0_u8; 4096];
-            let mut prof_collect_full = PLUGIN_Profiler_CollectData_Args {
-                struct_size: size_of::<PLUGIN_Profiler_CollectData_Args>(),
-                extension_start: ptr::null_mut(),
-                profiler: prof_create_args.profiler as usize,
-                buffer: xspace_buf.as_mut_ptr(),
-                size_in_bytes: ptr::addr_of_mut!(xspace_sz),
-            };
-            assert!(
-                PLUGIN_Profiler_CollectData(ptr::addr_of_mut!(prof_collect_full).cast()).is_null()
-            );
-            assert!(xspace_sz > 0);
-            assert!(PLUGIN_Profiler_Start(ptr::addr_of_mut!(prof_start_args).cast()).is_null());
-            let mut prof_stop_args = PLUGIN_Profiler_Stop_Args {
-                struct_size: size_of::<PLUGIN_Profiler_Stop_Args>(),
-                extension_start: ptr::null_mut(),
-                profiler: prof_create_args.profiler,
-            };
-            assert!(PLUGIN_Profiler_Stop(ptr::addr_of_mut!(prof_stop_args).cast()).is_null());
-            let mut prof_destroy_args = PLUGIN_Profiler_Destroy_Args {
-                struct_size: size_of::<PLUGIN_Profiler_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                profiler: prof_create_args.profiler,
-            };
-            assert!(PLUGIN_Profiler_Destroy(ptr::addr_of_mut!(prof_destroy_args).cast()).is_null());
-            assert!(prof_destroy_args.profiler.is_null());
-            assert_ne!(
-                format!(
-                    "{:?}{:?}",
-                    crate::pjrt_types::ClientExtensionArena::default(),
-                    crate::pjrt_types::ExecutableExtensionArena::default()
-                ),
-                ""
-            );
-
-            let ext_destroy_args = PJRT_Megascale_Handle_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                handle: ptr::null_mut(),
-            };
-            let ext_q32_args = PJRT_Megascale_Query_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                handle: 0,
-                out_value: 0,
-            };
-            let ext_q40_args = PJRT_Megascale_Data_Args {
-                struct_size: 40,
-                extension_start: ptr::null_mut(),
-                handle: 0,
-                out_first: 0,
-                out_second: 0,
-            };
-            let ext_q48_args = PJRT_TpuExecutable_ProtoQuery_Args {
-                struct_size: 48,
-                extension_start: ptr::null_mut(),
-                executable: ptr::null(),
-                serialized_bytes: 0,
-                serialized_bytes_size: 0,
-                holder: ptr::null_mut(),
-            };
-            let ext_q56_args = PJRT_CrossHostTransfers_Args {
-                struct_size: 56,
-                extension_start: ptr::null_mut(),
-                client: ptr::null_mut(),
-                buffers: 0,
-                num_buffers: 0,
-                remote_device: 0,
-                out_event: 0,
-            };
-            let ext_q64_args = PJRT_Communicator_CollectivePermute_Args {
-                struct_size: 64,
-                extension_start: ptr::null_mut(),
-                communicator: ptr::null_mut(),
-                send_buffer: ptr::null_mut(),
-                recv_buffer: ptr::null_mut(),
-                target_ranks: ptr::null(),
-                count: 0,
-                event: ptr::null_mut(),
-            };
-            let prof_err_del = PLUGIN_Profiler_Error_Destroy_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                error: ptr::null_mut(),
-            };
-            let prof_err_msg = PLUGIN_Profiler_Error_Message_Args {
-                struct_size: 40,
-                extension_start: ptr::null_mut(),
-                error: ptr::null(),
-                message: ptr::null(),
-                message_size: 0,
-            };
-            let prof_err_code = PLUGIN_Profiler_Error_GetCode_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                error: ptr::null(),
-                code: 0,
-            };
-            let prof_create = PLUGIN_Profiler_Create_Args {
-                struct_size: 40,
-                extension_start: ptr::null_mut(),
-                options: ptr::null(),
-                options_size: 0,
-                profiler: ptr::null_mut(),
-            };
-            let prof_del = PLUGIN_Profiler_Destroy_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                profiler: ptr::null_mut(),
-            };
-            let prof_start = PLUGIN_Profiler_Start_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                profiler: ptr::null_mut(),
-            };
-            let prof_stop = PLUGIN_Profiler_Stop_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                profiler: ptr::null_mut(),
-            };
-            let ms_del = PJRT_MultiSlice_Config_Destroy_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                config: ptr::null_mut(),
-            };
-            let ms_ns = PJRT_MultiSlice_Config_NumSlices_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                config: ptr::null(),
-                num_slices: 0,
-            };
-            let ms_ndps = PJRT_MultiSlice_Config_NumDevicesPerSlice_Args {
-                struct_size: 40,
-                extension_start: ptr::null_mut(),
-                config: ptr::null(),
-                num_devices_per_slice_map: 0,
-                num_slices: 0,
-            };
-            let ms_sid = PJRT_MultiSlice_Config_SliceId_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                config: ptr::null(),
-                slice_id: 0,
-            };
-            let coll_del = PJRT_Collectives_Destroy_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                collectives: ptr::null_mut(),
-            };
-            let coll_cc = PJRT_Collectives_CreateCommunicator_Args {
-                struct_size: 48,
-                extension_start: ptr::null_mut(),
-                collectives: ptr::null_mut(),
-                device_ids: ptr::null(),
-                num_devices: 0,
-                communicator: ptr::null_mut(),
-            };
-            let comm_del = PJRT_Communicator_Destroy_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                communicator: ptr::null_mut(),
-            };
-            let comm_ag = PJRT_Communicator_AllGather_Args {
-                struct_size: 56,
-                extension_start: ptr::null_mut(),
-                communicator: ptr::null_mut(),
-                send_buffer: ptr::null_mut(),
-                recv_buffer: ptr::null_mut(),
-                count: 0,
-                event: ptr::null_mut(),
-            };
-            let comm_str = PJRT_Communicator_ToString_Args {
-                struct_size: 40,
-                extension_start: ptr::null_mut(),
-                communicator: ptr::null(),
-                str_out: 0,
-                str_size: 0,
-            };
-            let abi_get = PJRT_AbiVersion_Get_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                handle: ptr::null(),
-                abi_version_out: 0,
-            };
-            let abi_del = PJRT_AbiVersion_Destroy_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                abi_version: ptr::null_mut(),
-            };
-            let abi_cmp = PJRT_AbiVersion_IsCompatible_Args {
-                struct_size: 40,
-                extension_start: ptr::null_mut(),
-                abi_version: ptr::null(),
-                other_abi_version: 0,
-                is_compatible_out: 0,
-            };
-            let abi_pid = PJRT_AbiVersion_PlatformId_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                abi_version: ptr::null(),
-                platform_id_out: 0,
-            };
-            let abi_fp = PJRT_AbiVersion_FromProto_Args {
-                struct_size: 40,
-                extension_start: ptr::null_mut(),
-                serialized_proto: ptr::null(),
-                serialized_proto_size: 0,
-                abi_version_out: 0,
-            };
-            let tpu_ec = PJRT_TpuExecutable_ErrorCheck_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                error: ptr::null(),
-                is_matched: 0,
-            };
-            let topo_sq = PJRT_TpuTopology_ScalarQuery_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                topology: ptr::null(),
-                out_value: 0,
-            };
-            let topo_bq = PJRT_TpuTopology_BoundsQuery_Args {
-                struct_size: 40,
-                extension_start: ptr::null_mut(),
-                topology: ptr::null(),
-                out_first: 0,
-                out_second: 0,
-            };
-            let topo_mq = PJRT_TpuTopology_MappingQuery_Args {
-                struct_size: 48,
-                extension_start: ptr::null_mut(),
-                topology: ptr::null(),
-                param0: 0,
-                out_first: 0,
-                out_second: 0,
-            };
-            let cb_inv = PJRT_Callback_Invoke_Args {
-                struct_size: 40,
-                extension_start: ptr::null_mut(),
-                client: ptr::null_mut(),
-                callback_type: 0,
-                payload: ptr::null_mut(),
-            };
-            let pc_gc = PJRT_PhaseCompile_GetCompiler_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                client: ptr::null_mut(),
-                compiler_out: 0,
-            };
-            let pc_del = PJRT_PhaseCompile_Destroy_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                handle: ptr::null_mut(),
-            };
-            let md_get = PJRT_Metadata_Get_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                handle: ptr::null(),
-                metadata_out: 0,
-            };
-            let md_del = PJRT_Metadata_Destroy_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                metadata: ptr::null_mut(),
-            };
-            let rb_q = PJRT_RawBuffer_Query_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                buffer: ptr::null_mut(),
-                out_value: 0,
-            };
-            let rb_del = PJRT_RawBuffer_Destroy_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                raw_buffer: ptr::null_mut(),
-            };
-            assert_ne!(
-                format!(
-                    "{ext_destroy_args:?}{ext_q32_args:?}{ext_q40_args:?}{ext_q48_args:?}{ext_q56_args:?}{ext_q64_args:?}{prof_err_del:?}{prof_err_msg:?}{prof_err_code:?}{prof_create:?}{prof_del:?}{prof_start:?}{prof_stop:?}{ms_del:?}{ms_ns:?}{ms_ndps:?}{ms_sid:?}{coll_del:?}{coll_cc:?}{comm_del:?}{comm_ag:?}{comm_str:?}{abi_get:?}{abi_del:?}{abi_cmp:?}{abi_pid:?}{abi_fp:?}{tpu_ec:?}{topo_sq:?}{topo_bq:?}{topo_mq:?}{cb_inv:?}{pc_gc:?}{pc_del:?}{md_get:?}{md_del:?}{rb_q:?}{rb_del:?}"
-                ),
-                ""
-            );
-
-            let layout_destroy_args = PJRT_Layouts_MemoryLayout_Destroy_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                layout: ptr::null_mut(),
-            };
-            let layout_ser_args = PJRT_Layouts_MemoryLayout_Serialize_Args {
-                struct_size: 56,
-                extension_start: ptr::null_mut(),
-                layout: ptr::null(),
-                serialized_bytes: ptr::null(),
-                serialized_bytes_size: 0,
-                serialized_layout: ptr::null_mut(),
-                serialized_layout_deleter: ptr::null(),
-            };
-            let layout_def_args = PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args {
-                struct_size: 56,
-                extension_start: ptr::null_mut(),
-                client: ptr::null_mut(),
-                elem_type: 11,
-                pad: 0,
-                dims: ptr::null(),
-                num_dims: 0,
-                layout: ptr::null_mut(),
-            };
-            let layout_buf_args = PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                buffer: ptr::null_mut(),
-                layout: ptr::null_mut(),
-            };
-            let shardings_args = PJRT_Shardings_PJRT_Executable_Shardings_Args {
-                struct_size: 48,
-                extension_start: ptr::null_mut(),
-                executable: ptr::null_mut(),
-                num_items: 0,
-                shardings: ptr::null(),
-                sharding_sizes: ptr::null(),
-            };
-            let phase_names_args = PJRT_PhaseCompile_GetPhaseNames_Args {
-                struct_size: 48,
-                extension_start: ptr::null_mut(),
-                phase_compiler: ptr::null(),
-                phase_names: ptr::null(),
-                phase_names_sizes: ptr::null(),
-                num_phase_names: 0,
-            };
-            let triton_args = PJRT_Triton_Compile_Args {
-                struct_size: 88,
-                extension_start: ptr::null_mut(),
-                module: ptr::null(),
-                module_size: 0,
-                arch_name: ptr::null(),
-                arch_name_size: 0,
-                num_warps: 4,
-                num_ctas: 1,
-                num_stages: 2,
-                pad: 0,
-                out_asm: ptr::null(),
-                out_asm_size: 0,
-                out_smem_bytes: 0,
-            };
-            assert_ne!(
-                format!(
-                    "{layout_destroy_args:?}{layout_ser_args:?}{layout_def_args:?}{layout_buf_args:?}{shardings_args:?}{phase_names_args:?}{triton_args:?}"
-                ),
-                ""
-            );
-
-            let xla_reg_args = PJRT_XlaTransform_Register_Args {
-                struct_size: 40,
-                extension_start: ptr::null_mut(),
-                name: ptr::null(),
-                name_size: 0,
-                transform_fn: 0,
-            };
-            let xla_wait_args = PJRT_XlaTransform_WaitForAll_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                client: ptr::null_mut(),
-            };
-            let xla_unreg_args = PJRT_XlaTransform_Unregister_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                name: ptr::null(),
-                name_size: 0,
-            };
-            let xla_list_args = PJRT_XlaTransform_List_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                names_out: ptr::null(),
-                num_names_out: 0,
-            };
-            let mut host_alloc_args = PJRT_HostMemoryAllocator_Get_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                client: ptr::null_mut(),
-                allocator_out: 0,
-            };
-            assert!(
-                PJRT_HostMemoryAllocator_Get(ptr::addr_of_mut!(host_alloc_args).cast()).is_null()
-            );
-            assert!(host_alloc_args.allocator_out > 0);
-            let mut md_get32 = PJRT_Metadata_Get_Args {
-                struct_size: 32,
-                extension_start: ptr::null_mut(),
-                handle: ptr::null(),
-                metadata_out: 0,
-            };
-            assert!(PJRT_MemoryDescriptions_Get(ptr::addr_of_mut!(md_get32).cast()).is_null());
-            assert_eq!(md_get32.metadata_out, 4);
-            let mut md_del24 = PJRT_Metadata_Destroy_Args {
-                struct_size: 24,
-                extension_start: ptr::null_mut(),
-                metadata: ptr::dangling_mut(),
-            };
-            assert!(PJRT_MemoryDescriptions_Destroy(ptr::addr_of_mut!(md_del24).cast()).is_null());
-            assert!(md_del24.metadata.is_null());
-            let ms_ser_args = PJRT_MultiSlice_Config_Serialize_Args {
-                struct_size: 48,
-                extension_start: ptr::null_mut(),
-                config: ptr::null(),
-                serialized_bytes: ptr::null(),
-                serialized_bytes_size: 0,
-                serialized_config: ptr::null_mut(),
-            };
-            let comm_ar_args = PJRT_Communicator_AllReduce_Args {
-                struct_size: 64,
-                extension_start: ptr::null_mut(),
-                communicator: ptr::null_mut(),
-                send_buffer: ptr::null_mut(),
-                recv_buffer: ptr::null_mut(),
-                reduction_op: 0,
-                pad: 0,
-                count: 4,
-                event: ptr::null_mut(),
-            };
-            let abi_proto_args = PJRT_AbiVersion_ToProto_Args {
-                struct_size: 48,
-                extension_start: ptr::null_mut(),
-                abi_version: ptr::null(),
-                serialized_proto: ptr::null(),
-                serialized_proto_size: 0,
-                serialized_proto_holder: ptr::null_mut(),
-            };
-            let tpu_mem_stats_args = PJRT_TpuExecutable_GetCompiledMemoryStats_Args {
-                struct_size: 64,
-                extension_start: ptr::null_mut(),
-                executable: ptr::null_mut(),
-                generated_code_size_in_bytes: 0,
-                argument_size_in_bytes: 0,
-                output_size_in_bytes: 0,
-                alias_size_in_bytes: 0,
-                temp_size_in_bytes: 0,
-            };
-            let cb_reg_args = PJRT_Callback_Register_Args {
-                struct_size: 48,
-                extension_start: ptr::null_mut(),
-                client: ptr::null_mut(),
-                callback_type: 1,
-                callback_fn: ptr::null(),
-                user_arg: ptr::null_mut(),
-            };
-            let phase_run_args = PJRT_PhaseCompile_RunPhase_Args {
-                struct_size: 56,
-                extension_start: ptr::null_mut(),
-                phase_compiler: ptr::null_mut(),
-                input_bytes: ptr::null(),
-                input_size: 0,
-                phase_name: ptr::null(),
-                output_status: 0,
-            };
-            let raw_copy_args = PJRT_RawBuffer_CopyRaw_Args {
-                struct_size: 56,
-                extension_start: ptr::null_mut(),
-                buffer: ptr::null_mut(),
-                host_ptr: ptr::null_mut(),
-                offset: 0,
-                transfer_size: 0,
-                event: ptr::null_mut(),
-            };
-            assert_ne!(
-                format!(
-                    "{xla_reg_args:?}{xla_wait_args:?}{xla_unreg_args:?}{xla_list_args:?}{host_alloc_args:?}{ms_ser_args:?}{comm_ar_args:?}{abi_proto_args:?}{tpu_mem_stats_args:?}{cb_reg_args:?}{phase_run_args:?}{raw_copy_args:?}"
-                ),
-                ""
-            );
-
-            let mut host_alloc64 = PJRT_HostMemoryAllocator_Allocate_Args {
-                struct_size: size_of::<PJRT_HostMemoryAllocator_Allocate_Args>(),
-                extension_start: ptr::null_mut(),
-                client: ptr::null_mut(),
-                size: 4096,
-                numa_node: 0,
-                pad: 0,
-                ptr: ptr::null_mut(),
-                deleter: ptr::null(),
-                deleter_arg: ptr::null_mut(),
-            };
-            assert!(PJRT_HostMemoryAllocator_Get(ptr::addr_of_mut!(host_alloc64).cast()).is_null());
-            assert!(!host_alloc64.ptr.is_null());
-            pjrt_host_memory_deleter(host_alloc64.deleter_arg);
-            host_alloc64.ptr = ptr::null_mut();
-            assert!(
-                PJRT_HostMemoryAllocator_Allocate(ptr::addr_of_mut!(host_alloc64).cast()).is_null()
-            );
-            assert!(!host_alloc64.ptr.is_null());
-            pjrt_host_memory_deleter(host_alloc64.deleter_arg);
-            pjrt_host_memory_deleter(ptr::null_mut());
-            let mut mem_desc48 = PJRT_DeviceDescription_MemoryDescriptions_Args {
-                struct_size: size_of::<PJRT_DeviceDescription_MemoryDescriptions_Args>(),
-                extension_start: ptr::null_mut(),
-                device_description: ptr::null(),
-                memory_descriptions: ptr::null(),
-                num_memory_descriptions: 0,
-                default_memory_index: -1,
-            };
-            assert!(PJRT_MemoryDescriptions_Get(ptr::addr_of_mut!(mem_desc48).cast()).is_null());
-            assert_eq!(mem_desc48.num_memory_descriptions, 4);
-            assert_eq!(mem_desc48.default_memory_index, 0);
-            let vmem_desc_ptr = *mem_desc48.memory_descriptions.add(1);
-            let mut mem_kind48 = PJRT_MemoryDescription_Kind_Args {
-                struct_size: size_of::<PJRT_MemoryDescription_Kind_Args>(),
-                extension_start: ptr::null_mut(),
-                memory_description: vmem_desc_ptr,
-                kind: ptr::null(),
-                kind_size: 0,
-                kind_id: -1,
-                pad: 0,
-            };
-            assert!(PJRT_MemoryDescription_Kind(ptr::addr_of_mut!(mem_kind48).cast()).is_null());
-            assert_eq!(mem_kind48.kind_id, 1);
-            assert_eq!(mem_kind48.kind_size, 4);
-            assert!(
-                PJRT_MemoryDescriptions_Destroy(ptr::addr_of_mut!(mem_kind48).cast()).is_null()
-            );
-            assert_eq!(mem_kind48.kind_id, 1);
-            mem_kind48.memory_description = ptr::null();
-            assert!(PJRT_MemoryDescription_Kind(ptr::addr_of_mut!(mem_kind48).cast()).is_null());
-            assert_eq!(mem_kind48.kind_id, 0);
-            let cb_sb = PJRT_Callback_Tpu_SliceBuilderArgs {
-                struct_size: 16,
-                failure_type: PJRT_Callback_Tpu_SliceFailureType::default() as i32,
-                pad: 0,
-            };
-            let cb_pf = PJRT_Callback_PrefatalArgs {
-                struct_size: 32,
-                error_code: 0,
-                pad: 0,
-                error_message: ptr::null(),
-                error_message_size: 0,
-            };
-            let exec_md = PJRT_ExecutableMetadata {
-                serialized_metadata: ptr::null(),
-                serialized_metadata_size: 0,
-            };
-            assert_ne!(
-                format!(
-                    "{host_alloc64:?}{mem_desc48:?}{mem_kind48:?}{cb_sb:?}{cb_pf:?}{exec_md:?}{:?}{:?}{:?}",
-                    PJRT_Collectives_ReductionKind::default(),
-                    PJRT_Collectives_CollectiveOpKind::default(),
-                    PJRT_Callback_Type::default(),
-                ),
-                ""
-            );
-            assert!(extension_call_count() > 0);
-
-            // Behavioral tests with real PJRT client, executable, and buffer handles
-            let mut create_args = PJRT_Client_Create_Args {
-                struct_size: size_of::<PJRT_Client_Create_Args>(),
-                extension_start: ptr::null_mut(),
-                create_options: ptr::null(),
-                num_options: 0,
-                kv_get_callback: ptr::null(),
-                kv_get_user_arg: ptr::null_mut(),
-                kv_put_callback: ptr::null(),
-                kv_put_user_arg: ptr::null_mut(),
-                kv_try_get_callback: ptr::null(),
-                kv_try_get_user_arg: ptr::null_mut(),
-                client: ptr::null_mut(),
-            };
-            assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args).cast()).is_null());
-            let client = create_args.client;
-
-            let mut look_args = PJRT_Client_LookupDevice_Args {
-                struct_size: size_of::<PJRT_Client_LookupDevice_Args>(),
-                extension_start: ptr::null_mut(),
-                client,
-                id: 0,
-                pad: 0,
-                device: ptr::null_mut(),
-            };
-            assert!(PJRT_Client_LookupDevice(ptr::addr_of_mut!(look_args).cast()).is_null());
-
-            let code_bytes = b"module @test { stablehlo.add }";
-            let fmt_bytes = b"mlir";
-            let prog = PJRT_Program {
-                struct_size: size_of::<PJRT_Program>(),
-                extension_start: ptr::null_mut(),
-                code: code_bytes.as_ptr().cast(),
-                code_size: code_bytes.len(),
-                format: fmt_bytes.as_ptr().cast(),
-                format_size: fmt_bytes.len(),
-            };
-            let mut comp_args = PJRT_Client_Compile_Args {
-                struct_size: size_of::<PJRT_Client_Compile_Args>(),
-                extension_start: ptr::null_mut(),
-                client,
-                program: ptr::addr_of!(prog),
-                compile_options: ptr::null(),
-                compile_options_size: 0,
-                executable: ptr::null_mut(),
-            };
-            assert!(PJRT_Client_Compile(ptr::addr_of_mut!(comp_args).cast()).is_null());
-
-            let host_floats = [1.0_f32, 2.0, 3.0, 4.0];
-            let dims_arr = [4_i64];
-            let mut h2d_args = PJRT_Client_BufferFromHostBuffer_Args {
-                struct_size: size_of::<PJRT_Client_BufferFromHostBuffer_Args>(),
-                extension_start: ptr::null_mut(),
-                client,
-                data: host_floats.as_ptr().cast(),
-                element_type: 11,
-                pad0: 0,
-                dims: dims_arr.as_ptr(),
-                num_dims: 1,
-                byte_strides: ptr::null(),
-                num_byte_strides: 0,
-                host_buffer_semantics: 0,
-                pad1: 0,
-                device: look_args.device,
-                memory: ptr::null_mut(),
-                device_layout: ptr::null(),
-                done_with_host_buffer: ptr::null_mut(),
-                out_buffer: ptr::null_mut(),
-            };
-            assert!(PJRT_Client_BufferFromHostBuffer(ptr::addr_of_mut!(h2d_args).cast()).is_null());
-            let buf_in = h2d_args.out_buffer;
-
-            let pass_name = b"custom_fusion_pass";
-            let mut xla_reg = PJRT_XlaTransform_Register_Args {
-                struct_size: size_of::<PJRT_XlaTransform_Register_Args>(),
-                extension_start: ptr::null_mut(),
-                name: pass_name.as_ptr().cast(),
-                name_size: pass_name.len(),
-                transform_fn: 0,
-            };
-            assert!(PJRT_XlaTransform_Register(ptr::addr_of_mut!(xla_reg).cast()).is_null());
-            assert!(xla_reg.transform_fn > 0);
-            let mut xla_list = PJRT_XlaTransform_List_Args {
-                struct_size: size_of::<PJRT_XlaTransform_List_Args>(),
-                extension_start: ptr::null_mut(),
-                names_out: ptr::null(),
-                num_names_out: 0,
-            };
-            assert!(PJRT_XlaTransform_List(ptr::addr_of_mut!(xla_list).cast()).is_null());
-            assert!(xla_list.num_names_out >= 1);
-            let mut xla_unreg = PJRT_XlaTransform_Unregister_Args {
-                struct_size: size_of::<PJRT_XlaTransform_Unregister_Args>(),
-                extension_start: ptr::null_mut(),
-                name: pass_name.as_ptr().cast(),
-                name_size: pass_name.len(),
-            };
-            assert!(PJRT_XlaTransform_Unregister(ptr::addr_of_mut!(xla_unreg).cast()).is_null());
-
-            let dev_ids = [0_i32, 1];
-            let mut comm_create = PJRT_Collectives_CreateCommunicator_Args {
-                struct_size: size_of::<PJRT_Collectives_CreateCommunicator_Args>(),
-                extension_start: ptr::null_mut(),
-                collectives: ptr::null_mut(),
-                device_ids: dev_ids.as_ptr(),
-                num_devices: dev_ids.len(),
-                communicator: ptr::null_mut(),
-            };
-            assert!(
-                PJRT_Collectives_CreateCommunicator(ptr::addr_of_mut!(comm_create).cast())
-                    .is_null()
-            );
-            assert!(!comm_create.communicator.is_null());
-            let mut comm_to_str = PJRT_Communicator_ToString_Args {
-                struct_size: size_of::<PJRT_Communicator_ToString_Args>(),
-                extension_start: ptr::null_mut(),
-                communicator: comm_create.communicator,
-                str_out: 0,
-                str_size: 0,
-            };
-            assert!(PJRT_Communicator_ToString(ptr::addr_of_mut!(comm_to_str).cast()).is_null());
-            assert!(comm_to_str.str_size > 0);
-
-            let host_floats_2 = [10.0_f32, 20.0, 30.0, 40.0];
-            let mut h2d_args_2 = PJRT_Client_BufferFromHostBuffer_Args {
-                struct_size: size_of::<PJRT_Client_BufferFromHostBuffer_Args>(),
-                extension_start: ptr::null_mut(),
-                client,
-                data: host_floats_2.as_ptr().cast(),
-                element_type: 11,
-                pad0: 0,
-                dims: dims_arr.as_ptr(),
-                num_dims: 1,
-                byte_strides: ptr::null(),
-                num_byte_strides: 0,
-                host_buffer_semantics: 0,
-                pad1: 0,
-                device: look_args.device,
-                memory: ptr::null_mut(),
-                device_layout: ptr::null(),
-                done_with_host_buffer: ptr::null_mut(),
-                out_buffer: ptr::null_mut(),
-            };
-            assert!(
-                PJRT_Client_BufferFromHostBuffer(ptr::addr_of_mut!(h2d_args_2).cast()).is_null()
-            );
-            let buf_recv = h2d_args_2.out_buffer;
-
-            for red_op in [0_i32, 1, 2, 3] {
-                let mut comm_ar = PJRT_Communicator_AllReduce_Args {
-                    struct_size: size_of::<PJRT_Communicator_AllReduce_Args>(),
-                    extension_start: ptr::null_mut(),
-                    communicator: comm_create.communicator,
-                    send_buffer: buf_in.cast(),
-                    recv_buffer: buf_recv.cast(),
-                    reduction_op: red_op,
-                    pad: 0,
-                    count: 4,
-                    event: ptr::null_mut(),
-                };
-                assert!(PJRT_Communicator_AllReduce(ptr::addr_of_mut!(comm_ar).cast()).is_null());
-                assert!(!comm_ar.event.is_null());
-            }
-
-            let host_ints_1 = [2_i32, 3, 4, 5];
-            let host_ints_2 = [10_i32, 20, 30, 40];
-            let mut h2d_i1 = h2d_args_2;
-            h2d_i1.data = host_ints_1.as_ptr().cast();
-            h2d_i1.element_type = 4;
-            h2d_i1.out_buffer = ptr::null_mut();
-            assert!(PJRT_Client_BufferFromHostBuffer(ptr::addr_of_mut!(h2d_i1).cast()).is_null());
-            let mut h2d_i2 = h2d_i1;
-            h2d_i2.data = host_ints_2.as_ptr().cast();
-            h2d_i2.out_buffer = ptr::null_mut();
-            assert!(PJRT_Client_BufferFromHostBuffer(ptr::addr_of_mut!(h2d_i2).cast()).is_null());
-            for red_op in [0_i32, 1, 2, 3] {
-                let mut comm_ar_i = PJRT_Communicator_AllReduce_Args {
-                    struct_size: size_of::<PJRT_Communicator_AllReduce_Args>(),
-                    extension_start: ptr::null_mut(),
-                    communicator: comm_create.communicator,
-                    send_buffer: h2d_i1.out_buffer.cast(),
-                    recv_buffer: h2d_i2.out_buffer.cast(),
-                    reduction_op: red_op,
-                    pad: 0,
-                    count: 4,
-                    event: ptr::null_mut(),
-                };
-                assert!(PJRT_Communicator_AllReduce(ptr::addr_of_mut!(comm_ar_i).cast()).is_null());
-            }
-            let mut del_bi1 = PJRT_Buffer_Destroy_Args {
-                struct_size: size_of::<PJRT_Buffer_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                buffer: h2d_i1.out_buffer,
-            };
-            assert!(PJRT_Buffer_Destroy(ptr::addr_of_mut!(del_bi1).cast()).is_null());
-            del_bi1.buffer = h2d_i2.out_buffer;
-            assert!(PJRT_Buffer_Destroy(ptr::addr_of_mut!(del_bi1).cast()).is_null());
-            del_bi1.buffer = buf_recv;
-            assert!(PJRT_Buffer_Destroy(ptr::addr_of_mut!(del_bi1).cast()).is_null());
-
-            let mut comm_destroy = PJRT_Communicator_Destroy_Args {
-                struct_size: size_of::<PJRT_Communicator_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                communicator: comm_create.communicator,
-            };
-            assert!(PJRT_Communicator_Destroy(ptr::addr_of_mut!(comm_destroy).cast()).is_null());
-            assert!(comm_destroy.communicator.is_null());
-
-            let mut layout_buf = PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args {
-                struct_size: size_of::<PJRT_Layouts_PJRT_Buffer_MemoryLayout_Args>(),
-                extension_start: ptr::null_mut(),
-                buffer: buf_in.cast(),
-                layout: ptr::null_mut(),
-            };
-            assert!(
-                PJRT_Layouts_Buffer_GetMemoryLayout(ptr::addr_of_mut!(layout_buf).cast()).is_null()
-            );
-            assert!(!layout_buf.layout.is_null());
-            let mut layout_ser = PJRT_Layouts_MemoryLayout_Serialize_Args {
-                struct_size: size_of::<PJRT_Layouts_MemoryLayout_Serialize_Args>(),
-                extension_start: ptr::null_mut(),
-                layout: layout_buf.layout,
-                serialized_bytes: ptr::null(),
-                serialized_bytes_size: 0,
-                serialized_layout: ptr::null_mut(),
-                serialized_layout_deleter: ptr::null(),
-            };
-            assert!(
-                PJRT_Layouts_MemoryLayout_Serialize(ptr::addr_of_mut!(layout_ser).cast()).is_null()
-            );
-            assert!(layout_ser.serialized_bytes_size > 0);
-            let mut layout_del = PJRT_Layouts_MemoryLayout_Destroy_Args {
-                struct_size: size_of::<PJRT_Layouts_MemoryLayout_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                layout: layout_buf.layout,
-            };
-            assert!(
-                PJRT_Layouts_MemoryLayout_Destroy(ptr::addr_of_mut!(layout_del).cast()).is_null()
-            );
-            assert!(layout_del.layout.is_null());
-
-            let mut meta_get = PJRT_Metadata_Get_Args {
-                struct_size: size_of::<PJRT_Metadata_Get_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: (*comp_args.executable).executable_ptr.cast(),
-                metadata_out: 0,
-            };
-            assert!(PJRT_ExecutableMetadata_Get(ptr::addr_of_mut!(meta_get).cast()).is_null());
-            assert_ne!(meta_get.metadata_out, 0);
-            let mut meta_del = PJRT_Metadata_Destroy_Args {
-                struct_size: size_of::<PJRT_Metadata_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                metadata: meta_get.metadata_out as *mut std::ffi::c_void,
-            };
-            assert!(PJRT_ExecutableMetadata_Destroy(ptr::addr_of_mut!(meta_del).cast()).is_null());
-
-            let mut raw_create = PJRT_RawBuffer_Query_Args {
-                struct_size: size_of::<PJRT_RawBuffer_Query_Args>(),
-                extension_start: ptr::null_mut(),
-                buffer: buf_in.cast(),
-                out_value: 0,
-            };
-            assert!(
-                PJRT_RawBuffer_CreateRawAliasOfBuffer(ptr::addr_of_mut!(raw_create).cast())
-                    .is_null()
-            );
-            let raw_buf_handle = raw_create.out_value as *mut std::ffi::c_void;
-            assert!(!raw_buf_handle.is_null());
-            assert!(PJRT_RawBuffer_GetHostPointer(ptr::addr_of_mut!(raw_create).cast()).is_null());
-            assert!(
-                PJRT_RawBuffer_GetOnDeviceSizeInBytes(ptr::addr_of_mut!(raw_create).cast())
-                    .is_null()
-            );
-            let mut raw_del = PJRT_RawBuffer_Destroy_Args {
-                struct_size: size_of::<PJRT_RawBuffer_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                raw_buffer: raw_buf_handle,
-            };
-            assert!(PJRT_RawBuffer_Destroy(ptr::addr_of_mut!(raw_del).cast()).is_null());
-
-            let mut abi_get_real = PJRT_AbiVersion_Get_Args {
-                struct_size: size_of::<PJRT_AbiVersion_Get_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: client.cast(),
-                abi_version_out: 0,
-            };
-            assert!(
-                PJRT_AbiVersion_ClientRuntime(ptr::addr_of_mut!(abi_get_real).cast()).is_null()
-            );
-            let mut abi_del_real = PJRT_AbiVersion_Destroy_Args {
-                struct_size: size_of::<PJRT_AbiVersion_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                abi_version: abi_get_real.abi_version_out as *mut std::ffi::c_void,
-            };
-            assert!(
-                PJRT_AbiVersion_RuntimeDestroy(ptr::addr_of_mut!(abi_del_real).cast()).is_null()
-            );
-            let sample_proto = b"\x08\x74";
-            let mut abi_from_p = PJRT_AbiVersion_FromProto_Args {
-                struct_size: size_of::<PJRT_AbiVersion_FromProto_Args>(),
-                extension_start: ptr::null_mut(),
-                serialized_proto: sample_proto.as_ptr().cast(),
-                serialized_proto_size: sample_proto.len(),
-                abi_version_out: 0,
-            };
-            assert!(
-                PJRT_AbiVersion_RuntimeFromProto(ptr::addr_of_mut!(abi_from_p).cast()).is_null()
-            );
-            abi_del_real.abi_version = abi_from_p.abi_version_out as *mut std::ffi::c_void;
-            assert!(
-                PJRT_AbiVersion_ExecutableDestroy(ptr::addr_of_mut!(abi_del_real).cast()).is_null()
-            );
-
-            let mut pc_get = PJRT_PhaseCompile_GetCompiler_Args {
-                struct_size: size_of::<PJRT_PhaseCompile_GetCompiler_Args>(),
-                extension_start: ptr::null_mut(),
-                client: client.cast(),
-                compiler_out: 0,
-            };
-            assert!(PJRT_PhaseCompile_GetCompiler(ptr::addr_of_mut!(pc_get).cast()).is_null());
-            let mut pc_run_real = PJRT_PhaseCompile_RunPhase_Args {
-                struct_size: size_of::<PJRT_PhaseCompile_RunPhase_Args>(),
-                extension_start: ptr::null_mut(),
-                phase_compiler: pc_get.compiler_out as *mut std::ffi::c_void,
-                input_bytes: code_bytes.as_ptr().cast(),
-                input_size: code_bytes.len(),
-                phase_name: ptr::null(),
-                output_status: 0,
-            };
-            assert!(PJRT_PhaseCompile_RunPhase(ptr::addr_of_mut!(pc_run_real).cast()).is_null());
-            pc_run_real.phase_name = c"spmd_partitioning".as_ptr();
-            assert!(PJRT_PhaseCompile_RunPhase(ptr::addr_of_mut!(pc_run_real).cast()).is_null());
-            let mut ms_tr = PJRT_Megascale_Query_Args {
-                struct_size: size_of::<PJRT_Megascale_Query_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: 2,
-                out_value: 0,
-            };
-            assert!(PJRT_Megascale_SetTransportType(ptr::addr_of_mut!(ms_tr).cast()).is_null());
-            assert_eq!(ms_tr.out_value, 2);
-            let mut pc_del_real = PJRT_PhaseCompile_Destroy_Args {
-                struct_size: size_of::<PJRT_PhaseCompile_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: pc_get.compiler_out as *mut std::ffi::c_void,
-            };
-            assert!(
-                PJRT_PhaseCompile_DestroyCompiler(ptr::addr_of_mut!(pc_del_real).cast()).is_null()
-            );
-            let (pc_buf_handle, _, _) = alloc_phase_compile_buffer(vec![1, 2, 3, 4]);
-            pc_del_real.handle = pc_buf_handle;
-            assert!(
-                PJRT_PhaseCompile_CBuffersDestroy(ptr::addr_of_mut!(pc_del_real).cast()).is_null()
-            );
-            assert!(pc_del_real.handle.is_null());
-
-            let mut ms_ctx_create = PJRT_Megascale_Query_Args {
-                struct_size: size_of::<PJRT_Megascale_Query_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: 0,
-                out_value: 0,
-            };
-            assert!(
-                PJRT_Megascale_CreateClientContext(ptr::addr_of_mut!(ms_ctx_create).cast())
-                    .is_null()
-            );
-            assert_ne!(ms_ctx_create.out_value, 0);
-            // Exercise context-bound barrier, transport, DCN topology, collect metrics, and reset metrics
-            let mut ms_bar_ctx = PJRT_Megascale_Barrier_Args {
-                struct_size: size_of::<PJRT_Megascale_Barrier_Args>(),
-                extension_start: ptr::null_mut(),
-                barrier_id: ms_ctx_create.out_value,
-                completed_barriers: 0,
-            };
-            assert!(PJRT_Megascale_Barrier(ptr::addr_of_mut!(ms_bar_ctx).cast()).is_null());
-            assert_eq!(ms_bar_ctx.completed_barriers, 1);
-            let mut ms_dcn_ctx = PJRT_Megascale_GetDcnTopology_Args {
-                struct_size: size_of::<PJRT_Megascale_GetDcnTopology_Args>(),
-                extension_start: ptr::null_mut(),
-                context: ms_ctx_create.out_value,
-                serialized_size: 0,
-            };
-            assert!(PJRT_Megascale_GetDcnTopology(ptr::addr_of_mut!(ms_dcn_ctx).cast()).is_null());
-            let mut ms_tr_ctx = PJRT_Megascale_GetTransportType_Args {
-                struct_size: size_of::<PJRT_Megascale_GetTransportType_Args>(),
-                extension_start: ptr::null_mut(),
-                context: ms_ctx_create.out_value,
-                transport_type_out: 0,
-            };
-            assert!(PJRT_Megascale_GetTransportType(ptr::addr_of_mut!(ms_tr_ctx).cast()).is_null());
-            let mut ms_col_ctx = PJRT_Megascale_CollectMetrics_Args {
-                struct_size: size_of::<PJRT_Megascale_CollectMetrics_Args>(),
-                extension_start: ptr::null_mut(),
-                context: ms_ctx_create.out_value,
-                serialized_metrics_ptr: 0,
-                serialized_metrics_size: 0,
-            };
-            assert!(PJRT_Megascale_CollectMetrics(ptr::addr_of_mut!(ms_col_ctx).cast()).is_null());
-            assert!(ms_col_ctx.serialized_metrics_size > 0);
-            let mut ms_rst_ctx = PJRT_Megascale_ResetMetrics_Args {
-                struct_size: size_of::<PJRT_Megascale_ResetMetrics_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: ms_ctx_create.out_value as *mut std::ffi::c_void,
-            };
-            assert!(PJRT_Megascale_ResetMetrics(ptr::addr_of_mut!(ms_rst_ctx).cast()).is_null());
-            let mut ms_ctx_del = PJRT_Megascale_Handle_Args {
-                struct_size: size_of::<PJRT_Megascale_Handle_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: ms_ctx_create.out_value as *mut std::ffi::c_void,
-            };
-            assert!(
-                PJRT_Megascale_DeleteClientContext(ptr::addr_of_mut!(ms_ctx_del).cast()).is_null()
-            );
-            assert!(ms_ctx_del.handle.is_null());
-
-            let mut ms_cfg_create = PJRT_Megascale_Query_Args {
-                struct_size: size_of::<PJRT_Megascale_Query_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: 0,
-                out_value: 0,
-            };
-            assert!(
-                PJRT_Megascale_CreateMultiSliceConfig(ptr::addr_of_mut!(ms_cfg_create).cast())
-                    .is_null()
-            );
-            let mut ms_cfg_del = PJRT_Megascale_Handle_Args {
-                struct_size: size_of::<PJRT_Megascale_Handle_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: ms_cfg_create.out_value as *mut std::ffi::c_void,
-            };
-            assert!(
-                PJRT_Megascale_DeleteMultiSliceConfig(ptr::addr_of_mut!(ms_cfg_del).cast())
-                    .is_null()
-            );
-            assert!(ms_cfg_del.handle.is_null());
-
-            assert!(
-                PJRT_Megascale_CreateDefaultConfig(ptr::addr_of_mut!(ms_cfg_create).cast())
-                    .is_null()
-            );
-            let mut ms_ext_del = PJRT_MultiSlice_Config_Destroy_Args {
-                struct_size: size_of::<PJRT_MultiSlice_Config_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                config: ms_cfg_create.out_value as *mut std::ffi::c_void,
-            };
-            assert!(PJRT_MultiSlice_Config_Destroy(ptr::addr_of_mut!(ms_ext_del).cast()).is_null());
-            assert!(ms_ext_del.config.is_null());
-
-            let mut tpu_mem_stats = PJRT_TpuExecutable_GetCompiledMemoryStats_Args {
-                struct_size: size_of::<PJRT_TpuExecutable_GetCompiledMemoryStats_Args>(),
-                extension_start: ptr::null_mut(),
-                executable: (*comp_args.executable).executable_ptr.cast(),
-                generated_code_size_in_bytes: 0,
-                argument_size_in_bytes: 0,
-                output_size_in_bytes: 0,
-                alias_size_in_bytes: 0,
-                temp_size_in_bytes: 0,
-            };
-            assert!(
-                PJRT_TpuExecutable_GetCompiledMemoryStats(ptr::addr_of_mut!(tpu_mem_stats).cast())
-                    .is_null()
-            );
-            assert!(tpu_mem_stats.generated_code_size_in_bytes >= 256);
-
-            let mut target_proto_q = PJRT_TpuExecutable_ProtoQuery_Args {
-                struct_size: size_of::<PJRT_TpuExecutable_ProtoQuery_Args>(),
-                extension_start: ptr::null_mut(),
-                executable: (*comp_args.executable).executable_ptr.cast(),
-                serialized_bytes: 0,
-                serialized_bytes_size: 0,
-                holder: ptr::null_mut(),
-            };
-            assert!(
-                PJRT_TpuExecutable_GetTargetArguments(ptr::addr_of_mut!(target_proto_q).cast())
-                    .is_null()
-            );
-            assert!(target_proto_q.serialized_bytes_size > 0);
-            assert!(!target_proto_q.holder.is_null());
-            let mut holder_del = PJRT_Metadata_Destroy_Args {
-                struct_size: size_of::<PJRT_Metadata_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                metadata: target_proto_q.holder,
-            };
-            assert!(
-                PJRT_ExecutableMetadata_Destroy(ptr::addr_of_mut!(holder_del).cast()).is_null()
-            );
-            assert!(holder_del.metadata.is_null());
-
-            assert!(
-                PJRT_TpuExecutable_GetHloModuleWithConfig(ptr::addr_of_mut!(target_proto_q).cast())
-                    .is_null()
-            );
-            assert!(target_proto_q.serialized_bytes_size > 0);
-            holder_del.metadata = target_proto_q.holder;
-            assert!(
-                PJRT_ExecutableMetadata_Destroy(ptr::addr_of_mut!(holder_del).cast()).is_null()
-            );
-            assert!(holder_del.metadata.is_null());
-
-            let pred_err = box_pjrt_error(LibTpuError::DevicePoisoned {
-                device_id: 0,
-                launch_id: 1,
-                reason: String::from("poisoned"),
-            });
-            let mut pred_chk = PJRT_TpuExecutable_ErrorCheck_Args {
-                struct_size: size_of::<PJRT_TpuExecutable_ErrorCheck_Args>(),
-                extension_start: ptr::null_mut(),
-                error: pred_err.cast(),
-                is_matched: 0,
-            };
-            assert!(
-                PJRT_TpuExecutable_IsPredeterminedError(ptr::addr_of_mut!(pred_chk).cast())
-                    .is_null()
-            );
-            assert_eq!(pred_chk.is_matched, 1);
-            assert!(
-                PJRT_TpuExecutable_IsCancellationPlaceholderError(
-                    ptr::addr_of_mut!(pred_chk).cast()
-                )
-                .is_null()
-            );
-            assert_eq!(pred_chk.is_matched, 0);
-            drop(Box::from_raw(pred_err));
-
-            let mut topo_map = PJRT_TpuTopology_MappingQuery_Args {
-                struct_size: size_of::<PJRT_TpuTopology_MappingQuery_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                param0: 5,
-                out_first: 0,
-                out_second: 0,
-            };
-            assert!(
-                PJRT_TpuTopology_ProcIdAndIdxOnProcForChip(ptr::addr_of_mut!(topo_map).cast())
-                    .is_null()
-            );
-            assert_eq!(topo_map.out_first, 1);
-            assert_eq!(topo_map.out_second, 1);
-
-            let slice_cfg_c = PJRT_TpuTopology_SliceConfig {
-                name: c"2x2x1".as_ptr(),
-                name_len: 5,
-                dimensions: [2, 2, 1, 0],
-                wraps: [false, false, false, false],
-                num_dimensions: 3,
-                twist: false,
-                pad: [0; 7],
-            };
-            let subslice_dims = [2_i32, 2, 1];
-            let subslice_devs = [0_i32, 1, 2, 3];
-            let mut subslice_origin = [-1_i32; 3];
-            let mut comp_subslice = PJRT_TpuTopology_ComputeSubsliceForDevices_Args {
-                struct_size: size_of::<PJRT_TpuTopology_ComputeSubsliceForDevices_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                subslice_dims: subslice_dims.as_ptr(),
-                num_subslice_dims: subslice_dims.len(),
-                device_ids: subslice_devs.as_ptr(),
-                num_devices: subslice_devs.len(),
-                subslice_origin_out: subslice_origin.as_mut_ptr(),
-            };
-            assert!(
-                PJRT_TpuTopology_ComputeSubsliceForDevices(ptr::addr_of_mut!(comp_subslice).cast())
-                    .is_null()
-            );
-            assert_eq!(subslice_origin, [0, 0, 0]);
-            assert_ne!(format!("{slice_cfg_c:?}{comp_subslice:?}"), "");
-
-            // Test pointer out-parameter modes on PJRT_TpuTopology_* and Megascale C error callbacks
-            let mut proc_ids_buf = [-1_i32; 4];
-            let mut proc_ids_args = PJRT_TpuTopology_ProcessIds_Args {
-                struct_size: size_of::<PJRT_TpuTopology_ProcessIds_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                out_value: proc_ids_buf.as_mut_ptr() as usize,
-            };
-            assert!(PJRT_TpuTopology_ProcessIds(ptr::addr_of_mut!(proc_ids_args).cast()).is_null());
-            assert_eq!(proc_ids_buf[0], 0);
-
-            let mut dev_ids_buf = [-1_i32; 8];
-            let mut dev_ids_args = PJRT_TpuTopology_LogiDeviceIdsOnProcess_Args {
-                struct_size: size_of::<PJRT_TpuTopology_LogiDeviceIdsOnProcess_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                out_value: dev_ids_buf.as_mut_ptr() as usize,
-            };
-            assert!(
-                PJRT_TpuTopology_LogiDeviceIdsOnProcess(ptr::addr_of_mut!(dev_ids_args).cast())
-                    .is_null()
-            );
-            assert_eq!(dev_ids_buf[0], 0);
-
-            let mut proc_for_dev_args = PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice_Args {
-                struct_size: size_of::<PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                device_id: 1,
-                out_proc_id: 0,
-                out_idx_on_proc: 0,
-            };
-            assert!(
-                PJRT_TpuTopology_ProcIdAndIdxOnProcForLogiDevice(
-                    ptr::addr_of_mut!(proc_for_dev_args).cast()
-                )
-                .is_null()
-            );
-            assert_eq!(proc_for_dev_args.out_idx_on_proc, 1);
-
-            let mut coords3 = [-1_i32; 3];
-            let mut pcoord_args = PJRT_TpuTopology_ProcessCoordFromId_Args {
-                struct_size: size_of::<PJRT_TpuTopology_ProcessCoordFromId_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                process_id: 0,
-                out_first: coords3.as_mut_ptr() as usize,
-                out_second: 0,
-            };
-            assert!(
-                PJRT_TpuTopology_ProcessCoordFromId(ptr::addr_of_mut!(pcoord_args).cast())
-                    .is_null()
-            );
-            assert_eq!(coords3, [0, 0, 0]);
-
-            let in_coords3 = [1_i32, 1, 0];
-            let mut chip_from_coord = PJRT_TpuTopology_ChipIdFromCoord_Args {
-                struct_size: size_of::<PJRT_TpuTopology_ChipIdFromCoord_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                coord_or_ptr: in_coords3.as_ptr() as usize,
-                out_first: 0,
-                out_second: 0,
-            };
-            assert!(
-                PJRT_TpuTopology_ChipIdFromCoord(ptr::addr_of_mut!(chip_from_coord).cast())
-                    .is_null()
-            );
-            assert!(chip_from_coord.out_first >= 1);
-
-            let mut logi_from_coord = PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx_Args {
-                struct_size: size_of::<PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                param0: in_coords3.as_ptr() as usize,
-                out_first: 0,
-                out_second: 0,
-            };
-            assert!(
-                PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx(
-                    ptr::addr_of_mut!(logi_from_coord).cast()
-                )
-                .is_null()
-            );
-            logi_from_coord.topology = ptr::null();
-            assert!(
-                PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx(
-                    ptr::addr_of_mut!(logi_from_coord).cast()
-                )
-                .is_null()
-            );
-
-            let mut coord_for_logi = PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice_Args {
-                struct_size: size_of::<PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                device_id: 0,
-                out_first: coords3.as_mut_ptr() as usize,
-                out_second: 99,
-            };
-            assert!(
-                PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice(
-                    ptr::addr_of_mut!(coord_for_logi).cast()
-                )
-                .is_null()
-            );
-            assert_eq!(coord_for_logi.out_second, 0);
-
-            let mut cbounds_args = PJRT_TpuTopology_ChipBounds_Args {
-                struct_size: size_of::<PJRT_TpuTopology_ChipBounds_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                out_first: coords3.as_mut_ptr() as usize,
-                out_second: 0,
-            };
-            assert!(PJRT_TpuTopology_ChipBounds(ptr::addr_of_mut!(cbounds_args).cast()).is_null());
-            assert_eq!(cbounds_args.out_second, 3);
-
-            let mut pbounds_args = PJRT_TpuTopology_ProcessBounds_Args {
-                struct_size: size_of::<PJRT_TpuTopology_ProcessBounds_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                out_first: coords3.as_mut_ptr() as usize,
-                out_second: 0,
-            };
-            assert!(
-                PJRT_TpuTopology_ProcessBounds(ptr::addr_of_mut!(pbounds_args).cast()).is_null()
-            );
-            assert_eq!(pbounds_args.out_second, 3);
-
-            let mut route_args = PJRT_TpuTopology_GetRoutingStrategy_Args {
-                struct_size: size_of::<PJRT_TpuTopology_GetRoutingStrategy_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                routing_strategy: 99,
-            };
-            assert!(
-                PJRT_TpuTopology_GetRoutingStrategy(ptr::addr_of_mut!(route_args).cast()).is_null()
-            );
-            assert_eq!(route_args.routing_strategy, 0);
-
-            let mut slice_cfg_out = PJRT_TpuTopology_SliceConfig {
-                name: ptr::null(),
-                name_len: 0,
-                dimensions: [0; 4],
-                wraps: [false; 4],
-                num_dimensions: 0,
-                twist: false,
-                pad: [0; 7],
-            };
-            let mut get_sc_args = PJRT_TpuTopology_GetSliceConfig_Args {
-                struct_size: size_of::<PJRT_TpuTopology_GetSliceConfig_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                out_value: ptr::addr_of_mut!(slice_cfg_out) as usize,
-            };
-            assert!(
-                PJRT_TpuTopology_GetSliceConfig(ptr::addr_of_mut!(get_sc_args).cast()).is_null()
-            );
-            assert_eq!(slice_cfg_out.num_dimensions, 3);
-            let mut get_scs_args = PJRT_TpuTopology_GetSliceConfigs_Args {
-                struct_size: size_of::<PJRT_TpuTopology_GetSliceConfigs_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                out_value: ptr::addr_of_mut!(slice_cfg_out) as usize,
-            };
-            assert!(
-                PJRT_TpuTopology_GetSliceConfigs(ptr::addr_of_mut!(get_scs_args).cast()).is_null()
-            );
-            assert_eq!(slice_cfg_out.name_len, 5);
-
-            unsafe extern "C" fn megascale_err_cb(arg: *mut std::ffi::c_void) {
-                if !arg.is_null() {
-                    // SAFETY: `arg` points to `ms_err_hits` in the test frame.
-                    unsafe {
-                        *arg.cast::<usize>() += 1;
-                    }
-                }
-            }
-            let mut ms_err_hits: usize = 0;
-            let ms_cb_ptr: unsafe extern "C" fn(*mut std::ffi::c_void) = megascale_err_cb;
-            let mut reg_ms_err = PJRT_Megascale_RegisterErrorHandler_Args {
-                struct_size: size_of::<PJRT_Megascale_RegisterErrorHandler_Args>(),
-                extension_start: ptr::null_mut(),
-                callback_fn: ms_cb_ptr as usize,
-                handler_id_out: 0,
-            };
-            assert!(
-                PJRT_Megascale_RegisterErrorHandler(ptr::addr_of_mut!(reg_ms_err).cast()).is_null()
-            );
-            let mut log_ms_err = PJRT_Megascale_LogError_Args {
-                struct_size: size_of::<PJRT_Megascale_LogError_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: ptr::addr_of_mut!(ms_err_hits).cast(),
-            };
-            assert!(PJRT_Megascale_LogError(ptr::addr_of_mut!(log_ms_err).cast()).is_null());
-            let mut abort_ms = PJRT_Megascale_AbortCollectives_Args {
-                struct_size: size_of::<PJRT_Megascale_AbortCollectives_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: ptr::addr_of_mut!(ms_err_hits).cast(),
-            };
-            assert!(PJRT_Megascale_AbortCollectives(ptr::addr_of_mut!(abort_ms).cast()).is_null());
-            assert_eq!(ms_err_hits, 2);
-            let mut unreg_ms_err = PJRT_Megascale_UnregisterErrorHandler_Args {
-                struct_size: size_of::<PJRT_Megascale_UnregisterErrorHandler_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: ptr::null_mut(),
-            };
-            for _ in 0..8 {
-                let _ =
-                    PJRT_Megascale_UnregisterErrorHandler(ptr::addr_of_mut!(unreg_ms_err).cast());
-            }
-
-            unsafe extern "C" fn sample_ext_cb(
-                payload: *mut std::ffi::c_void,
-                user_arg: *mut std::ffi::c_void,
-            ) {
-                if !user_arg.is_null() {
-                    // SAFETY: `user_arg` points to `cb_counter` in the test frame.
-                    unsafe {
-                        *user_arg.cast::<usize>() += payload as usize;
-                    }
-                }
-            }
-            let mut cb_counter: usize = 0;
-            let cb_fn_ptr: unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) =
-                sample_ext_cb;
-            let mut cb_reg = PJRT_Callback_Register_Args {
-                struct_size: size_of::<PJRT_Callback_Register_Args>(),
-                extension_start: ptr::null_mut(),
-                client: client.cast(),
-                callback_type: 7,
-                callback_fn: cb_fn_ptr as *const std::ffi::c_void,
-                user_arg: ptr::addr_of_mut!(cb_counter).cast(),
-            };
-            assert!(PJRT_Callback_RegisterCallback(ptr::addr_of_mut!(cb_reg).cast()).is_null());
-            let mut cb_inv_real = PJRT_Callback_Invoke_Args {
-                struct_size: size_of::<PJRT_Callback_Invoke_Args>(),
-                extension_start: ptr::null_mut(),
-                client: client.cast(),
-                callback_type: 7,
-                payload: 42 as *mut std::ffi::c_void,
-            };
-            assert!(PJRT_Callback_InvokeCallback(ptr::addr_of_mut!(cb_inv_real).cast()).is_null());
-            assert_eq!(cb_counter, 42);
-
-            let mut raw_host_bytes: Vec<u8> = [1.0_f32, 2.0, 3.0, 4.0]
-                .into_iter()
-                .flat_map(f32::to_le_bytes)
-                .collect();
-            let mut raw_h2d = PJRT_RawBuffer_CopyRaw_Args {
-                struct_size: size_of::<PJRT_RawBuffer_CopyRaw_Args>(),
-                extension_start: ptr::null_mut(),
-                buffer: buf_in.cast(),
-                host_ptr: raw_host_bytes.as_mut_ptr().cast(),
-                offset: 0,
-                transfer_size: 16,
-                event: ptr::null_mut(),
-            };
-            assert!(
-                PJRT_RawBuffer_CopyRawHostToDevice(ptr::addr_of_mut!(raw_h2d).cast()).is_null()
-            );
-            let mut raw_d2h_out = vec![0_u8; 16];
-            let mut raw_d2h = PJRT_RawBuffer_CopyRaw_Args {
-                struct_size: size_of::<PJRT_RawBuffer_CopyRaw_Args>(),
-                extension_start: ptr::null_mut(),
-                buffer: buf_in.cast(),
-                host_ptr: raw_d2h_out.as_mut_ptr().cast(),
-                offset: 0,
-                transfer_size: 16,
-                event: ptr::null_mut(),
-            };
-            assert!(
-                PJRT_RawBuffer_CopyRawDeviceToHost(ptr::addr_of_mut!(raw_d2h).cast()).is_null()
-            );
-            assert_eq!(raw_d2h_out, raw_host_bytes);
-
-            let triton_src = b"module @triton { stablehlo.add }";
-            let mut triton_call = PJRT_Triton_Compile_Args {
-                struct_size: size_of::<PJRT_Triton_Compile_Args>(),
-                extension_start: ptr::null_mut(),
-                module: ptr::null(),
-                module_size: 0,
-                arch_name: ptr::null(),
-                arch_name_size: 0,
-                num_warps: 4,
-                num_ctas: 1,
-                num_stages: 2,
-                pad: 0,
-                out_asm: ptr::null(),
-                out_asm_size: 0,
-                out_smem_bytes: 0,
-            };
-            assert!(PJRT_Triton_Compile(ptr::addr_of_mut!(triton_call).cast()).is_null());
-            PJRT_Triton_FreeCompiledAsm(triton_call.out_asm, triton_call.out_asm_size);
-            triton_call.module = triton_src.as_ptr().cast();
-            triton_call.module_size = triton_src.len();
-            assert!(PJRT_Triton_Compile(ptr::addr_of_mut!(triton_call).cast()).is_null());
-            assert!(triton_call.out_asm_size > 0);
-            assert_eq!(triton_call.out_smem_bytes, 4096);
-            PJRT_Triton_FreeCompiledAsm(triton_call.out_asm, triton_call.out_asm_size);
-            PJRT_Triton_FreeCompiledAsm(ptr::null(), 0);
-            drop(Box::from_raw(PJRT_Triton_Compile(ptr::null_mut())));
-
-            // Exercise executable-bound compilation env arena, client-bound cross-host arena, subslice topology, & PJRT_FFI_Extension
-            let exec_raw = (*comp_args.executable).executable_ptr;
-            let mut env_set = PJRT_Megascale_Query_Args {
-                struct_size: size_of::<PJRT_Megascale_Query_Args>(),
-                extension_start: ptr::null_mut(),
-                handle: exec_raw as usize,
-                out_value: 0,
-            };
-            assert!(
-                PJRT_TpuExecutable_SetTpuCompilationEnv(ptr::addr_of_mut!(env_set).cast())
-                    .is_null()
-            );
-            assert_eq!(env_set.out_value, 1);
-            let mut env_get = PJRT_TpuExecutable_Serialize_Args {
-                struct_size: size_of::<PJRT_TpuExecutable_Serialize_Args>(),
-                extension_start: ptr::null_mut(),
-                executable: exec_raw.cast(),
-                serialized_bytes: 0,
-                serialized_bytes_size: 0,
-                holder: ptr::null_mut(),
-            };
-            assert!(
-                PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString(
-                    ptr::addr_of_mut!(env_get).cast()
-                )
-                .is_null()
-            );
-            assert!(env_get.serialized_bytes_size > 0);
-
-            let mut xhost_real = PJRT_CrossHostTransfers_Args {
-                struct_size: size_of::<PJRT_CrossHostTransfers_Args>(),
-                extension_start: ptr::null_mut(),
-                client: client.cast(),
-                buffers: 0xABCD,
-                num_buffers: 1,
-                remote_device: 3,
-                out_event: 0,
-            };
-            assert!(
-                PJRT_CrossHostTransfers_SendBuffers(ptr::addr_of_mut!(xhost_real).cast()).is_null()
-            );
-            drop(Box::from_raw(
-                xhost_real.out_event as *mut crate::pjrt_types::PJRT_Event,
-            ));
-
-            let mut sub_topo_q = PJRT_TpuTopology_ScalarQuery_Args {
-                struct_size: size_of::<PJRT_TpuTopology_ScalarQuery_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                out_value: 0,
-            };
-            assert!(PJRT_TpuTopology_Subslice(ptr::addr_of_mut!(sub_topo_q).cast()).is_null());
-            let mut is_sub_q = PJRT_TpuTopology_IsSubsliceTopology_Args {
-                struct_size: size_of::<PJRT_TpuTopology_IsSubsliceTopology_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                is_subslice: 0,
-            };
-            assert!(
-                PJRT_TpuTopology_IsSubsliceTopology(ptr::addr_of_mut!(is_sub_q).cast()).is_null()
-            );
-            assert_eq!(is_sub_q.is_subslice, 1);
-            let mut lim_ici_q = PJRT_TpuTopology_HasLimitedIciConnectivity_Args {
-                struct_size: size_of::<PJRT_TpuTopology_HasLimitedIciConnectivity_Args>(),
-                extension_start: ptr::null_mut(),
-                topology: (*client).topology_ptr.cast(),
-                has_limited_ici: 0,
-            };
-            assert!(
-                PJRT_TpuTopology_HasLimitedIciConnectivity(ptr::addr_of_mut!(lim_ici_q).cast())
-                    .is_null()
-            );
-
-            let ffi_ext = PJRT_FFI_GetExtension();
-            assert!(!ffi_ext.is_null());
-            assert_eq!((*ffi_ext).base.ext_type, 3);
-            assert_eq!(GLOBAL_XLA_FFI_API.struct_size, 56);
-            let mut ffi_tid = PJRT_FFI_TypeID_Register_Args {
-                struct_size: size_of::<PJRT_FFI_TypeID_Register_Args>(),
-                extension_start: ptr::null_mut(),
-                type_name: c"MyCustomState".as_ptr(),
-                type_name_size: 13,
-                type_id: 0,
-            };
-            assert!(PJRT_FFI_TypeID_Register(ptr::addr_of_mut!(ffi_tid).cast()).is_null());
-            assert!(ffi_tid.type_id >= 1);
-            ffi_tid.type_name = ptr::null();
-            assert!(PJRT_FFI_TypeID_Register(ptr::addr_of_mut!(ffi_tid).cast()).is_null());
-            drop(Box::from_raw(PJRT_FFI_TypeID_Register(ptr::null_mut())));
-
-            unsafe extern "C" fn sample_user_data_del(ptr: *mut std::ffi::c_void) {
-                if !ptr.is_null() {
-                    // SAFETY: `ptr` points to `ud_del_hits`.
-                    unsafe {
-                        *ptr.cast::<usize>() += 1;
-                    }
-                }
-            }
-            let mut ud_del_hits: usize = 0;
-            let mut ffi_ud = PJRT_FFI_UserData_Add_Args {
-                struct_size: size_of::<PJRT_FFI_UserData_Add_Args>(),
-                extension_start: ptr::null_mut(),
-                context: ptr::null_mut(),
-                type_id: ffi_tid.type_id,
-                data: ptr::addr_of_mut!(ud_del_hits).cast(),
-                deleter: Some(sample_user_data_del),
-            };
-            assert!(PJRT_FFI_UserData_Add(ptr::addr_of_mut!(ffi_ud).cast()).is_null());
-            assert_eq!(ud_del_hits, 1);
-            // Second call has `ffi_ud.data == null` with `Some(sample_user_data_del)`
-            assert!(PJRT_FFI_UserData_Add(ptr::addr_of_mut!(ffi_ud).cast()).is_null());
-            ffi_ud.deleter = None;
-            assert!(PJRT_FFI_UserData_Add(ptr::addr_of_mut!(ffi_ud).cast()).is_null());
-            drop(Box::from_raw(PJRT_FFI_UserData_Add(ptr::null_mut())));
-
-            unsafe extern "C" fn noop_xla_ffi_handler(
-                _frame: *mut XLA_FFI_CallFrame,
-            ) -> *mut PJRT_Error {
-                ptr::null_mut()
-            }
-            let fn_raw: XLA_FFI_Handler = noop_xla_ffi_handler;
-            let mut ffi_reg = PJRT_FFI_Register_Handler_Args {
-                struct_size: size_of::<PJRT_FFI_Register_Handler_Args>(),
-                extension_start: ptr::null_mut(),
-                target_name: c"tpu.ffi_ext_test".as_ptr(),
-                target_name_size: 16,
-                handler: fn_raw as *const std::ffi::c_void,
-                platform_name: c"TPU".as_ptr(),
-                platform_name_size: 3,
-                traits: 0,
-                pad: 0,
-            };
-            assert!(PJRT_FFI_Register_Handler(ptr::addr_of_mut!(ffi_reg).cast()).is_null());
-            ffi_reg.target_name = ptr::null();
-            assert!(PJRT_FFI_Register_Handler(ptr::addr_of_mut!(ffi_reg).cast()).is_null());
-            drop(Box::from_raw(PJRT_FFI_Register_Handler(ptr::null_mut())));
-            assert_ne!(
-                format!("{ffi_tid:?}{ffi_ud:?}{ffi_reg:?}{:?}", *ffi_ext),
-                ""
-            );
-
-            let neg_prof = &NEGOTIATED_PLUGIN_PROFILER_API;
-            assert!((neg_prof.create)(ptr::null_mut()).is_null());
-            assert!((neg_prof.start)(ptr::null_mut()).is_null());
-            assert!((neg_prof.stop)(ptr::null_mut()).is_null());
-            assert!((neg_prof.collect_data)(ptr::null_mut()).is_null());
-            assert!((neg_prof.destroy)(ptr::null_mut()).is_null());
-
-            let mut zero_prof_words = [32_usize, 0, 0, 0];
-            assert!((neg_prof.start)(zero_prof_words.as_mut_ptr().cast()).is_null());
-            assert!((neg_prof.stop)(zero_prof_words.as_mut_ptr().cast()).is_null());
-            assert!((neg_prof.collect_data)(zero_prof_words.as_mut_ptr().cast()).is_null());
-            assert!((neg_prof.destroy)(zero_prof_words.as_mut_ptr().cast()).is_null());
-
-            let mut create_words = [32_usize, 0, 0, 0];
-            assert!((neg_prof.create)(create_words.as_mut_ptr().cast()).is_null());
-            let [_, _, _, prof_inst] = create_words;
-            assert!(prof_inst > 0x1000);
-            let mut op_words = [16_usize, prof_inst];
-            assert!((neg_prof.start)(op_words.as_mut_ptr().cast()).is_null());
-            assert!((neg_prof.stop)(op_words.as_mut_ptr().cast()).is_null());
-            let mut collect_words = [32_usize, prof_inst, 0, 0];
-            assert!((neg_prof.collect_data)(collect_words.as_mut_ptr().cast()).is_null());
-            let [_, _, buf_addr, buf_len] = collect_words;
-            assert!(buf_addr > 0);
-            assert!(buf_len > 0);
-            assert!((neg_prof.destroy)(op_words.as_mut_ptr().cast()).is_null());
-
-            let mut del_b_args = PJRT_Buffer_Destroy_Args {
-                struct_size: size_of::<PJRT_Buffer_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                buffer: buf_in,
-            };
-            assert!(PJRT_Buffer_Destroy(ptr::addr_of_mut!(del_b_args).cast()).is_null());
-            let mut del_exec_args = PJRT_LoadedExecutable_Destroy_Args {
-                struct_size: size_of::<PJRT_LoadedExecutable_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                executable: comp_args.executable,
-            };
-            assert!(
-                PJRT_LoadedExecutable_Destroy(ptr::addr_of_mut!(del_exec_args).cast()).is_null()
-            );
-            let mut destroy_client_args = PJRT_Client_Destroy_Args {
-                struct_size: size_of::<PJRT_Client_Destroy_Args>(),
-                extension_start: ptr::null_mut(),
-                client,
-            };
-            assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_client_args).cast()).is_null());
-        }
-    }
-}
+mod tests;

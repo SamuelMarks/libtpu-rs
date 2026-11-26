@@ -379,10 +379,28 @@ pub struct LinuxDeviceHal {
     pub next_completion_seq: AtomicU32,
     /// Optional non-blocking OS `(read_fd, write_fd)` `eventfd`/pipe pair bound to MSI-X vector `0`.
     pub os_eventfd_pair: Option<(EventFdHandle, EventFdHandle)>,
+    /// Unique HAL instance tag preventing cross-HAL address collisions in [`crate::runtime_state::SharedTpuRuntimeState`].
+    hal_instance_id: u64,
+    /// Process-wide [`crate::runtime_state::SharedTpuRuntimeState`] receiving live HBM, DMA, and execution telemetry.
+    runtime_state: Arc<crate::runtime_state::SharedTpuRuntimeState>,
 }
+
+/// Monotonic counter assigning a unique namespace tag to each [`LinuxDeviceHal`] instance.
+static NEXT_LINUX_HAL_INSTANCE_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0x0001_0000);
 
 impl Drop for LinuxDeviceHal {
     fn drop(&mut self) {
+        let tag = self.hal_instance_id.wrapping_shl(44);
+        let buddy_map = self.buddy_allocators.get_mut();
+        for (&(dev_id, addr), buf) in self.pinned_dma_buffers.get_mut() {
+            let block_bytes = buddy_map
+                .get(&dev_id)
+                .and_then(|a| a.allocated_block_bytes(addr))
+                .unwrap_or(buf.len() as u64);
+            self.runtime_state
+                .record_hbm_dealloc(dev_id, DeviceAddress(addr.0 ^ tag), block_bytes);
+        }
         if let Some((read_fd, write_fd)) = self.os_eventfd_pair.take() {
             let posix = PosixKernelDriverBackend::new();
             let _ = posix.close_eventfd_pair(read_fd, write_fd);
@@ -475,7 +493,7 @@ impl LinuxDeviceHal {
 
         TopologySpec {
             platform_name: String::from("tpu"),
-            platform_version: format!("libtpu-rs 0.0.52 ({generation})"),
+            platform_version: format!("libtpu-rs {} ({generation})", crate::LIBTPU_PYPI_VERSION),
             generation,
             chip_bounds,
             host_bounds: config.host_bounds,
@@ -575,9 +593,12 @@ impl LinuxDeviceHal {
         let buddy = Self::build_buddy_allocators(&topology);
         let iommu_allocators = Self::build_iommu_allocators(&topology);
         let page_tables = Self::build_page_tables(&topology);
+        let runtime_state = Arc::clone(crate::runtime_state::global_shared_runtime_state());
+        let cap_u64 = u64::try_from(topology.generation.hbm_capacity_bytes().0).unwrap_or(0);
         let mut poisons = BTreeMap::new();
         for dev in &topology.devices {
             poisons.insert(dev.device_id, None);
+            runtime_state.register_device_capacity(dev.device_id, cap_u64);
         }
         let mmio = EmulatedKernelDriverBackend::default();
         Self {
@@ -599,7 +620,19 @@ impl LinuxDeviceHal {
             completion_reactor: Arc::new(MsiXInterruptReactor::new()),
             next_completion_seq: AtomicU32::new(1),
             os_eventfd_pair: None,
+            hal_instance_id: NEXT_LINUX_HAL_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
+            runtime_state,
         }
+    }
+
+    /// Computes a [`crate::runtime_state::SharedTpuRuntimeState`]-unique telemetry key for `address`.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - Local HBM [`DeviceAddress`].
+    #[must_use]
+    const fn telemetry_address(&self, address: DeviceAddress) -> DeviceAddress {
+        DeviceAddress(address.0 ^ self.hal_instance_id.wrapping_shl(44))
     }
 
     /// Opens a Linux TPU device node (`/dev/accel0` or `/dev/vfio/vfio`) and initializes page tables.
@@ -710,8 +743,10 @@ impl LinuxDeviceHal {
 
         let probed = self.probe_hardware_chip_identity()?;
         self.topology.platform_version = format!(
-            "libtpu-rs 0.0.52 ({}, sku=0x{:04x})",
-            probed.generation, probed.sku_code
+            "libtpu-rs {} ({}, sku=0x{:04x})",
+            crate::LIBTPU_PYPI_VERSION,
+            probed.generation,
+            probed.sku_code
         );
         Ok(())
     }
@@ -2275,6 +2310,13 @@ impl TpuHal for LinuxDeviceHal {
                     .apply_typed_ioctl(cmd, IoctlPayload::VfioDmaMap(&payload));
             }
         }
+        let cap_u64 = u64::try_from(self.topology.generation.hbm_capacity_bytes().0).unwrap_or(0);
+        self.runtime_state.record_hbm_alloc(
+            device_id,
+            self.telemetry_address(addr),
+            u64::try_from(aligned_bytes).unwrap_or(0),
+            cap_u64,
+        );
         Ok(addr)
     }
 
@@ -2341,6 +2383,11 @@ impl TpuHal for LinuxDeviceHal {
                     .apply_typed_ioctl(cmd, IoctlPayload::VfioDmaUnmap(&payload));
             }
         }
+        self.runtime_state.record_hbm_dealloc(
+            device_id,
+            self.telemetry_address(address),
+            unmap_size,
+        );
         Ok(())
     }
 
@@ -2396,6 +2443,8 @@ impl TpuHal for LinuxDeviceHal {
                     *d = s;
                 }
             });
+        self.runtime_state
+            .record_dma_h2d(u64::try_from(data.len()).unwrap_or(0));
         Ok(())
     }
 
@@ -2447,6 +2496,8 @@ impl TpuHal for LinuxDeviceHal {
         self.hugepage_pool
             .lock()
             .read_staging(device_id, base_addr, intra_off, out)?;
+        self.runtime_state
+            .record_dma_d2h(u64::try_from(out.len()).unwrap_or(0));
         Ok(())
     }
 
@@ -2528,6 +2579,8 @@ impl TpuHal for LinuxDeviceHal {
                     *d = s;
                 }
             });
+        self.runtime_state
+            .record_dma_d2d(u64::try_from(size.0).unwrap_or(0));
         Ok(())
     }
 
@@ -2722,6 +2775,22 @@ impl TpuHal for LinuxDeviceHal {
         self.write_bar0_csr(BAR0_CSR_TENSORCORE_STATUS, 1);
         self.write_bar0_csr(BAR0_CSR_SYNC_FLAG_BASE, observed_sync.max(1));
         self.mmio.record_execution_telemetry(observed_sync.max(1));
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let flops = program.cost_analysis.flops.max(0.0) as u64;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let bytes_accessed = program.cost_analysis.bytes_accessed.max(0.0) as u64;
+        let has_sc = !sc_bitstream.is_empty();
+        let core_idx = crate::types::CoreIndex(u8::try_from(device_id.0 % 2).unwrap_or(0));
+        self.runtime_state.record_execution(
+            device_id,
+            core_idx,
+            has_sc,
+            &program.name,
+            u64::from(bundle_count),
+            observed_sync.max(1),
+            flops,
+            bytes_accessed,
+        );
         Ok(())
     }
 
@@ -2746,6 +2815,7 @@ impl TpuHal for LinuxDeviceHal {
                 device_id: device_id.0,
             })?
             .clear_peak_stats();
+        self.runtime_state.reset_device_peak_hbm(device_id);
         Ok(())
     }
 

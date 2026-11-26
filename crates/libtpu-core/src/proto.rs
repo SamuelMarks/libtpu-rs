@@ -72,19 +72,23 @@ mod tests {
 
     #[test]
     fn test_phase1_1_all_738_reconstructed_protos_roundtrip_protox() -> TestResult {
+        let expected_proto_count = crate::elf::parse_golden_proto_descriptors(include_str!(
+            "../../../docs/reverse_engineering/golden_proto_descriptors.json"
+        ))?
+        .proto_files_count;
         let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let proto_root = manifest_dir.join("../../docs/reverse_engineering/protos");
         let mut proto_paths = Vec::new();
         collect_proto_files(&proto_root, &mut proto_paths);
         proto_paths.sort();
-        assert_eq!(proto_paths.len(), 738);
+        assert_eq!(proto_paths.len(), expected_proto_count);
 
         let recompiled_fds = protox::compile(&proto_paths, [&proto_root]).map_err(|e| {
             crate::error::LibTpuError::BinaryFormatError {
                 reason: e.to_string(),
             }
         })?;
-        assert_eq!(recompiled_fds.file.len(), 738);
+        assert_eq!(recompiled_fds.file.len(), expected_proto_count);
 
         let embedded_fds = prost_types::FileDescriptorSet::decode(
             EMBEDDED_FILE_DESCRIPTOR_SET_BYTES,
@@ -92,7 +96,7 @@ mod tests {
         .map_err(|e| crate::error::LibTpuError::BinaryFormatError {
             reason: e.to_string(),
         })?;
-        assert_eq!(embedded_fds.file.len(), 738);
+        assert_eq!(embedded_fds.file.len(), expected_proto_count);
 
         for (lhs, rhs) in recompiled_fds.file.iter().zip(embedded_fds.file.iter()) {
             assert_eq!(lhs.name, rhs.name);
@@ -148,12 +152,15 @@ mod tests {
             }
         }
 
-        assert_eq!(protodesc_cold_293_file_count(), 738);
+        let expected_proto_count = crate::elf::parse_golden_proto_descriptors(include_str!(
+            "../../../docs/reverse_engineering/golden_proto_descriptors.json"
+        ))?
+        .proto_files_count;
+        assert_eq!(protodesc_cold_293_file_count(), expected_proto_count);
         assert_eq!(
             ALL_REGISTERED_PROTO_MESSAGE_NAMES.len(),
             ALL_GENERATED_PROTO_BIJECTION.len()
         );
-        assert_eq!(ALL_GENERATED_PROTO_BIJECTION.len(), 7266);
 
         let pool = global_descriptor_pool();
         let pool_non_wkt_msgs: std::collections::BTreeSet<String> = pool
@@ -161,6 +168,7 @@ mod tests {
             .filter(|m| !m.is_map_entry() && !m.full_name().starts_with("google.protobuf."))
             .map(|m| String::from(m.full_name()))
             .collect();
+        assert_eq!(ALL_GENERATED_PROTO_BIJECTION.len(), pool_non_wkt_msgs.len());
         let generated_msgs: std::collections::BTreeSet<String> = ALL_GENERATED_PROTO_BIJECTION
             .iter()
             .map(|(fqn, _)| String::from(*fqn))

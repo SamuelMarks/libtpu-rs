@@ -7,19 +7,93 @@
  */
 
 #include "libtpu.hpp"
+#include <cstddef>
+#include <cstdlib>
+#include <cstring>
 
 namespace libtpu {
 
 static_assert(sizeof(PJRT_Api) == 1144, "PJRT_Api must be 1144 bytes");
+static_assert(offsetof(PJRT_Api, extension_start) == 8,
+              "PJRT_Api::extension_start offset");
+static_assert(offsetof(PJRT_Api, pjrt_api_version) == 16,
+              "PJRT_Api::pjrt_api_version offset");
+static_assert(offsetof(PJRT_Api, pjrt_error_destroy) == 40,
+              "PJRT_Api::pjrt_error_destroy offset");
+static_assert(offsetof(PJRT_Api, pjrt_client_create) == 120,
+              "PJRT_Api::pjrt_client_create offset");
+static_assert(offsetof(PJRT_Api, pjrt_executable_num_outputs) == 392,
+              "PJRT_Api::pjrt_executable_num_outputs offset");
+static_assert(offsetof(PJRT_Api, pjrt_loaded_executable_execute) == 480,
+              "PJRT_Api::pjrt_loaded_executable_execute offset");
+static_assert(offsetof(PJRT_Api, pjrt_buffer_to_host_buffer) == 600,
+              "PJRT_Api::pjrt_buffer_to_host_buffer offset");
 static_assert(sizeof(LibtpuSdk_Api) == 144, "LibtpuSdk_Api must be 144 bytes");
+static_assert(offsetof(LibtpuSdk_Api, client_create) == 32,
+              "LibtpuSdk_Api::client_create offset");
+static_assert(offsetof(LibtpuSdk_Api, get_metric) == 80,
+              "LibtpuSdk_Api::get_metric offset");
+static_assert(offsetof(LibtpuSdk_Api, unregister_debug_callback) == 136,
+              "LibtpuSdk_Api::unregister_debug_callback offset");
+static_assert(sizeof(TpuDriverFn) == 224, "TpuDriverFn must be 224 bytes");
+static_assert(offsetof(TpuDriverFn, open) == 0, "TpuDriverFn::open offset");
+static_assert(offsetof(TpuDriverFn, get_compiled_program_shape) == 56,
+              "TpuDriverFn::get_compiled_program_shape offset");
+static_assert(offsetof(TpuDriverFn, unload_program) == 72,
+              "TpuDriverFn::unload_program offset");
 static_assert(sizeof(PJRT_Client_Create_Args) == 88,
               "PJRT_Client_Create_Args must be 88 bytes");
+static_assert(offsetof(PJRT_Client_Create_Args, client) == 64,
+              "PJRT_Client_Create_Args::client offset");
 static_assert(sizeof(PJRT_Client_BufferFromHostBuffer_Args) == 120,
               "PJRT_Client_BufferFromHostBuffer_Args must be 120 bytes");
+static_assert(offsetof(PJRT_Client_BufferFromHostBuffer_Args,
+                       done_with_host_buffer) == 104,
+              "PJRT_Client_BufferFromHostBuffer_Args::done offset");
+static_assert(offsetof(PJRT_Client_BufferFromHostBuffer_Args, buffer) == 112,
+              "PJRT_Client_BufferFromHostBuffer_Args::buffer offset");
 static_assert(sizeof(PJRT_LoadedExecutable_Execute_Args) == 80,
               "PJRT_LoadedExecutable_Execute_Args must be 80 bytes");
 static_assert(sizeof(PJRT_Buffer_ToHostBuffer_Args) == 56,
               "PJRT_Buffer_ToHostBuffer_Args must be 56 bytes");
+static_assert(sizeof(PJRT_RawBuffer_CopyRaw_Args) == 56,
+              "PJRT_RawBuffer_CopyRaw_Args must be 56 bytes");
+static_assert(offsetof(PJRT_RawBuffer_CopyRaw_Args, event) == 48,
+              "PJRT_RawBuffer_CopyRaw_Args::event offset");
+
+/**
+ * @brief Constructs a `std::string` safely when `ptr` may be `nullptr` or
+ * `len == 0`.
+ * @param ptr Optional byte pointer.
+ * @param len Byte length of `ptr`.
+ * @return Constructed `std::string` (or `""` if `ptr == nullptr || len == 0`).
+ */
+static std::string make_safe_string(const char *ptr, size_t len) noexcept {
+  if (ptr == nullptr) {
+    return "";
+  }
+  return std::string(ptr, len);
+}
+
+float find_named_float_property(const PJRT_NamedValue *properties,
+                                size_t num_properties,
+                                std::string_view target_name) noexcept {
+  if (properties == nullptr) {
+    return 0.0F;
+  }
+  for (size_t i = 0; i < num_properties; ++i) {
+    const std::string prop_name =
+        make_safe_string(properties[i].name, properties[i].name_size);
+    if (prop_name == target_name) {
+      const uint32_t raw_bits =
+          static_cast<uint32_t>(properties[i].value_payload);
+      float val = 0.0F;
+      std::memcpy(&val, &raw_bits, sizeof(float));
+      return val;
+    }
+  }
+  return 0.0F;
+}
 
 /**
  * @brief Destroys an ignored `PJRT_Error*` handle (`nullptr` is a safe no-op).
@@ -63,7 +137,8 @@ static Status pjrt_error_to_status(PJRT_Error *err) noexcept {
                                    err, nullptr, 0};
   GetPjrtApi()->pjrt_error_message(&msg_args);
 
-  std::string owned_msg(msg_args.message, msg_args.message_size);
+  std::string owned_msg =
+      make_safe_string(msg_args.message, msg_args.message_size);
 
   PJRT_Error_Destroy_Args del_args{sizeof(PJRT_Error_Destroy_Args), nullptr,
                                    err};
@@ -130,7 +205,10 @@ Status Buffer::to_host(uint8_t *host_dst, size_t len) const noexcept {
                                      host_dst,
                                      len,
                                      nullptr};
-  return pjrt_error_to_status(GetPjrtApi()->pjrt_buffer_to_host_buffer(&args));
+  Status st =
+      pjrt_error_to_status(GetPjrtApi()->pjrt_buffer_to_host_buffer(&args));
+  Event ev_guard(args.event);
+  return st;
 }
 
 Status Buffer::to_host(std::span<uint8_t> host_dst) const noexcept {
@@ -283,9 +361,10 @@ size_t LoadedExecutable::cost_analysis_property_count() const noexcept {
       nullptr};
   pjrt_ignore_error(
       GetPjrtApi()->pjrt_loaded_executable_get_executable(&get_ex_args));
+  Executable exec_guard(get_ex_args.executable);
   PJRT_Executable_GetCostAnalysis_Args cost_args{
-      sizeof(PJRT_Executable_GetCostAnalysis_Args), nullptr,
-      get_ex_args.executable, nullptr, 0};
+      sizeof(PJRT_Executable_GetCostAnalysis_Args), nullptr, exec_guard.raw(),
+      nullptr, 0};
   pjrt_ignore_error(
       GetPjrtApi()->pjrt_executable_get_cost_analysis(&cost_args));
   return cost_args.num_properties;
@@ -298,10 +377,11 @@ Status LoadedExecutable::serialize(uint8_t *out_bytes, size_t max_len,
       nullptr};
   pjrt_ignore_error(
       GetPjrtApi()->pjrt_loaded_executable_get_executable(&get_ex_args));
+  Executable exec_guard(get_ex_args.executable);
   PJRT_Executable_Serialize_Args ser_args{
       sizeof(PJRT_Executable_Serialize_Args),
       nullptr,
-      get_ex_args.executable,
+      exec_guard.raw(),
       nullptr,
       0,
       nullptr,
@@ -346,21 +426,15 @@ float LoadedExecutable::flops() const noexcept {
       nullptr};
   pjrt_ignore_error(
       GetPjrtApi()->pjrt_loaded_executable_get_executable(&get_ex_args));
+  Executable exec_guard(get_ex_args.executable);
   PJRT_Executable_GetCostAnalysis_Args cost_args{
-      sizeof(PJRT_Executable_GetCostAnalysis_Args), nullptr,
-      get_ex_args.executable, nullptr, 0};
+      sizeof(PJRT_Executable_GetCostAnalysis_Args), nullptr, exec_guard.raw(),
+      nullptr, 0};
   pjrt_ignore_error(
       GetPjrtApi()->pjrt_executable_get_cost_analysis(&cost_args));
-  const PJRT_NamedValue *props =
-      static_cast<const PJRT_NamedValue *>(cost_args.properties);
-  uint32_t raw_bits = static_cast<uint32_t>(props[0].value_payload);
-  float val = 0.0F;
-  const uint8_t *src = reinterpret_cast<const uint8_t *>(&raw_bits);
-  uint8_t *dst = reinterpret_cast<uint8_t *>(&val);
-  for (size_t i = 0; i < sizeof(float); ++i) {
-    dst[i] = src[i];
-  }
-  return val;
+  return find_named_float_property(
+      static_cast<const PJRT_NamedValue *>(cost_args.properties),
+      cost_args.num_properties, "flops");
 }
 
 size_t LoadedExecutable::num_outputs() const noexcept {
@@ -369,16 +443,11 @@ size_t LoadedExecutable::num_outputs() const noexcept {
       nullptr};
   pjrt_ignore_error(
       GetPjrtApi()->pjrt_loaded_executable_get_executable(&get_ex_args));
-  PJRT_Executable_OutputMemoryKinds_Args omk_args{
-      sizeof(PJRT_Executable_OutputMemoryKinds_Args),
-      nullptr,
-      get_ex_args.executable,
-      0,
-      nullptr,
-      nullptr};
-  pjrt_ignore_error(
-      GetPjrtApi()->pjrt_executable_output_memory_kinds(&omk_args));
-  return omk_args.num_outputs;
+  Executable exec_guard(get_ex_args.executable);
+  PJRT_Executable_NumOutputs_Args num_args{
+      sizeof(PJRT_Executable_NumOutputs_Args), nullptr, exec_guard.raw(), 0};
+  pjrt_ignore_error(GetPjrtApi()->pjrt_executable_num_outputs(&num_args));
+  return num_args.num_outputs;
 }
 
 Status LoadedExecutable::optimized_program(uint8_t *out_bytes, size_t max_len,
@@ -388,10 +457,11 @@ Status LoadedExecutable::optimized_program(uint8_t *out_bytes, size_t max_len,
       nullptr};
   pjrt_ignore_error(
       GetPjrtApi()->pjrt_loaded_executable_get_executable(&get_ex_args));
+  Executable exec_guard(get_ex_args.executable);
   PJRT_Program prog{sizeof(PJRT_Program), nullptr, nullptr, 0, nullptr, 0};
   PJRT_Executable_OptimizedProgram_Args opt_args{
-      sizeof(PJRT_Executable_OptimizedProgram_Args), nullptr,
-      get_ex_args.executable, &prog};
+      sizeof(PJRT_Executable_OptimizedProgram_Args), nullptr, exec_guard.raw(),
+      &prog};
   pjrt_ignore_error(GetPjrtApi()->pjrt_executable_optimized_program(&opt_args));
   *out_len = prog.code_size;
   prog.code = reinterpret_cast<const char *>(out_bytes);
@@ -444,8 +514,15 @@ bool Event::is_ready() const noexcept {
 }
 
 Status Event::set(int32_t error_code, const char *message) noexcept {
-  PJRT_Event_Set_Args args{
-      sizeof(PJRT_Event_Set_Args), nullptr, handle_, error_code, 0, message, 0};
+  const size_t msg_len =
+      message != nullptr ? std::char_traits<char>::length(message) : 0U;
+  PJRT_Event_Set_Args args{sizeof(PJRT_Event_Set_Args),
+                           nullptr,
+                           handle_,
+                           error_code,
+                           0,
+                           message,
+                           msg_len};
   return pjrt_error_to_status(GetPjrtApi()->pjrt_event_set(&args));
 }
 
@@ -564,6 +641,7 @@ Status Client::buffer_from_host(uint32_t device_id, DataType dtype,
         nullptr,
         nullptr};
     err = GetPjrtApi()->pjrt_client_buffer_from_host_buffer(&h2d_args);
+    Event host_ev_guard(h2d_args.done_with_host_buffer);
     *buffer_out = Buffer(h2d_args.buffer);
   }
   return pjrt_error_to_status(err);
@@ -727,13 +805,20 @@ Status
 Topology::compute_subslice_for_devices(const int32_t *device_ids,
                                        size_t num_devices,
                                        int32_t origin_out[3]) const noexcept {
-  const int32_t subslice_dims[3] = {2, 2, 1};
+  const int32_t default_dims[3] = {2, 2, 1};
+  return compute_subslice_for_devices(std::span<const int32_t, 3>(default_dims),
+                                      device_ids, num_devices, origin_out);
+}
+
+Status Topology::compute_subslice_for_devices(
+    std::span<const int32_t, 3> subslice_dims, const int32_t *device_ids,
+    size_t num_devices, int32_t origin_out[3]) const noexcept {
   PJRT_TpuTopology_ComputeSubsliceForDevices_Args args{
       sizeof(PJRT_TpuTopology_ComputeSubsliceForDevices_Args),
       nullptr,
       nullptr,
-      subslice_dims,
-      3,
+      subslice_dims.data(),
+      subslice_dims.size(),
       device_ids,
       num_devices,
       origin_out};
@@ -789,6 +874,18 @@ size_t SdkClient::metric_value_count(const char *metric_name) const noexcept {
   LibtpuSdk_GetMetricValues_Args v_args{m_args.metric, nullptr, 0};
   sdk_ignore_error(api_, api_->get_metric_values(&v_args));
   return v_args.num_values;
+}
+
+double SdkClient::metric_sum(const char *metric_name) const noexcept {
+  LibtpuSdk_GetMetric_Args m_args{handle_, metric_name, nullptr};
+  sdk_ignore_error(api_, api_->get_metric(&m_args));
+  LibtpuSdk_GetMetricValues_Args v_args{m_args.metric, nullptr, 0};
+  sdk_ignore_error(api_, api_->get_metric_values(&v_args));
+  double total = 0.0;
+  for (size_t i = 0; i < v_args.num_values; ++i) {
+    total += std::strtod(v_args.values[i], nullptr);
+  }
+  return total;
 }
 
 size_t SdkClient::chip_count() const noexcept {
@@ -871,7 +968,8 @@ bool PjrtApiView::default_layout_allocated() const noexcept {
                                        2,
                                        nullptr};
   pjrt_ignore_error(PJRT_Layouts_Topology_GetDefaultLayout(&args));
-  void *layout = args.layout_out;
+  PJRT_Layouts_MemoryLayout *layout =
+      static_cast<PJRT_Layouts_MemoryLayout *>(args.layout_out);
   PJRT_Layouts_Destroy_Args del_args{sizeof(PJRT_Layouts_Destroy_Args), nullptr,
                                      layout};
   pjrt_ignore_error(PJRT_Layouts_MemoryLayout_Destroy(&del_args));
@@ -879,31 +977,46 @@ bool PjrtApiView::default_layout_allocated() const noexcept {
 }
 
 size_t PjrtApiView::create_raw_buffer_device_ptr(Buffer &buf) const noexcept {
-  PJRT_RawBuffer_Create_Args create_args{sizeof(PJRT_RawBuffer_Create_Args),
-                                         nullptr, buf.raw_mut(), nullptr};
-  pjrt_ignore_error(PJRT_RawBuffer_CreateRawAliasOfBuffer(&create_args));
-  void *raw_buf = create_args.raw_buffer_out;
-  PJRT_RawBuffer_Create_Args ptr_args{sizeof(PJRT_RawBuffer_Create_Args),
-                                      nullptr, buf.raw_mut(), nullptr};
-  pjrt_ignore_error(PJRT_RawBuffer_GetHostPointer(&ptr_args));
-  size_t dev_ptr = reinterpret_cast<size_t>(ptr_args.raw_buffer_out);
-  PJRT_RawBuffer_Destroy_Args del_args{sizeof(PJRT_RawBuffer_Destroy_Args),
-                                       nullptr, raw_buf};
-  pjrt_ignore_error(PJRT_RawBuffer_Destroy(&del_args));
-  return dev_ptr;
+  RawBuffer raw_buf;
+  (void)RawBuffer::create_from_buffer(buf, &raw_buf);
+  return reinterpret_cast<size_t>(raw_buf.host_pointer());
 }
 
 size_t PjrtApiView::cross_host_send(size_t transfer_tag) const noexcept {
-  PJRT_CrossHostTransfers_Args args{sizeof(PJRT_CrossHostTransfers_Args),
-                                    nullptr,
-                                    nullptr,
-                                    0,
-                                    1,
-                                    transfer_tag,
-                                    0};
-  pjrt_ignore_error(PJRT_CrossHostTransfers_SendBuffers(&args));
-  Event ev_guard(reinterpret_cast<PJRT_Event *>(args.out_event));
-  return args.out_event;
+  Client xh_client;
+  (void)Client::create(&xh_client);
+  const float payload[1] = {42.0F};
+  const int64_t dims[1] = {1};
+  Buffer send_buf;
+  Buffer recv_buf;
+  (void)xh_client.buffer_from_host(0U, DataType::F32, dims, 1U,
+                                   reinterpret_cast<const uint8_t *>(payload),
+                                   sizeof(payload), &send_buf);
+  (void)xh_client.buffer_from_host(0U, DataType::F32, dims, 1U,
+                                   reinterpret_cast<const uint8_t *>(payload),
+                                   sizeof(payload), &recv_buf);
+  PJRT_Buffer *send_arr[1] = {send_buf.raw_mut()};
+  PJRT_Buffer *recv_arr[1] = {recv_buf.raw_mut()};
+  PJRT_CrossHostTransfers_Args send_args{sizeof(PJRT_CrossHostTransfers_Args),
+                                         nullptr,
+                                         xh_client.raw(),
+                                         send_arr,
+                                         1U,
+                                         transfer_tag,
+                                         nullptr};
+  pjrt_ignore_error(PJRT_CrossHostTransfers_SendBuffers(&send_args));
+  PJRT_CrossHostTransfers_Args recv_args{sizeof(PJRT_CrossHostTransfers_Args),
+                                         nullptr,
+                                         xh_client.raw(),
+                                         recv_arr,
+                                         1U,
+                                         transfer_tag,
+                                         nullptr};
+  pjrt_ignore_error(PJRT_CrossHostTransfers_ReceiveBuffers(&recv_args));
+  const size_t ev_addr = reinterpret_cast<size_t>(send_args.out_event);
+  Event send_ev(send_args.out_event);
+  Event recv_ev(recv_args.out_event);
+  return ev_addr;
 }
 
 size_t PjrtApiView::runtime_abi_version_proto_size() const noexcept {
@@ -980,6 +1093,26 @@ Memory::Memory(PJRT_Memory *handle) noexcept : handle_(handle) {}
 PJRT_Memory *Memory::raw() const noexcept { return handle_; }
 
 Executable::Executable(PJRT_Executable *handle) noexcept : handle_(handle) {}
+
+Executable::~Executable() noexcept {
+  PJRT_Executable_Destroy_Args args{sizeof(PJRT_Executable_Destroy_Args),
+                                    nullptr, handle_};
+  pjrt_ignore_error(GetPjrtApi()->pjrt_executable_destroy(&args));
+}
+
+Executable::Executable(Executable &&other) noexcept : handle_(other.handle_) {
+  other.handle_ = nullptr;
+}
+
+Executable &Executable::operator=(Executable &&other) noexcept {
+  PJRT_Executable *next = other.handle_;
+  other.handle_ = nullptr;
+  PJRT_Executable_Destroy_Args args{sizeof(PJRT_Executable_Destroy_Args),
+                                    nullptr, handle_};
+  pjrt_ignore_error(GetPjrtApi()->pjrt_executable_destroy(&args));
+  handle_ = next;
+  return *this;
+}
 
 PJRT_Executable *Executable::raw() const noexcept { return handle_; }
 
@@ -1108,7 +1241,7 @@ std::string EmbeddingEngine::partition_parameters(const char *config_bytes,
                                    &out_ptr,
                                    nullptr};
   (void)TpuEmbeddingEngine_ExecutePartitioner(&params);
-  std::string result(out_ptr, out_sz);
+  std::string result = make_safe_string(out_ptr, out_sz);
   TpuConfigurationApi_FreeCharArray(out_ptr);
   return result;
 }
@@ -1172,13 +1305,17 @@ size_t EmbeddingEngine::build_load_optimizer_hlo() noexcept {
   return sz;
 }
 
-Communicator::Communicator() noexcept : handle_(nullptr) {
+Communicator::Communicator() noexcept
+    : Communicator(std::span<const int32_t>()) {}
+
+Communicator::Communicator(std::span<const int32_t> device_ids) noexcept
+    : handle_(nullptr) {
   PJRT_Collectives_CreateCommunicator_Args args{
       sizeof(PJRT_Collectives_CreateCommunicator_Args),
       nullptr,
       nullptr,
-      nullptr,
-      0,
+      device_ids.data(),
+      device_ids.size(),
       nullptr};
   pjrt_ignore_error(PJRT_Collectives_CreateCommunicator(&args));
   handle_ = static_cast<PJRT_Collectives_Communicator *>(args.communicator);
@@ -1272,15 +1409,23 @@ Status Communicator::all_to_all(Buffer &send_buf, Buffer *recv_buf,
 
 Status Communicator::collective_permute(Buffer &send_buf, Buffer *recv_buf,
                                         size_t count) noexcept {
+  return collective_permute(send_buf, recv_buf, count,
+                            std::span<const int32_t>());
+}
+
+Status Communicator::collective_permute(
+    Buffer &send_buf, Buffer *recv_buf, size_t count,
+    std::span<const int32_t> source_target_pairs) noexcept {
   PJRT_Communicator_CollectivePermute_Args args{
       sizeof(PJRT_Communicator_CollectivePermute_Args),
       nullptr,
       handle_,
       send_buf.raw_mut(),
       recv_buf->raw_mut(),
-      nullptr,
-      count,
+      source_target_pairs.empty() ? nullptr : source_target_pairs.data(),
+      source_target_pairs.empty() ? 0U : source_target_pairs.size(),
       nullptr};
+  (void)count;
   Status st = pjrt_error_to_status(PJRT_Communicator_CollectivePermute(&args));
   Event ev_guard(static_cast<PJRT_Event *>(args.event));
   return st;
@@ -1290,8 +1435,8 @@ std::string Communicator::to_string() const noexcept {
   PJRT_Communicator_ToString_Args args{sizeof(PJRT_Communicator_ToString_Args),
                                        nullptr, handle_, 0, 0};
   pjrt_ignore_error(PJRT_Communicator_ToString(&args));
-  return std::string(reinterpret_cast<const char *>(args.str_out),
-                     args.str_size);
+  return make_safe_string(reinterpret_cast<const char *>(args.str_out),
+                          args.str_size);
 }
 
 AsyncTransferManager::AsyncTransferManager(const Client &client) noexcept
@@ -1444,8 +1589,10 @@ int64_t TpuExecutableInspector::generated_code_size_bytes() const noexcept {
 
 size_t TpuExecutableInspector::set_and_query_compilation_env(
     size_t field_tag) const noexcept {
-  PJRT_Megascale_Query_Args set_args{sizeof(PJRT_Megascale_Query_Args), nullptr,
-                                     field_tag, 0};
+  (void)field_tag;
+  PJRT_TpuExecutable_SetTpuCompilationEnv_Args set_args{
+      sizeof(PJRT_TpuExecutable_SetTpuCompilationEnv_Args), nullptr,
+      executable_, nullptr, 0};
   pjrt_ignore_error(PJRT_TpuExecutable_SetTpuCompilationEnv(&set_args));
   PJRT_TpuExecutable_ProtoQuery_Args get_args{
       sizeof(PJRT_TpuExecutable_ProtoQuery_Args),
@@ -1456,7 +1603,10 @@ size_t TpuExecutableInspector::set_and_query_compilation_env(
       nullptr};
   pjrt_ignore_error(
       PJRT_TpuExecutable_GetTpuCompilationEnvFieldAsString(&get_args));
-  return set_args.out_value + get_args.serialized_bytes_size;
+  PJRT_Metadata_Destroy_Args del_args{sizeof(PJRT_Metadata_Destroy_Args),
+                                      nullptr, get_args.holder};
+  pjrt_ignore_error(PJRT_ExecutableMetadata_Destroy(&del_args));
+  return set_args.serialized_env_size + get_args.serialized_bytes_size;
 }
 
 size_t TpuExecutableInspector::buffer_assignment_size(
@@ -1504,7 +1654,7 @@ ShardingsInspector::parameter_sharding_bytes(size_t index) const noexcept {
   if (index >= args.num_items) {
     return "";
   }
-  return std::string(args.shardings[index], args.sharding_sizes[index]);
+  return make_safe_string(args.shardings[index], args.sharding_sizes[index]);
 }
 
 std::string
@@ -1520,8 +1670,228 @@ ShardingsInspector::output_sharding_bytes(size_t index) const noexcept {
   if (index >= args.num_items) {
     return "";
   }
-  return std::string(args.shardings[index], args.sharding_sizes[index]);
+  return make_safe_string(args.shardings[index], args.sharding_sizes[index]);
 }
+
+RawBuffer::RawBuffer(PJRT_RawBuffer *handle) noexcept : handle_(handle) {}
+
+RawBuffer::~RawBuffer() noexcept {
+  if (handle_ != nullptr) {
+    PJRT_RawBuffer_Destroy_Args args{sizeof(PJRT_RawBuffer_Destroy_Args),
+                                     nullptr, handle_};
+    pjrt_ignore_error(PJRT_RawBuffer_Destroy(&args));
+  }
+}
+
+RawBuffer::RawBuffer(RawBuffer &&other) noexcept : handle_(other.handle_) {
+  other.handle_ = nullptr;
+}
+
+RawBuffer &RawBuffer::operator=(RawBuffer &&other) noexcept {
+  PJRT_RawBuffer *next = other.handle_;
+  other.handle_ = nullptr;
+  if (handle_ != nullptr) {
+    PJRT_RawBuffer_Destroy_Args args{sizeof(PJRT_RawBuffer_Destroy_Args),
+                                     nullptr, handle_};
+    pjrt_ignore_error(PJRT_RawBuffer_Destroy(&args));
+  }
+  handle_ = next;
+  return *this;
+}
+
+Status RawBuffer::create_from_buffer(const Buffer &buffer,
+                                     RawBuffer *out) noexcept {
+  PJRT_RawBuffer_Create_Args args{sizeof(PJRT_RawBuffer_Create_Args), nullptr,
+                                  buffer.raw(), nullptr};
+  Status st =
+      pjrt_error_to_status(PJRT_RawBuffer_CreateRawAliasOfBuffer(&args));
+  *out = RawBuffer(args.raw_buffer_out);
+  return st;
+}
+
+void *RawBuffer::host_pointer() const noexcept {
+  PJRT_RawBuffer_GetHostPointer_Args args{
+      sizeof(PJRT_RawBuffer_GetHostPointer_Args), nullptr, handle_, nullptr};
+  pjrt_ignore_error(PJRT_RawBuffer_GetHostPointer(&args));
+  return args.host_pointer_out;
+}
+
+size_t RawBuffer::on_device_size_bytes() const noexcept {
+  PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args args{
+      sizeof(PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args), nullptr, handle_, 0};
+  pjrt_ignore_error(PJRT_RawBuffer_GetOnDeviceSizeInBytes(&args));
+  return args.on_device_size_in_bytes;
+}
+
+PJRT_Memory *RawBuffer::memory_space() const noexcept {
+  PJRT_RawBuffer_GetMemorySpace_Args args{
+      sizeof(PJRT_RawBuffer_GetMemorySpace_Args), nullptr, handle_, nullptr};
+  pjrt_ignore_error(PJRT_RawBuffer_GetMemorySpace(&args));
+  return args.memory_space_out;
+}
+
+Status RawBuffer::copy_raw_host_to_device(const void *src, int64_t offset,
+                                          int64_t transfer_size) noexcept {
+  PJRT_RawBuffer_CopyRaw_Args args{sizeof(PJRT_RawBuffer_CopyRaw_Args),
+                                   nullptr,
+                                   handle_,
+                                   const_cast<void *>(src),
+                                   offset,
+                                   transfer_size,
+                                   nullptr};
+  Status st = pjrt_error_to_status(PJRT_RawBuffer_CopyRawHostToDevice(&args));
+  Event ev_guard(args.event);
+  return st;
+}
+
+Status
+RawBuffer::copy_raw_device_to_host(void *dst, int64_t offset,
+                                   int64_t transfer_size) const noexcept {
+  PJRT_RawBuffer_CopyRaw_Args args{sizeof(PJRT_RawBuffer_CopyRaw_Args),
+                                   nullptr,
+                                   handle_,
+                                   dst,
+                                   offset,
+                                   transfer_size,
+                                   nullptr};
+  Status st = pjrt_error_to_status(PJRT_RawBuffer_CopyRawDeviceToHost(&args));
+  Event ev_guard(args.event);
+  return st;
+}
+
+PJRT_RawBuffer *RawBuffer::raw() const noexcept { return handle_; }
+
+MultiSliceConfig::MultiSliceConfig(
+    const PJRT_TopologyDescription *topology) noexcept
+    : handle_(nullptr) {
+  PJRT_Megascale_CreateDefaultConfig_Args args{
+      sizeof(PJRT_Megascale_CreateDefaultConfig_Args), nullptr, topology,
+      nullptr};
+  pjrt_ignore_error(PJRT_Megascale_CreateDefaultConfig(&args));
+  handle_ = args.config_out;
+}
+
+MultiSliceConfig::~MultiSliceConfig() noexcept {
+  if (handle_ != nullptr) {
+    PJRT_MultiSlice_Config_Destroy_Args args{
+        sizeof(PJRT_MultiSlice_Config_Destroy_Args), nullptr, handle_};
+    pjrt_ignore_error(PJRT_MultiSlice_Config_Destroy(&args));
+  }
+}
+
+MultiSliceConfig::MultiSliceConfig(MultiSliceConfig &&other) noexcept
+    : handle_(other.handle_) {
+  other.handle_ = nullptr;
+}
+
+MultiSliceConfig &
+MultiSliceConfig::operator=(MultiSliceConfig &&other) noexcept {
+  PJRT_MultiSlice_Config *next = other.handle_;
+  other.handle_ = nullptr;
+  if (handle_ != nullptr) {
+    PJRT_MultiSlice_Config_Destroy_Args args{
+        sizeof(PJRT_MultiSlice_Config_Destroy_Args), nullptr, handle_};
+    pjrt_ignore_error(PJRT_MultiSlice_Config_Destroy(&args));
+  }
+  handle_ = next;
+  return *this;
+}
+
+size_t MultiSliceConfig::num_slices() const noexcept {
+  PJRT_MultiSlice_Config_NumSlices_Args args{
+      sizeof(PJRT_MultiSlice_Config_NumSlices_Args), nullptr, handle_, 0};
+  pjrt_ignore_error(PJRT_MultiSlice_Config_NumSlices(&args));
+  return args.num_slices;
+}
+
+size_t MultiSliceConfig::num_devices_per_slice() const noexcept {
+  PJRT_MultiSlice_Config_NumDevicesPerSlice_Args args{
+      sizeof(PJRT_MultiSlice_Config_NumDevicesPerSlice_Args), nullptr, handle_,
+      0, 0};
+  pjrt_ignore_error(PJRT_MultiSlice_Config_NumDevicesPerSlice(&args));
+  return args.num_devices_per_slice_map;
+}
+
+size_t MultiSliceConfig::slice_id() const noexcept {
+  PJRT_MultiSlice_Config_SliceId_Args args{
+      sizeof(PJRT_MultiSlice_Config_SliceId_Args), nullptr, handle_, 0};
+  pjrt_ignore_error(PJRT_MultiSlice_Config_SliceId(&args));
+  return args.slice_id;
+}
+
+std::string MultiSliceConfig::serialize() const noexcept {
+  PJRT_MultiSlice_Config_Serialize_Args args{
+      sizeof(PJRT_MultiSlice_Config_Serialize_Args),
+      nullptr,
+      handle_,
+      nullptr,
+      0,
+      nullptr};
+  pjrt_ignore_error(PJRT_MultiSlice_Config_Serialize(&args));
+  std::string out =
+      make_safe_string(args.serialized_bytes, args.serialized_bytes_size);
+  PJRT_Metadata_Destroy_Args del_args{sizeof(PJRT_Metadata_Destroy_Args),
+                                      nullptr, args.serialized_config};
+  pjrt_ignore_error(PJRT_ExecutableMetadata_Destroy(&del_args));
+  return out;
+}
+
+PJRT_MultiSlice_Config *MultiSliceConfig::raw() const noexcept {
+  return handle_;
+}
+
+XlaTransform::XlaTransform() noexcept : name_() {}
+
+XlaTransform::~XlaTransform() noexcept {
+  if (!name_.empty()) {
+    PJRT_XlaTransform_Unregister_Args args{
+        sizeof(PJRT_XlaTransform_Unregister_Args), nullptr, name_.data(),
+        name_.size()};
+    pjrt_ignore_error(PJRT_XlaTransform_Unregister(&args));
+  }
+}
+
+XlaTransform::XlaTransform(XlaTransform &&other) noexcept
+    : name_(static_cast<std::string &&>(other.name_)) {
+  other.name_.clear();
+}
+
+XlaTransform &XlaTransform::operator=(XlaTransform &&other) noexcept {
+  std::string next = static_cast<std::string &&>(other.name_);
+  other.name_.clear();
+  if (!name_.empty()) {
+    PJRT_XlaTransform_Unregister_Args args{
+        sizeof(PJRT_XlaTransform_Unregister_Args), nullptr, name_.data(),
+        name_.size()};
+    pjrt_ignore_error(PJRT_XlaTransform_Unregister(&args));
+  }
+  name_ = static_cast<std::string &&>(next);
+  return *this;
+}
+
+Status XlaTransform::register_pass(std::string_view pass_name,
+                                   size_t transform_id,
+                                   XlaTransform *out) noexcept {
+  PJRT_XlaTransform_Register_Args args{sizeof(PJRT_XlaTransform_Register_Args),
+                                       nullptr, pass_name.data(),
+                                       pass_name.size(), transform_id};
+  Status st = pjrt_error_to_status(PJRT_XlaTransform_Register(&args));
+  if (st.is_ok()) {
+    XlaTransform guard;
+    guard.name_ = std::string(pass_name.data(), pass_name.size());
+    *out = static_cast<XlaTransform &&>(guard);
+  }
+  return st;
+}
+
+size_t XlaTransform::registered_count() noexcept {
+  PJRT_XlaTransform_List_Args args{sizeof(PJRT_XlaTransform_List_Args), nullptr,
+                                   nullptr, 0, nullptr};
+  pjrt_ignore_error(PJRT_XlaTransform_List(&args));
+  return args.num_names_out;
+}
+
+std::string_view XlaTransform::name() const noexcept { return name_; }
 
 Coordinator::Coordinator() noexcept : handle_(libtpu_rs_coordinator_create()) {}
 
@@ -1877,7 +2247,7 @@ std::string DeviceDescription::kind() const noexcept {
   PJRT_DeviceDescription_Kind_Args args{
       sizeof(PJRT_DeviceDescription_Kind_Args), nullptr, handle_, nullptr, 0};
   pjrt_ignore_error(GetPjrtApi()->pjrt_device_description_kind(&args));
-  return std::string(args.device_kind, args.device_kind_size);
+  return make_safe_string(args.device_kind, args.device_kind_size);
 }
 
 std::string DeviceDescription::to_string() const noexcept {
@@ -1885,7 +2255,7 @@ std::string DeviceDescription::to_string() const noexcept {
       sizeof(PJRT_DeviceDescription_ToString_Args), nullptr, handle_, nullptr,
       0};
   pjrt_ignore_error(GetPjrtApi()->pjrt_device_description_to_string(&args));
-  return std::string(args.to_string, args.to_string_size);
+  return make_safe_string(args.to_string, args.to_string_size);
 }
 
 ExecuteContext::ExecuteContext() noexcept : handle_(nullptr) {
@@ -1981,8 +2351,20 @@ int64_t CopyToDeviceStream::current_bytes() const noexcept {
 }
 
 DlPackTensor::DlPackTensor(const Buffer &buffer) noexcept
-    : data_addr_(reinterpret_cast<uintptr_t>(buffer.raw())),
-      ndim_(buffer.rank()), dtype_(buffer.element_type()), device_type_(12) {}
+    : data_addr_(0), ndim_(buffer.rank()), dtype_(buffer.element_type()),
+      device_type_(12) {
+  PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args ptr_args{
+      sizeof(PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args), nullptr,
+      buffer.raw(), nullptr};
+  pjrt_ignore_error(
+      GetPjrtApi()->pjrt_buffer_opaque_device_memory_data_pointer(&ptr_args));
+  PJRT_Buffer_UnsafePointer_Args unsafe_args{
+      sizeof(PJRT_Buffer_UnsafePointer_Args), nullptr, buffer.raw(), 0};
+  pjrt_ignore_error(GetPjrtApi()->pjrt_buffer_unsafe_pointer(&unsafe_args));
+  data_addr_ = ptr_args.device_memory_ptr != nullptr
+                   ? reinterpret_cast<uintptr_t>(ptr_args.device_memory_ptr)
+                   : unsafe_args.buffer_pointer;
+}
 
 DlPackTensor::~DlPackTensor() noexcept { data_addr_ = 0; }
 

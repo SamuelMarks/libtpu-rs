@@ -15,15 +15,100 @@ class CompilerMetadataReport(TypedDict):
     module_name: str
     executable_fingerprint: str
 
+class CoreIdentifierDict(TypedDict):
+    """Parsed `TpuCoreIdentifier` dictionary in `CoreStateSummaryDict`."""
+
+    global_core_id: int
+    chip_id: int
+    core_on_chip_type: str
+    core_on_chip_index: int
+
+class _SequencerInfoRequired(TypedDict):
+    """Required fields of `SequencerInfoDict`."""
+
+    sequencer_type: str
+    sequencer_index: int
+
+class SequencerInfoDict(_SequencerInfoRequired, total=False):
+    """Parsed `SequencerInfo` dictionary in `CoreStateSummaryDict`."""
+
+    pc: int
+    tag: int
+    tracemark: int
+    program_id: int
+    run_id: int
+    hlo_location: str
+    hlo_detailed_info: str
+
+class QueuedProgramInfoDict(TypedDict):
+    """Parsed `QueuedProgramInfo` dictionary in `CoreStateSummaryDict`."""
+
+    run_id: int
+    launch_id: int
+    program_fingerprint: bytes
+
+class CompletedProgramInfoDict(TypedDict):
+    """Parsed `CompletedProgramInfo` dictionary in `CoreStateSummaryDict`."""
+
+    run_id: int
+    launch_id: int
+    name: str
+    program_fingerprint: bytes
+
+class _CoreStateSummaryRequired(TypedDict):
+    """Required fields of `CoreStateSummaryDict`."""
+
+    core_id: CoreIdentifierDict
+    xdb_server_running: bool
+    sequencer_info: list[SequencerInfoDict]
+    queued_program_info: list[QueuedProgramInfoDict]
+    recent_completions: list[CompletedProgramInfoDict]
+
+class CoreStateSummaryDict(_CoreStateSummaryRequired, total=False):
+    """Parsed `CurrentCoreStateSummary` dictionary in `StallSummaryReportDict`."""
+
+    program_fingerprint: bytes
+    launch_id: int
+    error_message: str
+
+class StallTriggerInfoDict(TypedDict):
+    """Parsed `StallTriggerInfo` dictionary in `StallArtifactMetadataDict`."""
+
+    source: str
+    description: str
+    timeout_ms: int
+    posted_host_id: int
+    trigger_time_unix_micros: int
+
+class _StallArtifactMetadataRequired(TypedDict):
+    """Required fields of `StallArtifactMetadataDict`."""
+
+    harvest_start_time_unix_micros: int
+    harvest_end_time_unix_micros: int
+    hostname: str
+    pid: int
+    local_host_id: int
+    host_count: int
+    chips_per_host: int
+    libtpu_build: str
+    triggers: list[StallTriggerInfoDict]
+
+class StallArtifactMetadataDict(_StallArtifactMetadataRequired, total=False):
+    """Parsed `StallArtifactMetadata` dictionary in `StallSummaryReportDict`."""
+
+    launch_id: int
+
 class _StallSummariesOptional(TypedDict, total=False):
-    """Optional `artifact_metadata` field for `StallSummariesReport`."""
+    """Optional `artifact_metadata` field for `StallSummaryReportDict`."""
 
-    artifact_metadata: dict[str, object]
+    artifact_metadata: StallArtifactMetadataDict
 
-class StallSummariesReport(_StallSummariesOptional):
+class StallSummaryReportDict(_StallSummariesOptional):
     """Stall summary dictionary returned by `read_stall_summaries`."""
 
-    core_states: dict[str, dict[str, object]]
+    core_states: dict[str, CoreStateSummaryDict]
+
+StallSummariesReport = StallSummaryReportDict
 
 class CoreDumpMachineInfo(TypedDict):
     """Machine metadata block in `CoreDumpReport`."""
@@ -86,7 +171,7 @@ def read_compiler_metadata(path: str | os.PathLike[str]) -> CompilerMetadataRepo
     """
     ...
 
-def read_stall_summaries(path: str | os.PathLike[str]) -> StallSummariesReport:
+def read_stall_summaries(path: str | os.PathLike[str]) -> StallSummaryReportDict:
     """Read an `AllCoreStateSummaries` binary proto from disk.
 
     Args:

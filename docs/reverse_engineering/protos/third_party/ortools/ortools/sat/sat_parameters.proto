@@ -289,6 +289,7 @@ message SatParameters {
   optional bool shared_tree_worker_enable_trail_sharing = 295 [default = true];
   optional bool shared_tree_worker_enable_phase_sharing = 304 [default = true];
   optional bool shared_tree_worker_propagate_intermediate_nodes = 365 [default = false];
+  optional double shared_tree_worker_min_dtime_before_sync = 377 [default = 2];
   optional double shared_tree_open_leaves_per_worker = 281 [default = 2];
   optional int32 shared_tree_max_nodes_per_worker = 238 [default = 10000];
   optional .operations_research.sat.SatParameters.SharedTreeSplitStrategy shared_tree_split_strategy = 239 [default = SPLIT_STRATEGY_AUTO];
@@ -305,6 +306,8 @@ message SatParameters {
   optional bool stop_after_root_propagation = 252 [default = false];
   optional double lns_initial_difficulty = 307 [default = 0.5];
   optional double lns_initial_deterministic_limit = 308 [default = 0.1];
+  optional double lns_initial_presolve_deterministic_limit = 378 [default = 0.5];
+  optional double lns_max_presolve_deterministic_limit = 379 [default = 10];
   optional bool use_lns = 283 [default = true];
   optional bool use_lns_only = 101 [default = false];
   optional int32 solution_pool_size = 193 [default = 3];
@@ -381,7 +384,7 @@ message SatParameters {
   optional int32 mip_max_activity_exponent = 127 [default = 53];
   optional double mip_check_precision = 128 [default = 1e-05];
   optional bool mip_compute_true_objective_bound = 198 [default = true];
-  optional double mip_max_valid_magnitude = 199 [default = 1e+20];
+  optional double mip_max_valid_magnitude = 199 [default = 1e+25];
   optional bool mip_treat_high_magnitude_bounds_as_infinity = 278 [default = false];
   optional double mip_drop_tolerance = 232 [default = 1e-16];
   optional int32 mip_presolve_level = 261 [default = 2];

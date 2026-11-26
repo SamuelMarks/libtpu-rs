@@ -12,56 +12,75 @@ import argparse
 import hashlib
 import json
 import re
+import shutil
 import struct
+import sys
 import urllib.request
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
 
-from scripts.re_extract import ElfSectionHeader, parse_elf64_sections_and_dynsym
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.re_extract import (
+    ElfSectionHeader as ElfSectionHeader,
+)
+from scripts.re_extract import (
+    carve_protodesc_cold,
+    parse_elf64_sections_and_dynsym,
+)
 
 PYPI_LIBTPU_JSON_URL: str = "https://pypi.org/pypi/libtpu/json"
 GCS_LIBTPU_INDEX_URL: str = "https://storage.googleapis.com/jax-releases/libtpu_releases.html"
+
+TARGET_PLATFORMS: tuple[str, ...] = ("manylinux_2_31_x86_64",)
 
 SUPPORTED_PLATFORM_TAGS: tuple[str, ...] = (
     "manylinux_2_31_x86_64",
     "manylinux_2_35_aarch64",
 )
 
-PINNED_WHEEL_SHA256: dict[str, str] = {
-    "libtpu-0.0.52-cp311-cp311-manylinux_2_31_x86_64.whl": (
-        "f5e2e596eaea9357fbb5a6755a7a9007c6ab75bfde4a55191b03eff402971140"
+PINNED_LIBTPU_0_0_53_1_SHA256: dict[str, str] = {
+    "libtpu-0.0.53.1-cp311-cp311-manylinux_2_31_x86_64.whl": (
+        "e300a3ccd01933894103303c9886c6c0dc88fcd3166928cecfd1e36b54ae95d3"
     ),
-    "libtpu-0.0.52-cp312-cp312-manylinux_2_31_x86_64.whl": (
-        "f76ab1f4d697c346371c50058796f6baa93317b89be8cf8a1012715a2655120d"
+    "libtpu-0.0.53.1-cp312-cp312-manylinux_2_31_x86_64.whl": (
+        "54eff1c73872c1c5697d70e158b52e0c4a5286184c3582e2075d439b4ea028cf"
     ),
-    "libtpu-0.0.52-cp313-cp313-manylinux_2_31_x86_64.whl": (
-        "bf962d290626e93828f4ffafef96dfff8d8bfd0d64f506ca6f953e6e1e7c8e87"
+    "libtpu-0.0.53.1-cp313-cp313-manylinux_2_31_x86_64.whl": (
+        "91544c2141c9e5310ab354d48446bb91fe927630b07003bee2b3675bb2b35446"
     ),
-    "libtpu-0.0.52-cp314-cp314-manylinux_2_31_x86_64.whl": (
-        "1c250f39da2c604eeaace2a552593219d9c6f9a11aefef5fe063b1410a315cec"
+    "libtpu-0.0.53.1-cp314-cp314-manylinux_2_31_x86_64.whl": (
+        "30d2c3ba20047080e6bae8dbacb62115a627780d7a8f9a66163fd085f032b5ba"
     ),
-    "libtpu-0.0.52-cp314-cp314t-manylinux_2_31_x86_64.whl": (
-        "ea2fed72da6931352369ec5d33ecd39ed32410233aa68b6c3c46872003e6cde6"
+    "libtpu-0.0.53.1-cp314-cp314t-manylinux_2_31_x86_64.whl": (
+        "838295bfc8560136d0ebe4eecb55786eb2d5031a38e3d921b7e58b1977fab0b8"
     ),
-    "libtpu-0.0.52-cp315-cp315-manylinux_2_31_x86_64.whl": (
-        "9de113b743b5eaeec44be48127f61814760dc450f0ca154d844322eccf33009f"
+    "libtpu-0.0.53.1-cp315-cp315-manylinux_2_31_x86_64.whl": (
+        "a84b8e09ceda97bd89fd06a86b9a05c43e5d351c4b9b1b11e927326dcad9ba0d"
     ),
-    "libtpu-0.0.52-cp315-cp315t-manylinux_2_31_x86_64.whl": (
-        "167554bafdbff2f4a65ce5acda131eb6770821b49d242d99ea1bbb2b604be29a"
+    "libtpu-0.0.53.1-cp315-cp315t-manylinux_2_31_x86_64.whl": (
+        "fa3ceb1df9c3395e8175b3917ebb4347202d4a03c69a24656026f7ff85abea7f"
     ),
 }
 
+PINNED_WHEEL_SHA256: dict[str, str] = dict(PINNED_LIBTPU_0_0_53_1_SHA256)
+
 PINNED_BINARY_SHA256: dict[tuple[str, str], str] = {
     (
-        "0.0.52",
+        "0.0.53.1",
         "libtpu/libtpu.so",
-    ): "f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077",
+    ): "9b098d865d7ed58592646df3d7ebe988dadfb3f444011ddae99b230bbfcb3dc8",
     (
-        "0.0.52",
+        "0.0.53.1",
         "libtpu/sdk.so",
     ): "630c772352b470e1f32b7459ac3d60790f8d4d5000747390ebdeb743c1f33186",
+    (
+        "0.0.53.1",
+        "libtpu/sdk.so:freethreaded",
+    ): "7fb29a9b394037ac61d984948afa55147c49248cf75cd6e518c445e4a80284f6",
 }
 
 
@@ -194,13 +213,14 @@ def parse_wheel_tags(filename: str) -> tuple[str, str, str]:
     if len(parts) < 5:
         raise ArtifactFetchError(f"Malformed PEP 427 wheel filename: {filename}")
     version = parts[1]
-    python_tag = parts[-3]
+    abi_tag = parts[-2]
+    python_tag = abi_tag if abi_tag.endswith("t") and abi_tag.startswith("cp") else parts[-3]
     platform_tag = parts[-1]
     return version, python_tag, platform_tag
 
 
 def resolve_pypi_wheels(
-    version: str = "0.0.52",
+    version: str = "0.0.53.1",
     platform_tag: str = "manylinux_2_31_x86_64",
     python_tag: str | None = "cp311",
     pypi_json_url: str = PYPI_LIBTPU_JSON_URL,
@@ -320,15 +340,29 @@ def download_and_extract_wheel(
             )
         wheel_path.write_bytes(raw_wheel)
 
-    extract_root = cache_dir / "extracted" / spec.version / spec.python_tag / spec.platform_tag
+    version_root = cache_dir / spec.version
+    extract_root = version_root / spec.python_tag / spec.platform_tag
     extract_root.mkdir(parents=True, exist_ok=True)
+    is_freethreaded = spec.python_tag.endswith("t")
 
     extracted: list[ExtractedBinaryDigest] = []
     with zipfile.ZipFile(wheel_path, "r") as zf:
+        for py_member in sorted(name for name in zf.namelist() if name.endswith(".py")):
+            py_bytes = zf.read(py_member)
+            for py_root in (extract_root / "python", version_root / "python"):
+                py_dest = py_root / py_member
+                py_dest.parent.mkdir(parents=True, exist_ok=True)
+                py_dest.write_bytes(py_bytes)
+
         so_members = sorted(name for name in zf.namelist() if name.endswith(".so"))
         for member in so_members:
             dest_path = extract_root / Path(member).name
-            normalized_key = "libtpu/sdk.so" if member.endswith("/sdk.so") else "libtpu/libtpu.so"
+            if member.endswith("/sdk.so"):
+                normalized_key = (
+                    "libtpu/sdk.so:freethreaded" if is_freethreaded else "libtpu/sdk.so"
+                )
+            else:
+                normalized_key = "libtpu/libtpu.so"
             expected_so_sha = PINNED_BINARY_SHA256.get((spec.version, normalized_key))
 
             if not dest_path.exists() or (
@@ -347,6 +381,16 @@ def download_and_extract_wheel(
                     f"Extracted binary SHA-256 mismatch for {member}: "
                     f"expected {expected_so_sha}, got {so_sha}"
                 )
+
+            top_so_name = (
+                "sdk_freethreaded.so"
+                if (member.endswith("/sdk.so") and is_freethreaded)
+                else Path(member).name
+            )
+            top_so_path = version_root / top_so_name
+            if not top_so_path.exists():
+                shutil.copyfile(dest_path, top_so_path)
+
             extracted.append(
                 ExtractedBinaryDigest(
                     member_name=member,
@@ -368,23 +412,14 @@ def _scan_protodesc_filenames(section_bytes: bytes) -> tuple[str, ...]:
     Returns:
         Sorted tuple of unique `.proto` file paths discovered in `section_bytes`.
     """
-    names: set[str] = set()
-    pattern = re.compile(rb"\x0a([\x07-\x7f])([A-Za-z0-9_./-]{1,120}\.proto)")
-    for match in pattern.finditer(section_bytes):
-        expected_len = match.group(1)[0]
-        candidate = match.group(2)
-        if expected_len <= len(candidate):
-            sliced = candidate[:expected_len]
-            if sliced.endswith(b".proto"):
-                names.add(sliced.decode("ascii"))
-    return tuple(sorted(names))
+    return tuple(sorted({entry["name"] for entry in carve_protodesc_cold(section_bytes)}))
 
 
 def _extract_pjrt_header_from_sections(
     raw_so: bytes,
     sections: list[ElfSectionHeader],
 ) -> tuple[int, int, int]:
-    """Attempts to read `(struct_size, major, minor)` of the static `PJRT_Api` table in an ELF.
+    """Attempts to read `(struct_size, major, minor)` of the `PJRT_Api` table in an ELF.
 
     Args:
         raw_so: Raw ELF64 binary byte buffer.
@@ -415,6 +450,32 @@ def _extract_pjrt_header_from_sections(
             ):
                 return int(struct_size), int(major), int(minor)
             offset = idx + 8
+
+    text_sec = sec_map.get(".text")
+    if text_sec is not None:
+        text_raw = raw_so[text_sec.sh_offset : text_sec.sh_offset + text_sec.sh_size]
+        ver_pat = b"\x48\xc7\x40\x10\x18\x00\x00\x00"
+        pos = text_raw.find(ver_pat)
+        if pos >= 8 and pos + 32 <= len(text_raw):
+            win = text_raw[pos - 16 : pos + 32]
+            sz_idx = win.find(b"\x48\xc7\x00")
+            ver_idx = win.find(b"\x49\xb9")
+            if (
+                sz_idx != -1
+                and sz_idx + 7 <= len(win)
+                and ver_idx != -1
+                and ver_idx + 10 <= len(win)
+            ):
+                s_size = struct.unpack_from("<I", win, sz_idx + 3)[0]
+                maj, min_v = struct.unpack_from("<ii", win, ver_idx + 2)
+                if (
+                    512 <= s_size <= 4096
+                    and s_size % 8 == 0
+                    and 0 <= maj <= 5
+                    and 1 <= min_v <= 500
+                ):
+                    return int(s_size), int(maj), int(min_v)
+
     return 0, 0, 0
 
 
@@ -506,6 +567,63 @@ def diff_wheel_reports(
     )
 
 
+def resolve_pinned_wheels(
+    version: str = "0.0.53.1",
+    platform_tag: str = "manylinux_2_31_x86_64",
+    python_tag: str | None = None,
+    cache_dir: Path | None = None,
+) -> list[WheelArtifactSpec]:
+    """Builds `WheelArtifactSpec` records from `PINNED_WHEEL_SHA256` and verifies cached files.
+
+    Args:
+        version: Target `libtpu` version string.
+        platform_tag: PEP 427 platform tag filter.
+        python_tag: Optional CPython tag filter (or `None` for all tags).
+        cache_dir: Optional wheel cache directory whose existing `.whl` files are verified.
+
+    Returns:
+        Sorted list of `WheelArtifactSpec` records matching the requested filters.
+
+    Raises:
+        ArtifactFetchError: If no pinned wheels match or a cached `.whl` fails SHA-256 verification.
+    """
+    specs: list[WheelArtifactSpec] = []
+    for filename, sha256 in sorted(PINNED_WHEEL_SHA256.items()):
+        ver, py_tag, plat_tag = parse_wheel_tags(filename)
+        if ver != version or plat_tag != platform_tag:
+            continue
+        if python_tag is not None and py_tag != python_tag:
+            continue
+        size_bytes = 0
+        if cache_dir is not None:
+            cached_path = cache_dir / filename
+            if cached_path.exists():
+                actual = compute_sha256_file(cached_path)
+                if actual != sha256:
+                    raise ArtifactFetchError(
+                        f"Cached wheel SHA-256 mismatch for {filename}: "
+                        f"expected {sha256}, got {actual}"
+                    )
+                size_bytes = cached_path.stat().st_size
+        specs.append(
+            WheelArtifactSpec(
+                version=ver,
+                filename=filename,
+                url=f"https://files.pythonhosted.org/packages/py3/l/libtpu/{filename}",
+                sha256=sha256,
+                platform_tag=plat_tag,
+                python_tag=py_tag,
+                size_bytes=size_bytes,
+            )
+        )
+    if not specs:
+        raise ArtifactFetchError(
+            f"No pinned wheels matched version={version}, platform={platform_tag}, "
+            f"python_tag={python_tag}"
+        )
+    return specs
+
+
 def main(argv: list[str] | None = None, reader: UrlReader = default_url_reader) -> int:
     """CLI entry point for fetching, inspecting, and diffing `libtpu` wheels.
 
@@ -523,14 +641,19 @@ def main(argv: list[str] | None = None, reader: UrlReader = default_url_reader) 
         default=Path(".cache/wheels"),
         help="Target directory for cached wheels and extracted .so binaries",
     )
-    parser.add_argument("--version", default="0.0.52", help="Target PyPI libtpu version")
+    parser.add_argument("--version", default="0.0.53.1", help="Target PyPI libtpu version")
     parser.add_argument(
         "--platform",
-        default="manylinux_2_31_x86_64",
+        default=TARGET_PLATFORMS[0],
         choices=list(SUPPORTED_PLATFORM_TAGS),
         help="PEP 427 wheel platform tag",
     )
-    parser.add_argument("--python-tag", default="cp311", help="CPython tag (e.g., cp311)")
+    parser.add_argument("--python-tag", default="cp311", help="CPython tag (e.g., cp311 or all)")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Verify pinned wheel metadata and cached SHA-256 digests without downloading",
+    )
     parser.add_argument("--fetch", action="store_true", help="Download and extract matching wheel")
     parser.add_argument("--inspect", type=Path, help="Inspect an on-disk .whl archive")
     parser.add_argument(
@@ -551,27 +674,37 @@ def main(argv: list[str] | None = None, reader: UrlReader = default_url_reader) 
         if args.inspect is not None:
             print(json.dumps(asdict(inspect_wheel_archive(args.inspect)), indent=2))
             return 0
+        py_filter = None if str(args.python_tag) == "all" else str(args.python_tag)
+        if args.dry_run:
+            pinned_specs = resolve_pinned_wheels(
+                version=str(args.version),
+                platform_tag=str(args.platform),
+                python_tag=py_filter,
+                cache_dir=Path(args.cache_dir),
+            )
+            print(json.dumps([asdict(s) for s in pinned_specs], indent=2))
+            return 0
         specs = resolve_pypi_wheels(
             version=str(args.version),
             platform_tag=str(args.platform),
-            python_tag=str(args.python_tag),
+            python_tag=py_filter,
             reader=reader,
         )
         if args.fetch:
-            wheel_path, binaries = download_and_extract_wheel(
-                specs[0],
-                cache_dir=Path(args.cache_dir),
-                reader=reader,
-            )
-            print(
-                json.dumps(
+            results = []
+            for spec in specs:
+                wheel_path, binaries = download_and_extract_wheel(
+                    spec,
+                    cache_dir=Path(args.cache_dir),
+                    reader=reader,
+                )
+                results.append(
                     {
                         "wheel": str(wheel_path),
                         "binaries": [asdict(b) for b in binaries],
-                    },
-                    indent=2,
+                    }
                 )
-            )
+            print(json.dumps(results[0] if len(results) == 1 else results, indent=2))
             return 0
         print(json.dumps([asdict(s) for s in specs], indent=2))
         return 0

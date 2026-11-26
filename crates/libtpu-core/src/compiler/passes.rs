@@ -1086,7 +1086,7 @@ impl CompiledProgram {
             program_format: String::from("ltpuexec"),
             producer_phase: String::from(phase_name),
             consumer_phases,
-            version: String::from("0.0.52"),
+            version: String::from(crate::LIBTPU_PYPI_VERSION),
             program_name: String::from("tpu_partial_program"),
         })
     }

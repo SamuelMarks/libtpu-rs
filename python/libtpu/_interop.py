@@ -7,9 +7,9 @@ import importlib.machinery
 import importlib.util
 import sys
 import types
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Protocol, cast, runtime_checkable
+from typing import ClassVar, Protocol, Union, cast, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
@@ -17,18 +17,51 @@ import numpy.typing as npt
 import libtpu
 
 
+class PyCapsule(Protocol):
+    """Opaque protocol representing a `CPython` `PyCapsule` handle."""
+
+    _pycapsule_opaque: ClassVar[str]
+
+
 @runtime_checkable
 class SupportsDLPack(Protocol):
     """Protocol for DLPack v1.0 tensor producers implementing `__dlpack__`."""
 
-    __dlpack__: Callable[..., object]
+    __dlpack__: Callable[..., PyCapsule]
     __dlpack_device__: Callable[[], tuple[int, int]]
 
 
 class SupportsArrayInterface(Protocol):
     """Protocol for host array producers exposing `__array_interface__`."""
 
-    __array_interface__: Mapping[str, object]
+    __array_interface__: libtpu.ArrayInterfaceDict
+
+
+NativeArg = Union[
+    int,
+    float,
+    bool,
+    str,
+    bytes,
+    bytearray,
+    memoryview,
+    Sequence[int],
+    Sequence[Sequence[float]],
+    PyCapsule,
+    None,
+]
+NativeReturn = Union[
+    int,
+    str,
+    bytes,
+    memoryview,
+    tuple[int, int],
+    list[str],
+    list[list[float]],
+    tuple[bytes, Sequence[int], int, int, int, int, int],
+    PyCapsule,
+    None,
+]
 
 
 class _PjrtDeviceGetDescriptionArgs(ctypes.Structure):
@@ -353,17 +386,18 @@ def _resolve_pyo3_extension_path(prefer_sdk: bool) -> Path:
     c_globs = sorted(pkg_dir.glob("_C*.so")) + sorted(pkg_dir.glob("_C*.pyd"))
     sdk_candidates = [pkg_dir / "sdk.so", pkg_dir / "sdk.dylib", pkg_dir / "sdk.pyd"]
     ordered_pkg = (sdk_candidates + c_globs) if prefer_sdk else (c_globs + sdk_candidates)
-    cargo_candidates = [
-        repo_root / "target" / "debug" / "liblibtpu_py.dylib",
-        repo_root / "target" / "debug" / "liblibtpu_py.so",
-        repo_root / "target" / "debug" / "libtpu_py.dll",
-        repo_root / "target" / "release" / "liblibtpu_py.dylib",
-        repo_root / "target" / "release" / "liblibtpu_py.so",
-        repo_root / "target" / "release" / "libtpu_py.dll",
-    ]
-    for candidate in [*ordered_pkg, *cargo_candidates]:
+    for candidate in ordered_pkg:
         if candidate.is_file():
             return candidate
+    cargo_existing: list[Path] = []
+    for target_root in libtpu._cargo_target_roots(repo_root):
+        for profile in ("debug", "release"):
+            for name in ("liblibtpu_py.dylib", "liblibtpu_py.so", "libtpu_py.dll"):
+                cand = target_root / profile / name
+                if cand.is_file():
+                    cargo_existing.append(cand)
+    if cargo_existing:
+        return max(cargo_existing, key=lambda p: p.stat().st_mtime_ns)
     raise FileNotFoundError("Compiled libtpu-py PyO3 extension library not found")
 
 
@@ -393,6 +427,11 @@ def _load_extension_symbol(
         raise ImportError(f"Unable to build module spec for {symbol_mod_name} at {ext_path}")
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
+    cdll = _load_interop_cdll()
+    cdll.libtpu_rs_runtime_sync_vtable.argtypes = []
+    cdll.libtpu_rs_runtime_sync_vtable.restype = ctypes.c_void_p
+    sync_vt_addr = int(cdll.libtpu_rs_runtime_sync_vtable() or 0)
+    mod.bind_c_api_runtime_sync(sync_vt_addr)
     sys.modules[module_qualname] = mod
     _NATIVE_EXT_CACHE[module_qualname] = mod
     return mod
@@ -416,7 +455,7 @@ def load_native_sdk_module() -> types.ModuleType:
     return _load_extension_symbol("libtpu._sdk_native", "sdk", prefer_sdk=True)
 
 
-def call_native_c(fn_name: str, *args: object) -> object:
+def call_native_c(fn_name: str, *args: NativeArg) -> NativeReturn:
     """Invokes `fn_name` on `libtpu._C`, translating native exceptions to `libtpu.TpuError`.
 
     Args:
@@ -432,8 +471,7 @@ def call_native_c(fn_name: str, *args: object) -> object:
     mod = load_native_c_module()
     native_err_cls = mod.TpuError
     try:
-        res: object = getattr(mod, fn_name)(*args)
-        return res
+        return cast(NativeReturn, getattr(mod, fn_name)(*args))
     except native_err_cls as exc:
         code = int(getattr(exc, "code", 2))
         msg = str(getattr(exc, "message", str(exc)))
@@ -729,12 +767,20 @@ class TpuTopology:
         """
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `TpuTopology` upon exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
+        _ = (exc_type, exc_val, exc_tb)
         self.close()
 
 
@@ -885,7 +931,7 @@ def unpack_subbyte_elements(
 
 def buffer_to_numpy(
     buf: libtpu.TpuBuffer,
-    requested_dtype: object = None,
+    requested_dtype: npt.DTypeLike = None,
 ) -> npt.NDArray[
     np.bool_
     | np.int8
@@ -936,14 +982,14 @@ def buffer_to_numpy(
 def client_buffer_from_numpy(
     client: libtpu.TpuClient,
     device_id: int,
-    array: npt.ArrayLike | SupportsArrayInterface | object,
+    array: npt.ArrayLike | SupportsArrayInterface,
 ) -> libtpu.TpuBuffer:
     """Transfers a `numpy.ndarray` (including `ml_dtypes`) onto `device_id`.
 
     Args:
         client: Active `TpuClient`.
         device_id: Destination logical TPU device ID.
-        array: Input `numpy.ndarray` or array-like object.
+        array: Input `numpy.ndarray` or host array producer.
 
     Returns:
         Allocated `TpuBuffer` on `device_id`.
@@ -998,7 +1044,7 @@ def _map_dlpack_code_bits_to_dtype(code: int, bits: int) -> libtpu.DataType:
 
 
 def from_dlpack(
-    ext_tensor: SupportsDLPack | object,
+    ext_tensor: SupportsDLPack | npt.NDArray[np.generic] | PyCapsule,
     *,
     client: libtpu.TpuClient | None = None,
     device_id: int = 0,
@@ -1006,7 +1052,7 @@ def from_dlpack(
     """Imports an external tensor or `"dltensor"` `PyCapsule` into a `TpuBuffer` via `DLPack` v1.0.
 
     Args:
-        ext_tensor: Producer object implementing `__dlpack__()` or a raw `"dltensor"` `PyCapsule`.
+        ext_tensor: Producer implementing `__dlpack__()` or a raw `"dltensor"` `PyCapsule`.
         client: Optional existing `TpuClient` (a new client is created when `None`).
         device_id: Destination logical TPU device ID (`0` by default).
 
@@ -1017,7 +1063,7 @@ def from_dlpack(
         TpuError: If `ext_tensor` is invalid, already consumed, or has an unsupported dtype.
     """
     dlpack_fn = getattr(ext_tensor, "__dlpack__", None)
-    capsule = dlpack_fn() if callable(dlpack_fn) else ext_tensor
+    capsule = cast(PyCapsule, dlpack_fn() if callable(dlpack_fn) else ext_tensor)
     consumed = cast(
         tuple[bytes, Sequence[int], int, int, int, int, int],
         call_native_c("consume_dlpack", capsule),

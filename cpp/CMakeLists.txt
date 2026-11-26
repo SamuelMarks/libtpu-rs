@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(libtpu_cpp VERSION 0.0.52 LANGUAGES C CXX)
+project(libtpu_cpp VERSION 0.0.53 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -46,6 +46,11 @@ add_subdirectory(src)
 
 enable_testing()
 add_executable(test_libtpu tests/test_libtpu.cpp)
+target_compile_definitions(
+    test_libtpu
+    PRIVATE
+    LIBTPU_GOLDEN_PROTO_DESC_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../docs/reverse_engineering/golden_proto_descriptors.json"
+)
 target_compile_options(test_libtpu PRIVATE ${STRICT_WARN_FLAGS} ${COVERAGE_FLAGS})
 target_link_options(test_libtpu PRIVATE ${COVERAGE_FLAGS})
 target_link_libraries(test_libtpu PRIVATE libtpu_cpp)

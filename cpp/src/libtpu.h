@@ -87,6 +87,35 @@ typedef struct TpuDriver TpuDriver;
 /** @brief Opaque PJRT collectives communicator handle
  * (`PJRT_Collectives_Communicator`). */
 typedef struct PJRT_Collectives_Communicator PJRT_Collectives_Communicator;
+/** @brief Opaque PJRT raw buffer alias handle (`PJRT_RawBuffer`). */
+typedef struct PJRT_RawBuffer PJRT_RawBuffer;
+/** @brief Opaque PJRT memory layout handle (`PJRT_Layouts_MemoryLayout`). */
+typedef struct PJRT_Layouts_MemoryLayout PJRT_Layouts_MemoryLayout;
+/** @brief Opaque PJRT multi-slice configuration handle
+ * (`PJRT_MultiSlice_Config`). */
+typedef struct PJRT_MultiSlice_Config PJRT_MultiSlice_Config;
+/** @brief Opaque PJRT ABI version handle (`PJRT_AbiVersion`). */
+typedef struct PJRT_AbiVersion PJRT_AbiVersion;
+/** @brief Opaque PJRT phase compiler handle (`PJRT_PhaseCompile_Compiler`). */
+typedef struct PJRT_PhaseCompile_Compiler PJRT_PhaseCompile_Compiler;
+/** @brief Opaque PJRT phase compile C buffer handle
+ * (`PJRT_PhaseCompile_C_Buffer`). */
+typedef struct PJRT_PhaseCompile_C_Buffer PJRT_PhaseCompile_C_Buffer;
+/** @brief Opaque PJRT Megascale client context handle
+ * (`PJRT_Megascale_ClientContext`). */
+typedef struct PJRT_Megascale_ClientContext PJRT_Megascale_ClientContext;
+/** @brief Opaque PJRT executable metadata holder handle
+ * (`PJRT_ExecutableMetadata_Handle`). */
+typedef struct PJRT_ExecutableMetadata_Handle PJRT_ExecutableMetadata_Handle;
+/** @brief Opaque `TpuDriver` compiled program shape handle
+ * (`TpuCompiledProgramShape`). */
+typedef struct TpuCompiledProgramShape TpuCompiledProgramShape;
+/** @brief Opaque `PLUGIN_Profiler` session handle (`PLUGIN_Profiler_Instance`).
+ */
+typedef struct PLUGIN_Profiler_Instance PLUGIN_Profiler_Instance;
+/** @brief Opaque `PLUGIN_Profiler` consumed result handle
+ * (`PLUGIN_Profiler_ConsumeResult`). */
+typedef struct PLUGIN_Profiler_ConsumeResult PLUGIN_Profiler_ConsumeResult;
 
 /** @brief Void-returning PJRT C API vtable function pointer (`PjrtVoidFn`). */
 typedef void (*PjrtVoidFn)(void *args);
@@ -123,7 +152,7 @@ typedef struct PJRT_Api_Version {
   const PJRT_Extension_Base *extension_start;
   /** @brief Major PJRT version (`0`). */
   int32_t major_version;
-  /** @brief Minor PJRT version (`116`). */
+  /** @brief Minor PJRT version (`117`). */
   int32_t minor_version;
 } PJRT_Api_Version;
 
@@ -133,10 +162,10 @@ typedef struct PJRT_Api_Version {
 typedef struct PJRT_Api {
   /** @brief Total byte size of `PJRT_Api` (`1144`). */
   size_t struct_size;
-  /** @brief Pointer to the first `PJRT_Extension_Base` in the 17-node TPU
+  /** @brief Pointer to the first `PJRT_Extension_Base` in the 18-node TPU
    * extension chain. */
   const PJRT_Extension_Base *extension_start;
-  /** @brief Embedded 24-byte `PJRT_Api_Version` (`0.116`). */
+  /** @brief Embedded 24-byte `PJRT_Api_Version` (`0.117`). */
   PJRT_Api_Version pjrt_api_version;
   /** @brief Slot 1 (`0x028`): `PJRT_Error_Destroy`. */
   PjrtVoidFn pjrt_error_destroy;
@@ -875,6 +904,61 @@ typedef struct PJRT_Executable_Serialize_Args {
    */
   void (*serialized_executable_deleter)(PJRT_SerializedExecutable *exec);
 } PJRT_Executable_Serialize_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Executable_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_Executable_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Executable handle to destroy. */
+  PJRT_Executable *executable;
+} PJRT_Executable_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Executable_NumOutputs` (`32` bytes).
+ */
+typedef struct PJRT_Executable_NumOutputs_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Executable handle. */
+  const PJRT_Executable *executable;
+  /** @brief Output number of outputs. */
+  size_t num_outputs;
+} PJRT_Executable_NumOutputs_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Buffer_UnsafePointer` (`32` bytes).
+ */
+typedef struct PJRT_Buffer_UnsafePointer_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Buffer handle. */
+  const PJRT_Buffer *buffer;
+  /** @brief Output raw device buffer address (`uintptr_t`). */
+  uintptr_t buffer_pointer;
+} PJRT_Buffer_UnsafePointer_Args;
+
+/**
+ * @brief Argument structure for `PJRT_Buffer_OpaqueDeviceMemoryDataPointer`
+ * (`32` bytes).
+ */
+typedef struct PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Extension pointer (`NULL`). */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Buffer handle. */
+  const PJRT_Buffer *buffer;
+  /** @brief Output opaque device memory data pointer (`void*`). */
+  void *device_memory_ptr;
+} PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args;
 
 /**
  * @brief Argument structure for `PJRT_LoadedExecutable_Destroy` (`24` bytes).
@@ -1812,23 +1896,6 @@ const void *
 TpuEmbeddingEngineState_GetState(const TpuEmbeddingEngineState *state);
 
 /**
- * @brief Configures HBM memory for embedding tables
- * (`TpuEmbeddingEngine_ConfigureMemory`).
- * @param params Pointer to `TpuEmbeddingEngine_ConfigureMemory_Params` (or
- * generic `void*`).
- * @return `0` on success, `-1` on invalid struct size.
- */
-int32_t TpuEmbeddingEngine_ConfigureMemory(void *params);
-
-/**
- * @brief Collates HBM memory across hosts (`TpuEmbeddingEngine_CollateMemory`).
- * @param params Pointer to `TpuEmbeddingEngine_CollateMemory_Params` (or
- * generic `void*`).
- * @return `0` on success, `-1` on invalid struct size.
- */
-int32_t TpuEmbeddingEngine_CollateMemory(void *params);
-
-/**
  * @brief Configures host embedding communication
  * (`TpuEmbeddingEngine_ConfigureHost`).
  * @param params Pointer to `TpuEmbeddingEngine_ConfigureHost_Params` (or
@@ -2115,6 +2182,80 @@ TpuEvent *TpuDriver_Deallocate(TpuDriver *driver, TpuBufferHandle *buf,
  * @param event Event handle to free.
  */
 void TpuDriver_FreeEvent(TpuEvent *event);
+
+/**
+ * @brief Resets all devices managed by `driver` (`TpuDriver_Reset`).
+ * @param driver Pointer to `TpuDriver`.
+ * @return Heap-allocated `TpuStatus*` (`TpuDriver_FreeStatus` /
+ * `TpuStatus_Free`).
+ */
+TpuStatus *TpuDriver_Reset(TpuDriver *driver);
+
+/**
+ * @brief Compiles a textual HLO program on `driver`
+ * (`TpuDriver_CompileProgramFromText`).
+ * @param driver Pointer to `TpuDriver`.
+ * @param hlo_text Null-terminated HLO text string.
+ * @param num_replicas Number of replicas.
+ * @param num_ains Number of prerequisite events.
+ * @param ains Optional array of prerequisite `TpuEvent*` pointers.
+ * @return Heap-allocated `TpuCompiledProgramHandle*`.
+ */
+TpuCompiledProgramHandle *
+TpuDriver_CompileProgramFromText(TpuDriver *driver, const char *hlo_text,
+                                 int32_t num_replicas, int32_t num_ains,
+                                 TpuEvent *const *ains);
+
+/**
+ * @brief Frees a `TpuCompiledProgramHandle`
+ * (`TpuDriver_FreeCompiledProgramHandle`).
+ * @param handle Compiled program handle to free.
+ */
+void TpuDriver_FreeCompiledProgramHandle(TpuCompiledProgramHandle *handle);
+
+/**
+ * @brief Queries an independent `TpuCompiledProgramShape*` for `handle`
+ * (`TpuDriver_GetCompiledProgramShape`).
+ * @param driver Pointer to `TpuDriver`.
+ * @param handle Pointer to `const TpuCompiledProgramHandle`.
+ * @return Heap-allocated `TpuCompiledProgramShape*`.
+ */
+TpuCompiledProgramShape *
+TpuDriver_GetCompiledProgramShape(TpuDriver *driver,
+                                  const TpuCompiledProgramHandle *handle);
+
+/**
+ * @brief Frees a `TpuCompiledProgramShape` allocated by
+ * `TpuDriver_GetCompiledProgramShape` (`TpuDriver_FreeCompiledProgramShape`).
+ * @param shape Compiled program shape handle to free.
+ */
+void TpuDriver_FreeCompiledProgramShape(TpuCompiledProgramShape *shape);
+
+/**
+ * @brief Loads a compiled program onto `core_id` (`TpuDriver_LoadProgram`).
+ * @param driver Pointer to `TpuDriver`.
+ * @param core_id Target core ordinal.
+ * @param compiled_program_handle Pointer to `const TpuCompiledProgramHandle`.
+ * @param num_ains Number of prerequisite events.
+ * @param ains Optional array of prerequisite `TpuEvent*` pointers.
+ * @return Heap-allocated `TpuLoadedProgramHandle*`.
+ */
+TpuLoadedProgramHandle *
+TpuDriver_LoadProgram(TpuDriver *driver, int32_t core_id,
+                      const TpuCompiledProgramHandle *compiled_program_handle,
+                      int32_t num_ains, TpuEvent *const *ains);
+
+/**
+ * @brief Unloads and frees a loaded program (`TpuDriver_UnloadProgram`).
+ * @param driver Pointer to `TpuDriver`.
+ * @param loaded_program_handle Loaded program handle to unload.
+ * @param num_ains Number of prerequisite events.
+ * @param ains Optional array of prerequisite `TpuEvent*` pointers.
+ * @return Completion `TpuEvent*`.
+ */
+TpuEvent *TpuDriver_UnloadProgram(TpuDriver *driver,
+                                  TpuLoadedProgramHandle *loaded_program_handle,
+                                  int32_t num_ains, TpuEvent *const *ains);
 
 /**
  * @brief Allocates a new OK `TpuStatus`.
@@ -2993,6 +3134,71 @@ typedef struct TpuSerializedProto {
 } TpuSerializedProto;
 
 /**
+ * @brief Parameter structure for `TpuEmbeddingEngine_ConfigureMemory` (`64`
+ * bytes).
+ */
+typedef struct TpuEmbeddingEngine_ConfigureMemory_Params {
+  /** @brief Size of this struct (`64`). */
+  size_t struct_size;
+  /** @brief Reserved private pointer (`NULL`). */
+  void *priv_data;
+  /** @brief Number of embedding inputs. */
+  int32_t num_inputs;
+  /** @brief Explicit 4-byte alignment padding. */
+  int32_t pad;
+  /** @brief Input common configuration byte pointer. */
+  const char *common_config_string;
+  /** @brief Input common configuration byte length. */
+  size_t common_config_string_size;
+  /** @brief Output byte length pointer (`task_host_config_size`). */
+  size_t *task_host_config_size;
+  /** @brief Output heap-allocated `char*` pointer (`task_host_config`). */
+  char **task_host_config;
+  /** @brief Optional status pointer. */
+  TpuStatus *status;
+} TpuEmbeddingEngine_ConfigureMemory_Params;
+
+/**
+ * @brief Parameter structure for `TpuEmbeddingEngine_CollateMemory` (`56`
+ * bytes).
+ */
+typedef struct TpuEmbeddingEngine_CollateMemory_Params {
+  /** @brief Size of this struct (`56`). */
+  size_t struct_size;
+  /** @brief Reserved private pointer (`NULL`). */
+  void *priv_data;
+  /** @brief Number of per-task `TpuSerializedProto` memory configs. */
+  size_t memory_configs_size;
+  /** @brief Pointer to array of `TpuSerializedProto` descriptors. */
+  const TpuSerializedProto *memory_configs;
+  /** @brief Output merged memory configuration byte length pointer. */
+  size_t *merged_memory_config_size;
+  /** @brief Output heap-allocated merged memory configuration `char*` pointer.
+   */
+  char **merged_memory_config;
+  /** @brief Optional status pointer. */
+  TpuStatus *status;
+} TpuEmbeddingEngine_CollateMemory_Params;
+
+/**
+ * @brief Configures SparseCore embedding HBM memory
+ * (`TpuEmbeddingEngine_ConfigureMemory`).
+ * @param params Pointer to `TpuEmbeddingEngine_ConfigureMemory_Params`.
+ * @return `0` on success, `-1` on invalid struct size or empty config.
+ */
+int32_t TpuEmbeddingEngine_ConfigureMemory(
+    TpuEmbeddingEngine_ConfigureMemory_Params *params);
+
+/**
+ * @brief Collates per-task SparseCore HBM memory configurations
+ * (`TpuEmbeddingEngine_CollateMemory`).
+ * @param params Pointer to `TpuEmbeddingEngine_CollateMemory_Params`.
+ * @return `0` on success, `-1` on invalid struct size or malformed input.
+ */
+int32_t TpuEmbeddingEngine_CollateMemory(
+    TpuEmbeddingEngine_CollateMemory_Params *params);
+
+/**
  * @brief Parameter structure for `TpuEmbeddingEngine_*Computation` entrypoints
  * (`96` bytes).
  */
@@ -3047,24 +3253,24 @@ typedef struct PJRT_Layouts_DefaultLayout_Args {
 } PJRT_Layouts_DefaultLayout_Args;
 
 /**
- * @brief Argument structure for `PJRT_CrossHostTransfers_SendBuffers` (`56`
- * bytes).
+ * @brief Argument structure for `PJRT_CrossHostTransfers_SendBuffers` and
+ * `ReceiveBuffers` (`56` bytes).
  */
 typedef struct PJRT_CrossHostTransfers_Args {
   /** @brief Size of this struct (`56`). */
   size_t struct_size;
   /** @brief Optional chained `PJRT_Extension_Base*`. */
   PJRT_Extension_Base *extension_start;
-  /** @brief Client handle. */
-  void *client;
-  /** @brief Buffers array word. */
-  size_t buffers;
-  /** @brief Number of buffers. */
+  /** @brief Client handle (`PJRT_Client*`). */
+  PJRT_Client *client;
+  /** @brief Pointer to array of `PJRT_Buffer*` handles. */
+  PJRT_Buffer *const *buffers;
+  /** @brief Number of buffers in `buffers`. */
   size_t num_buffers;
-  /** @brief Remote device tag. */
-  size_t remote_device;
-  /** @brief Output event handle word (`PJRT_Event*`). */
-  size_t out_event;
+  /** @brief Cross-host rendez-vous transfer key/tag. */
+  size_t transfer_key;
+  /** @brief Output completion `PJRT_Event*` handle. */
+  PJRT_Event *out_event;
 } PJRT_CrossHostTransfers_Args;
 
 /**
@@ -3076,8 +3282,8 @@ typedef struct PJRT_Layouts_Destroy_Args {
   size_t struct_size;
   /** @brief Optional chained `PJRT_Extension_Base*`. */
   PJRT_Extension_Base *extension_start;
-  /** @brief Layout handle to destroy. */
-  void *layout;
+  /** @brief Layout handle to destroy (`PJRT_Layouts_MemoryLayout*`). */
+  PJRT_Layouts_MemoryLayout *layout;
 } PJRT_Layouts_Destroy_Args;
 
 /**
@@ -3089,10 +3295,10 @@ typedef struct PJRT_RawBuffer_Create_Args {
   size_t struct_size;
   /** @brief Optional chained `PJRT_Extension_Base*`. */
   PJRT_Extension_Base *extension_start;
-  /** @brief Source `PJRT_Buffer*` handle. */
-  void *buffer;
+  /** @brief Source `const PJRT_Buffer*` handle. */
+  const PJRT_Buffer *buffer;
   /** @brief Output `PJRT_RawBuffer*` handle. */
-  void *raw_buffer_out;
+  PJRT_RawBuffer *raw_buffer_out;
 } PJRT_RawBuffer_Create_Args;
 
 /**
@@ -3103,9 +3309,74 @@ typedef struct PJRT_RawBuffer_Destroy_Args {
   size_t struct_size;
   /** @brief Optional chained `PJRT_Extension_Base*`. */
   PJRT_Extension_Base *extension_start;
-  /** @brief Raw buffer handle to destroy. */
-  void *raw_buffer;
+  /** @brief Raw buffer handle to destroy (`PJRT_RawBuffer*`). */
+  PJRT_RawBuffer *raw_buffer;
 } PJRT_RawBuffer_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_RawBuffer_GetHostPointer` (`32` bytes).
+ */
+typedef struct PJRT_RawBuffer_GetHostPointer_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input `const PJRT_RawBuffer*` handle. */
+  const PJRT_RawBuffer *raw_buffer;
+  /** @brief Output device/host data pointer (`void*`). */
+  void *host_pointer_out;
+} PJRT_RawBuffer_GetHostPointer_Args;
+
+/**
+ * @brief Argument structure for `PJRT_RawBuffer_GetOnDeviceSizeInBytes` (`32`
+ * bytes).
+ */
+typedef struct PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input `const PJRT_RawBuffer*` handle. */
+  const PJRT_RawBuffer *raw_buffer;
+  /** @brief Output on-device byte size (`size_t`). */
+  size_t on_device_size_in_bytes;
+} PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args;
+
+/**
+ * @brief Argument structure for `PJRT_RawBuffer_GetMemorySpace` (`32` bytes).
+ */
+typedef struct PJRT_RawBuffer_GetMemorySpace_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input `const PJRT_RawBuffer*` handle. */
+  const PJRT_RawBuffer *raw_buffer;
+  /** @brief Output `PJRT_Memory*` memory space handle. */
+  PJRT_Memory *memory_space_out;
+} PJRT_RawBuffer_GetMemorySpace_Args;
+
+/**
+ * @brief Argument structure for `PJRT_RawBuffer_CopyRawHostToDevice` and
+ * `CopyRawDeviceToHost` (`56` bytes).
+ */
+typedef struct PJRT_RawBuffer_CopyRaw_Args {
+  /** @brief Size of this struct (`56`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Target or source `PJRT_RawBuffer*` handle. */
+  PJRT_RawBuffer *buffer;
+  /** @brief Source (`const void*` cast) or destination (`void*`) host pointer.
+   */
+  void *host_ptr;
+  /** @brief Byte offset within the raw buffer (`>= 0`). */
+  int64_t offset;
+  /** @brief Number of bytes to transfer (`>= 0`). */
+  int64_t transfer_size;
+  /** @brief Output completion `PJRT_Event*` handle. */
+  PJRT_Event *event;
+} PJRT_RawBuffer_CopyRaw_Args;
 
 /**
  * @brief Queries default TPU memory layout
@@ -3141,18 +3412,269 @@ PJRT_Error *PJRT_RawBuffer_Destroy(void *raw_args);
 /**
  * @brief Queries the host/device pointer of a `PJRT_RawBuffer`
  * (`PJRT_RawBuffer_GetHostPointer`).
- * @param raw_args Pointer to `PJRT_RawBuffer_Create_Args`.
+ * @param raw_args Pointer to `PJRT_RawBuffer_GetHostPointer_Args`.
  * @return `nullptr` on success or `PJRT_Error*` on failure.
  */
 PJRT_Error *PJRT_RawBuffer_GetHostPointer(void *raw_args);
 
 /**
- * @brief Initiates a cross-host DCN transfer
+ * @brief Queries the on-device byte size of a `PJRT_RawBuffer`
+ * (`PJRT_RawBuffer_GetOnDeviceSizeInBytes`).
+ * @param raw_args Pointer to `PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_RawBuffer_GetOnDeviceSizeInBytes(void *raw_args);
+
+/**
+ * @brief Queries the `PJRT_Memory*` space of a `PJRT_RawBuffer`
+ * (`PJRT_RawBuffer_GetMemorySpace`).
+ * @param raw_args Pointer to `PJRT_RawBuffer_GetMemorySpace_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_RawBuffer_GetMemorySpace(void *raw_args);
+
+/**
+ * @brief Copies `transfer_size` bytes from host memory into a `PJRT_RawBuffer`
+ * at `offset` (`PJRT_RawBuffer_CopyRawHostToDevice`).
+ * @param raw_args Pointer to `PJRT_RawBuffer_CopyRaw_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_RawBuffer_CopyRawHostToDevice(void *raw_args);
+
+/**
+ * @brief Copies `transfer_size` bytes from a `PJRT_RawBuffer` at `offset` into
+ * host memory (`PJRT_RawBuffer_CopyRawDeviceToHost`).
+ * @param raw_args Pointer to `PJRT_RawBuffer_CopyRaw_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_RawBuffer_CopyRawDeviceToHost(void *raw_args);
+
+/**
+ * @brief Initiates a cross-host DCN send transfer
  * (`PJRT_CrossHostTransfers_SendBuffers`).
- * @param raw_args Pointer to `PJRT_Megascale_Query_Args`.
+ * @param raw_args Pointer to `PJRT_CrossHostTransfers_Args`.
  * @return `nullptr` on success or `PJRT_Error*` on failure.
  */
 PJRT_Error *PJRT_CrossHostTransfers_SendBuffers(void *raw_args);
+
+/**
+ * @brief Initiates a cross-host DCN receive transfer
+ * (`PJRT_CrossHostTransfers_ReceiveBuffers`).
+ * @param raw_args Pointer to `PJRT_CrossHostTransfers_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_CrossHostTransfers_ReceiveBuffers(void *raw_args);
+
+/**
+ * @brief Argument structure for `PJRT_Megascale_CreateDefaultConfig` (`32`
+ * bytes).
+ */
+typedef struct PJRT_Megascale_CreateDefaultConfig_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Optional `const PJRT_TopologyDescription*` handle. */
+  const PJRT_TopologyDescription *topology;
+  /** @brief Output `PJRT_MultiSlice_Config*` handle. */
+  PJRT_MultiSlice_Config *config_out;
+} PJRT_Megascale_CreateDefaultConfig_Args;
+
+/**
+ * @brief Argument structure for `PJRT_MultiSlice_Config_Destroy` (`24` bytes).
+ */
+typedef struct PJRT_MultiSlice_Config_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Multi-slice configuration handle to destroy. */
+  PJRT_MultiSlice_Config *config;
+} PJRT_MultiSlice_Config_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_MultiSlice_Config_NumSlices` (`32`
+ * bytes).
+ */
+typedef struct PJRT_MultiSlice_Config_NumSlices_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input `const PJRT_MultiSlice_Config*` handle. */
+  const PJRT_MultiSlice_Config *config;
+  /** @brief Output number of slices. */
+  size_t num_slices;
+} PJRT_MultiSlice_Config_NumSlices_Args;
+
+/**
+ * @brief Argument structure for `PJRT_MultiSlice_Config_NumDevicesPerSlice`
+ * (`40` bytes).
+ */
+typedef struct PJRT_MultiSlice_Config_NumDevicesPerSlice_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input `const PJRT_MultiSlice_Config*` handle. */
+  const PJRT_MultiSlice_Config *config;
+  /** @brief Output number of devices per slice. */
+  size_t num_devices_per_slice_map;
+  /** @brief Output number of slices. */
+  size_t num_slices;
+} PJRT_MultiSlice_Config_NumDevicesPerSlice_Args;
+
+/**
+ * @brief Argument structure for `PJRT_MultiSlice_Config_SliceId` (`32` bytes).
+ */
+typedef struct PJRT_MultiSlice_Config_SliceId_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input `const PJRT_MultiSlice_Config*` handle. */
+  const PJRT_MultiSlice_Config *config;
+  /** @brief Output local slice ID. */
+  size_t slice_id;
+} PJRT_MultiSlice_Config_SliceId_Args;
+
+/**
+ * @brief Argument structure for `PJRT_MultiSlice_Config_Serialize` (`48`
+ * bytes).
+ */
+typedef struct PJRT_MultiSlice_Config_Serialize_Args {
+  /** @brief Size of this struct (`48`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Input `const PJRT_MultiSlice_Config*` handle. */
+  const PJRT_MultiSlice_Config *config;
+  /** @brief Output serialized protobuf byte pointer. */
+  const char *serialized_bytes;
+  /** @brief Output serialized protobuf byte length. */
+  size_t serialized_bytes_size;
+  /** @brief Output metadata holder handle (`PJRT_ExecutableMetadata_Destroy`).
+   */
+  PJRT_ExecutableMetadata_Handle *serialized_config;
+} PJRT_MultiSlice_Config_Serialize_Args;
+
+/**
+ * @brief Creates a default `PJRT_MultiSlice_Config`
+ * (`PJRT_Megascale_CreateDefaultConfig`).
+ * @param raw_args Pointer to `PJRT_Megascale_CreateDefaultConfig_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_Megascale_CreateDefaultConfig(void *raw_args);
+
+/**
+ * @brief Destroys a `PJRT_MultiSlice_Config`
+ * (`PJRT_MultiSlice_Config_Destroy`).
+ * @param raw_args Pointer to `PJRT_MultiSlice_Config_Destroy_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_MultiSlice_Config_Destroy(void *raw_args);
+
+/**
+ * @brief Queries slice count on `PJRT_MultiSlice_Config`
+ * (`PJRT_MultiSlice_Config_NumSlices`).
+ * @param raw_args Pointer to `PJRT_MultiSlice_Config_NumSlices_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_MultiSlice_Config_NumSlices(void *raw_args);
+
+/**
+ * @brief Queries devices-per-slice count on `PJRT_MultiSlice_Config`
+ * (`PJRT_MultiSlice_Config_NumDevicesPerSlice`).
+ * @param raw_args Pointer to `PJRT_MultiSlice_Config_NumDevicesPerSlice_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_MultiSlice_Config_NumDevicesPerSlice(void *raw_args);
+
+/**
+ * @brief Queries local slice ID on `PJRT_MultiSlice_Config`
+ * (`PJRT_MultiSlice_Config_SliceId`).
+ * @param raw_args Pointer to `PJRT_MultiSlice_Config_SliceId_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_MultiSlice_Config_SliceId(void *raw_args);
+
+/**
+ * @brief Serializes a `PJRT_MultiSlice_Config` to protobuf bytes
+ * (`PJRT_MultiSlice_Config_Serialize`).
+ * @param raw_args Pointer to `PJRT_MultiSlice_Config_Serialize_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_MultiSlice_Config_Serialize(void *raw_args);
+
+/**
+ * @brief Argument structure for `PJRT_XlaTransform_Register` (`40` bytes).
+ */
+typedef struct PJRT_XlaTransform_Register_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief UTF-8 pass name pointer. */
+  const char *name;
+  /** @brief Byte length of `name`. */
+  size_t name_size;
+  /** @brief Transform callback/pass identifier word. */
+  size_t transform_fn;
+} PJRT_XlaTransform_Register_Args;
+
+/**
+ * @brief Argument structure for `PJRT_XlaTransform_Unregister` (`32` bytes).
+ */
+typedef struct PJRT_XlaTransform_Unregister_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief UTF-8 pass name pointer. */
+  const char *name;
+  /** @brief Byte length of `name`. */
+  size_t name_size;
+} PJRT_XlaTransform_Unregister_Args;
+
+/**
+ * @brief Argument structure for `PJRT_XlaTransform_List` (`40` bytes).
+ */
+typedef struct PJRT_XlaTransform_List_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Output array of registered transform C-string pointers. */
+  const char *const *names_out;
+  /** @brief Output number of registered transforms. */
+  size_t num_names_out;
+  /** @brief Output array of transform name byte lengths. */
+  const size_t *name_sizes_out;
+} PJRT_XlaTransform_List_Args;
+
+/**
+ * @brief Registers a custom XLA compiler transform pass
+ * (`PJRT_XlaTransform_Register`).
+ * @param raw_args Pointer to `PJRT_XlaTransform_Register_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_XlaTransform_Register(void *raw_args);
+
+/**
+ * @brief Unregisters a custom XLA compiler transform pass
+ * (`PJRT_XlaTransform_Unregister`).
+ * @param raw_args Pointer to `PJRT_XlaTransform_Unregister_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_XlaTransform_Unregister(void *raw_args);
+
+/**
+ * @brief Lists registered custom XLA compiler transform passes
+ * (`PJRT_XlaTransform_List`).
+ * @param raw_args Pointer to `PJRT_XlaTransform_List_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_XlaTransform_List(void *raw_args);
 
 /**
  * @brief Binary slice configuration record returned by
@@ -3417,6 +3939,150 @@ PJRT_Error *PJRT_HostMemoryAllocator_Allocate(void *raw_args);
  * @param holder Opaque holder pointer returned in `deleter_arg`.
  */
 void pjrt_host_memory_deleter(void *holder);
+
+/**
+ * @brief Argument structure for `PJRT_TpuExecutable_SetTpuCompilationEnv`
+ * (`40` bytes).
+ */
+typedef struct PJRT_TpuExecutable_SetTpuCompilationEnv_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Optional `PJRT_Executable*` handle. */
+  PJRT_Executable *executable;
+  /** @brief Optional serialized `TpuCompilationEnvironmentProto` bytes. */
+  const uint8_t *serialized_env;
+  /** @brief Input byte length (overwritten with updated override count). */
+  size_t serialized_env_size;
+} PJRT_TpuExecutable_SetTpuCompilationEnv_Args;
+
+/**
+ * @brief Argument structure for `PJRT_AbiVersion_ClientRuntime` and
+ * `ExecutableGet` (`32` bytes).
+ */
+typedef struct PJRT_AbiVersion_Get_Args {
+  /** @brief Size of this struct (`32`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Client or executable handle (`const void*`). */
+  const void *handle;
+  /** @brief Output `PJRT_AbiVersion*` handle. */
+  PJRT_AbiVersion *abi_version_out;
+} PJRT_AbiVersion_Get_Args;
+
+/**
+ * @brief Argument structure for `PJRT_AbiVersion_RuntimeDestroy` and
+ * `ExecutableDestroy` (`24` bytes).
+ */
+typedef struct PJRT_AbiVersion_Destroy_Args {
+  /** @brief Size of this struct (`24`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief `PJRT_AbiVersion*` handle to destroy. */
+  PJRT_AbiVersion *abi_version;
+} PJRT_AbiVersion_Destroy_Args;
+
+/**
+ * @brief Argument structure for `PJRT_AbiVersion_RuntimeCompatibleWith*` (`40`
+ * bytes).
+ */
+typedef struct PJRT_AbiVersion_IsCompatible_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Runtime `const PJRT_AbiVersion*` handle. */
+  const PJRT_AbiVersion *abi_version;
+  /** @brief Peer runtime or executable `const PJRT_AbiVersion*` handle. */
+  const PJRT_AbiVersion *other_abi_version;
+  /** @brief Output compatibility flag (`1` = compatible, `0` = incompatible).
+   */
+  size_t is_compatible_out;
+} PJRT_AbiVersion_IsCompatible_Args;
+
+/**
+ * @brief Argument structure for `PJRT_AbiVersion_RuntimeFromProto` and
+ * `ExecutableFromProto` (`40` bytes).
+ */
+typedef struct PJRT_AbiVersion_FromProto_Args {
+  /** @brief Size of this struct (`40`). */
+  size_t struct_size;
+  /** @brief Optional chained `PJRT_Extension_Base*`. */
+  PJRT_Extension_Base *extension_start;
+  /** @brief Serialized ABI version protobuf bytes pointer. */
+  const char *serialized_proto;
+  /** @brief Byte length of `serialized_proto`. */
+  size_t serialized_proto_size;
+  /** @brief Output `PJRT_AbiVersion*` handle. */
+  PJRT_AbiVersion *abi_version_out;
+} PJRT_AbiVersion_FromProto_Args;
+
+/**
+ * @brief Queries runtime ABI version for a client
+ * (`PJRT_AbiVersion_ClientRuntime`).
+ * @param raw_args Pointer to `PJRT_AbiVersion_Get_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_AbiVersion_ClientRuntime(void *raw_args);
+
+/**
+ * @brief Queries ABI version for an executable
+ * (`PJRT_AbiVersion_ExecutableGet`).
+ * @param raw_args Pointer to `PJRT_AbiVersion_Get_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_AbiVersion_ExecutableGet(void *raw_args);
+
+/**
+ * @brief Destroys a runtime `PJRT_AbiVersion` handle
+ * (`PJRT_AbiVersion_RuntimeDestroy`).
+ * @param raw_args Pointer to `PJRT_AbiVersion_Destroy_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_AbiVersion_RuntimeDestroy(void *raw_args);
+
+/**
+ * @brief Destroys an executable `PJRT_AbiVersion` handle
+ * (`PJRT_AbiVersion_ExecutableDestroy`).
+ * @param raw_args Pointer to `PJRT_AbiVersion_Destroy_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_AbiVersion_ExecutableDestroy(void *raw_args);
+
+/**
+ * @brief Checks compatibility between two runtime ABI versions
+ * (`PJRT_AbiVersion_RuntimeCompatibleWithRuntime`).
+ * @param raw_args Pointer to `PJRT_AbiVersion_IsCompatible_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_AbiVersion_RuntimeCompatibleWithRuntime(void *raw_args);
+
+/**
+ * @brief Checks compatibility between runtime and executable ABI versions
+ * (`PJRT_AbiVersion_RuntimeCompatibleWithExecutable`).
+ * @param raw_args Pointer to `PJRT_AbiVersion_IsCompatible_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_AbiVersion_RuntimeCompatibleWithExecutable(void *raw_args);
+
+/**
+ * @brief Deserializes a runtime `PJRT_AbiVersion` from protobuf bytes
+ * (`PJRT_AbiVersion_RuntimeFromProto`).
+ * @param raw_args Pointer to `PJRT_AbiVersion_FromProto_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_AbiVersion_RuntimeFromProto(void *raw_args);
+
+/**
+ * @brief Deserializes an executable `PJRT_AbiVersion` from protobuf bytes
+ * (`PJRT_AbiVersion_ExecutableFromProto`).
+ * @param raw_args Pointer to `PJRT_AbiVersion_FromProto_Args`.
+ * @return `nullptr` on success or `PJRT_Error*` on failure.
+ */
+PJRT_Error *PJRT_AbiVersion_ExecutableFromProto(void *raw_args);
 
 /**
  * @brief Serializes runtime ABI version to protobuf
@@ -4183,11 +4849,11 @@ PJRT_Error *PJRT_FFI_Register_Handler(void *raw_args);
 
 /**
  * @brief Frees a compiled Triton kernel buffer allocated by
- * `PJRT_Triton_Compile` (`PJRT_Triton_FreeCompiledAsm`).
+ * `PJRT_Triton_Compile` (`PJRT_Triton_FreeAsm`).
  * @param asm_ptr `out_asm` pointer returned by `PJRT_Triton_Compile`.
  * @param asm_size `out_asm_size` byte length returned by `PJRT_Triton_Compile`.
  */
-void PJRT_Triton_FreeCompiledAsm(const char *asm_ptr, size_t asm_size);
+void PJRT_Triton_FreeAsm(const char *asm_ptr, size_t asm_size);
 
 /** @cond INTERNAL */
 #if defined(__cplusplus)
@@ -4206,6 +4872,38 @@ static_assert(sizeof(PJRT_Client_LookupDevice_Args) == 40,
 static_assert(sizeof(PJRT_Client_Compile_Args) == 56, "Client_Compile == 56");
 static_assert(sizeof(PJRT_Client_BufferFromHostBuffer_Args) == 120,
               "H2D == 120");
+static_assert(sizeof(PJRT_Executable_Destroy_Args) == 24, "ExecDestroy == 24");
+static_assert(sizeof(PJRT_Executable_NumOutputs_Args) == 32,
+              "ExecNumOut == 32");
+static_assert(sizeof(PJRT_Buffer_UnsafePointer_Args) == 32,
+              "BufUnsafePtr == 32");
+static_assert(sizeof(PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args) == 32,
+              "BufOpaquePtr == 32");
+static_assert(sizeof(PJRT_RawBuffer_Create_Args) == 32, "RawCreate == 32");
+static_assert(sizeof(PJRT_RawBuffer_Destroy_Args) == 24, "RawDestroy == 24");
+static_assert(sizeof(PJRT_RawBuffer_GetHostPointer_Args) == 32,
+              "RawHostPtr == 32");
+static_assert(sizeof(PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args) == 32,
+              "RawSize == 32");
+static_assert(sizeof(PJRT_RawBuffer_GetMemorySpace_Args) == 32, "RawMem == 32");
+static_assert(sizeof(PJRT_RawBuffer_CopyRaw_Args) == 56, "RawCopy == 56");
+static_assert(sizeof(PJRT_MultiSlice_Config_NumSlices_Args) == 32,
+              "MsNumSlices == 32");
+static_assert(sizeof(PJRT_MultiSlice_Config_NumDevicesPerSlice_Args) == 40,
+              "MsNumDevs == 40");
+static_assert(sizeof(PJRT_MultiSlice_Config_SliceId_Args) == 32,
+              "MsSliceId == 32");
+static_assert(sizeof(PJRT_MultiSlice_Config_Serialize_Args) == 48,
+              "MsSer == 48");
+static_assert(sizeof(PJRT_XlaTransform_Register_Args) == 40, "XlaReg == 40");
+static_assert(sizeof(PJRT_XlaTransform_Unregister_Args) == 32,
+              "XlaUnreg == 32");
+static_assert(sizeof(PJRT_XlaTransform_List_Args) == 40, "XlaList == 40");
+static_assert(sizeof(PJRT_AbiVersion_IsCompatible_Args) == 40, "AbiCmp == 40");
+static_assert(sizeof(TpuEmbeddingEngine_ConfigureMemory_Params) == 64,
+              "EmbedCfgMem == 64");
+static_assert(sizeof(TpuEmbeddingEngine_CollateMemory_Params) == 56,
+              "EmbedCollateMem == 56");
 static_assert(sizeof(PJRT_Executable_GetCostAnalysis_Args) == 40, "Cost == 40");
 static_assert(sizeof(PJRT_Executable_OutputMemoryKinds_Args) == 48,
               "Mem == 48");

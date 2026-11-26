@@ -7,38 +7,35 @@ use libtpu_core::config::global_init_config;
 use libtpu_core::hal::TopologySpec;
 use std::sync::atomic::Ordering;
 
-/// Resolves a raw `topology` pointer into an optional [`PJRT_TopologyDescription`] reference
-/// when `ptr` is a valid heap pointer (`> 0x10000`).
+/// Resolves a typed `topology` pointer into an optional [`PJRT_TopologyDescription`] reference.
 ///
 /// # Arguments
 ///
-/// * `ptr` - Raw `topology` pointer field from a topology extension args struct.
+/// * `ptr` - Typed `PJRT_TopologyDescription*` handle from a topology extension args struct.
 ///
 /// # Safety
 ///
-/// If `ptr as usize > 0x10000`, `ptr` must point to a valid [`PJRT_TopologyDescription`].
+/// If non-null, `ptr` must point to a valid [`PJRT_TopologyDescription`].
 unsafe fn resolve_topology_handle<'a>(
-    ptr: *const std::ffi::c_void,
+    ptr: *const PJRT_TopologyDescription,
 ) -> Option<&'a PJRT_TopologyDescription> {
-    if (ptr as usize) > 0x10000 {
-        // SAFETY: `ptr` is a non-null heap pointer to `PJRT_TopologyDescription`.
-        unsafe { ptr.cast::<PJRT_TopologyDescription>().as_ref() }
-    } else {
-        None
-    }
+    // SAFETY: Caller guarantees non-null `ptr` points to a valid `PJRT_TopologyDescription`.
+    unsafe { ptr.as_ref() }
 }
 
-/// Resolves a raw `topology` pointer from a `PJRT_TpuTopology_*` argument structure into an
-/// optional [`TopologySpec`] reference when `ptr` is a valid heap pointer (`> 0x10000`).
+/// Resolves a typed `topology` pointer from a `PJRT_TpuTopology_*` argument structure into an
+/// optional [`TopologySpec`] reference.
 ///
 /// # Arguments
 ///
-/// * `ptr` - Raw `topology` pointer field from a topology extension args struct.
+/// * `ptr` - Typed `PJRT_TopologyDescription*` handle from a topology extension args struct.
 ///
 /// # Safety
 ///
-/// If `ptr as usize > 0x10000`, `ptr` must point to a valid [`PJRT_TopologyDescription`].
-unsafe fn resolve_topology_spec<'a>(ptr: *const std::ffi::c_void) -> Option<&'a TopologySpec> {
+/// If non-null, `ptr` must point to a valid [`PJRT_TopologyDescription`].
+unsafe fn resolve_topology_spec<'a>(
+    ptr: *const PJRT_TopologyDescription,
+) -> Option<&'a TopologySpec> {
     // SAFETY: Caller upholds `ptr` precondition.
     unsafe { resolve_topology_handle(ptr).map(|t| &t.inner.spec) }
 }
@@ -161,12 +158,23 @@ unsafe fn handle_tpu_topology_one(args: &mut PJRT_TpuTopology_ScalarQuery_Args) 
 ///
 /// `args` must be a valid [`PJRT_TpuTopology_ScalarQuery_Args`].
 unsafe fn handle_tpu_topology_subslice_device_id(args: &mut PJRT_TpuTopology_ScalarQuery_Args) {
-    let cfg = global_init_config();
-    let per_host = usize::try_from(
-        cfg.chips_per_host().max(1) * cfg.generation.logical_devices_per_chip().max(1),
-    )
-    .unwrap_or(4);
-    args.out_value = (args.topology as usize) % per_host;
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
+    let per_host = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
+        || {
+            let cfg = global_init_config();
+            usize::try_from(
+                cfg.chips_per_host().max(1) * cfg.generation.logical_devices_per_chip().max(1),
+            )
+            .unwrap_or(4)
+        },
+        |spec| {
+            usize::try_from(
+                spec.chips_per_host.max(1) * spec.generation.logical_devices_per_chip().max(1),
+            )
+            .unwrap_or(4)
+        },
+    );
+    args.out_value %= per_host;
 }
 
 /// Maps full device ID to subslice device ID (`PJRT_TpuTopology_SubsliceDeviceIdFromFullDeviceId`).
@@ -639,7 +647,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerProcess(
 }
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_ProcessIds`], populating a caller `int32_t*` array
-/// when `out_value > 0x10000` or returning the process count otherwise.
+/// when `process_ids_out` is non-null.
 ///
 /// # Arguments
 ///
@@ -647,24 +655,21 @@ pub unsafe extern "C" fn PJRT_TpuTopology_CoreCountPerProcess(
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_TpuTopology_ProcessIds_Args`].
+/// If `args.process_ids_out` is non-null, it must point to at least `process_count` `i32` slots.
 unsafe fn handle_tpu_topology_process_ids(args: &mut PJRT_TpuTopology_ProcessIds_Args) {
-    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
     let hosts = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
         || global_init_config().total_hosts(),
         |spec| spec.host_bounds.x * spec.host_bounds.y * spec.host_bounds.z,
     );
     let count = usize::try_from(hosts.max(1)).unwrap_or(1);
-    if args.out_value > 0x10000 {
-        let out_ptr = args.out_value as *mut i32;
+    if !args.process_ids_out.is_null() {
         for idx in 0..count {
-            // SAFETY: `out_ptr` points to a caller-supplied `int32_t` buffer of at least `count` elements.
+            // SAFETY: `process_ids_out` points to a caller-supplied `int32_t` buffer of at least `count` elements.
             unsafe {
-                *out_ptr.add(idx) = i32::try_from(idx).unwrap_or(0);
+                *args.process_ids_out.add(idx) = i32::try_from(idx).unwrap_or(0);
             }
         }
-    } else {
-        args.out_value = count;
     }
 }
 
@@ -691,7 +696,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ProcessIds(
 }
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_LogiDeviceIdsOnProcess`], populating a caller
-/// `int32_t*` array when `out_value > 0x10000` or returning the per-process logical device count.
+/// `int32_t*` array when `device_ids_out` is non-null.
 ///
 /// # Arguments
 ///
@@ -699,11 +704,11 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ProcessIds(
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_TpuTopology_LogiDeviceIdsOnProcess_Args`].
+/// If `args.device_ids_out` is non-null, it must point to at least `core_count_per_process` `i32` slots.
 unsafe fn handle_tpu_topology_logi_device_ids_on_process(
     args: &mut PJRT_TpuTopology_LogiDeviceIdsOnProcess_Args,
 ) {
-    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
     let spec_opt = unsafe { resolve_topology_spec(args.topology) };
     let cores_per_proc = spec_opt.map_or_else(
         || {
@@ -713,21 +718,18 @@ unsafe fn handle_tpu_topology_logi_device_ids_on_process(
         |spec| spec.chips_per_host * spec.generation.logical_devices_per_chip(),
     );
     let count = usize::try_from(cores_per_proc.max(1)).unwrap_or(4);
-    if args.out_value > 0x10000 {
-        let out_ptr = args.out_value as *mut i32;
+    if !args.device_ids_out.is_null() {
         for idx in 0..count {
             let fallback_id = i32::try_from(idx).unwrap_or(0);
             let dev_id = spec_opt
                 .and_then(|s| s.devices.get(idx))
                 .and_then(|d| i32::try_from(d.device_id.0).ok())
                 .unwrap_or(fallback_id);
-            // SAFETY: `out_ptr` points to a caller-supplied `int32_t` buffer of at least `count` elements.
+            // SAFETY: `device_ids_out` points to a caller-supplied `int32_t` buffer of at least `count` elements.
             unsafe {
-                *out_ptr.add(idx) = dev_id;
+                *args.device_ids_out.add(idx) = dev_id;
             }
         }
-    } else {
-        args.out_value = count;
     }
 }
 
@@ -808,8 +810,8 @@ unsafe fn handle_tpu_topology_proc_for_device(
     args.out_idx_on_proc = args.device_id % devs_per_proc;
 }
 
-/// Strongly-typed handler for [`PJRT_TpuTopology_ProcessCoordFromId`], supporting both scalar `(x, y)`
-/// output fields and writing `int32_t[3]` `(x, y, z)` coordinates when `out_first > 0x10000`.
+/// Strongly-typed handler for [`PJRT_TpuTopology_ProcessCoordFromId`], writing `int32_t[3]`
+/// `(x, y, z)` coordinates when `coords_out` is non-null.
 ///
 /// # Arguments
 ///
@@ -817,36 +819,31 @@ unsafe fn handle_tpu_topology_proc_for_device(
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_TpuTopology_ProcessCoordFromId_Args`].
+/// If `args.coords_out` is non-null, it must point to at least 3 `i32` slots.
 unsafe fn handle_tpu_topology_process_coord_from_id(
     args: &mut PJRT_TpuTopology_ProcessCoordFromId_Args,
 ) {
-    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
     let hb = unsafe { resolve_topology_spec(args.topology) }
         .map_or_else(|| global_init_config().host_bounds, |spec| spec.host_bounds);
     let hx = usize::try_from(hb.x.max(1)).unwrap_or(1);
     let hy = usize::try_from(hb.y.max(1)).unwrap_or(1);
-    let chips_per_proc = usize::try_from(global_init_config().chips_per_host().max(1)).unwrap_or(4);
-    if args.out_first > 0x10000 {
-        let coords_out = args.out_first as *mut i32;
+    if !args.coords_out.is_null() {
         let x = i32::try_from(args.process_id % hx).unwrap_or(0);
         let y = i32::try_from((args.process_id / hx) % hy).unwrap_or(0);
         let z = i32::try_from(args.process_id / (hx * hy)).unwrap_or(0);
         // SAFETY: `coords_out` points to an `int32_t[3]` coordinate array.
         unsafe {
-            *coords_out = x;
-            *coords_out.add(1) = y;
-            *coords_out.add(2) = z;
+            *args.coords_out = x;
+            *args.coords_out.add(1) = y;
+            *args.coords_out.add(2) = z;
         }
-        args.out_second = 3;
-    } else {
-        args.out_first = args.process_id / chips_per_proc;
-        args.out_second = args.process_id % chips_per_proc;
     }
+    args.num_coords = 3;
 }
 
-/// Strongly-typed handler for [`PJRT_TpuTopology_ChipIdFromCoord`], supporting both `const int32_t[3]`
-/// coordinate pointers (`coord_or_ptr > 0x10000`) and scalar index bijections.
+/// Strongly-typed handler for [`PJRT_TpuTopology_ChipIdFromCoord`], linearizing `const int32_t[3]`
+/// chip coordinates when `coords` is non-null.
 ///
 /// # Arguments
 ///
@@ -854,9 +851,9 @@ unsafe fn handle_tpu_topology_process_coord_from_id(
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_TpuTopology_ChipIdFromCoord_Args`].
+/// If `args.coords` is non-null, it must point to at least 3 `i32` values.
 unsafe fn handle_tpu_topology_chip_id_from_coord(args: &mut PJRT_TpuTopology_ChipIdFromCoord_Args) {
-    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
     let spec_opt = unsafe { resolve_topology_spec(args.topology) };
     let cb = spec_opt.map_or_else(
         || global_init_config().chips_per_host_bounds,
@@ -864,25 +861,30 @@ unsafe fn handle_tpu_topology_chip_id_from_coord(args: &mut PJRT_TpuTopology_Chi
     );
     let cx = usize::try_from(cb.x.max(1)).unwrap_or(2);
     let cy = usize::try_from(cb.y.max(1)).unwrap_or(2);
-    if args.coord_or_ptr > 0x10000 {
-        let coords_ptr = args.coord_or_ptr as *const i32;
-        // SAFETY: `coords_ptr` points to `const int32_t[3]`.
+    let chips_per_proc = usize::try_from(
+        spec_opt
+            .map_or_else(
+                || global_init_config().chips_per_host(),
+                |spec| spec.chips_per_host,
+            )
+            .max(1),
+    )
+    .unwrap_or(4);
+    let chip_id = if !args.coords.is_null() {
+        // SAFETY: `coords` points to `const int32_t[3]`.
         let (x, y, z) = unsafe {
             (
-                usize::try_from((*coords_ptr).max(0)).unwrap_or(0),
-                usize::try_from((*coords_ptr.add(1)).max(0)).unwrap_or(0),
-                usize::try_from((*coords_ptr.add(2)).max(0)).unwrap_or(0),
+                usize::try_from((*args.coords).max(0)).unwrap_or(0),
+                usize::try_from((*args.coords.add(1)).max(0)).unwrap_or(0),
+                usize::try_from((*args.coords.add(2)).max(0)).unwrap_or(0),
             )
         };
-        let chip_id = z * (cx * cy) + y * cx + x;
-        args.out_first = chip_id;
-        args.out_second = 0;
+        z * (cx * cy) + y * cx + x
     } else {
-        let chips_per_proc =
-            usize::try_from(global_init_config().chips_per_host().max(1)).unwrap_or(4);
-        args.out_first = args.coord_or_ptr / chips_per_proc;
-        args.out_second = args.coord_or_ptr % chips_per_proc;
-    }
+        0
+    };
+    args.chip_id_out = chip_id;
+    args.idx_on_proc_out = chip_id % chips_per_proc;
 }
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx`].
@@ -893,45 +895,41 @@ unsafe fn handle_tpu_topology_chip_id_from_coord(args: &mut PJRT_TpuTopology_Chi
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx_Args`].
+/// If `args.coords` is non-null, it must point to at least 3 `i32` values.
 unsafe fn handle_tpu_topology_logi_device_from_coord(
     args: &mut PJRT_TpuTopology_LogiDeviceIdFromChipCoordAndIdx_Args,
 ) {
-    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
     let spec_opt = unsafe { resolve_topology_spec(args.topology) };
-    if args.param0 > 0x10000 {
-        let coords_ptr = args.param0 as *const i32;
-        // SAFETY: `coords_ptr` points to `const int32_t[3]`.
-        let (x, y, z) = unsafe {
+    let (x, y, z) = if !args.coords.is_null() {
+        // SAFETY: `coords` points to `const int32_t[3]`.
+        unsafe {
             (
-                u32::try_from((*coords_ptr).max(0)).unwrap_or(0),
-                u32::try_from((*coords_ptr.add(1)).max(0)).unwrap_or(0),
-                u32::try_from((*coords_ptr.add(2)).max(0)).unwrap_or(0),
+                u32::try_from((*args.coords).max(0)).unwrap_or(0),
+                u32::try_from((*args.coords.add(1)).max(0)).unwrap_or(0),
+                u32::try_from((*args.coords.add(2)).max(0)).unwrap_or(0),
             )
-        };
-        let core_idx = u32::try_from(args.out_first).unwrap_or(0);
-        let found = spec_opt
-            .and_then(|s| {
-                s.devices
-                    .iter()
-                    .find(|d| {
-                        (
-                            d.chip_coords.x,
-                            d.chip_coords.y,
-                            d.chip_coords.z,
-                            d.core_on_chip.0,
-                        ) == (x, y, z, core_idx)
-                    })
-                    .map(|d| usize::try_from(d.device_id.0).unwrap_or(0))
-            })
-            .unwrap_or_else(|| usize::try_from(y * 2 + x).unwrap_or(0));
-        args.out_second = found;
+        }
     } else {
-        let chips_per_proc =
-            usize::try_from(global_init_config().chips_per_host().max(1)).unwrap_or(4);
-        args.out_first = args.param0 / chips_per_proc;
-        args.out_second = args.param0 % chips_per_proc;
-    }
+        (0, 0, 0)
+    };
+    let core_idx = u32::try_from(args.core_idx).unwrap_or(0);
+    let found = spec_opt
+        .and_then(|s| {
+            s.devices
+                .iter()
+                .find(|d| {
+                    (
+                        d.chip_coords.x,
+                        d.chip_coords.y,
+                        d.chip_coords.z,
+                        d.core_on_chip.0,
+                    ) == (x, y, z, core_idx)
+                })
+                .map(|d| usize::try_from(d.device_id.0).unwrap_or(0))
+        })
+        .unwrap_or_else(|| usize::try_from(y * 2 + x + core_idx).unwrap_or(0));
+    args.device_id_out = found;
 }
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice`].
@@ -942,38 +940,42 @@ unsafe fn handle_tpu_topology_logi_device_from_coord(
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice_Args`].
+/// If `args.coords_out` is non-null, it must point to at least 3 `i32` slots.
 unsafe fn handle_tpu_topology_coord_for_logi_device(
     args: &mut PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice_Args,
 ) {
-    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
     let spec_opt = unsafe { resolve_topology_spec(args.topology) };
-    if args.out_first > 0x10000 {
-        let coords_out = args.out_first as *mut i32;
-        let (x, y, z, core_idx) =
-            spec_opt
-                .and_then(|s| s.devices.get(args.device_id))
-                .map_or((0, 0, 0, 0), |d| {
-                    (
-                        i32::try_from(d.chip_coords.x).unwrap_or(0),
-                        i32::try_from(d.chip_coords.y).unwrap_or(0),
-                        i32::try_from(d.chip_coords.z).unwrap_or(0),
-                        usize::try_from(d.core_on_chip.0).unwrap_or(0),
-                    )
-                });
+    let (x, y, z, core_idx) = spec_opt
+        .and_then(|s| s.devices.get(args.device_id))
+        .map_or_else(
+            || {
+                let d = global_init_config().chips_per_host_bounds;
+                let bx = usize::try_from(d.x.max(1)).unwrap_or(2);
+                let by = usize::try_from(d.y.max(1)).unwrap_or(2);
+                let cx = i32::try_from(args.device_id % bx).unwrap_or(0);
+                let cy = i32::try_from((args.device_id / bx) % by).unwrap_or(0);
+                let cz = i32::try_from(args.device_id / (bx * by)).unwrap_or(0);
+                (cx, cy, cz, 0)
+            },
+            |d| {
+                (
+                    i32::try_from(d.chip_coords.x).unwrap_or(0),
+                    i32::try_from(d.chip_coords.y).unwrap_or(0),
+                    i32::try_from(d.chip_coords.z).unwrap_or(0),
+                    usize::try_from(d.core_on_chip.0).unwrap_or(0),
+                )
+            },
+        );
+    if !args.coords_out.is_null() {
         // SAFETY: `coords_out` points to an `int32_t[3]` coordinate array.
         unsafe {
-            *coords_out = x;
-            *coords_out.add(1) = y;
-            *coords_out.add(2) = z;
+            *args.coords_out = x;
+            *args.coords_out.add(1) = y;
+            *args.coords_out.add(2) = z;
         }
-        args.out_second = core_idx;
-    } else {
-        let chips_per_proc =
-            usize::try_from(global_init_config().chips_per_host().max(1)).unwrap_or(4);
-        args.out_first = args.device_id / chips_per_proc;
-        args.out_second = args.device_id % chips_per_proc;
     }
+    args.core_idx_out = core_idx;
 }
 
 /// Maps chip ID to `(process_id, index_on_process)` (`PJRT_TpuTopology_ProcIdAndIdxOnProcForChip`).
@@ -1110,35 +1112,28 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ChipCoordAndIdxForLogiDevice(
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_ChipsPerProcessBounds`] and [`PJRT_TpuTopology_ChipBounds`].
 ///
-/// Supports both scalar `(x, y)` output fields and writing `int32_t[3]` `(x, y, z)` coordinates
-/// when `out_first > 0x10000`.
-///
 /// # Arguments
 ///
 /// * `args` - Validated [`PJRT_TpuTopology_ChipBounds_Args`] structure.
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_TpuTopology_ChipBounds_Args`].
+/// If `args.coords_out` is non-null, it must point to at least 3 `i32` slots.
 unsafe fn handle_tpu_topology_chip_bounds(args: &mut PJRT_TpuTopology_ChipBounds_Args) {
-    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
     let bounds = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
         || global_init_config().chips_per_host_bounds,
         |spec| spec.chip_bounds,
     );
-    if args.out_first > 0x10000 {
-        let coords_out = args.out_first as *mut i32;
+    if !args.coords_out.is_null() {
         // SAFETY: `coords_out` points to an `int32_t[3]` coordinate array.
         unsafe {
-            *coords_out = i32::try_from(bounds.x).unwrap_or(2);
-            *coords_out.add(1) = i32::try_from(bounds.y).unwrap_or(2);
-            *coords_out.add(2) = i32::try_from(bounds.z).unwrap_or(1);
+            *args.coords_out = i32::try_from(bounds.x).unwrap_or(2);
+            *args.coords_out.add(1) = i32::try_from(bounds.y).unwrap_or(2);
+            *args.coords_out.add(2) = i32::try_from(bounds.z).unwrap_or(1);
         }
-        args.out_second = 3;
-    } else {
-        args.out_first = usize::try_from(bounds.x).unwrap_or(2);
-        args.out_second = usize::try_from(bounds.y).unwrap_or(2);
     }
+    args.num_coords = 3;
 }
 
 /// Queries 3D chips-per-process bounds (`PJRT_TpuTopology_ChipsPerProcessBounds`).
@@ -1187,33 +1182,26 @@ pub unsafe extern "C" fn PJRT_TpuTopology_ChipBounds(
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_ProcessBounds`].
 ///
-/// Supports both scalar `(x, y)` output fields and writing `int32_t[3]` `(x, y, z)` coordinates
-/// when `out_first > 0x10000`.
-///
 /// # Arguments
 ///
 /// * `args` - Validated [`PJRT_TpuTopology_ProcessBounds_Args`] structure.
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_TpuTopology_ProcessBounds_Args`].
+/// If `args.coords_out` is non-null, it must point to at least 3 `i32` slots.
 unsafe fn handle_tpu_topology_process_bounds(args: &mut PJRT_TpuTopology_ProcessBounds_Args) {
-    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
     let bounds = unsafe { resolve_topology_spec(args.topology) }
         .map_or_else(|| global_init_config().host_bounds, |spec| spec.host_bounds);
-    if args.out_first > 0x10000 {
-        let coords_out = args.out_first as *mut i32;
+    if !args.coords_out.is_null() {
         // SAFETY: `coords_out` points to an `int32_t[3]` coordinate array.
         unsafe {
-            *coords_out = i32::try_from(bounds.x).unwrap_or(1);
-            *coords_out.add(1) = i32::try_from(bounds.y).unwrap_or(1);
-            *coords_out.add(2) = i32::try_from(bounds.z).unwrap_or(1);
+            *args.coords_out = i32::try_from(bounds.x).unwrap_or(1);
+            *args.coords_out.add(1) = i32::try_from(bounds.y).unwrap_or(1);
+            *args.coords_out.add(2) = i32::try_from(bounds.z).unwrap_or(1);
         }
-        args.out_second = 3;
-    } else {
-        args.out_first = usize::try_from(bounds.x).unwrap_or(1);
-        args.out_second = usize::try_from(bounds.y).unwrap_or(1);
     }
+    args.num_coords = 3;
 }
 
 /// Queries 3D process mesh bounds (`PJRT_TpuTopology_ProcessBounds`).
@@ -1283,7 +1271,7 @@ fn build_slice_config_from_bounds(
 }
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_GetSliceConfig`], populating a caller
-/// [`PJRT_TpuTopology_SliceConfig`] descriptor when `out_value > 0x10000` or returning `1`.
+/// [`PJRT_TpuTopology_SliceConfig`] descriptor when `slice_config_out` is non-null.
 ///
 /// # Arguments
 ///
@@ -1291,21 +1279,18 @@ fn build_slice_config_from_bounds(
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_TpuTopology_GetSliceConfig_Args`].
+/// If `args.slice_config_out` is non-null, it must point to a writable [`PJRT_TpuTopology_SliceConfig`].
 unsafe fn handle_tpu_topology_get_slice_config(args: &mut PJRT_TpuTopology_GetSliceConfig_Args) {
-    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
     let bounds = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
         || global_init_config().chips_per_host_bounds,
         |spec| spec.chip_bounds,
     );
-    if args.out_value > 0x10000 {
-        let cfg_out = args.out_value as *mut PJRT_TpuTopology_SliceConfig;
-        // SAFETY: `cfg_out` points to a caller-supplied `PJRT_TpuTopology_SliceConfig`.
+    if !args.slice_config_out.is_null() {
+        // SAFETY: `slice_config_out` points to a caller-supplied `PJRT_TpuTopology_SliceConfig`.
         unsafe {
-            *cfg_out = build_slice_config_from_bounds(bounds);
+            *args.slice_config_out = build_slice_config_from_bounds(bounds);
         }
-    } else {
-        args.out_value = 1;
     }
 }
 
@@ -1332,7 +1317,7 @@ pub unsafe extern "C" fn PJRT_TpuTopology_GetSliceConfig(
 }
 
 /// Strongly-typed handler for [`PJRT_TpuTopology_GetSliceConfigs`], populating a caller
-/// [`PJRT_TpuTopology_SliceConfig`] descriptor when `out_value > 0x10000` or returning the count.
+/// [`PJRT_TpuTopology_SliceConfig`] descriptor when `slice_configs_out` is non-null.
 ///
 /// # Arguments
 ///
@@ -1340,25 +1325,18 @@ pub unsafe extern "C" fn PJRT_TpuTopology_GetSliceConfig(
 ///
 /// # Safety
 ///
-/// `args` must be a valid [`PJRT_TpuTopology_GetSliceConfigs_Args`].
+/// If `args.slice_configs_out` is non-null, it must point to at least 1 [`PJRT_TpuTopology_SliceConfig`].
 unsafe fn handle_tpu_topology_get_slice_configs(args: &mut PJRT_TpuTopology_GetSliceConfigs_Args) {
-    // SAFETY: `args.topology` is null, a small sentinel, or a valid `PJRT_TopologyDescription*`.
-    let chips = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
-        || global_init_config().chips_per_host(),
-        |spec| spec.chips_per_host,
+    // SAFETY: `args.topology` is null or a valid `PJRT_TopologyDescription*`.
+    let bounds = unsafe { resolve_topology_spec(args.topology) }.map_or_else(
+        || global_init_config().chips_per_host_bounds,
+        |spec| spec.chip_bounds,
     );
-    if args.out_value > 0x10000 {
-        let cfg_out = args.out_value as *mut PJRT_TpuTopology_SliceConfig;
-        // SAFETY: `cfg_out` points to a caller-supplied `PJRT_TpuTopology_SliceConfig`.
+    if !args.slice_configs_out.is_null() {
+        // SAFETY: `slice_configs_out` points to a caller-supplied `PJRT_TpuTopology_SliceConfig`.
         unsafe {
-            *cfg_out = build_slice_config_from_bounds(libtpu_core::types::ChipCoordinates {
-                x: 2,
-                y: 2,
-                z: 1,
-            });
+            *args.slice_configs_out = build_slice_config_from_bounds(bounds);
         }
-    } else {
-        args.out_value = usize::try_from(chips.max(1)).unwrap_or(4);
     }
 }
 

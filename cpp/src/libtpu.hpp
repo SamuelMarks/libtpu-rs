@@ -881,6 +881,21 @@ public:
   compute_subslice_for_devices(const int32_t *device_ids, size_t num_devices,
                                int32_t origin_out[3]) const noexcept;
 
+  /**
+   * @brief Computes the bounding subslice origin `(x, y, z)` for `device_ids`
+   * with explicit 3D `subslice_dims` via
+   * `PJRT_TpuTopology_ComputeSubsliceForDevices`.
+   * @param subslice_dims 3-element `(x, y, z)` subslice dimension bounds.
+   * @param device_ids Pointer to logical device IDs array.
+   * @param num_devices Number of device IDs.
+   * @param origin_out Output 3-element `int32_t` array receiving the origin.
+   * @return `Status` indicating success or failure.
+   */
+  [[nodiscard]] Status
+  compute_subslice_for_devices(std::span<const int32_t, 3> subslice_dims,
+                               const int32_t *device_ids, size_t num_devices,
+                               int32_t origin_out[3]) const noexcept;
+
 private:
   /** @brief Non-owning pointer to global `TpuTopology`. */
   const TpuTopology *handle_;
@@ -945,6 +960,14 @@ public:
    */
   [[nodiscard]] size_t
   metric_value_count(const char *metric_name) const noexcept;
+
+  /**
+   * @brief Sums all per-device numeric values reported for `metric_name` via
+   * `GetLibtpuSdkApi()`.
+   * @param metric_name Null-terminated metric identifier string.
+   * @return Sum of parsed `double` metric values across devices.
+   */
+  [[nodiscard]] double metric_sum(const char *metric_name) const noexcept;
 
   /**
    * @brief Queries the number of TPU chips discovered by
@@ -1140,15 +1163,48 @@ private:
 };
 
 /**
- * @brief Non-owning strongly-typed C++20 view over a `PJRT_Executable*`.
+ * @brief Strongly-typed C++20 move-only RAII owner over a `PJRT_Executable*`.
  */
 class Executable {
 public:
   /**
-   * @brief Constructs an `Executable` view over `handle`.
+   * @brief Constructs an `Executable` taking ownership of `handle`.
    * @param handle Raw `PJRT_Executable*` pointer (defaults to `nullptr`).
    */
   explicit Executable(PJRT_Executable *handle = nullptr) noexcept;
+
+  /**
+   * @brief Destroys the underlying `PJRT_Executable*` via
+   * `GetPjrtApi()->pjrt_executable_destroy`.
+   */
+  ~Executable() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other executable.
+   */
+  Executable(const Executable &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other executable.
+   * @return Reference to this executable.
+   */
+  Executable &operator=(const Executable &other) = delete;
+
+  /**
+   * @brief Move constructor transferring ownership of `PJRT_Executable*`.
+   * @param other Rvalue executable to move from.
+   */
+  Executable(Executable &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring ownership of
+   * `PJRT_Executable*`.
+   * @param other Rvalue executable to move from.
+   * @return Reference to this executable.
+   */
+  Executable &operator=(Executable &&other) noexcept;
 
   /**
    * @brief Returns the underlying raw `PJRT_Executable*` pointer.
@@ -1157,7 +1213,7 @@ public:
   [[nodiscard]] PJRT_Executable *raw() const noexcept;
 
 private:
-  /** @brief Non-owning C executable handle. */
+  /** @brief Owned C executable handle. */
   PJRT_Executable *handle_;
 };
 
@@ -1391,10 +1447,17 @@ private:
 class Communicator {
 public:
   /**
-   * @brief Creates an ICI/DCN `Communicator` via
+   * @brief Creates a single-rank ICI/DCN `Communicator` via
    * `PJRT_Collectives_CreateCommunicator`.
    */
   Communicator() noexcept;
+
+  /**
+   * @brief Creates a multi-rank `Communicator` participant for `device_ids` via
+   * `PJRT_Collectives_CreateCommunicator`.
+   * @param device_ids Ordered participating logical device IDs.
+   */
+  explicit Communicator(std::span<const int32_t> device_ids) noexcept;
 
   /**
    * @brief Destroys the `Communicator` via `PJRT_Communicator_Destroy`.
@@ -1480,6 +1543,20 @@ public:
    */
   [[nodiscard]] Status collective_permute(Buffer &send_buf, Buffer *recv_buf,
                                           size_t count) noexcept;
+
+  /**
+   * @brief Executes a `CollectivePermute` operation with explicit `(src, dst)`
+   * rank pairs flattened in `source_target_pairs`.
+   * @param send_buf Source on-device `Buffer`.
+   * @param recv_buf Destination on-device `Buffer`.
+   * @param count Number of elements to permute.
+   * @param source_target_pairs Interleaved `[src0, dst0, src1, dst1, ...]` rank
+   * pairs.
+   * @return `Status` indicating completion status.
+   */
+  [[nodiscard]] Status
+  collective_permute(Buffer &send_buf, Buffer *recv_buf, size_t count,
+                     std::span<const int32_t> source_target_pairs) noexcept;
 
   /**
    * @brief Queries the communicator description string via
@@ -1701,11 +1778,288 @@ using CollectivesCommunicator = Communicator;
 /** @brief Type alias for `MegascaleContext` (`MegaScaleContext`). */
 using MegaScaleContext = MegascaleContext;
 
-/** @brief Type alias for `MegascaleContext` (`MultiSliceConfig`). */
-using MultiSliceConfig = MegascaleContext;
-
 /** @brief Type alias for `MegascaleContext` (`MultiSliceCoordinator`). */
 using MultiSliceCoordinator = MegascaleContext;
+
+/**
+ * @brief Looks up a float property named `target_name` inside a
+ * `PJRT_NamedValue` array.
+ * @param properties Pointer to `PJRT_NamedValue` array (or `nullptr`).
+ * @param num_properties Number of elements in `properties`.
+ * @param target_name Exact UTF-8 property name to match (e.g., `"flops"`).
+ * @return Decoded `float` property value, or `0.0F` if null or absent.
+ */
+[[nodiscard]] float
+find_named_float_property(const PJRT_NamedValue *properties,
+                          size_t num_properties,
+                          std::string_view target_name) noexcept;
+
+/**
+ * @brief Strongly-typed C++20 move-only RAII wrapper over `PJRT_RawBuffer*`
+ * (`PJRT_RawBuffer_Extension`).
+ */
+class RawBuffer {
+public:
+  /**
+   * @brief Constructs an empty `RawBuffer` or takes ownership of `handle`.
+   * @param handle Raw `PJRT_RawBuffer*` pointer (defaults to `nullptr`).
+   */
+  explicit RawBuffer(PJRT_RawBuffer *handle = nullptr) noexcept;
+
+  /**
+   * @brief Destroys the owned `PJRT_RawBuffer*` via `PJRT_RawBuffer_Destroy`.
+   */
+  ~RawBuffer() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other raw buffer.
+   */
+  RawBuffer(const RawBuffer &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other raw buffer.
+   * @return Reference to this raw buffer.
+   */
+  RawBuffer &operator=(const RawBuffer &other) = delete;
+
+  /**
+   * @brief Move constructor transferring ownership of `PJRT_RawBuffer*`.
+   * @param other Rvalue raw buffer to move from.
+   */
+  RawBuffer(RawBuffer &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring ownership of
+   * `PJRT_RawBuffer*`.
+   * @param other Rvalue raw buffer to move from.
+   * @return Reference to this raw buffer.
+   */
+  RawBuffer &operator=(RawBuffer &&other) noexcept;
+
+  /**
+   * @brief Creates a `RawBuffer` alias over `buffer` via
+   * `PJRT_RawBuffer_CreateRawAliasOfBuffer`.
+   * @param buffer Source on-device `Buffer`.
+   * @param out Output `RawBuffer` receiving ownership of the created alias.
+   * @return `Status` indicating creation success or failure.
+   */
+  [[nodiscard]] static Status create_from_buffer(const Buffer &buffer,
+                                                 RawBuffer *out) noexcept;
+
+  /**
+   * @brief Queries the device/host pointer via `PJRT_RawBuffer_GetHostPointer`.
+   * @return Device/host pointer (or `nullptr` if uninitialized).
+   */
+  [[nodiscard]] void *host_pointer() const noexcept;
+
+  /**
+   * @brief Queries the on-device byte size via
+   * `PJRT_RawBuffer_GetOnDeviceSizeInBytes`.
+   * @return On-device byte size (`0` if uninitialized).
+   */
+  [[nodiscard]] size_t on_device_size_bytes() const noexcept;
+
+  /**
+   * @brief Queries the `PJRT_Memory*` space via
+   * `PJRT_RawBuffer_GetMemorySpace`.
+   * @return `PJRT_Memory*` handle (or `nullptr`).
+   */
+  [[nodiscard]] PJRT_Memory *memory_space() const noexcept;
+
+  /**
+   * @brief Copies `transfer_size` bytes from `src` into device HBM at `offset`
+   * via `PJRT_RawBuffer_CopyRawHostToDevice`.
+   * @param src Source host buffer pointer.
+   * @param offset Byte offset within the raw buffer (`>= 0`).
+   * @param transfer_size Number of bytes to write (`>= 0`).
+   * @return `Status` indicating completion or bounds/null error.
+   */
+  [[nodiscard]] Status copy_raw_host_to_device(const void *src, int64_t offset,
+                                               int64_t transfer_size) noexcept;
+
+  /**
+   * @brief Copies `transfer_size` bytes from device HBM at `offset` into `dst`
+   * via `PJRT_RawBuffer_CopyRawDeviceToHost`.
+   * @param dst Destination host buffer pointer.
+   * @param offset Byte offset within the raw buffer (`>= 0`).
+   * @param transfer_size Number of bytes to read (`>= 0`).
+   * @return `Status` indicating completion or bounds/null error.
+   */
+  [[nodiscard]] Status
+  copy_raw_device_to_host(void *dst, int64_t offset,
+                          int64_t transfer_size) const noexcept;
+
+  /**
+   * @brief Returns the underlying raw `PJRT_RawBuffer*` handle.
+   * @return Raw `PJRT_RawBuffer*` pointer.
+   */
+  [[nodiscard]] PJRT_RawBuffer *raw() const noexcept;
+
+private:
+  /** @brief Owned `PJRT_RawBuffer*` handle. */
+  PJRT_RawBuffer *handle_;
+};
+
+/**
+ * @brief Strongly-typed C++20 move-only RAII wrapper over
+ * `PJRT_MultiSlice_Config*` (`PJRT_MultiSlice_Extension`).
+ */
+class MultiSliceConfig {
+public:
+  /**
+   * @brief Creates a default `MultiSliceConfig` via
+   * `PJRT_Megascale_CreateDefaultConfig`.
+   * @param topology Optional `const PJRT_TopologyDescription*` (defaults to
+   * `nullptr`).
+   */
+  explicit MultiSliceConfig(
+      const PJRT_TopologyDescription *topology = nullptr) noexcept;
+
+  /**
+   * @brief Destroys the owned `PJRT_MultiSlice_Config*` via
+   * `PJRT_MultiSlice_Config_Destroy`.
+   */
+  ~MultiSliceConfig() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other multi-slice config.
+   */
+  MultiSliceConfig(const MultiSliceConfig &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other multi-slice config.
+   * @return Reference to this multi-slice config.
+   */
+  MultiSliceConfig &operator=(const MultiSliceConfig &other) = delete;
+
+  /**
+   * @brief Move constructor transferring ownership of
+   * `PJRT_MultiSlice_Config*`.
+   * @param other Rvalue multi-slice config to move from.
+   */
+  MultiSliceConfig(MultiSliceConfig &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring ownership of
+   * `PJRT_MultiSlice_Config*`.
+   * @param other Rvalue multi-slice config to move from.
+   * @return Reference to this multi-slice config.
+   */
+  MultiSliceConfig &operator=(MultiSliceConfig &&other) noexcept;
+
+  /**
+   * @brief Queries total slice count via `PJRT_MultiSlice_Config_NumSlices`.
+   * @return Number of slices (`>= 1`, or `0` if moved-from).
+   */
+  [[nodiscard]] size_t num_slices() const noexcept;
+
+  /**
+   * @brief Queries devices-per-slice count via
+   * `PJRT_MultiSlice_Config_NumDevicesPerSlice`.
+   * @return Number of devices per slice (`>= 1`, or `0` if moved-from).
+   */
+  [[nodiscard]] size_t num_devices_per_slice() const noexcept;
+
+  /**
+   * @brief Queries local slice ID via `PJRT_MultiSlice_Config_SliceId`.
+   * @return Local slice ID.
+   */
+  [[nodiscard]] size_t slice_id() const noexcept;
+
+  /**
+   * @brief Serializes this `MultiSliceConfig` via
+   * `PJRT_MultiSlice_Config_Serialize`.
+   * @return Serialized protobuf wire bytes (`""` if moved-from).
+   */
+  [[nodiscard]] std::string serialize() const noexcept;
+
+  /**
+   * @brief Returns the underlying raw `PJRT_MultiSlice_Config*` handle.
+   * @return Raw `PJRT_MultiSlice_Config*` pointer.
+   */
+  [[nodiscard]] PJRT_MultiSlice_Config *raw() const noexcept;
+
+private:
+  /** @brief Owned `PJRT_MultiSlice_Config*` handle. */
+  PJRT_MultiSlice_Config *handle_;
+};
+
+/**
+ * @brief Strongly-typed C++20 move-only RAII registration guard over
+ * `PJRT_XlaTransform_Extension` (`PJRT_XlaTransform_Register` / `Unregister` /
+ * `List`).
+ */
+class XlaTransform {
+public:
+  /**
+   * @brief Constructs an empty unregistered `XlaTransform`.
+   */
+  XlaTransform() noexcept;
+
+  /**
+   * @brief Unregisters the owned XLA transform pass if active.
+   */
+  ~XlaTransform() noexcept;
+
+  /**
+   * @brief Deleted copy constructor.
+   * @param other Other XLA transform guard.
+   */
+  XlaTransform(const XlaTransform &other) = delete;
+
+  /**
+   * @brief Deleted copy assignment operator.
+   * @param other Other XLA transform guard.
+   * @return Reference to this XLA transform guard.
+   */
+  XlaTransform &operator=(const XlaTransform &other) = delete;
+
+  /**
+   * @brief Move constructor transferring registration ownership.
+   * @param other Rvalue XLA transform guard to move from.
+   */
+  XlaTransform(XlaTransform &&other) noexcept;
+
+  /**
+   * @brief Move assignment operator transferring registration ownership.
+   * @param other Rvalue XLA transform guard to move from.
+   * @return Reference to this XLA transform guard.
+   */
+  XlaTransform &operator=(XlaTransform &&other) noexcept;
+
+  /**
+   * @brief Registers a custom XLA transform pass named `pass_name` with token
+   * `transform_id`.
+   * @param pass_name Non-empty UTF-8 transform pass name.
+   * @param transform_id Non-zero transform identifier word.
+   * @param out Output `XlaTransform` receiving RAII ownership.
+   * @return `Status` indicating registration success or failure.
+   */
+  [[nodiscard]] static Status register_pass(std::string_view pass_name,
+                                            size_t transform_id,
+                                            XlaTransform *out) noexcept;
+
+  /**
+   * @brief Queries the number of currently registered XLA transforms via
+   * `PJRT_XlaTransform_List`.
+   * @return Count of registered XLA transforms.
+   */
+  [[nodiscard]] static size_t registered_count() noexcept;
+
+  /**
+   * @brief Returns the registered transform pass name (`""` if unregistered).
+   * @return Pass name string view.
+   */
+  [[nodiscard]] std::string_view name() const noexcept;
+
+private:
+  /** @brief Registered transform pass name (`""` when inactive). */
+  std::string name_;
+};
 
 /** @brief Type alias for `EmbeddingEngine` (`SparseCoreEngine`). */
 using SparseCoreEngine = EmbeddingEngine;

@@ -160,7 +160,11 @@ pub(super) unsafe fn handle_client_create_with_config(
 type ClientKvCallbacks = (
     *const std::ffi::c_void,
     *mut std::ffi::c_void,
-    *const std::ffi::c_void,
+    Option<
+        unsafe extern "C" fn(
+            *mut crate::pjrt_types::PJRT_KeyValuePutCallback_Args,
+        ) -> *mut PJRT_Error,
+    >,
     *mut std::ffi::c_void,
     *const std::ffi::c_void,
     *mut std::ffi::c_void,
@@ -194,7 +198,7 @@ const fn select_multihost_kv_callbacks(
         (
             ptr::null(),
             ptr::null_mut(),
-            ptr::null(),
+            None,
             ptr::null_mut(),
             ptr::null(),
             ptr::null_mut(),
@@ -237,19 +241,17 @@ pub(super) unsafe fn handle_client_create(
 ///
 /// If non-null, `kv_put_callback` must be a valid C function pointer matching `PJRT_KeyValuePutCallback`.
 unsafe fn notify_kv_put_topology_ready(
-    kv_put_callback: *const std::ffi::c_void,
+    kv_put_callback: Option<
+        unsafe extern "C" fn(
+            *mut crate::pjrt_types::PJRT_KeyValuePutCallback_Args,
+        ) -> *mut PJRT_Error,
+    >,
     kv_put_user_arg: *mut std::ffi::c_void,
     local_topo_bytes: &[u8],
 ) {
-    /// C callback type for `PJRT_KeyValuePutCallback`.
-    type KvPutCallbackFn = unsafe extern "C" fn(
-        *mut crate::pjrt_types::PJRT_KeyValuePutCallback_Args,
-    ) -> *mut PJRT_Error;
-    if kv_put_callback.is_null() {
+    let Some(kv_put) = kv_put_callback else {
         return;
-    }
-    // SAFETY: `kv_put_callback` is a valid C function pointer supplied by the caller.
-    let kv_put: KvPutCallbackFn = unsafe { std::mem::transmute(kv_put_callback) };
+    };
     for (key, val) in [
         (&b"tpu_topology_ready"[..], &b"1"[..]),
         (&b"local_topology_proto"[..], local_topo_bytes),

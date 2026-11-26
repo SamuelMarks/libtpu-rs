@@ -49,7 +49,7 @@ mod tests {
                 num_options: 0,
                 kv_get_callback: ptr::null(),
                 kv_get_user_arg: ptr::null_mut(),
-                kv_put_callback: ptr::null(),
+                kv_put_callback: None,
                 kv_put_user_arg: ptr::null_mut(),
                 kv_try_get_callback: ptr::null(),
                 kv_try_get_user_arg: ptr::null_mut(),
@@ -146,7 +146,7 @@ mod tests {
                 num_options: create_opts.len(),
                 kv_get_callback: ptr::null(),
                 kv_get_user_arg: ptr::null_mut(),
-                kv_put_callback: mock_kv_put_ok as *const std::ffi::c_void,
+                kv_put_callback: Some(mock_kv_put_ok),
                 kv_put_user_arg: ptr::addr_of_mut!(kv_called).cast(),
                 client: ptr::null_mut(),
                 kv_try_get_callback: ptr::null(),
@@ -161,14 +161,14 @@ mod tests {
             };
             assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_opts_client).cast()).is_null());
 
-            create_args_opts.kv_put_callback = mock_kv_put_err as *const std::ffi::c_void;
+            create_args_opts.kv_put_callback = Some(mock_kv_put_err);
             create_args_opts.kv_put_user_arg = ptr::null_mut();
             create_args_opts.client = ptr::null_mut();
             assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args_opts).cast()).is_null());
             destroy_opts_client.client = create_args_opts.client;
             assert!(PJRT_Client_Destroy(ptr::addr_of_mut!(destroy_opts_client).cast()).is_null());
 
-            create_args_opts.kv_put_callback = ptr::null();
+            create_args_opts.kv_put_callback = None;
             create_args_opts.client = ptr::null_mut();
             assert!(PJRT_Client_Create(ptr::addr_of_mut!(create_args_opts).cast()).is_null());
             destroy_opts_client.client = create_args_opts.client;
@@ -187,7 +187,7 @@ mod tests {
                 num_options: 0,
                 kv_get_callback: ptr::null(),
                 kv_get_user_arg: ptr::null_mut(),
-                kv_put_callback: ptr::null(),
+                kv_put_callback: None,
                 kv_put_user_arg: ptr::null_mut(),
                 kv_try_get_callback: ptr::null(),
                 kv_try_get_user_arg: ptr::null_mut(),
@@ -553,7 +553,7 @@ mod tests {
                 pad: 0,
                 layout: ptr::null(),
                 device: look_args.device,
-                on_delete_callback: test_view_deleter as *const std::ffi::c_void,
+                on_delete_callback: Some(test_view_deleter),
                 buffer: ptr::null_mut(),
             };
             assert!(
@@ -963,7 +963,7 @@ mod tests {
                 num_options: 0,
                 kv_get_callback: ptr::null(),
                 kv_get_user_arg: ptr::null_mut(),
-                kv_put_callback: ptr::null(),
+                kv_put_callback: None,
                 kv_put_user_arg: ptr::null_mut(),
                 client: ptr::null_mut(),
                 kv_try_get_callback: ptr::null(),

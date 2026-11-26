@@ -1626,7 +1626,7 @@ fn serialization_riegeli_relocations_abi_and_five_phase_compile_cover_all_branch
         program_format: String::from("mlir"),
         producer_phase: String::from("hlo_verification"),
         consumer_phases: vec![String::from("tpu_layout_assignment")],
-        version: String::from("0.0.52"),
+        version: String::from(crate::LIBTPU_PYPI_VERSION),
         program_name: String::from("restricted"),
     };
     assert!(

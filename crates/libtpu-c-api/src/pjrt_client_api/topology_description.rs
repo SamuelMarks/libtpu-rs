@@ -14,7 +14,21 @@ use super::*;
 unsafe fn handle_topology_create(
     args: &mut crate::pjrt_types::PJRT_TopologyDescription_Create_Args,
 ) -> Result<(), LibTpuError> {
-    args.topology = box_default_topology_description();
+    let mut cfg = libtpu_core::config::global_init_config();
+    if !args.topology_name.is_null() && args.topology_name_size > 0 {
+        // SAFETY: `topology_name` points to `topology_name_size` readable bytes.
+        let name_bytes = unsafe {
+            std::slice::from_raw_parts(args.topology_name.cast::<u8>(), args.topology_name_size)
+        };
+        if let Ok(name_str) = std::str::from_utf8(name_bytes)
+            && let Ok(parsed_gen) = libtpu_core::types::TpuGeneration::from_name(name_str)
+        {
+            cfg.generation = parsed_gen;
+        }
+    }
+    let hal = libtpu_core::hal::SimulatedTpuHal::new(&cfg);
+    let spec = hal.topology_spec();
+    args.topology = crate::box_topology_description(libtpu_core::pjrt::PjrtCoreTopology::new(spec));
     Ok(())
 }
 
@@ -145,7 +159,7 @@ unsafe fn handle_topology_platform_version(
     args: &mut crate::pjrt_types::PJRT_TopologyDescription_PlatformVersion_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `topology` is null or a valid `PJRT_TopologyDescription*`.
-    let (ptr, len) = unsafe { args.topology.as_ref() }.map_or((c"0.0.52".as_ptr(), 6), |t| {
+    let (ptr, len) = unsafe { args.topology.as_ref() }.map_or((c"0.0.53.1".as_ptr(), 8), |t| {
         (
             t.inner.spec.platform_version.as_ptr().cast::<c_char>(),
             t.inner.spec.platform_version.len(),
@@ -238,7 +252,7 @@ unsafe fn handle_topology_serialize(
         || {
             libtpu_core::proto::TpuTopologyArgsProto {
                 version: Some(5),
-                variant: Some(String::from("0.0.52")),
+                variant: Some(String::from("0.0.53.1")),
                 chip_config_name: Some(String::from("00001234")),
                 chips_per_host_bounds: Some(libtpu_core::proto::TpuDimensionsProto {
                     x: 2,

@@ -46,11 +46,11 @@ class ExtractedSpecSummary:
     proto_messages: tuple[str, ...]
 
 
-OSS_ANCHOR_PINS: tuple[OssRepoPin, ...] = (
+OSS_REPO_PINS: tuple[OssRepoPin, ...] = (
     OssRepoPin(
         key="llvm_mlir",
         repo="llvm/llvm-project",
-        commit="llvmorg-20.1.0",
+        commit="c744694c6ae1d12bbf7d0447b4bc91ee94a1904c",
         files=(
             "mlir/include/mlir/Bytecode/Encoding.h",
             "mlir/lib/Bytecode/Reader/BytecodeReader.cpp",
@@ -61,7 +61,7 @@ OSS_ANCHOR_PINS: tuple[OssRepoPin, ...] = (
     OssRepoPin(
         key="openxla_stablehlo",
         repo="openxla/stablehlo",
-        commit="v1.9.3",
+        commit="9fe4a1e9cedbe466af2d620c2fcf87459df32eb6",
         files=(
             "stablehlo/dialect/VhloOps.td",
             "stablehlo/dialect/VhloBytecode.cpp",
@@ -73,7 +73,7 @@ OSS_ANCHOR_PINS: tuple[OssRepoPin, ...] = (
     OssRepoPin(
         key="openxla_shardy",
         repo="openxla/shardy",
-        commit="main",
+        commit="ab30307107fad95e652ad1e3bfa06532bbda1905",
         files=(
             "shardy/dialect/sdy/ir/ops.td",
             "shardy/dialect/sdy/ir/attrs.td",
@@ -83,7 +83,7 @@ OSS_ANCHOR_PINS: tuple[OssRepoPin, ...] = (
     OssRepoPin(
         key="openxla_xla",
         repo="openxla/xla",
-        commit="main",
+        commit="814b4d72d1d4a9677aab9e2f7cfcc91253103b8f",
         files=(
             "xla/pjrt/c/pjrt_c_api.h",
             "xla/pjrt/c/pjrt_c_api_phase_compile_extension.h",
@@ -93,6 +93,7 @@ OSS_ANCHOR_PINS: tuple[OssRepoPin, ...] = (
             "xla/pjrt/c/pjrt_c_api_profiler_extension.h",
             "xla/pjrt/c/pjrt_c_api_triton_extension.h",
             "xla/pjrt/c/pjrt_c_api_raw_buffer_extension.h",
+            "xla/backends/profiler/plugin/profiler_c_api.h",
             "xla/ffi/api/c_api.h",
             "xla/service/hlo.proto",
             "xla/xla_data.proto",
@@ -117,7 +118,7 @@ OSS_ANCHOR_PINS: tuple[OssRepoPin, ...] = (
     OssRepoPin(
         key="jax_mosaic",
         repo="jax-ml/jax",
-        commit="jax-v0.5.0",
+        commit="ebe9cca4ad4d14afb4b5110e6bd0d609849e3cf2",
         files=(
             "jaxlib/mosaic/dialect/tpu/tpu.td",
             "jax/_src/lib/__init__.py",
@@ -143,6 +144,8 @@ OSS_ANCHOR_PINS: tuple[OssRepoPin, ...] = (
         ),
     ),
 )
+
+OSS_ANCHOR_PINS: tuple[OssRepoPin, ...] = OSS_REPO_PINS
 
 UrlTextReader = Callable[[str], str]
 
@@ -288,6 +291,227 @@ def sync_all_anchors(
     return results
 
 
+def _iter_pjrt_struct_bodies(cleaned_header: str) -> list[tuple[str, str]]:
+    """Extracts brace-balanced `(struct_name, body)` pairs for `struct PJRT_*` definitions.
+
+    Args:
+        cleaned_header: Comment- and preprocessor-stripped C header text.
+
+    Returns:
+        Ordered list of `(struct_name, inner_body_text)` pairs.
+    """
+    results: list[tuple[str, str]] = []
+    for head_m in re.finditer(r"\bstruct\s+(PJRT_[A-Za-z0-9_]+)\s*\{", cleaned_header):
+        sname = head_m.group(1)
+        start = head_m.end()
+        depth = 1
+        pos = start
+        n = len(cleaned_header)
+        while pos < n and depth > 0:
+            ch = cleaned_header[pos]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+            pos += 1
+        if depth == 0:
+            results.append((sname, cleaned_header[start : pos - 1]))
+    return results
+
+
+def _split_top_level_c_decls(body: str) -> list[str]:
+    """Splits a C struct/union body into `;`-terminated top-level member declarations.
+
+    Args:
+        body: Inner text of a C `struct` or `union` block.
+
+    Returns:
+        Non-empty trimmed member declaration strings (without trailing `;`).
+    """
+    decls: list[str] = []
+    cur: list[str] = []
+    depth = 0
+    for ch in body:
+        if ch == "{":
+            depth += 1
+            cur.append(ch)
+        elif ch == "}":
+            depth = max(0, depth - 1)
+            cur.append(ch)
+        elif ch == ";" and depth == 0:
+            stmt = " ".join("".join(cur).split())
+            if stmt:
+                decls.append(stmt)
+            cur = []
+        else:
+            cur.append(ch)
+    return decls
+
+
+def _measure_c_decl_slot_bytes(decl: str, known_sizes: dict[str, int]) -> tuple[str | None, int]:
+    """Extracts the optional field name and 8-byte-aligned x86_64 size of a C member declaration.
+
+    Args:
+        decl: Single `;`-stripped C member declaration (may be an anonymous `union { ... }`).
+        known_sizes: Previously computed byte sizes of value-embedded `PJRT_*` structs.
+
+    Returns:
+        Tuple `(field_name_or_none, aligned_size_bytes)`.
+    """
+    union_m = re.match(r"^union\s*\{(.*)\}$", decl, re.DOTALL)
+    if union_m is not None:
+        sub_sizes = [
+            _measure_c_decl_slot_bytes(sub, known_sizes)[1]
+            for sub in _split_top_level_c_decls(union_m.group(1))
+        ]
+        return None, max(sub_sizes, default=0)
+
+    fn_ptr_m = re.search(r"\(\s*\*\s*([A-Za-z0-9_]+)\s*\)", decl)
+    if fn_ptr_m is not None:
+        return fn_ptr_m.group(1), 8
+
+    ident_m = re.match(r"^(.*?)\b([A-Za-z0-9_]+)\s*(?:\[([0-9]+)\])?$", decl)
+    if ident_m is None:
+        return None, 0
+    type_prefix, field_name, arr_count_str = ident_m.groups()
+    count = int(arr_count_str) if arr_count_str is not None else 1
+    clean_type = type_prefix.replace("const", "").replace("struct", "").strip()
+    elem_size = 8 if "*" in clean_type else known_sizes.get(clean_type, 8)
+    return field_name, elem_size * count
+
+
+def parse_pjrt_c_api_header(header_text: str) -> dict[str, object]:
+    """Parses `PJRT_API_MINOR`, `PJRT_Extension_Type`, and `PJRT_*_Args` fields from `pjrt_c_api.h`.
+
+    Args:
+        header_text: Raw UTF-8 text of `xla/pjrt/c/pjrt_c_api.h`.
+
+    Returns:
+        Dictionary with `"pjrt_api_minor"`, `"extension_types"`, `"args_structs"`,
+        and `"args_struct_sizes"`.
+    """
+    minor_match = re.search(r"^\s*#\s*define\s+PJRT_API_MINOR\s+(\d+)\b", header_text, re.MULTILINE)
+    pjrt_api_minor = int(minor_match.group(1)) if minor_match is not None else None
+
+    extension_types: dict[str, int] = {}
+    enum_match = re.search(
+        r"typedef\s+enum\s*\{([^}]+)\}\s*PJRT_Extension_Type\s*;",
+        header_text,
+        re.DOTALL,
+    )
+    if enum_match is not None:
+        next_val = 0
+        for raw_line in enum_match.group(1).splitlines():
+            line = raw_line.split("//", 1)[0].strip().rstrip(",")
+            if not line:
+                continue
+            item_m = re.match(r"^PJRT_Extension_Type_([A-Za-z0-9_]+)(?:\s*=\s*(\d+))?$", line)
+            if item_m is not None:
+                name_suffix, explicit_val = item_m.groups()
+                if explicit_val is not None:
+                    next_val = int(explicit_val)
+                extension_types[name_suffix] = next_val
+                next_val += 1
+
+    no_block_comments = re.sub(r"/\*.*?\*/", "", header_text, flags=re.DOTALL)
+    cleaned_lines: list[str] = []
+    for raw_line in no_block_comments.splitlines():
+        no_line_comment = raw_line.split("//", 1)[0]
+        if no_line_comment.lstrip().startswith("#"):
+            continue
+        cleaned_lines.append(no_line_comment)
+    cleaned_header = "\n".join(cleaned_lines)
+
+    known_sizes: dict[str, int] = {}
+    args_structs: dict[str, tuple[str, ...]] = {}
+    args_struct_sizes: dict[str, int] = {}
+    for sname, body in _iter_pjrt_struct_bodies(cleaned_header):
+        fields: list[str] = []
+        total_bytes = 0
+        for decl in _split_top_level_c_decls(body):
+            fname, fbytes = _measure_c_decl_slot_bytes(decl, known_sizes)
+            total_bytes += fbytes
+            if fname is not None:
+                fields.append(fname)
+        known_sizes[sname] = total_bytes
+        if sname.endswith("_Args"):
+            args_structs[sname] = tuple(fields)
+            args_struct_sizes[sname] = total_bytes
+
+    return {
+        "pjrt_api_minor": pjrt_api_minor,
+        "extension_types": extension_types,
+        "args_structs": args_structs,
+        "args_struct_sizes": args_struct_sizes,
+    }
+
+
+def validate_pjrt_header_against_golden(
+    header_text: str,
+    golden_layouts: dict[str, object],
+) -> list[str]:
+    """Cross-validates extracted `pjrt_c_api.h` definitions against `golden_struct_layouts.json`.
+
+    Args:
+        header_text: Raw UTF-8 text of `xla/pjrt/c/pjrt_c_api.h`.
+        golden_layouts: Parsed `docs/reverse_engineering/golden_struct_layouts.json` dictionary.
+
+    Returns:
+        List of human-readable mismatch messages (empty when 100% consistent).
+    """
+    parsed = parse_pjrt_c_api_header(header_text)
+    errors: list[str] = []
+
+    expected_minor = golden_layouts.get("pjrt_api_minor", 117)
+    if parsed["pjrt_api_minor"] != expected_minor:
+        errors.append(
+            f"PJRT_API_MINOR mismatch: header={parsed['pjrt_api_minor']} vs golden={expected_minor}"
+        )
+
+    ext_types = parsed["extension_types"]
+    raw_exts = golden_layouts.get("extensions", [])
+    if isinstance(ext_types, dict) and isinstance(raw_exts, list):
+        for ext in raw_exts:
+            if not isinstance(ext, dict):
+                continue
+            ext_name = str(ext.get("name", ""))
+            short = ext_name.removeprefix("PJRT_").removesuffix("_Extension")
+            if short in ext_types and ext_types[short] != ext.get("ext_type"):
+                errors.append(
+                    f"Extension {ext_name} ext_type mismatch: "
+                    f"header={ext_types[short]} vs golden={ext.get('ext_type')}"
+                )
+
+    args_structs = parsed["args_structs"]
+    args_sizes = parsed.get("args_struct_sizes", {})
+    raw_slots = golden_layouts.get("pjrt_slots", [])
+    if isinstance(args_structs, dict) and isinstance(raw_slots, list):
+        slot_by_args: dict[str, int] = {}
+        for slot in raw_slots:
+            if not isinstance(slot, dict):
+                continue
+            msym = str(slot.get("mangled_symbol", ""))
+            min_sz = slot.get("min_struct_size")
+            args_m = re.search(r"P\d+(PJRT_[A-Za-z0-9_]+_Args)$", msym)
+            if args_m is not None and isinstance(min_sz, int):
+                slot_by_args[args_m.group(1)] = min_sz
+
+        for sname, fields in args_structs.items():
+            est_bytes = (
+                args_sizes.get(sname, len(fields) * 8)
+                if isinstance(args_sizes, dict)
+                else len(fields) * 8
+            )
+            if not fields or fields[0] != "struct_size":
+                errors.append(f"{sname}: missing leading struct_size field in pjrt_c_api.h")
+            elif sname in slot_by_args and est_bytes < slot_by_args[sname]:
+                errors.append(
+                    f"{sname}: {est_bytes}B estimated (< {slot_by_args[sname]}B min_struct_size)"
+                )
+
+    return errors
+
+
 def main(argv: list[str] | None = None, reader: UrlTextReader = default_text_reader) -> int:
     """CLI entry point for listing or syncing pinned open-source anchor specifications.
 
@@ -318,9 +542,30 @@ def main(argv: list[str] | None = None, reader: UrlTextReader = default_text_rea
         action="store_true",
         help="Download missing anchor files into --cache-dir and emit token summaries",
     )
+    parser.add_argument(
+        "--validate-golden",
+        type=Path,
+        default=None,
+        help="Cross-validate synced pjrt_c_api.h against golden_struct_layouts.json",
+    )
     args = parser.parse_args(argv)
 
     try:
+        if args.validate_golden is not None:
+            xla_pin = get_pin_by_key("openxla_xla")
+            pjrt_rel = "xla/pjrt/c/pjrt_c_api.h"
+            cached_hdr = Path(args.cache_dir) / xla_pin.key / xla_pin.commit / pjrt_rel
+            hdr_text = (
+                cached_hdr.read_text(encoding="utf-8")
+                if cached_hdr.exists()
+                else reader(build_raw_github_url(xla_pin, pjrt_rel))
+            )
+            golden_data = json.loads(Path(args.validate_golden).read_text(encoding="utf-8"))
+            validation_errors = validate_pjrt_header_against_golden(hdr_text, golden_data)
+            if validation_errors:
+                raise OssAnchorError("; ".join(validation_errors))
+            print(json.dumps({"validated": str(args.validate_golden), "errors": []}, indent=2))
+            return 0
         if not args.sync:
             pins = (
                 [get_pin_by_key(k) for k in args.repo_keys]

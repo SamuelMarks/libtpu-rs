@@ -10,9 +10,9 @@ Performs:
    Python (`ruff check`, `mypy --strict`), and C/C++ (`doxygen`).
 4. Unit and integration test suite execution across Rust (`cargo test`), Python (`pytest`),
    and C/C++ (`ctest`).
-5. Official Google `libtpu` (`libtpu.so` v0.0.52) binary ABI & Python wheel API compatibility
-   verification (`PJRT_Api` v0.116 1,144-byte vtable, `LibtpuSdk_Api` v0.1 144-byte vtable,
-   17-node PJRT extension linked list, 79 exported dynamic C symbols, `#[repr(C)]` struct sizes).
+5. Official Google `libtpu` (`libtpu.so` v0.0.53.1) binary ABI & Python wheel API compatibility
+   verification (`PJRT_Api` v0.117 1,144-byte vtable, `LibtpuSdk_Api` v0.1 144-byte vtable,
+   18-node PJRT extension linked list, 79 exported dynamic C symbols, `#[repr(C)]` struct sizes).
 6. Doc & test coverage calculation and `% doc coverage` / `% test coverage` shield updates
    in `README.md`.
 """
@@ -116,21 +116,22 @@ GOOGLE_LIBTPU_EXPORTED_SYMBOLS: tuple[str, ...] = (
 )
 
 EXPECTED_PJRT_EXTENSION_CHAIN: tuple[tuple[int, int, int], ...] = (
-    (29, 56, 4),
-    (28, 32, 1),
-    (26, 64, 5),
-    (25, 96, 9),
+    (5, 48, 3),
+    (24, 56, 4),
+    (23, 32, 1),
+    (22, 64, 5),
+    (21, 96, 9),
     (20, 120, 12),
     (19, 40, 2),
-    (18, 248, 28),
+    (18, 288, 33),
     (17, 96, 9),
     (16, 280, 32),
     (14, 40, 2),
-    (9, 64, 5),
+    (9, 192, 21),
     (12, 56, 4),
-    (11, 40, 2),
-    (7, 40, 2),
-    (6, 80, 7),
+    (13, 40, 2),
+    (6, 40, 2),
+    (4, 80, 7),
     (8, 80, 7),
     (1, 40, 2),
 )
@@ -191,17 +192,18 @@ EXPECTED_REPR_C_STRUCT_SIZES: tuple[tuple[str, int], ...] = (
     ("TpuEmbeddingEngine_WriteParameters_Params", 72),
     ("TpuEmbeddingEngine_EnqueueTensorBatch_Params", 56),
     ("TpuEmbeddingEngine_Computation_Params", 96),
+    ("PJRT_FFI_Extension", 48),
     ("PJRT_XlaTransform_Extension", 56),
     ("PJRT_HostMemoryAllocator_Extension", 32),
     ("PJRT_MultiSlice_Extension", 64),
     ("PJRT_Collectives_Extension", 96),
     ("PJRT_AbiVersion_Extension", 120),
     ("PJRT_Shardings_Extension", 40),
-    ("PJRT_Megascale_Extension", 248),
+    ("PJRT_Megascale_Extension", 288),
     ("PJRT_TpuExecutable_Extension", 96),
     ("PJRT_TpuTopology_Extension", 280),
     ("PJRT_Callback_Extension", 40),
-    ("PJRT_PhaseCompile_Extension", 64),
+    ("PJRT_PhaseCompile_Extension", 192),
     ("PJRT_CrossHostTransfers_Extension", 56),
     ("PJRT_ExecutableMetadata_Extension", 40),
     ("PJRT_MemoryDescriptions_Extension", 40),
@@ -431,19 +433,48 @@ def hook_build(repo_root: Path, check_only: bool = False) -> int:
     return 0
 
 
-def verify_workspace_ast_invariants(repo_root: Path) -> list[str]:
+def verify_no_pointer_guessing_hacks(repo_root: Path) -> list[str]:
+    """Scans `crates/libtpu-c-api/src` for raw pointer-vs-integer address guessing heuristics.
+
+    Args:
+        repo_root: Path to the workspace root directory.
+
+    Returns:
+        List of pointer-guessing violation strings (empty when 100% strongly typed).
+    """
+    violations: list[str] = []
+    c_api_src = repo_root / "crates" / "libtpu-c-api" / "src"
+    if not c_api_src.exists():
+        return violations
+    heuristic_re = re.compile(r">=?\s*0x10000\b|>\s*0x1000\b")
+    for rs_path in sorted(c_api_src.rglob("*.rs")):
+        prod_text = rs_path.read_text(encoding="utf-8").split("#[cfg(test)]", 1)[0]
+        for line_no, raw_line in enumerate(prod_text.splitlines(), start=1):
+            stripped = raw_line.strip()
+            if not stripped.startswith("//") and heuristic_re.search(stripped):
+                violations.append(f"{rs_path.name}:{line_no}: forbidden pointer-guessing heuristic")
+    return violations
+
+
+def verify_workspace_ast_invariants(
+    repo_root: Path,
+    check_pointer_heuristics: bool = True,
+) -> list[str]:
     """Audits Rust, C11/C++20, and Python sources for workspace engineering invariants.
 
     Verifies:
       - Zero `anyhow`, `thiserror`, `eyre`, `snafu`, or `Box<dyn Error>` in `Cargo.toml`/`.rs`.
       - Zero secondary `enum *Error` definitions outside `LibTpuError`.
       - Zero `.unwrap()`, `.expect()`, `unwrap_unchecked()`, `panic!()`, `todo!()`,
-        `unimplemented!()`, `unreachable!()`, `coverage(off)`, or `#[allow(dead_code)]`
-        in production Rust code, and zero `//!` missing file headers.
-      - Zero `# pragma: no cover` in Python files, and `@file` headers in `cpp/src/` files.
+        `unimplemented!()`, or `unreachable!()` across ALL Rust code (including `#[cfg(test)]`
+        and `build.rs`), zero `coverage(off)` in production Rust code, zero `#[allow(dead_code)]`,
+        and zero `//!` missing file headers.
+      - Zero `# pragma: no cover` in Python files, and `@file` headers in `cpp/src/` and
+        `cpp/tests/` files.
 
     Args:
         repo_root: Path to the workspace root directory.
+        check_pointer_heuristics: Whether to also enforce zero `> 0x10000` pointer heuristics.
 
     Returns:
         List of invariant violation messages (empty when 100% compliant).
@@ -491,20 +522,29 @@ def verify_workspace_ast_invariants(repo_root: Path) -> list[str]:
             for st_m in re.finditer(r"\bstruct\s+([A-Za-z0-9_]*Error)\b", prod_text):
                 if (rs_path.name, st_m.group(1)) not in allowed_error_structs:
                     violations.append(f"{rs_path.name}: secondary error struct '{st_m.group(1)}'")
-            for raw_line in prod_text.splitlines():
+            for raw_line in rs_text.splitlines():
                 stripped = raw_line.strip()
                 if not stripped.startswith("//"):
                     for pat in banned_rs_pats:
                         if re.search(pat, stripped):
                             violations.append(f"{rs_path.name}: forbidden pattern '{pat}'")
 
-    cpp_src = repo_root / "cpp" / "src"
-    if cpp_src.exists():
-        for cpp_file in sorted(
-            [*cpp_src.glob("*.h"), *cpp_src.glob("*.hpp"), *cpp_src.glob("*.cpp")]
-        ):
-            if "@file" not in cpp_file.read_text(encoding="utf-8")[:600]:
-                violations.append(f"{cpp_file.name}: missing Doxygen `@file` header")
+    if check_pointer_heuristics:
+        violations.extend(verify_no_pointer_guessing_hacks(repo_root))
+
+    for cpp_sub in ("src", "tests"):
+        cpp_dir = repo_root / "cpp" / cpp_sub
+        if cpp_dir.exists():
+            for cpp_file in sorted(
+                [
+                    *cpp_dir.glob("*.h"),
+                    *cpp_dir.glob("*.hpp"),
+                    *cpp_dir.glob("*.c"),
+                    *cpp_dir.glob("*.cpp"),
+                ]
+            ):
+                if "@file" not in cpp_file.read_text(encoding="utf-8")[:600]:
+                    violations.append(f"{cpp_file.name}: missing Doxygen `@file` header")
 
     for py_dir_name in ("python", "scripts"):
         py_dir = repo_root / py_dir_name
@@ -788,8 +828,9 @@ def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
     if not crates_dir.exists():
         return 0, 0
 
-    fn_re = re.compile(
-        r"((?:\s*///[^\n]*\n)*(?:\s*#\[[^\]]*\]\s*)*)\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+)?(?:unsafe\s+)?(?:extern\s+\"C\"\s+)?fn\s+([A-Za-z0-9_]+)",
+    fn_line_re = re.compile(
+        r"^[ \t]*(?:pub(?:\([^)\n]*\))?[ \t]+)?(?:const[ \t]+)?(?:async[ \t]+)?"
+        r"(unsafe[ \t]+)?(?:extern[ \t]+\"[^\"]*\"[ \t]+)?fn[ \t]+([A-Za-z0-9_]+)",
         re.MULTILINE,
     )
     param_re = re.compile(r"^\s*(?:mut\s+)?([A-Za-z0-9_]+)\s*:")
@@ -799,8 +840,38 @@ def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
     for rs_file in sorted(crates_dir.rglob("*.rs")):
         prod_raw = rs_file.read_text(encoding="utf-8").split("#[cfg(test)]", 1)[0]
         text = _strip_trait_impl_blocks(prod_raw)
-        for match in fn_re.finditer(text):
-            doc_block, _fn_name = match.groups()
+        lines = text.splitlines(keepends=True)
+        line_offsets: list[int] = []
+        running = 0
+        for ln in lines:
+            line_offsets.append(running)
+            running += len(ln)
+
+        line_idx_hint = 0
+        for match in fn_line_re.finditer(text):
+            unsafe_kw, _fn_name = match.groups()
+            while (
+                line_idx_hint + 1 < len(line_offsets)
+                and line_offsets[line_idx_hint + 1] <= match.start()
+            ):
+                line_idx_hint += 1
+
+            doc_parts: list[str] = []
+            k = line_idx_hint - 1
+            bracket_depth = 0
+            while k >= 0:
+                st = lines[k].strip()
+                if bracket_depth > 0:
+                    bracket_depth += st.count("]") - st.count("[")
+                elif st.startswith("///"):
+                    doc_parts.append(st)
+                elif st.endswith("]") and not st.startswith("#["):
+                    bracket_depth = st.count("]") - st.count("[")
+                elif st and not st.startswith("#["):
+                    k = -1
+                k -= 1
+            doc_block = "\n".join(reversed(doc_parts))
+
             open_paren = text.find("(", match.end())
             if open_paren == -1:
                 continue
@@ -812,6 +883,10 @@ def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
                 elif text[idx] == ")":
                     depth -= 1
                 idx += 1
+            if unsafe_kw:
+                total_args += 1
+                if "# Safety" in doc_block:
+                    doc_args += 1
             raw_params = text[open_paren + 1 : idx - 1]
             for raw_param in _split_top_level_commas(raw_params):
                 stripped = raw_param.strip()
@@ -827,8 +902,33 @@ def calculate_rust_arg_doc_coverage(repo_root: Path) -> tuple[int, int]:
     return doc_args, total_args
 
 
+def _python_fn_requires_returns_doc(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Determines whether `node` has a concrete non-`None` return requiring `Returns:`/`Yields:`.
+
+    Args:
+        node: Parsed Python `FunctionDef` or `AsyncFunctionDef` AST node.
+
+    Returns:
+        `True` if `node` requires a `Returns:` or `Yields:` docstring section.
+    """
+    if node.name == "__init__" or node.returns is None:
+        return False
+    decs = [ast.unparse(dec) for dec in node.decorator_list]
+    if "property" in decs or any(dec.endswith(".setter") for dec in decs):
+        return False
+    body_wo_doc = node.body[1:] if ast.get_docstring(node, clean=False) else node.body
+    if (
+        len(body_wo_doc) == 1
+        and isinstance(body_wo_doc[0], ast.Expr)
+        and isinstance(body_wo_doc[0].value, ast.Constant)
+        and body_wo_doc[0].value.value is Ellipsis
+    ):
+        return False
+    return ast.unparse(node.returns) not in ("None", "NoReturn")
+
+
 def calculate_python_doc_coverage(repo_root: Path) -> tuple[int, int]:
-    """Calculates documented vs total modules, classes, functions, and args in `.py`/`.pyi`.
+    """Calculates documented vs total modules, classes, functions, args, and returns in Python.
 
     Args:
         repo_root: Path to the workspace root directory.
@@ -840,6 +940,7 @@ def calculate_python_doc_coverage(repo_root: Path) -> tuple[int, int]:
     with_docs = 0
     py_files = sorted((repo_root / "python" / "libtpu").rglob("*.py"))
     py_files.extend(sorted((repo_root / "python" / "libtpu").rglob("*.pyi")))
+    tests_root = (repo_root / "python" / "tests").resolve()
     tests_dir = repo_root / "python" / "tests"
     if tests_dir.exists():
         py_files.extend(sorted(tests_dir.rglob("*.py")))
@@ -849,6 +950,7 @@ def calculate_python_doc_coverage(repo_root: Path) -> tuple[int, int]:
         py_files.extend(sorted(scripts_dir.rglob("*.pyi")))
 
     for py_file in py_files:
+        is_test_file = py_file.resolve().is_relative_to(tests_root) if tests_dir.exists() else False
         tree = ast.parse(py_file.read_text(encoding="utf-8"))
         total_items += 1
         if ast.get_docstring(tree):
@@ -877,6 +979,10 @@ def calculate_python_doc_coverage(repo_root: Path) -> tuple[int, int]:
                     if "Args:" in doc and (
                         f"{arg.arg}:" in doc or f"*{arg.arg}:" in doc or f"**{arg.arg}:" in doc
                     ):
+                        with_docs += 1
+                if not is_test_file and _python_fn_requires_returns_doc(node):
+                    total_items += 1
+                    if "Returns:" in doc or "Yields:" in doc:
                         with_docs += 1
 
     return with_docs, total_items
@@ -1271,17 +1377,22 @@ def resolve_compiled_cdylib(repo_root: Path) -> Path | None:
     Returns:
         Path to the compiled shared library if found, or None otherwise.
     """
-    candidates = [
-        repo_root / "target" / "debug" / "libtpu.dylib",
-        repo_root / "target" / "debug" / "libtpu.so",
-        repo_root / "target" / "debug" / "tpu.dll",
-        repo_root / "target" / "release" / "libtpu.dylib",
-        repo_root / "target" / "release" / "libtpu.so",
-        repo_root / "target" / "release" / "tpu.dll",
+    roots = [
+        repo_root / "target",
+        repo_root.parent / "shared-cargo-target" / "global-target",
     ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
+    env_target = os.environ.get("CARGO_TARGET_DIR", "")
+    if env_target and repo_root.resolve() == get_repo_root().resolve():
+        roots.insert(0, Path(env_target))
+    candidates = [
+        root / profile / name
+        for root in roots
+        for profile in ("debug", "release")
+        for name in ("libtpu.dylib", "libtpu.so", "tpu.dll")
+    ]
+    existing = [c for c in candidates if c.exists()]
+    if existing:
+        return max(existing, key=lambda p: p.stat().st_mtime)
     return None
 
 
@@ -1790,7 +1901,7 @@ def verify_binary_vtable_abi(cdylib_path: Path) -> list[str]:
     ver_major = ctypes.c_int32.from_address(pjrt_api_addr + 0x20).value
     ver_minor = ctypes.c_int32.from_address(pjrt_api_addr + 0x24).value
     null_pjrt_slots = [idx for idx in range(5, 143) if int(qwords[idx]) == 0]
-    if (struct_size, ver_size, ver_major, ver_minor) != (1144, 24, 0, 116) or null_pjrt_slots:
+    if (struct_size, ver_size, ver_major, ver_minor) != (1144, 24, 0, 117) or null_pjrt_slots:
         errors.append(
             f"PJRT_Api header/slots mismatch: size={struct_size}, "
             f"ver=({ver_size},{ver_major},{ver_minor}), null_slots={null_pjrt_slots}"
@@ -1841,7 +1952,7 @@ def verify_binary_vtable_abi(cdylib_path: Path) -> list[str]:
 
 
 def hook_abi(repo_root: Path, check_only: bool = False) -> int:
-    """Verifies 100% binary C ABI and Python SDK parity with official Google `libtpu` (`v0.0.52`).
+    """Verifies 100% binary C ABI and Python SDK parity with official Google `libtpu` (`v0.0.53.1`).
 
     Args:
         repo_root: Path to the workspace root directory.
@@ -1851,7 +1962,7 @@ def hook_abi(repo_root: Path, check_only: bool = False) -> int:
         Zero on success, or non-zero if any ABI compatibility check fails.
     """
     _ = check_only
-    print("==> [abi] Verifying Google libtpu (v0.0.52) C ABI & vtable compatibility...")
+    print("==> [abi] Verifying Google libtpu (v0.0.53.1) C ABI & vtable compatibility...")
     src_errors = verify_rust_and_c_abi_sources(repo_root)
     if src_errors:
         for err_msg in src_errors:
@@ -1875,7 +1986,7 @@ def hook_abi(repo_root: Path, check_only: bool = False) -> int:
 
     print(
         f"==> [abi] Verified {len(GOOGLE_LIBTPU_EXPORTED_SYMBOLS)} exported symbols, "
-        "PJRT_Api v0.116 (1144B, 138 slots), 17 PJRT extensions, LibtpuSdk_Api v0.1 (144B), "
+        "PJRT_Api v0.117 (1144B, 138 slots), 18 PJRT extensions, LibtpuSdk_Api v0.1 (144B), "
         "and TpuDriverFn (224B, 28 slots)."
     )
     return 0
@@ -1975,6 +2086,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--check",
+        "--check-only",
+        dest="check",
         action="store_true",
         help="Run in strict CI verification mode without modifying tracked files",
     )

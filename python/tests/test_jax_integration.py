@@ -39,7 +39,7 @@ def _detect_jax_pjrt_minor_version(lib_path: str) -> str:
         lib_path: Absolute filesystem path to the compiled `libtpu` shared library.
 
     Returns:
-        Minor version string (e.g. `"54"` for JAX 0.4.x or `"116"` for OpenXLA PJRT v0.116).
+        Minor version string (e.g. `"54"` for JAX 0.4.x or `"117"` for OpenXLA PJRT v0.117).
     """
     probe_env = os.environ.copy()
     probe_env.pop("LIBTPU_PJRT_API_MINOR_VERSION", None)
@@ -54,7 +54,7 @@ def _detect_jax_pjrt_minor_version(lib_path: str) -> str:
         check=False,
     )
     if proc.returncode == 0:
-        return "116"
+        return "117"
     combined = f"{proc.stdout}\n{proc.stderr}"
     match = re.search(r"framework PJRT API version 0\.(\d+)", combined)
     return match.group(1) if match is not None else "54"

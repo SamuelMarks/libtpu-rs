@@ -9,12 +9,14 @@ use super::{
 use crate::compiler::CompiledProgram;
 use crate::config::TpuInitConfig;
 use crate::error::{LibTpuError, LibTpuResult};
+use crate::runtime_state::{SharedTpuRuntimeState, global_shared_runtime_state};
 use crate::types::{
-    ByteSize, ChipCoordinates, ChipId, CoreId, DeviceAddress, DeviceId, HostId, LocalHardwareId,
-    MemoryKind, ProcessIndex,
+    ByteSize, ChipCoordinates, ChipId, CoreId, CoreIndex, DeviceAddress, DeviceId, HostId,
+    LocalHardwareId, MemoryKind, ProcessIndex,
 };
 use parking_lot::{Mutex, MutexGuard};
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 /// Internal per-device state for [`SimulatedTpuHal`].
@@ -44,9 +46,15 @@ pub(super) struct SimulatedDeviceState {
     pub(super) chip_vm: MultiCoreChipVmState,
 }
 
+/// Monotonic counter assigning a unique namespace tag to each [`SimulatedTpuHal`] instance.
+static NEXT_SIMULATED_HAL_INSTANCE_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// Deterministic in-memory TPU hardware simulator implementing [`TpuHal`].
 #[derive(Debug)]
 pub struct SimulatedTpuHal {
+    /// Unique simulator instance tag preventing cross-HAL address collisions in [`SharedTpuRuntimeState`].
+    hal_instance_id: u64,
     /// Discovered topology specification.
     pub(super) topology: TopologySpec,
     /// Per-device mutable HBM and execution state protected by `parking_lot::Mutex`.
@@ -55,16 +63,48 @@ pub struct SimulatedTpuHal {
     pub(super) devices_poisoned: std::sync::atomic::AtomicBool,
     /// Emulated `PCIe` BAR0 MMIO CSR bank updated during DMA and `TensorCore` execution.
     pub mmio: EmulatedKernelDriverBackend,
+    /// Synchronized runtime telemetry, live buffer registry, and `XSpace` trace state.
+    runtime_state: Arc<SharedTpuRuntimeState>,
+}
+
+impl Drop for SimulatedTpuHal {
+    fn drop(&mut self) {
+        let tag = self.hal_instance_id.wrapping_shl(44);
+        for (&dev_id, dev) in self.devices.get_mut() {
+            for (&addr, bytes) in &dev.allocations {
+                self.runtime_state.record_hbm_dealloc(
+                    dev_id,
+                    DeviceAddress(addr.0 ^ tag),
+                    u64::try_from(bytes.len()).unwrap_or(0),
+                );
+            }
+        }
+    }
 }
 
 impl SimulatedTpuHal {
-    /// Creates a new [`SimulatedTpuHal`] from a [`TpuInitConfig`].
+    /// Creates a new [`SimulatedTpuHal`] from a [`TpuInitConfig`] attached to [`global_shared_runtime_state`].
     ///
     /// # Arguments
     ///
     /// * `config` - Initialization configuration specifying generation and mesh bounds.
     #[must_use]
     pub fn new(config: &TpuInitConfig) -> Self {
+        Self::with_runtime_state(config, Arc::clone(global_shared_runtime_state()))
+    }
+
+    /// Creates a new [`SimulatedTpuHal`] bound to an explicit [`SharedTpuRuntimeState`].
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Initialization configuration specifying generation and mesh bounds.
+    /// * `runtime_state` - Shared telemetry and `XSpace` trace sink.
+    #[must_use]
+    #[allow(clippy::too_many_lines)]
+    pub fn with_runtime_state(
+        config: &TpuInitConfig,
+        runtime_state: Arc<SharedTpuRuntimeState>,
+    ) -> Self {
         let generation = config.generation;
         let devs_per_chip = generation.logical_devices_per_chip();
         let mut devices_spec = Vec::new();
@@ -154,9 +194,14 @@ impl SimulatedTpuHal {
             config.host_bounds.z * config.chips_per_host_bounds.z,
         );
 
+        let hbm_cap_u64 = u64::try_from(generation.hbm_capacity_bytes().0).unwrap_or(0);
+        for &dev_id in state_map.keys() {
+            runtime_state.register_device_capacity(dev_id, hbm_cap_u64);
+        }
+
         let topology = TopologySpec {
             platform_name: String::from("tpu"),
-            platform_version: format!("libtpu-rs 0.0.52 ({generation})"),
+            platform_version: format!("libtpu-rs {} ({generation})", crate::LIBTPU_PYPI_VERSION),
             generation,
             chip_bounds,
             host_bounds: config.host_bounds,
@@ -165,11 +210,29 @@ impl SimulatedTpuHal {
         };
 
         Self {
+            hal_instance_id: NEXT_SIMULATED_HAL_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
             topology,
             devices: Mutex::new(state_map),
             devices_poisoned: std::sync::atomic::AtomicBool::new(false),
             mmio: EmulatedKernelDriverBackend::default(),
+            runtime_state,
         }
+    }
+
+    /// Computes a [`SharedTpuRuntimeState`]-unique telemetry key for `address` on this HAL instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `address` - Local HBM [`DeviceAddress`].
+    #[must_use]
+    const fn telemetry_address(&self, address: DeviceAddress) -> DeviceAddress {
+        DeviceAddress(address.0 ^ self.hal_instance_id.wrapping_shl(44))
+    }
+
+    /// Returns a reference to the attached [`SharedTpuRuntimeState`].
+    #[must_use]
+    pub const fn runtime_state(&self) -> &Arc<SharedTpuRuntimeState> {
+        &self.runtime_state
     }
 
     /// Returns a cloned copy of the discovered [`TopologySpec`].
@@ -209,6 +272,8 @@ impl SimulatedTpuHal {
         dev.capacity_bytes = capacity.0;
         dev.region_allocator.set_capacity(capacity.0);
         drop(guard);
+        self.runtime_state
+            .register_device_capacity(device_id, u64::try_from(capacity.0).unwrap_or(0));
         Ok(())
     }
 
@@ -229,63 +294,19 @@ impl SimulatedTpuHal {
             })
             .unwrap_or(256)
     }
-}
 
-impl TpuHal for SimulatedTpuHal {
-    fn discover_topology(&self) -> LibTpuResult<TopologySpec> {
-        Ok(self.topology_spec())
-    }
-
-    fn allocate_device_memory(
-        &self,
-        device_id: DeviceId,
-        memory_kind: MemoryKind,
-        size: ByteSize,
-    ) -> LibTpuResult<DeviceAddress> {
-        let mut guard = self.lock_devices()?;
-        let dev = guard
-            .get_mut(&device_id)
-            .ok_or(LibTpuError::DeviceNotFound {
-                device_id: device_id.0,
-            })?;
-        let alloc_size = size.0.max(256);
-        let addr = dev.region_allocator.allocate(alloc_size)?;
-        dev.allocations.insert(addr, vec![0_u8; alloc_size]);
-        dev.allocation_kinds.insert(addr, memory_kind);
-        dev.bytes_in_use += alloc_size;
-        dev.peak_bytes_in_use = dev.peak_bytes_in_use.max(dev.bytes_in_use);
-        dev.num_allocs += 1;
-        dev.largest_alloc_size = dev.largest_alloc_size.max(alloc_size);
-        drop(guard);
-        Ok(addr)
-    }
-
-    fn deallocate_device_memory(
-        &self,
-        device_id: DeviceId,
-        address: DeviceAddress,
-    ) -> LibTpuResult<()> {
-        let mut guard = self.lock_devices()?;
-        let dev = guard
-            .get_mut(&device_id)
-            .ok_or(LibTpuError::DeviceNotFound {
-                device_id: device_id.0,
-            })?;
-        let removed =
-            dev.allocations
-                .remove(&address)
-                .ok_or_else(|| LibTpuError::InvalidArgument {
-                    parameter: "address",
-                    reason: format!("Allocation {address} not found on device {device_id}"),
-                })?;
-        let _ = dev.region_allocator.deallocate(address);
-        dev.allocation_kinds.remove(&address);
-        dev.bytes_in_use = dev.bytes_in_use.saturating_sub(removed.len());
-        drop(guard);
-        Ok(())
-    }
-
-    fn write_device_memory(
+    /// Writes `data` into `address` on `device_id` without incrementing public H2D counters.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Target logical TPU device.
+    /// * `address` - Destination HBM [`DeviceAddress`].
+    /// * `data` - Source payload bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `device_id` or `address` is invalid or `data` exceeds capacity.
+    fn write_hbm_raw(
         &self,
         device_id: DeviceId,
         address: DeviceAddress,
@@ -325,7 +346,18 @@ impl TpuHal for SimulatedTpuHal {
         Ok(())
     }
 
-    fn read_device_memory(
+    /// Reads `out.len()` bytes from `address` on `device_id` without incrementing public D2H counters.
+    ///
+    /// # Arguments
+    ///
+    /// * `device_id` - Source logical TPU device.
+    /// * `address` - Source HBM [`DeviceAddress`].
+    /// * `out` - Destination host byte slice.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError`] if `device_id` or `address` is invalid or `out` exceeds buffer size.
+    fn read_hbm_raw(
         &self,
         device_id: DeviceId,
         address: DeviceAddress,
@@ -362,6 +394,98 @@ impl TpuHal for SimulatedTpuHal {
         drop(guard);
         Ok(())
     }
+}
+
+impl TpuHal for SimulatedTpuHal {
+    fn discover_topology(&self) -> LibTpuResult<TopologySpec> {
+        Ok(self.topology_spec())
+    }
+
+    fn allocate_device_memory(
+        &self,
+        device_id: DeviceId,
+        memory_kind: MemoryKind,
+        size: ByteSize,
+    ) -> LibTpuResult<DeviceAddress> {
+        let mut guard = self.lock_devices()?;
+        let dev = guard
+            .get_mut(&device_id)
+            .ok_or(LibTpuError::DeviceNotFound {
+                device_id: device_id.0,
+            })?;
+        let alloc_size = size.0.max(256);
+        let addr = dev.region_allocator.allocate(alloc_size)?;
+        dev.allocations.insert(addr, vec![0_u8; alloc_size]);
+        dev.allocation_kinds.insert(addr, memory_kind);
+        dev.bytes_in_use += alloc_size;
+        dev.peak_bytes_in_use = dev.peak_bytes_in_use.max(dev.bytes_in_use);
+        dev.num_allocs += 1;
+        dev.largest_alloc_size = dev.largest_alloc_size.max(alloc_size);
+        let cap_u64 = u64::try_from(dev.capacity_bytes).unwrap_or(0);
+        drop(guard);
+        self.runtime_state.record_hbm_alloc(
+            device_id,
+            self.telemetry_address(addr),
+            u64::try_from(alloc_size).unwrap_or(0),
+            cap_u64,
+        );
+        Ok(addr)
+    }
+
+    fn deallocate_device_memory(
+        &self,
+        device_id: DeviceId,
+        address: DeviceAddress,
+    ) -> LibTpuResult<()> {
+        let mut guard = self.lock_devices()?;
+        let dev = guard
+            .get_mut(&device_id)
+            .ok_or(LibTpuError::DeviceNotFound {
+                device_id: device_id.0,
+            })?;
+        let removed =
+            dev.allocations
+                .remove(&address)
+                .ok_or_else(|| LibTpuError::InvalidArgument {
+                    parameter: "address",
+                    reason: format!("Allocation {address} not found on device {device_id}"),
+                })?;
+        let removed_len = removed.len();
+        let _ = dev.region_allocator.deallocate(address);
+        dev.allocation_kinds.remove(&address);
+        dev.bytes_in_use = dev.bytes_in_use.saturating_sub(removed_len);
+        drop(guard);
+        self.runtime_state.record_hbm_dealloc(
+            device_id,
+            self.telemetry_address(address),
+            u64::try_from(removed_len).unwrap_or(0),
+        );
+        Ok(())
+    }
+
+    fn write_device_memory(
+        &self,
+        device_id: DeviceId,
+        address: DeviceAddress,
+        data: &[u8],
+    ) -> LibTpuResult<()> {
+        self.write_hbm_raw(device_id, address, data)?;
+        self.runtime_state
+            .record_dma_h2d(u64::try_from(data.len()).unwrap_or(0));
+        Ok(())
+    }
+
+    fn read_device_memory(
+        &self,
+        device_id: DeviceId,
+        address: DeviceAddress,
+        out: &mut [u8],
+    ) -> LibTpuResult<()> {
+        self.read_hbm_raw(device_id, address, out)?;
+        self.runtime_state
+            .record_dma_d2h(u64::try_from(out.len()).unwrap_or(0));
+        Ok(())
+    }
 
     fn copy_device_to_device(
         &self,
@@ -372,10 +496,14 @@ impl TpuHal for SimulatedTpuHal {
         size: ByteSize,
     ) -> LibTpuResult<()> {
         let mut temp = vec![0_u8; size.0];
-        self.read_device_memory(src_device, src_addr, &mut temp)?;
-        self.write_device_memory(dst_device, dst_addr, &temp)
+        self.read_hbm_raw(src_device, src_addr, &mut temp)?;
+        self.write_hbm_raw(dst_device, dst_addr, &temp)?;
+        self.runtime_state
+            .record_dma_d2d(u64::try_from(size.0).unwrap_or(0));
+        Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn execute_program(
         &self,
         device_id: DeviceId,
@@ -467,6 +595,28 @@ impl TpuHal for SimulatedTpuHal {
         self.mmio.set_csr(reg_map.tc1_run_status_csr(), 2);
         self.mmio.set_csr(reg_map.sc0_run_status_csr, 2);
         drop(guard);
+
+        let bundles_retired = u64::try_from(program.instruction_bundles.len().max(1)).unwrap_or(1);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let flops = program.cost_analysis.flops.max(0.0) as u64;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let bytes_accessed = program.cost_analysis.bytes_accessed.max(0.0) as u64;
+        let has_sc = program.instruction_bundles.iter().any(|b| {
+            b.opcode == crate::compiler::TpuOpCode::CustomCall
+                && (b.attrs.custom_call_target.contains("SparseCore")
+                    || b.attrs.custom_call_target.contains("TpuEmbedding"))
+        });
+        let core_idx = CoreIndex(u8::try_from(device_id.0 % 2).unwrap_or(0));
+        self.runtime_state.record_execution(
+            device_id,
+            core_idx,
+            has_sc,
+            &program.name,
+            bundles_retired,
+            vm_cycles,
+            flops,
+            bytes_accessed,
+        );
         Ok(())
     }
 
@@ -508,6 +658,7 @@ impl TpuHal for SimulatedTpuHal {
         dev.peak_bytes_in_use = dev.bytes_in_use;
         dev.largest_alloc_size = 0;
         drop(guard);
+        self.runtime_state.reset_device_peak_hbm(device_id);
         Ok(())
     }
 

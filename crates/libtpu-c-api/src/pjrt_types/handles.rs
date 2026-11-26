@@ -45,6 +45,22 @@ pub struct ExecutableExtensionArena {
     pub overrides_count: usize,
     /// Lifetime-bound serialized buffers owned by this executable until `PJRT_Executable_Destroy`.
     pub owned_buffers: Vec<Box<[u8]>>,
+    /// Cached `PJRT_Layouts_MemoryLayout*` handles for each input parameter shape.
+    pub parameter_layout_ptrs: Vec<*mut PJRT_Layouts_MemoryLayout>,
+    /// Cached `PJRT_Layouts_MemoryLayout*` handles for each output shape.
+    pub output_layout_ptrs: Vec<*mut PJRT_Layouts_MemoryLayout>,
+}
+
+impl Drop for ExecutableExtensionArena {
+    fn drop(&mut self) {
+        for &ptr in self
+            .parameter_layout_ptrs
+            .iter()
+            .chain(self.output_layout_ptrs.iter())
+        {
+            drop(crate::pjrt_helpers::take_live_handle(ptr));
+        }
+    }
 }
 
 /// Opaque C handle wrapping a [`PjrtCoreClient`].
@@ -69,7 +85,11 @@ pub struct PJRT_Client {
     /// Optional distributed key-value store `kv_get` user argument.
     pub kv_get_user_arg: *mut std::ffi::c_void,
     /// Optional distributed key-value store `kv_put` callback pointer.
-    pub kv_put_callback: *const std::ffi::c_void,
+    pub kv_put_callback: Option<
+        unsafe extern "C" fn(
+            *mut crate::pjrt_types::PJRT_KeyValuePutCallback_Args,
+        ) -> *mut PJRT_Error,
+    >,
     /// Optional distributed key-value store `kv_put` user argument.
     pub kv_put_user_arg: *mut std::ffi::c_void,
     /// Optional distributed key-value store `kv_try_get` callback pointer.
@@ -476,6 +496,8 @@ pub struct PjrtSerializedArtifact {
 #[repr(C)]
 #[derive(Debug)]
 pub struct PJRT_Collectives_Communicator {
+    /// Core multi-rank collective communicator engine.
+    pub inner: libtpu_core::distributed::CollectiveCommunicator,
     /// Unique communicator identifier.
     pub communicator_id: libtpu_core::types::CommunicatorId,
     /// Participating device IDs in the clique.
@@ -500,9 +522,9 @@ pub struct PJRT_Layouts_MemoryLayout {
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_MemoryDescription {
-    /// Strongly-typed memory space classification (`Hbm`, `Vmem`, `Smem`, `HostPinned`).
+    /// Strongly-typed memory space classification (`Hbm`, `Vmem`, `Smem`, `HostPinned`, `Cmem`).
     pub kind: libtpu_core::types::MemorySpaceKind,
-    /// Numeric kind ID (`0` = HBM, `1` = VMEM, `2` = SMEM, `3` = `HostPinned`).
+    /// Numeric kind ID (`0` = HBM, `1` = VMEM, `2` = SMEM, `3` = `HostPinned`, `4` = CMEM).
     pub kind_id: i32,
 }
 
@@ -515,22 +537,34 @@ pub type PJRT_ExecutableMetadata_Handle = PjrtSerializedArtifact;
 pub struct PJRT_RawBuffer {
     /// Target `PJRT_Buffer*` being aliased.
     pub buffer_ptr: *mut PJRT_Buffer,
+    /// Target logical [`libtpu_core::types::DeviceId`].
+    pub device_id: libtpu_core::types::DeviceId,
     /// Device HBM/VMEM base address.
     pub device_address: libtpu_core::types::DeviceAddress,
     /// On-device size in bytes.
     pub byte_size: libtpu_core::types::ByteSize,
     /// Owning `PJRT_Memory*` handle.
     pub memory_ptr: *mut PJRT_Memory,
+    /// Shared reference to the backing hardware abstraction layer for direct offset H2D/D2H transfers.
+    pub hal: std::sync::Arc<dyn libtpu_core::hal::TpuHal>,
 }
 
 /// Heap-allocated ABI version handle for `PJRT_AbiVersion_Extension` (`PJRT_AbiVersion_Holder`).
 #[repr(C)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PJRT_AbiVersion_Holder {
     /// Numeric 64-bit platform ID (`TPU_PLATFORM_ID`).
     pub platform_id: u64,
-    /// Runtime or executable ABI version number.
-    pub version: i32,
+    /// Major ABI version (`0`).
+    pub major: u32,
+    /// Minor PJRT/runtime ABI version (`117`).
+    pub minor: u32,
+    /// Patch ABI version (`1` for `0.0.53.1`).
+    pub patch: u32,
+    /// Target [`libtpu_core::types::TpuGeneration`] encoded in this ABI descriptor.
+    pub generation: libtpu_core::types::TpuGeneration,
+    /// Whether this handle represents an executable ABI version (`true`) or runtime ABI version (`false`).
+    pub is_executable: bool,
     /// Owned serialized protobuf bytes (`RuntimeAbiVersionProto` or `ExecutableAbiVersionProto`).
     pub proto_bytes: Vec<u8>,
 }
@@ -551,6 +585,12 @@ pub struct PJRT_MultiSlice_Config {
     pub slice_id: u32,
     /// Number of logical devices per slice.
     pub num_devices_per_slice: u32,
+    /// Unique slice incarnation identifier (`PJRT_Megascale_MultiSliceConfig_GetIncarnationId`).
+    pub incarnation_id: u64,
+    /// Local host index within this slice (`PJRT_Megascale_MultiSliceConfig_GetLocalHostId`).
+    pub local_host_id: i32,
+    /// Total number of hosts across slices (`PJRT_Megascale_MultiSliceConfig_GetNumHosts`).
+    pub num_hosts: i32,
 }
 
 /// Distinct type alias for a Megascale multi-slice configuration handle (`PJRT_Megascale_MultiSliceConfig`).
@@ -603,6 +643,54 @@ pub struct PJRT_PhaseCompile_Compiler {
     pub owned_buffers: parking_lot::Mutex<Vec<Box<[u8]>>>,
 }
 
+/// Heap-allocated relocatable compilation module handle for `PJRT_PhaseCompile_Extension` (`PJRT_Relocatable`).
+#[repr(C)]
+#[derive(Debug)]
+pub struct PJRT_Relocatable {
+    /// Null-terminated relocatable module name bytes (without trailing NUL in slice queries).
+    pub name: Vec<u8>,
+    /// Deterministic build identifier string bytes.
+    pub build_id: Vec<u8>,
+    /// Backend call configuration payload bytes.
+    pub call_backend_config: Vec<u8>,
+    /// Whether this relocatable module has side effects.
+    pub has_side_effects: bool,
+    /// Parameter `PJRT_Buffer_Type` element type codes.
+    pub param_element_types: Vec<i32>,
+    /// Output `PJRT_Buffer_Type` element type codes.
+    pub output_element_types: Vec<i32>,
+    /// Flattened parameter dimensions.
+    pub param_dims_flat: Vec<i64>,
+    /// Rank of each parameter shape.
+    pub param_dim_sizes: Vec<usize>,
+    /// Flattened output dimensions.
+    pub output_dims_flat: Vec<i64>,
+    /// Rank of each output shape.
+    pub output_dim_sizes: Vec<usize>,
+    /// Cached `PJRT_Layouts_MemoryLayout*` handles for parameters.
+    pub param_layout_ptrs: Vec<*mut PJRT_Layouts_MemoryLayout>,
+    /// Cached `PJRT_Layouts_MemoryLayout*` handles for outputs.
+    pub output_layout_ptrs: Vec<*mut PJRT_Layouts_MemoryLayout>,
+    /// Parameter-to-output alias indices (`-1` when unaliased).
+    pub param_output_aliases: Vec<i64>,
+    /// Serialized `TpuExecutableProto` wire bytes for linking/deserialization.
+    pub serialized_bytes: Vec<u8>,
+    /// Retained compiled program backing this relocatable module.
+    pub program: libtpu_core::compiler::CompiledProgram,
+}
+
+impl Drop for PJRT_Relocatable {
+    fn drop(&mut self) {
+        for &ptr in self
+            .param_layout_ptrs
+            .iter()
+            .chain(self.output_layout_ptrs.iter())
+        {
+            drop(crate::pjrt_helpers::take_live_handle(ptr));
+        }
+    }
+}
+
 /// Heap-allocated profiler instance handle for `PLUGIN_Profiler_Api` (`PLUGIN_Profiler_Instance`).
 #[repr(C)]
 #[derive(Debug)]
@@ -611,6 +699,14 @@ pub struct PLUGIN_Profiler_Instance {
     pub inner: libtpu_core::driver::TpuCoreProfiler,
     /// Lifetime-bound serialized `XSpace` buffer retained until the next `CollectData` or `Destroy`.
     pub last_xspace: parking_lot::Mutex<Box<[u8]>>,
+}
+
+/// Heap-allocated consumed profiler trace snapshot handle for `PLUGIN_Profiler_Consume` (`0.0.53.1`).
+#[repr(C)]
+#[derive(Debug)]
+pub struct PLUGIN_Profiler_ConsumeResult {
+    /// Consumed wire-encoded `tensorflow.profiler.XSpace` snapshot bytes.
+    pub xspace_bytes: Box<[u8]>,
 }
 
 /// Program descriptor passed to `PJRT_Client_Compile` (`PJRT_Program`).
@@ -687,6 +783,19 @@ pub struct PJRT_NamedValue {
     pub value_size: usize,
 }
 
+/// Host send callback function pointer type (`PJRT_SendCallback`).
+pub type PjrtSendCallbackFn = unsafe extern "C" fn(
+    *mut PJRT_Chunk,
+    unsafe extern "C" fn(i32, *const c_char, usize) -> *mut PJRT_Error,
+    usize,
+    bool,
+    *mut std::ffi::c_void,
+) -> *mut PJRT_Error;
+
+/// Host receive callback function pointer type (`PJRT_RecvCallback`).
+pub type PjrtRecvCallbackFn =
+    unsafe extern "C" fn(*mut PJRT_CopyToDeviceStream, *mut std::ffi::c_void);
+
 /// Send callback descriptor (`PJRT_SendCallbackInfo`, `32` bytes).
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -696,7 +805,7 @@ pub struct PJRT_SendCallbackInfo {
     /// User callback context pointer.
     pub user_arg: *mut std::ffi::c_void,
     /// Send callback function pointer.
-    pub send_callback: *const std::ffi::c_void,
+    pub send_callback: Option<PjrtSendCallbackFn>,
     /// Extension pointer (`NULL`).
     pub extension_start: *mut PJRT_Extension_Base,
 }
@@ -710,7 +819,7 @@ pub struct PJRT_RecvCallbackInfo {
     /// User callback context pointer.
     pub user_arg: *mut std::ffi::c_void,
     /// Receive callback function pointer.
-    pub recv_callback: *const std::ffi::c_void,
+    pub recv_callback: Option<PjrtRecvCallbackFn>,
     /// Extension pointer (`NULL`).
     pub extension_start: *mut PJRT_Extension_Base,
 }
@@ -836,8 +945,8 @@ pub struct PJRT_ProcessInfo {
 /// # Arguments
 ///
 /// * `minor_env` - Optional string value of `LIBTPU_PJRT_API_MINOR_VERSION`.
-/// * `default_size` - Standard PJRT `v0.116` minimum struct byte size.
-/// * `legacy_size` - Negotiated legacy (`< v0.116`) minimum struct byte size.
+/// * `default_size` - Standard PJRT `v0.117` minimum struct byte size.
+/// * `legacy_size` - Negotiated legacy (`< v0.117`) minimum struct byte size.
 #[must_use]
 pub(crate) fn select_min_struct_size(
     minor_env: Option<&str>,
@@ -845,7 +954,7 @@ pub(crate) fn select_min_struct_size(
     legacy_size: usize,
 ) -> usize {
     match minor_env.and_then(|s| s.parse::<i32>().ok()) {
-        Some(v) if v < 116 => legacy_size,
+        Some(v) if v < 117 => legacy_size,
         _ => default_size,
     }
 }
@@ -853,13 +962,13 @@ pub(crate) fn select_min_struct_size(
 /// Trait implemented by every `PJRT_*_Args` C ABI struct providing its exact minimum valid
 /// `struct_size` (`PJRT_STRUCT_SIZE(type, last_field)`) as disassembled from `libtpu.so`.
 pub trait PjrtArgsStruct: Sized {
-    /// Minimum valid `struct_size` accepted by `PJRT_CheckMatchingStructSizes` in `libtpu.so` (`v0.116`).
+    /// Minimum valid `struct_size` accepted by `PJRT_CheckMatchingStructSizes` in `libtpu.so` (`v0.117`).
     const MIN_STRUCT_SIZE: usize = size_of::<Self>();
 
-    /// Minimum valid `struct_size` when negotiating an earlier PJRT minor version (`LIBTPU_PJRT_API_MINOR_VERSION < 116`).
+    /// Minimum valid `struct_size` when negotiating an earlier PJRT minor version (`LIBTPU_PJRT_API_MINOR_VERSION < 117`).
     const LEGACY_MIN_STRUCT_SIZE: usize = Self::MIN_STRUCT_SIZE;
 
-    /// Returns [`Self::LEGACY_MIN_STRUCT_SIZE`] when `LIBTPU_PJRT_API_MINOR_VERSION < 116`, else [`Self::MIN_STRUCT_SIZE`].
+    /// Returns [`Self::LEGACY_MIN_STRUCT_SIZE`] when `LIBTPU_PJRT_API_MINOR_VERSION < 117`, else [`Self::MIN_STRUCT_SIZE`].
     #[must_use]
     fn effective_min_struct_size() -> usize {
         select_min_struct_size(

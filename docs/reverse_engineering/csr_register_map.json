@@ -2,7 +2,7 @@
   "source_table": "filewrapper_toc (*_pf_csrs.br, *_error_collector_error_sources.br, *_chip_parts.binarypb, *_model_parameters.binarypb) + .lrodata PerformanceCounterNameToString shards",
   "schema": "asic_sw.tools.RegisterTranslatorData + hardware.chips.infra.gcsr.gcsrproto.Node.Register",
   "runtime_abi_base_version": 65536,
-  "deepsea_compiler_hash": "04aaaa86d5833da9604b4c12f1d288aeae18f36853d311e8c143611207b66f52",
+  "deepsea_compiler_hash": "f84a06ff88d86dee0671954c599f27eef7633769f4a591870a4e33a1da19ec33",
   "generations": {
     "V2": {
       "codename": "jf",
@@ -99954,5 +99954,6 @@
         }
       ]
     }
-  }
+  },
+  "tpu_runtime_base_abi_version": 167
 }

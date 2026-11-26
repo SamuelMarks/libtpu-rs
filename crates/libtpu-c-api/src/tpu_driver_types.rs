@@ -82,8 +82,10 @@ pub struct TpuHostLocation {
 pub struct TpuTopology {
     /// Underlying simulated HAL storing topology specs.
     pub hal: SimulatedTpuHal,
-    /// Pre-built core locations.
+    /// Pre-built `TensorCore` locations (`core_type = 0`).
     pub core_locations: Vec<TpuCoreLocation>,
+    /// Pre-built `SparseCore` locations (`core_type = 1`).
+    pub sparse_core_locations: Vec<TpuCoreLocation>,
 }
 
 /// Function pointer table stored at offset `0x00` of [`TpuDriver`] (`TpuDriverFn`, `224` bytes, 28 slots).
@@ -161,7 +163,12 @@ pub struct TpuDriver {
     pub fn_table: *const TpuDriverFn,
     /// Underlying driver instance.
     pub inner: TpuCoreDriver,
+    /// Parsed worker URI passed to `TpuDriver_Open` (e.g., `"local://"`).
+    pub worker_uri: String,
 }
+
+/// Event completion callback signature passed to `TpuDriver_AddCallback`.
+pub type TpuDriverCallbackFn = unsafe extern "C" fn(*mut TpuStatus, *mut std::ffi::c_void);
 
 /// Serialized HLO program descriptor passed to `TpuDriver_Compile` (`16` bytes).
 #[repr(C)]
@@ -211,6 +218,21 @@ pub struct TpuSystemInfo {
 pub struct TpuCompiledProgramHandle {
     /// Underlying compiled program.
     pub program: libtpu_core::compiler::CompiledProgram,
+}
+
+/// Distinct compiled program shape handle returned by `TpuDriver_GetCompiledProgramShape`
+/// and freed independently by `TpuDriver_FreeCompiledProgramShape`.
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct TpuCompiledProgramShape {
+    /// Number of input parameters in the compiled program.
+    pub num_parameters: usize,
+    /// Number of outputs in the compiled program.
+    pub num_outputs: usize,
+    /// Parameter shapes snapshot.
+    pub parameter_shapes: Vec<libtpu_core::types::Shape>,
+    /// Output shapes snapshot.
+    pub output_shapes: Vec<libtpu_core::types::Shape>,
 }
 
 /// Loaded program handle returned by `TpuDriver_LoadProgram` (`16` bytes).
@@ -270,6 +292,8 @@ pub struct LibtpuSdk_Client {
     pub metric_names: Vec<String>,
     /// Owned [`LibtpuSdk_Metric`] instances allocated during `LibtpuSdk_GetMetric` calls.
     pub metrics: Vec<Box<LibtpuSdk_Metric>>,
+    /// Strongly-typed C callback function pointers registered via `LibtpuSdk_RegisterDebugCallback`.
+    pub c_debug_callbacks: parking_lot::Mutex<std::collections::BTreeMap<u64, (SdkVoidFn, usize)>>,
 }
 
 /// Opaque C handle representing a `LibtpuSdk_Error`.
@@ -465,8 +489,8 @@ pub struct LibtpuSdk_RuntimeStatus_Destroy_Args {
 pub struct LibtpuSdk_RegisterDebugCallback_Args {
     /// Input `LibtpuSdk_Client*`.
     pub client: *mut LibtpuSdk_Client,
-    /// Callback function pointer.
-    pub callback: *const std::ffi::c_void,
+    /// Nullable C callback function pointer (`void (*)(void*)`).
+    pub callback: Option<SdkVoidFn>,
     /// Opaque user context pointer.
     pub user_data: *mut std::ffi::c_void,
     /// Output registered callback ID (`i64`).

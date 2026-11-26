@@ -6,17 +6,17 @@
 [![% doc coverage](https://img.shields.io/badge/doc%20coverage-100%25-brightgreen.svg)](#verification--quality-gates)
 [![% test coverage](https://img.shields.io/badge/test%20coverage-100%25-brightgreen.svg)](#verification--quality-gates)
 
-**Clean-room, pure-Rust drop-in replacement for Google's closed-source Cloud TPU runtime (`libtpu` v0.0.52).**
+**Clean-room, pure-Rust drop-in replacement for Google's closed-source Cloud TPU runtime (`libtpu` v0.0.53.1).**
 
-`libtpu-rs` implements the complete **OpenXLA PJRT C API (`PJRT_Api` v0.116 — 1,144 bytes, 138 function slots)**, all **17 chained TPU PJRT extensions** plus **`PJRT_FFI_Extension`** (`xla::ffi` custom calls), the **17-slot `LibtpuSdk_Api` (`144` B)**, the **28-slot `TpuDriverFn` (`224` B)**, legacy TensorFlow TPU symbols (`TfTpu_*`, `TpuStatus_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*`), a zero-exception **C++20 RAII & monadic `Result<T>` SDK**, and a drop-in **Python wheel (`libtpu` + `libtpu.sdk`)** powered by **`PyO3` (`abi3-py39`)**, zero-copy **DLPack / PEP 3118 / `ml_dtypes`**, and verified end-to-end against live **`jax`**.
+`libtpu-rs` implements the complete **OpenXLA PJRT C API (`PJRT_Api` v0.117 — 1,144 bytes, 138 function slots)**, all **18 chained TPU PJRT extensions** (`PJRT_FFI_Extension` -> `PJRT_XlaTransform_Extension` -> ... -> `PJRT_Profiler_Extension`), the **17-slot `LibtpuSdk_Api` (`144` B)**, the **28-slot `TpuDriverFn` (`224` B)**, legacy TensorFlow TPU symbols (`TfTpu_*`, `TpuStatus_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*`), a zero-exception **C++20 RAII & monadic `Result<T>` SDK**, and a drop-in **Python wheel (`libtpu` + `libtpu.sdk`, `>=3.9`)** powered by **`PyO3` (`abi3-py39` standard + PEP 703 `cp314t`/`cp315t` free-threaded)**, zero-copy **DLPack / PEP 3118 / `ml_dtypes`**, unified process-wide **`SharedTpuRuntimeState`** telemetry, and verified end-to-end against live **`jax`**.
 
 ---
 
 ## Highlights
 
-- **100% Binary C ABI Parity with Official `libtpu.so` (`v0.0.52`)**:
-  - Exports all **79 Google `libtpu` dynamic C symbols** (`GetPjrtApi`, `GetLibtpuSdkApi`, `PyInit_sdk`, `TfTpu_*`, `TpuDriver_*`, `TpuProfiler_*`, `TpuTopology_*`, `TpuEmbeddingEngine_*`, plus ergonomic `libtpu_rs_*` C helpers) with lifetime-bound arenas and 100% `ffi_catch_unwind` panic containment across every `extern "C"` boundary.
-  - Exact `#[repr(C)]` struct sizes, field offsets, and vtable layouts verified at compile time in both Rust (`offset_of!`) and C11 (`_Static_assert` in `cpp/tests/test_libtpu_c11.c`), including `PJRT_Api` (`1,144` B), all **17 chained `PJRT_Extension_Base` descriptors** (`PJRT_XlaTransform` -> ... -> `PJRT_TpuTopology` `280` B -> ... -> `PJRT_Profiler` `40` B + `PLUGIN_Profiler_Api` `80` B), `PJRT_FFI_Extension` (`48` B), `LibtpuSdk_Api` (`144` B), and `TpuDriverFn` (`224` B).
+- **100% Binary C ABI Parity with Official `libtpu.so` (`v0.0.53.1`, SHA-256 `9b098d86...bcb3dc8`)**:
+  - Exports all **75 Google `libtpu.so` dynamic C symbols** plus `PyInit_sdk` (`sdk.so` standard & free-threaded) and ergonomic `libtpu_rs_*` C helpers with lifetime-bound arenas and 100% `ffi_catch_unwind` panic containment across every `extern "C"` boundary.
+  - Exact `#[repr(C)]` struct sizes, field offsets, and vtable layouts verified at compile time in Rust (`offset_of!`), C11 (`_Static_assert` in `cpp/tests/test_libtpu_c11.c`), and C++20 (`static_assert` in `cpp/src/libtpu.cpp`), including `PJRT_Api` (`1,144` B, `v0.117`), all **18 chained `PJRT_Extension_Base` descriptors** (`PJRT_FFI` `48` B -> `PJRT_XlaTransform` `56` B -> ... -> `PJRT_Megascale` `288` B -> `PJRT_TpuTopology` `280` B -> `PJRT_PhaseCompile` `192` B -> ... -> `PJRT_Profiler` `40` B + `PLUGIN_Profiler_Api` `104` B), `LibtpuSdk_Api` (`144` B), and `TpuDriverFn` (`224` B).
 - **1:1 `.proto` <-> Rust `struct` Synchronization (738 `protodesc_cold` Schemas + `protos/libtpu_ext/`)**:
   - All **738** embedded `google.protobuf.FileDescriptorProto` schemas reconstructed from `libtpu.so` `protodesc_cold` (encompassing the **293** primary TPU, XLA, HLO, PJRT, Shardy, DeepSea, SparseCore/BarnaCore, MegaScale, XPlane, and CoordinationService schemas plus all transitive dependencies) together with `protos/libtpu_ext/*.proto` compile directly via `protox` + `prost-build` into **7,266** strongly-typed Rust structs and **1,139** enums with zero hand-written `*Proto` structs (`scripts/pre_commit.py proto-sync`).
 - **Spec-Compliant MLIR / VHLO / StableHLO / Shardy / Mosaic Compiler & Generation-Exact VLIW / SparseCore Backend**:
@@ -30,39 +30,57 @@
 - **First-Class Rust, C11, C++20, and Python (`PyO3` + Live `jax`) SDKs**:
   - **Rust (`libtpu-core`)**: Safe, strongly-typed APIs using `#[repr(transparent)]` hardware/memory/ISA newtypes and a single unified `LibTpuError` enum (`derive_more::{Display, Error, From}`) — **zero `.unwrap()`, zero `.expect()`, zero `anyhow`/`thiserror`**.
   - **C11 & C++20 (`cpp/src/`)**: Strict `-std=c11` header (`libtpu.h`) and `-fno-exceptions -fno-rtti` C++20 RAII wrappers (`libtpu.hpp` / `libtpu.cpp`) with monadic `libtpu::Result<T>` (`value_or`, `map`, `and_then`).
-  - **Python (`python/libtpu/` & `crates/libtpu-py`)**: Drop-in `libtpu` & `libtpu.sdk` (`tpumonitoring`, `slice`, `tpuz`, `debug`, `diagnostics`) with `PyO3` (`abi3-py39`) native modules (`libtpu._C`, `libtpu/sdk.so`), PEP 3118 buffer protocol, NumPy `__array_interface__` (`ml_dtypes`), DLPack (`__dlpack__`, `from_dlpack`), and live `jax` numerical parity (`python/tests/test_jax_integration.py`).
+  - **Python (`python/libtpu/` & `crates/libtpu-py`, `>=3.9`)**: Drop-in `libtpu` & `libtpu.sdk` (`tpumonitoring`, `slice`, `tpuz`, `debug`, `diagnostics`) with `PyO3` (`abi3-py39` standard + PEP 703 `Py_MOD_GIL_NOT_USED` free-threaded `3.14t`/`3.15t`) native modules (`libtpu._C`, `libtpu/sdk.so`), cross-`cdylib` `SharedTpuRuntimeState` telemetry sync, PEP 3118 buffer protocol, NumPy `__array_interface__` (`ml_dtypes`), DLPack (`__dlpack__`, `from_dlpack`), and live `jax` numerical parity (`python/tests/test_jax_integration.py`).
 
 ---
 
 ## Architecture Overview
 
-```text
-+-----------------------------------------------------------------------------------+
-|                   User Applications & ML Frameworks                               |
-|   JAX / OpenXLA / PyTorch-XLA  |  Python libtpu.sdk  |  C11 & C++20 RAII SDK      |
-+--------------------------------+---------------------+----------------------------+
-                                 |                     |
-                                 v                     v
-+-----------------------------------------------------------------------------------+
-|  crates/libtpu-c-api (cdylib / staticlib: libtpu.so | libtpu.dylib | tpu.dll)     |
-|  * GetPjrtApi() -> PJRT_Api v0.116 (1,144 B, 138 slots) + 17 TPU Extensions       |
-|  * PJRT_FFI_Extension (48 B) | GetLibtpuSdkApi() (144 B) | TpuDriverFn (224 B)    |
-|  * Legacy TfTpu_*, TpuStatus_*, TpuTopology_*, TpuProfiler_*, TpuEmbeddingEngine_*|
-|  * crates/libtpu-py: PyO3 (abi3-py39) libtpu._C & PyInit_sdk + DLPack / PEP 3118  |
-+-----------------------------------------------------------------------------------+
-                                 |
-                                 v
-+-----------------------------------------------------------------------------------+
-|  crates/libtpu-core (100% Safe Core, Unified LibTpuError via derive_more)         |
-|  * proto/       : 738 protodesc_cold + 6 ext .proto -> 7,266 prost structs (1:1)  |
-|  * compiler/    : MLIR v1-v6 / VHLO / StableHLO / Shardy / Mosaic -> Middle-End   |
-|                   (GSPMD, (8,128) Tiling, MSA) -> LLO -> jfc/dfc/pfc/vfc/gfc/iwc  |
-|                   VLIW + SparseCore V2/V3 Binary Codecs & Riegeli Relocations     |
-|  * distributed/ : HTTP/2 gRPC CoordinationService + 2D/3D ICI + MegaScale TCP/DCN |
-|  * hal/         : Sysfs 0x1ae0 + VFIO (0x3B) / Gasket (0xDC) + Real CSR Maps      |
-|                   LinuxDeviceHal over Physical TPU or VirtualVfioGasketDevice     |
-|  * elf/         : ELF64/Mach-O, CFI/RTTI, Brotli CSR & protodesc_cold Forensics   |
-+-----------------------------------------------------------------------------------+
+```mermaid
+flowchart TB
+    subgraph Clients["User & ML Framework Clients"]
+        JaxPy["JAX / OpenXLA / PyTorch-XLA<br/>(PJRT C API & DLPack Zero-Copy)"]
+        PySdkApp["Python SDK Applications<br/>(libtpu & libtpu.sdk: tpuz, tpumonitoring, diagnostics)"]
+        CppApp["C11 & C++20 Applications<br/>(libtpu.h & libtpu.hpp RAII + Result&lt;T&gt;)"]
+    end
+
+    subgraph Bindings["Language SDKs & FFI Wrappers"]
+        PyBind["crates/libtpu-py & python/libtpu/<br/>PyO3 (abi3-py39 + 3.14t/3.15t): libtpu._C & PyInit_sdk<br/>Zero-Copy DLPack, PEP 3118 & ml_dtypes"]
+        CppBind["cpp/src/<br/>libtpu.h (C11 ABI + _Static_assert)<br/>libtpu.hpp (-fno-exceptions RAII + Result&lt;T&gt;)"]
+    end
+
+    subgraph CApi["crates/libtpu-c-api (libtpu.so | .dylib | tpu.dll)"]
+        PjrtApi["GetPjrtApi() -> PJRT_Api v0.117 (1,144 B, 138 slots)<br/>18 Chained TPU Extensions (PJRT_FFI .. PJRT_Profiler)"]
+        LegacyApi["GetLibtpuSdkApi() (144 B) & TpuDriverFn (224 B)<br/>75 Google libtpu.so Symbols: TfTpu_*, TpuStatus_*,<br/>TpuTopology_*, TpuProfiler_*, TpuEmbeddingEngine_*"]
+    end
+
+    subgraph Core["crates/libtpu-core (100% Safe Core, Unified LibTpuError via derive_more)"]
+        Engine["pjrt.rs, driver.rs, types/ & config.rs<br/>PjrtCoreClient, LibtpuSdk & TpuDriver | 29 ElementTypes & Newtypes"]
+        Compiler["compiler/<br/>MLIR v1-v6, VHLO, StableHLO, Shardy & Mosaic<br/>Middle-End (GSPMD, (8, 128) Tiling, MSA)<br/>LLO -> jfc/dfc/pfc/vfc/gfc/iwc VLIW<br/>SparseCore V2/V3 & Riegeli Relocations"]
+        Dist["distributed/<br/>HTTP/2 gRPC CoordinationService (19 RPCs)<br/>2D/3D Twisted-Torus ICI + MegaScale TCP/DCN"]
+        Elf["elf/<br/>ELF64/Mach-O, CFI/RTTI,<br/>Brotli CSR & protodesc_cold Forensics"]
+        Hal["hal/<br/>Sysfs PCIe 0x1ae0 + VFIO (0x3B) / Gasket (0xDC)<br/>194,929-Entry Real CSR Maps + LinuxDeviceHal"]
+        Proto["proto/ & crates/libtpu-proto-s0..s5<br/>738 protodesc_cold + 6 ext .proto<br/>7,266 Prost Structs & 1,139 Enums (1:1)"]
+    end
+
+    subgraph Targets["TPU Execution Backends"]
+        HwTpu["Physical Cloud TPU PCIe 0x1ae0 (v2-v7x)<br/>/dev/vfio/* & /dev/accel* + IOMMU / Hugepages / dma-buf"]
+        VirtTpu["VirtualVfioGasketDevice<br/>Cycle-Accurate Binary VLIW & SparseCore Emulator"]
+    end
+
+    JAX --> PjrtApi
+    PyApp --> PyBind
+    CppApp --> CppBind
+    PyBind -.-> PjrtApi
+    CppBind --> PjrtApi & LegacyApi
+
+    PjrtApi & LegacyApi --> Engine
+    PyBind --> Engine
+
+    Engine --> Compiler & Dist & Hal & Elf
+    Compiler & Dist & Elf --> Proto
+    Compiler --> Hal
+    Hal --> HwTpu & VirtTpu
 ```
 
 See **[`ARCHITECTURE.md`](ARCHITECTURE.md)** for the deep-dive architectural reference and **[`USAGE.md`](USAGE.md)** for Rust, C11, C++20, Python, and JAX usage examples.
@@ -73,9 +91,9 @@ See **[`ARCHITECTURE.md`](ARCHITECTURE.md)** for the deep-dive architectural ref
 
 | Path | Description |
 | :--- | :--- |
-| `crates/libtpu-core/` | Pure-Rust core: 7,266 generated `prost` structs (`738` `protodesc_cold` + `6` `libtpu_ext` `.proto` files), MLIR/StableHLO/Shardy/Mosaic frontend, XLA-TPU middle-end & MSA, LLO + multi-gen VLIW/SparseCore codecs, `LinuxDeviceHal` + `VirtualVfioGasketDevice`, gRPC `CoordinationService` + ICI + MegaScale, and ELF forensics. |
-| `crates/libtpu-c-api/` | ABI-exact `#[repr(C)]` C FFI (`GetPjrtApi`, 17 TPU extensions, `PJRT_FFI_Extension`, `GetLibtpuSdkApi`, `TpuDriver_*`, `TfTpu_*`, `libtpu_rs_*`) with lifetime-bound arenas and 100% `ffi_catch_unwind`. |
-| `crates/libtpu-py/` | `PyO3` (`abi3-py39`) native CPython extensions (`libtpu._C` and `libtpu/sdk.so` `PyInit_sdk`) + zero-copy `DLManagedTensor` capsule bridge. |
+| `crates/libtpu-core/` | Pure-Rust core: generated `prost` structs (`738` `protodesc_cold` + `6` `libtpu_ext` `.proto` files), `SharedTpuRuntimeState` live telemetry & `XSpace` tracer, MLIR/StableHLO/Shardy/Mosaic frontend + `XlaTransformRegistry`, XLA-TPU middle-end & MSA, LLO + multi-gen VLIW/SparseCore codecs, `LinuxDeviceHal` + `VirtualVfioGasketDevice`, gRPC `CoordinationService` + multi-rank `CollectiveCommunicator` + `CrossHostTransferRegistry` + MegaScale, and ELF forensics. |
+| `crates/libtpu-c-api/` | ABI-exact `#[repr(C)]` C FFI (`GetPjrtApi` `v0.117`, 18 chained TPU extensions, `GetLibtpuSdkApi`, `TpuDriver_*`, `TfTpu_*`, `libtpu_rs_*`) with strongly-typed handle registries and 100% `ffi_catch_unwind`. |
+| `crates/libtpu-py/` | `PyO3` (`abi3-py39` + PEP 703 `Py_MOD_GIL_NOT_USED` free-threaded `3.14t`/`3.15t`) native CPython extensions (`libtpu._C` and `libtpu/sdk.so` `PyInit_sdk`) + zero-copy `DLManagedTensor` capsule bridge. |
 | `cpp/` | Two-level CMake project (`cpp/CMakeLists.txt` + `cpp/src/CMakeLists.txt`), C11 header (`libtpu.h`), C11 `_Static_assert` verification (`test_libtpu_c11.c`), and zero-exception C++20 RAII + `Result<T>` SDK (`libtpu.hpp`, `libtpu.cpp`, `test_libtpu.cpp`). |
 | `python/libtpu/` | Drop-in `libtpu` and `libtpu.sdk` (`tpumonitoring`, `slice`, `tpuz`, `debug`, `diagnostics`) with PEP 561 `.pyi` stubs, PEP 3118 buffer protocol, NumPy/`ml_dtypes` interop, and DLPack. |
 | `python/tests/` | 100% branch-covered unit tests plus live end-to-end `jax` numerical parity suite (`test_jax_integration.py`). |
@@ -135,7 +153,7 @@ Every commit is gated by `scripts/pre_commit.py` and `.github/workflows/ci.yml` 
   - Workspace `Cargo.toml` forbids `unsafe_op_in_unsafe_fn` violations and denies `unwrap_used`, `expect_used`, `panic`, `todo`, `unimplemented`, `unreachable`, and `indexing_slicing` across `pedantic` + `nursery` Clippy lints.
   - Zero `anyhow` or `thiserror`: all fallible Rust operations return `Result<T, LibTpuError>` powered by `derive_more`.
   - Python passes `mypy --strict` across all modules, scripts, and `.pyi` stubs; C11/C++20 compile cleanly with `-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -fno-exceptions -fno-rtti -Werror`.
-- **1:1 `.proto` <-> `.rs` Schema Sync (`proto-sync`) & Binary ABI Gate (`abi`)**: Verifies bidirectional parity across all 744 `.proto` files (`738` `protodesc_cold` + `6` `protos/libtpu_ext/`) and dynamically inspects all 79 Google `libtpu` exported symbols (plus `libtpu_rs_*` C helpers), 138 `PJRT_Api` slots, and 17 PJRT extension descriptors.
+- **1:1 `.proto` <-> `.rs` Schema Sync (`proto-sync`) & Binary ABI Gate (`abi`)**: Verifies bidirectional parity across all 744 `.proto` files (`738` `protodesc_cold` + `6` `protos/libtpu_ext/`) and dynamically inspects all 75 Google `libtpu.so` exported symbols (plus `PyInit_sdk` and `libtpu_rs_*` C helpers), 138 `PJRT_Api` slots (`v0.117`), and 18 PJRT extension descriptors.
 
 Run the complete local verification suite with:
 

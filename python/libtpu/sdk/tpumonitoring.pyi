@@ -1,5 +1,6 @@
 """Type stubs for `libtpu.sdk.tpumonitoring`."""
 
+import types
 from collections.abc import Sequence
 
 class ChipCoordinates:
@@ -84,11 +85,18 @@ class SdkClient:
         """Enters a context manager block returning `self`."""
         ...
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `SdkClient` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
         ...
 

@@ -788,13 +788,24 @@ mod tests {
             );
             assert!(!cp_text.is_null());
             assert!(TpuDriver_GetCompiledProgramShape(ptr::null_mut(), cp_text).is_null());
-            assert_eq!(TpuDriver_GetCompiledProgramShape(drv, cp_text), cp_text);
+            assert!(TpuDriver_GetCompiledProgramShape(drv, ptr::null()).is_null());
+            let cp_shape = TpuDriver_GetCompiledProgramShape(drv, cp_text);
+            assert!(!cp_shape.is_null());
+            assert_ne!(
+                cp_shape.cast::<std::ffi::c_void>(),
+                cp_text.cast::<std::ffi::c_void>()
+            );
+            TpuDriver_FreeCompiledProgramShape(cp_shape);
+            TpuDriver_FreeCompiledProgramShape(ptr::null_mut());
             TpuDriver_FreeCompiledProgramHandle(cp_text);
             let cp_text_null =
                 TpuDriver_CompileProgramFromText(drv, ptr::null(), 1, 0, ptr::null());
             TpuDriver_FreeCompiledProgramHandle(cp_text_null);
-            TpuDriver_AddCallback(drv, ptr::null_mut(), ptr::null(), ptr::null_mut());
-            assert!(!TpuDriver_Version().is_null());
+            TpuDriver_AddCallback(drv, ptr::null_mut(), None, ptr::null_mut());
+            assert_eq!(
+                std::ffi::CStr::from_ptr(TpuDriver_Version()).to_bytes(),
+                b"0.0.53.1"
+            );
 
             let st_reset_ok = TpuDriver_Reset(drv);
             assert!(TpuStatus_Ok(st_reset_ok));
@@ -981,7 +992,10 @@ mod tests {
             let cp_prog_alias =
                 TpuDriver_CompileProgram(drv, ptr::addr_of!(hlo_proto), 1, 0, ptr::null());
             assert!(!cp_prog_alias.is_null());
-            TpuDriver_FreeCompiledProgramShape(cp_prog_alias);
+            let cp_prog_shape = TpuDriver_GetCompiledProgramShape(drv, cp_prog_alias);
+            assert!(!cp_prog_shape.is_null());
+            TpuDriver_FreeCompiledProgramShape(cp_prog_shape);
+            TpuDriver_FreeCompiledProgramHandle(cp_prog_alias);
             let st_wait_ev_alias = TpuDriver_WaitForEvent(drv, 0, ptr::null(), 100);
             assert!(TpuStatus_Ok(st_wait_ev_alias));
             TpuDriver_FreeStatus(st_wait_ev_alias);
@@ -1044,6 +1058,283 @@ mod tests {
             let res_mgr = TpuResourceMgr_Create();
             assert!(!res_mgr.is_null());
             TpuResourceMgr_Destroy(res_mgr);
+
+            // Cover remaining branches in driver, runtime, topology, and embedding C APIs
+            assert!(TpuDriver_Open(c"".as_ptr()).is_null());
+            let drv_null = TpuDriver_Open(ptr::null());
+            assert!(!drv_null.is_null());
+            TpuDriver_Close(drv_null);
+            let drv_v6e = TpuDriver_Open(c"local://v6e".as_ptr());
+            assert!(!drv_v6e.is_null());
+            TpuDriver_Close(drv_v6e);
+
+            assert!(!TpuTopology_CoreForId(topo_ptr, 1, 0).is_null());
+            assert!(TpuTopology_CoreForId(topo_ptr, 99, 0).is_null());
+
+            let neg_cores = [-1_i32];
+            let mut bad_cfg_out: *mut c_char = ptr::null_mut();
+            let mut bad_cfg_len: usize = 0;
+            assert_eq!(
+                ConfigureDistributedTpuOp_DoWork(
+                    1,
+                    neg_cores.as_ptr(),
+                    ptr::addr_of_mut!(bad_cfg_len),
+                    ptr::addr_of_mut!(bad_cfg_out),
+                    st_dist,
+                ),
+                -1
+            );
+            TpuStatus_Set(st_dist, 3, c"null-term-err".as_ptr(), -1);
+            assert!(!TpuStatus_Ok(st_dist));
+
+            let mut max_ids_out = 0_i64;
+            let mut max_uniq_out = 0_i64;
+            assert_eq!(
+                SparseCore_GetMaxIdsAndUniques(
+                    c"".as_ptr(),
+                    16,
+                    32,
+                    ptr::addr_of_mut!(max_ids_out),
+                    ptr::addr_of_mut!(max_uniq_out),
+                    st_dist,
+                ),
+                -1
+            );
+
+            // TpuEmbeddingEngine error & multi-descriptor branches
+            let mut part_bad = TpuEmbeddingEngine_ExecutePartitioner_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_ExecutePartitioner_Params>(),
+                priv_data: ptr::null_mut(),
+                tpu_embedding_config_bytes: c"".as_ptr(),
+                tpu_embedding_config_size: 0,
+                common_config_string_size: ptr::null_mut(),
+                common_config_string: ptr::null_mut(),
+                status: st_dist,
+            };
+            assert_eq!(
+                TpuEmbeddingEngine_ExecutePartitioner(ptr::addr_of_mut!(part_bad)),
+                -1
+            );
+
+            let mut part_ok_ptr: *mut c_char = ptr::null_mut();
+            let mut part_ok_len: usize = 0;
+            let valid_emb_cfg = b"table:lookup_tbl:1024:64";
+            let mut part_reg = TpuEmbeddingEngine_ExecutePartitioner_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_ExecutePartitioner_Params>(),
+                priv_data: ptr::null_mut(),
+                tpu_embedding_config_bytes: valid_emb_cfg.as_ptr().cast(),
+                tpu_embedding_config_size: valid_emb_cfg.len(),
+                common_config_string_size: ptr::addr_of_mut!(part_ok_len),
+                common_config_string: ptr::addr_of_mut!(part_ok_ptr),
+                status: st_dist,
+            };
+            assert_eq!(
+                TpuEmbeddingEngine_ExecutePartitioner(ptr::addr_of_mut!(part_reg)),
+                0
+            );
+            TpuConfigurationApi_FreeCharArray(part_ok_ptr);
+
+            // Registered table lookup branch in SparseCore_GetMaxIdsAndUniques (`registered_vocab > 0`)
+            assert!(
+                SparseCore_GetMaxIdsAndUniques(
+                    c"named_table".as_ptr(),
+                    16,
+                    32,
+                    ptr::addr_of_mut!(max_ids_out),
+                    ptr::addr_of_mut!(max_uniq_out),
+                    st_dist,
+                ) > 0
+            );
+
+            let mut mem_bad = TpuEmbeddingEngine_ConfigureMemory_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_ConfigureMemory_Params>(),
+                priv_data: ptr::null_mut(),
+                num_inputs: 0,
+                pad: 0,
+                common_config_string: c"".as_ptr(),
+                common_config_string_size: 0,
+                task_host_config_size: ptr::null_mut(),
+                task_host_config: ptr::null_mut(),
+                status: st_dist,
+            };
+            assert_eq!(
+                TpuEmbeddingEngine_ConfigureMemory(ptr::addr_of_mut!(mem_bad)),
+                -1
+            );
+
+            let mut mem_cfg_ptr: *mut c_char = ptr::null_mut();
+            let mut mem_cfg_len: usize = 0;
+            let mut mem_ok = TpuEmbeddingEngine_ConfigureMemory_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_ConfigureMemory_Params>(),
+                priv_data: ptr::null_mut(),
+                num_inputs: 2,
+                pad: 0,
+                common_config_string: valid_emb_cfg.as_ptr().cast(),
+                common_config_string_size: valid_emb_cfg.len(),
+                task_host_config_size: ptr::addr_of_mut!(mem_cfg_len),
+                task_host_config: ptr::addr_of_mut!(mem_cfg_ptr),
+                status: st_dist,
+            };
+            assert_eq!(
+                TpuEmbeddingEngine_ConfigureMemory(ptr::addr_of_mut!(mem_ok)),
+                0
+            );
+
+            // CollateMemory branches: null array, null bytes with size > 0, empty/valid slices, corrupt proto
+            let mut merged_ptr: *mut c_char = ptr::null_mut();
+            let mut merged_len: usize = 0;
+            let mut col_null_arr = TpuEmbeddingEngine_CollateMemory_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_CollateMemory_Params>(),
+                priv_data: ptr::null_mut(),
+                memory_configs_size: 1,
+                memory_configs: ptr::null(),
+                collated_size: ptr::addr_of_mut!(merged_len),
+                merged_memory_config: ptr::addr_of_mut!(merged_ptr),
+                status: st_dist,
+            };
+            assert_eq!(
+                TpuEmbeddingEngine_CollateMemory(ptr::addr_of_mut!(col_null_arr)),
+                -1
+            );
+
+            let bad_desc = [TpuSerializedProto {
+                bytes: ptr::null_mut(),
+                size: 4,
+            }];
+            col_null_arr.memory_configs = bad_desc.as_ptr();
+            assert_eq!(
+                TpuEmbeddingEngine_CollateMemory(ptr::addr_of_mut!(col_null_arr)),
+                -1
+            );
+
+            let mut corrupt_bytes = *b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01";
+            let empty_and_corrupt = [
+                TpuSerializedProto {
+                    bytes: ptr::null_mut(),
+                    size: 0,
+                },
+                TpuSerializedProto {
+                    bytes: mem_cfg_ptr,
+                    size: 0,
+                },
+                TpuSerializedProto {
+                    bytes: corrupt_bytes.as_mut_ptr().cast(),
+                    size: corrupt_bytes.len(),
+                },
+            ];
+            col_null_arr.memory_configs = empty_and_corrupt.as_ptr();
+            col_null_arr.memory_configs_size = empty_and_corrupt.len();
+            assert_eq!(
+                TpuEmbeddingEngine_CollateMemory(ptr::addr_of_mut!(col_null_arr)),
+                -1
+            );
+
+            let valid_descs = [TpuSerializedProto {
+                bytes: mem_cfg_ptr,
+                size: mem_cfg_len,
+            }];
+            col_null_arr.memory_configs = valid_descs.as_ptr();
+            col_null_arr.memory_configs_size = valid_descs.len();
+            assert_eq!(
+                TpuEmbeddingEngine_CollateMemory(ptr::addr_of_mut!(col_null_arr)),
+                0
+            );
+            assert!(merged_len > 0);
+            TpuConfigurationApi_FreeCharArray(merged_ptr);
+            TpuConfigurationApi_FreeCharArray(mem_cfg_ptr);
+
+            // ConfigureHost & ConnectHosts branches
+            let mut host_bad = TpuEmbeddingEngine_ConfigureHost_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_ConfigureHost_Params>(),
+                priv_data: ptr::null_mut(),
+                num_inputs: 0,
+                pad: 0,
+                common_config_string: c"".as_ptr(),
+                common_config_string_size: 0,
+                task_host_config: ptr::null(),
+                task_host_config_size: 0,
+                tpu_embedding_config_bytes: ptr::null(),
+                tpu_embedding_config_size: 0,
+                network_config_size: ptr::null_mut(),
+                network_config: ptr::null_mut(),
+                status: st_dist,
+            };
+            assert_eq!(
+                TpuEmbeddingEngine_ConfigureHost(ptr::addr_of_mut!(host_bad)),
+                -1
+            );
+
+            let mut host_cfg_ptr: *mut c_char = ptr::null_mut();
+            let mut host_cfg_len: usize = 0;
+            let mut host_ok = TpuEmbeddingEngine_ConfigureHost_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_ConfigureHost_Params>(),
+                priv_data: ptr::null_mut(),
+                num_inputs: 1,
+                pad: 0,
+                common_config_string: valid_emb_cfg.as_ptr().cast(),
+                common_config_string_size: valid_emb_cfg.len(),
+                task_host_config: ptr::null(),
+                task_host_config_size: 0,
+                tpu_embedding_config_bytes: valid_emb_cfg.as_ptr().cast(),
+                tpu_embedding_config_size: valid_emb_cfg.len(),
+                network_config_size: ptr::addr_of_mut!(host_cfg_len),
+                network_config: ptr::addr_of_mut!(host_cfg_ptr),
+                status: st_dist,
+            };
+            assert_eq!(
+                TpuEmbeddingEngine_ConfigureHost(ptr::addr_of_mut!(host_ok)),
+                0
+            );
+
+            let mut conn_params = TpuEmbeddingEngine_ConnectHosts_Params {
+                struct_size: size_of::<TpuEmbeddingEngine_ConnectHosts_Params>(),
+                priv_data: ptr::null_mut(),
+                network_configs: ptr::null(),
+                network_configs_size: 1,
+                status: st_dist,
+            };
+            assert_eq!(
+                TpuEmbeddingEngine_ConnectHosts(ptr::addr_of_mut!(conn_params)),
+                -1
+            );
+            conn_params.network_configs = bad_desc.as_ptr();
+            assert_eq!(
+                TpuEmbeddingEngine_ConnectHosts(ptr::addr_of_mut!(conn_params)),
+                -1
+            );
+            let mut bad_utf8_buf = *b"\xff\xfe";
+            let bad_utf8_host = [
+                TpuSerializedProto {
+                    bytes: ptr::null_mut(),
+                    size: 0,
+                },
+                TpuSerializedProto {
+                    bytes: host_cfg_ptr,
+                    size: 0,
+                },
+                TpuSerializedProto {
+                    bytes: bad_utf8_buf.as_mut_ptr().cast(),
+                    size: 2,
+                },
+            ];
+            conn_params.network_configs = bad_utf8_host.as_ptr();
+            conn_params.network_configs_size = bad_utf8_host.len();
+            assert_eq!(
+                TpuEmbeddingEngine_ConnectHosts(ptr::addr_of_mut!(conn_params)),
+                -1
+            );
+            let good_hosts = [TpuSerializedProto {
+                bytes: host_cfg_ptr,
+                size: host_cfg_len,
+            }];
+            conn_params.network_configs = good_hosts.as_ptr();
+            conn_params.network_configs_size = 1;
+            assert_eq!(
+                TpuEmbeddingEngine_ConnectHosts(ptr::addr_of_mut!(conn_params)),
+                0
+            );
+            TpuConfigurationApi_FreeCharArray(host_cfg_ptr);
+
             TpuStatus_Destroy(st_dist);
 
             TpuDriver_Close(drv);

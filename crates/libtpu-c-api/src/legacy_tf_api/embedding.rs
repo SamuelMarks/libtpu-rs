@@ -56,6 +56,19 @@ fn global_embedding_engine() -> &'static parking_lot::Mutex<TpuCoreEmbeddingEngi
     GLOBAL_EMBEDDING_ENGINE.get_or_init(|| parking_lot::Mutex::new(TpuCoreEmbeddingEngine::new()))
 }
 
+/// Queries the registered float parameter count for `table_name` in [`GLOBAL_EMBEDDING_ENGINE`].
+///
+/// # Arguments
+///
+/// * `table_name` - Name of the embedding table.
+pub(super) fn lookup_registered_table_vocab_size(table_name: &str) -> Option<usize> {
+    global_embedding_engine()
+        .lock()
+        .tables
+        .get(table_name)
+        .map(|bytes| bytes.len() / 4)
+}
+
 /// Executes the TPU embedding partitioner (`TpuEmbeddingEngine_ExecutePartitioner`).
 ///
 /// # Arguments
@@ -94,7 +107,13 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ExecutePartitioner(
             }
         };
         let mut eng = global_embedding_engine().lock();
-        let partitioned = eng.execute_partitioner(cfg_bytes);
+        let Ok(partitioned) = eng.execute_partitioner(cfg_bytes) else {
+            // SAFETY: `TpuStatus_Set` checks `p.status` for null.
+            unsafe {
+                TpuStatus_Set(p.status, 3, c"empty embedding config".as_ptr(), 22);
+            }
+            return -1;
+        };
         drop(eng);
         if !p.common_config_string_size.is_null() {
             // SAFETY: `p.common_config_string_size` is non-null.
@@ -103,10 +122,9 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ExecutePartitioner(
             }
         }
         if !p.common_config_string.is_null() {
-            let cstr = to_c_string(&String::from_utf8_lossy(&partitioned));
-            // SAFETY: `p.common_config_string` is non-null.
+            // SAFETY: `p.common_config_string` is non-null; `alloc_c_byte_buf` preserves arbitrary binary protobuf bytes.
             unsafe {
-                *p.common_config_string = cstr.into_raw();
+                *p.common_config_string = crate::pjrt_helpers::alloc_c_byte_buf(&partitioned);
             }
         }
         0
@@ -152,18 +170,24 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ConfigureMemory(
             }
         };
         let mut eng = global_embedding_engine().lock();
-        eng.configure_memory(cfg_bytes.clone());
+        let Ok(mem_out) = eng.configure_memory(&cfg_bytes) else {
+            // SAFETY: `TpuStatus_Set` checks `p.status` for null.
+            unsafe {
+                TpuStatus_Set(p.status, 3, c"empty memory config".as_ptr(), 19);
+            }
+            return -1;
+        };
         drop(eng);
         if !p.task_host_config_size.is_null() {
             // SAFETY: `p.task_host_config_size` is non-null.
             unsafe {
-                *p.task_host_config_size = cfg_bytes.len();
+                *p.task_host_config_size = mem_out.len();
             }
         }
         if !p.task_host_config.is_null() {
             // SAFETY: `p.task_host_config` is non-null.
             unsafe {
-                *p.task_host_config = to_c_string(&String::from_utf8_lossy(&cfg_bytes)).into_raw();
+                *p.task_host_config = crate::pjrt_helpers::alloc_c_byte_buf(&mem_out);
             }
         }
         0
@@ -196,11 +220,54 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_CollateMemory(
             }
             return -1;
         }
-        let collated = global_embedding_engine().lock().collate_memory();
+        if p.memory_configs_size > 0 && p.memory_configs.is_null() {
+            // SAFETY: `TpuStatus_Set` checks `p.status` for null.
+            unsafe {
+                TpuStatus_Set(p.status, 3, c"memory_configs is null".as_ptr(), 22);
+            }
+            return -1;
+        }
+        let mut owned_slices: Vec<Vec<u8>> = Vec::with_capacity(p.memory_configs_size);
+        if p.memory_configs_size > 0 {
+            // SAFETY: `p.memory_configs` was verified non-null above for `p.memory_configs_size > 0`.
+            let descriptors =
+                unsafe { std::slice::from_raw_parts(p.memory_configs, p.memory_configs_size) };
+            for desc in descriptors {
+                if desc.size > 0 && desc.bytes.is_null() {
+                    // SAFETY: `TpuStatus_Set` checks `p.status` for null.
+                    unsafe {
+                        TpuStatus_Set(p.status, 3, c"memory_config bytes is null".as_ptr(), 27);
+                    }
+                    return -1;
+                }
+                if desc.size == 0 {
+                    owned_slices.push(Vec::new());
+                } else {
+                    // SAFETY: `desc.bytes` is non-null with `desc.size` readable bytes.
+                    let slice =
+                        unsafe { std::slice::from_raw_parts(desc.bytes.cast::<u8>(), desc.size) };
+                    owned_slices.push(slice.to_vec());
+                }
+            }
+        }
+        let refs: Vec<&[u8]> = owned_slices.iter().map(Vec::as_slice).collect();
+        let Ok(collated) = global_embedding_engine().lock().collate_memory(&refs) else {
+            // SAFETY: `TpuStatus_Set` checks `p.status` for null.
+            unsafe {
+                TpuStatus_Set(p.status, 3, c"collate_memory failed".as_ptr(), 21);
+            }
+            return -1;
+        };
         if !p.collated_size.is_null() {
             // SAFETY: `p.collated_size` is non-null.
             unsafe {
                 *p.collated_size = collated.len();
+            }
+        }
+        if !p.merged_memory_config.is_null() {
+            // SAFETY: `p.merged_memory_config` is non-null.
+            unsafe {
+                *p.merged_memory_config = crate::pjrt_helpers::alloc_c_byte_buf(&collated);
             }
         }
         0
@@ -245,7 +312,13 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ConfigureHost(
             }
         };
         let mut eng = global_embedding_engine().lock();
-        let net_cfg = eng.configure_host(host_slice);
+        let Ok(net_cfg) = eng.configure_host(host_slice) else {
+            // SAFETY: `TpuStatus_Set` checks `p.status` for null.
+            unsafe {
+                TpuStatus_Set(p.status, 3, c"empty host config".as_ptr(), 17);
+            }
+            return -1;
+        };
         drop(eng);
         if !p.network_config_size.is_null() {
             // SAFETY: `p.network_config_size` is non-null.
@@ -256,7 +329,7 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ConfigureHost(
         if !p.network_config.is_null() {
             // SAFETY: `p.network_config` is non-null.
             unsafe {
-                *p.network_config = to_c_string(&String::from_utf8_lossy(&net_cfg)).into_raw();
+                *p.network_config = crate::pjrt_helpers::alloc_c_byte_buf(&net_cfg);
             }
         }
         0
@@ -289,7 +362,48 @@ pub unsafe extern "C" fn TpuEmbeddingEngine_ConnectHosts(
             }
             return -1;
         }
-        global_embedding_engine().lock().connect_hosts();
+        if p.network_configs_size > 0 && p.network_configs.is_null() {
+            // SAFETY: `TpuStatus_Set` checks `p.status` for null.
+            unsafe {
+                TpuStatus_Set(p.status, 3, c"network_configs is null".as_ptr(), 23);
+            }
+            return -1;
+        }
+        let mut owned_nets: Vec<Vec<u8>> = Vec::with_capacity(p.network_configs_size);
+        if p.network_configs_size > 0 {
+            // SAFETY: `p.network_configs` was verified non-null above for `p.network_configs_size > 0`.
+            let descriptors =
+                unsafe { std::slice::from_raw_parts(p.network_configs, p.network_configs_size) };
+            for desc in descriptors {
+                if desc.size > 0 && desc.bytes.is_null() {
+                    // SAFETY: `TpuStatus_Set` checks `p.status` for null.
+                    unsafe {
+                        TpuStatus_Set(p.status, 3, c"network_config bytes is null".as_ptr(), 28);
+                    }
+                    return -1;
+                }
+                if desc.size == 0 {
+                    owned_nets.push(Vec::new());
+                } else {
+                    // SAFETY: `desc.bytes` is non-null with `desc.size` readable bytes.
+                    let slice =
+                        unsafe { std::slice::from_raw_parts(desc.bytes.cast::<u8>(), desc.size) };
+                    owned_nets.push(slice.to_vec());
+                }
+            }
+        }
+        let refs: Vec<&[u8]> = owned_nets.iter().map(Vec::as_slice).collect();
+        if global_embedding_engine()
+            .lock()
+            .connect_hosts(&refs)
+            .is_err()
+        {
+            // SAFETY: `TpuStatus_Set` checks `p.status` for null.
+            unsafe {
+                TpuStatus_Set(p.status, 3, c"connect_hosts failed".as_ptr(), 20);
+            }
+            return -1;
+        }
         0
     })
 }
@@ -574,12 +688,12 @@ unsafe fn build_embedding_xla_computation(
         .lock()
         .generate_xla_computation(kind);
     if !p.xla_computation_out.is_null() {
-        let c_str = to_c_string(&String::from_utf8_lossy(&hlo_bytes));
-        let len = c_str.as_bytes().len();
+        let len = hlo_bytes.len();
+        let raw_buf = crate::pjrt_helpers::alloc_c_byte_buf(&hlo_bytes);
         // SAFETY: `p.xla_computation_out` is non-null.
         unsafe {
             (*p.xla_computation_out) = TpuSerializedProto {
-                bytes: c_str.into_raw(),
+                bytes: raw_buf,
                 size: len,
             };
         }

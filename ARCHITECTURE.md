@@ -1,6 +1,6 @@
 # `libtpu-rs` Architecture Guide
 
-This document provides the ground-truth architectural reference for **`libtpu-rs`**, a pure-Rust, zero-external-C++-dependency, binary-ABI-exact re-implementation of Google Cloud's `libtpu.so` and `libtpu/sdk.so` (`v0.0.52`).
+This document provides the ground-truth architectural reference for **`libtpu-rs`**, a pure-Rust, zero-external-C++-dependency, binary-ABI-exact re-implementation of Google Cloud's `libtpu.so` and `libtpu/sdk.so` (`v0.0.53.1`).
 
 ---
 
@@ -14,7 +14,7 @@ This document provides the ground-truth architectural reference for **`libtpu-rs
 6. [Compiler Frontend, XLA-TPU Middle-End, LLO & VLIW/SparseCore Backend (`compiler/*`)](#6-compiler-frontend-xla-tpu-middle-end-llo--vliwsparsecore-backend-compiler)
 7. [Linux Kernel Driver (`VFIO` & `Gasket`), Real CSR Maps & Hardware Emulator (`hal/*`)](#7-linux-kernel-driver-vfio--gasket-real-csr-maps--hardware-emulator-hal)
 8. [Distributed Coordination, 2D/3D Twisted-Torus ICI & MegaScale DCN (`distributed/*`)](#8-distributed-coordination-2d3d-twisted-torus-ici--megascale-dcn-distributed)
-9. [C11 ABI, 138-Slot `PJRT_Api` & 17-Node Extension Chain (`libtpu-c-api` & `cpp/src/libtpu.h`)](#9-c11-abi-138-slot-pjrt_api--17-node-extension-chain-libtpu-c-api--cppsrclibtpuh)
+9. [C11 ABI, 138-Slot `PJRT_Api` & 18-Node Extension Chain (`libtpu-c-api` & `cpp/src/libtpu.h`)](#9-c11-abi-138-slot-pjrt_api--18-node-extension-chain-libtpu-c-api--cppsrclibtpuh)
 10. [Zero-Exception C++20 RAII & Monadic `Result<T>` SDK (`cpp/src/libtpu.hpp`)](#10-zero-exception-c20-raii--monadic-resultt-sdk-cppsrclibtpuhpp)
 11. [Drop-In Python Wheel, `PyO3` (`abi3`) Extensions, DLPack & Live JAX (`libtpu-py` & `python/`)](#11-drop-in-python-wheel-pyo3-abi3-extensions-dlpack--live-jax-libtpu-py--python)
 12. [Zero-Bypass 100% Doc & 100% Function/Line/Branch Coverage Gate (`scripts/pre_commit.py`)](#12-zero-bypass-100-doc--100-functionlinebranch-coverage-gate-scriptspre_commitpy)
@@ -49,7 +49,7 @@ flowchart TD
     subgraph PyPkg["Python Layer (python/ & crates/libtpu-py)"]
         PyMod["python/libtpu/__init__.py & _interop.py<br/>PEP 3118 | __array_interface__ | DLPack"]
         PySdk["python/libtpu/sdk/*<br/>(tpumonitoring, slice, tpuz, debug, diagnostics)"]
-        PyO3Crate["crates/libtpu-py (PyO3 abi3-py39)<br/>libtpu._C & libtpu/sdk.so (PyInit_sdk)"]
+        PyO3Crate["crates/libtpu-py (PyO3 abi3-py39 + 3.14t/3.15t)<br/>libtpu._C & libtpu/sdk.so (PyInit_sdk)"]
     end
 
     subgraph CppLayer["C11 / C++20 Layer (cpp/)"]
@@ -58,8 +58,8 @@ flowchart TD
     end
 
     subgraph CApi["C ABI Layer (crates/libtpu-c-api -> libtpu.so / .dylib / .dll)"]
-        PjrtVtbl["pjrt_vtable.rs & pjrt_*_api/<br/>PJRT_Api v0.116 (1,144 B, 138 Slots)"]
-        ExtChain["extensions.rs & extensions/*<br/>17 TPU Extensions + PJRT_FFI_Extension"]
+        PjrtVtbl["pjrt_vtable.rs & pjrt_*_api/<br/>PJRT_Api v0.117 (1,144 B, 138 Slots)"]
+        ExtChain["extensions.rs & extensions/*<br/>18 Chained TPU Extensions (PJRT_FFI .. PJRT_Profiler)"]
         SdkVtbl["sdk_api.rs<br/>LibtpuSdk_Api v0.1 (144 B, 17 Slots)"]
         LegacyTf["legacy_tf_api/*<br/>TfTpu_*, TpuDriverFn (224 B), Profiler, Embedding"]
     end
@@ -144,33 +144,34 @@ flowchart TD
 
 ---
 
-## 9. C11 ABI, 138-Slot `PJRT_Api` & 17-Node Extension Chain (`libtpu-c-api` & `cpp/src/libtpu.h`)
+## 9. C11 ABI, 138-Slot `PJRT_Api` & 18-Node Extension Chain (`libtpu-c-api` & `cpp/src/libtpu.h`)
 
-- **Panic-Free & Arena-Bound FFI**: Every `extern "C"` entrypoint is wrapped in `ffi_catch_unwind`, and all returned string/slice descriptors live in lifetime-bound arenas owned by `PJRT_Client`, `PJRT_Executable`, or `PJRT_TopologyDescription` (with explicit OpenXLA deleter callbacks).
-- **`PJRT_Api` v0.116 (`1,144` B, 138 Slots) & `PJRT_FFI_Extension` (`ext_type = 3`, `48` B)**: Verified slot-for-slot via Rust `offset_of!` and C11 `_Static_assert` (`cpp/tests/test_libtpu_c11.c`).
-- **17-Node `PJRT_Extension_Base` Chain (`GetPjrtApi()->extension_start`)**:
+- **Panic-Free & Strongly-Typed Handle Registries**: Every `extern "C"` entrypoint is wrapped in `ffi_catch_unwind` over exact `#[repr(C)]` `*_Args` structs and registered live handle tables, with lifetime-bound arenas owned by `PJRT_Client`, `PJRT_Executable`, or `PJRT_TopologyDescription`.
+- **`PJRT_Api` v0.117 (`1,144` B, 138 Slots)**: Verified slot-for-slot via Rust `offset_of!`, C11 `_Static_assert` (`cpp/tests/test_libtpu_c11.c`), and C++20 `static_assert` (`cpp/src/libtpu.cpp`).
+- **18-Node `PJRT_Extension_Base` Chain (`GetPjrtApi()->extension_start`)**:
 
 | Order | Extension Struct | `ext_type` | Size (Bytes) | Function Slots |
 | :---: | :--- | :---: | :---: | :---: |
-| 1 | `PJRT_XlaTransform_Extension` | `29` (`0x1d`) | `56` | `4` |
-| 2 | `PJRT_HostMemoryAllocator_Extension` | `28` (`0x1c`) | `32` | `1` |
-| 3 | `PJRT_MultiSlice_Extension` | `26` (`0x1a`) | `64` | `5` |
-| 4 | `PJRT_Collectives_Extension` | `25` (`0x19`) | `96` | `9` |
-| 5 | `PJRT_AbiVersion_Extension` | `20` (`0x14`) | `120` | `12` |
-| 6 | `PJRT_Shardings_Extension` | `19` (`0x13`) | `40` | `2` |
-| 7 | `PJRT_Megascale_Extension` | `18` (`0x12`) | `248` | `28` |
-| 8 | `PJRT_TpuExecutable_Extension` | `17` (`0x11`) | `96` | `9` |
-| 9 | `PJRT_TpuTopology_Extension` | `16` (`0x10`) | `280` | `32` |
-| 10 | `PJRT_Callback_Extension` | `14` (`0x0e`) | `40` | `2` |
-| 11 | `PJRT_PhaseCompile_Extension` | `9` (`0x09`) | `64` | `5` |
-| 12 | `PJRT_CrossHostTransfers_Extension` | `12` (`0x0c`) | `56` | `4` |
-| 13 | `PJRT_ExecutableMetadata_Extension` | `11` (`0x0b`) | `40` | `2` |
-| 14 | `PJRT_MemoryDescriptions_Extension` | `7` (`0x07`) | `40` | `2` |
-| 15 | `PJRT_Layouts_Extension` | `6` (`0x06`) | `80` | `7` |
-| 16 | `PJRT_RawBuffer_Extension` | `8` (`0x08`) | `80` | `7` |
-| 17 | `PJRT_Profiler_Extension` | `1` (`0x01`) | `40` | `1` (+ `PLUGIN_Profiler_Api` `80` B, `9` slots + header) |
+| 1 | `PJRT_FFI_Extension` | `5` (`0x05`) | `48` | `3` |
+| 2 | `PJRT_XlaTransform_Extension` | `24` (`0x18`) | `56` | `4` |
+| 3 | `PJRT_HostMemoryAllocator_Extension` | `23` (`0x17`) | `32` | `1` |
+| 4 | `PJRT_MultiSlice_Extension` | `22` (`0x16`) | `64` | `5` |
+| 5 | `PJRT_Collectives_Extension` | `21` (`0x15`) | `96` | `9` |
+| 6 | `PJRT_AbiVersion_Extension` | `20` (`0x14`) | `120` | `12` |
+| 7 | `PJRT_Shardings_Extension` | `19` (`0x13`) | `40` | `2` |
+| 8 | `PJRT_Megascale_Extension` | `18` (`0x12`) | `288` | `33` |
+| 9 | `PJRT_TpuExecutable_Extension` | `17` (`0x11`) | `96` | `9` |
+| 10 | `PJRT_TpuTopology_Extension` | `16` (`0x10`) | `280` | `32` |
+| 11 | `PJRT_Callback_Extension` | `14` (`0x0e`) | `40` | `2` |
+| 12 | `PJRT_PhaseCompile_Extension` | `9` (`0x09`) | `192` | `21` |
+| 13 | `PJRT_CrossHostTransfers_Extension` | `12` (`0x0c`) | `56` | `4` |
+| 14 | `PJRT_ExecutableMetadata_Extension` | `13` (`0x0d`) | `40` | `2` |
+| 15 | `PJRT_MemoryDescriptions_Extension` | `6` (`0x06`) | `40` | `2` |
+| 16 | `PJRT_Layouts_Extension` | `4` (`0x04`) | `80` | `7` |
+| 17 | `PJRT_RawBuffer_Extension` | `8` (`0x08`) | `80` | `7` |
+| 18 | `PJRT_Profiler_Extension` | `1` (`0x01`) | `40` | `2` (`PLUGIN_Profiler_Api` `104` B, `11` slots + header) |
 
-- **Additional C Vtables**: `LibtpuSdk_Api` v0.1 (`144` B, 17 slots), `TpuDriverFn` (`224` B, 28 slots), `TfTpu_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*` (79 dynamic exports total), and ergonomic `libtpu_rs_*` C helpers.
+- **Additional C Vtables & Unified Telemetry (`SharedTpuRuntimeState`)**: `LibtpuSdk_Api` v0.1 (`144` B, 17 slots), `TpuDriverFn` (`224` B, 28 slots), `TfTpu_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*` (75 `libtpu.so` dynamic exports + `PyInit_sdk`), and ergonomic `libtpu_rs_*` C helpers—all unified over `libtpu_core::runtime_state::SharedTpuRuntimeState`.
 
 ---
 
@@ -178,14 +179,14 @@ flowchart TD
 
 Built via two-level CMake (`cpp/CMakeLists.txt` + `cpp/src/CMakeLists.txt`) under `-std=c++20 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -fno-exceptions -fno-rtti -Werror`:
 - **`libtpu::Status` & `libtpu::Result<T>`**: `[[nodiscard]]`, move-safe, zero-exception value/status container providing `.value()`, `.value_or()`, `.map()`, and `.and_then()`.
-- **Complete RAII Handle Suite**: `Plugin`, `TopologyDescription`, `DeviceDescription`, `Client`, `Device`, `Memory`, `Buffer`, `AsyncTransferManager`, `CopyToDeviceStream`, `DlPackTensor`, `Executable`, `LoadedExecutable`, `PhaseCompiler`, `ExecuteContext`, `Event`, `CollectiveCommunicator`, `MegaScaleContext`, `FfiCustomCallRegistry`, `Profiler`, `EmbeddingEngine`, and `SdkClient`.
+- **Complete RAII Handle Suite**: `Plugin`, `TopologyDescription`, `DeviceDescription`, `Client`, `Device`, `Memory`, `Buffer`, `RawBuffer`, `AsyncTransferManager`, `CopyToDeviceStream`, `DlPackTensor`, `Executable`, `LoadedExecutable`, `PhaseCompiler`, `XlaTransform`, `ExecuteContext`, `Event`, `CollectiveCommunicator`, `MegaScaleContext`, `MultiSliceConfig`, `FfiCustomCallRegistry`, `Profiler`, `EmbeddingEngine`, and `SdkClient`.
 
 ---
 
-## 11. Drop-In Python Wheel, `PyO3` (`abi3`) Extensions, DLPack & Live JAX (`libtpu-py` & `python/`)
+## 11. Drop-In Python Wheel, `PyO3` (`abi3` + Free-Threaded) Extensions, DLPack & Live JAX (`libtpu-py` & `python/`)
 
-- **Native `PyO3` (`abi3-py39`) Extensions (`crates/libtpu-py`)**: Exports both `libtpu._C` (`PyInit__C`) and `libtpu/sdk.so` (`PyInit_sdk`), mapping `LibTpuError` to typed `libtpu.TpuError` exceptions and constructing `PyCapsule("dltensor")` zero-copy views (`dlpack.rs`).
-- **Custom PEP 517 Maturin Backend (`scripts/maturin_backend.py`)**: Packages `libtpu/libtpu.so`, `libtpu/sdk.so`, and `libtpu/_C.abi3.so` into a single drop-in `pip install .` wheel.
+- **Native `PyO3` (`abi3-py39` + PEP 703 `Py_MOD_GIL_NOT_USED`) Extensions (`crates/libtpu-py`)**: Exports both `libtpu._C` (`PyInit__C`) and `libtpu/sdk.so` (`PyInit_sdk`) for Python `>=3.9` through `3.15` (including free-threaded `cp314t`/`cp315t`), synchronizing telemetry with `libtpu.so` via `ExternalRuntimeSyncVtable`, mapping `LibTpuError` to typed `libtpu.TpuError` exceptions, and constructing `PyCapsule("dltensor")` zero-copy views (`dlpack.rs`).
+- **Custom PEP 517 Maturin Backend (`scripts/maturin_backend.py`)**: Packages `libtpu/libtpu.so`, `libtpu/sdk.so`, and `libtpu/_C` into a single drop-in `pip install .` wheel, automatically switching from `abi3-py39` to `--no-default-features --features=extension-module,freethreaded` when `Py_GIL_DISABLED == 1`.
 - **Zero-Copy Tensor Protocols (`python/libtpu/_interop.py`)**: Full PEP 3118 buffer protocol, NumPy `__array_interface__` (including `ml_dtypes` `bfloat16`, `float8_*`, `int4`/`uint4`), and DLPack (`__dlpack__`, `__dlpack_device__`, `from_dlpack`).
 - **Live End-to-End `jax` Validation (`python/tests/test_jax_integration.py`)**: Boots real `jax` over `libtpu-rs` (`LinuxDeviceHal<VirtualVfioGasketDevice>`) and verifies numerical parity against JAX CPU across `jnp.matmul` (`f32`/`bf16`), `lax.dot_general`, `lax.conv_general_dilated`, `jax.jit`/`grad`/`vmap`, `lax.scan`/`while_loop`/`cond`, 4-chip `shard_map` collectives, `pallas_call` Mosaic kernels, `jax.pure_callback`, Transformer SGD steps, and `jax.profiler` `XPlane` capture.
 

@@ -15,6 +15,9 @@
 //! - [`crate::distributed::megascale`]: Multi-socket TCP/DCN striped transport, hierarchical `DCN`+`ICI`
 //!   collectives, RTT/ECN congestion windowing, full 16-op `MegaScaleActionGraph` runner, and `RapidEye` digests.
 
+/// Multi-rank [`CollectiveCommunicator`] and [`CrossHostTransferRegistry`] (`Phase 3.2`).
+///
+pub mod communicator;
 /// Wire-compatible HTTP/2 + Protobuf gRPC `tensorflow.CoordinationService` (`Phase 8.1`).
 ///
 pub mod coordination;
@@ -28,6 +31,10 @@ pub mod megascale;
 #[cfg(test)]
 mod phase8_tests;
 
+pub use communicator::{
+    CollectiveCommunicator, CrossHostDescriptorCallback, CrossHostTransferRegistry,
+    global_cross_host_transfer_registry, numeric_element_byte_width, reduce_numeric_buffers,
+};
 pub use coordination::{
     CoordinationGrpcClient, CoordinationGrpcServer, CoordinationServiceState, GrpcProtoEnvelope,
     HTTP2_CLIENT_PREFACE, HpackCodec, Http2Frame, Http2FrameType, MultiHostTopologyHandshake,

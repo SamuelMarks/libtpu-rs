@@ -1,23 +1,26 @@
-# `libtpu` Python Wheel & Package API Specification (`libtpu-0.0.52`)
+# `libtpu` Python Wheel & Package API Specification (`libtpu-0.0.53.1`)
 
 ## 1. Wheel Distribution Metadata
 - **Package Name**: `libtpu`
-- **Version Analyzed**: `0.0.52`
-- **Wheel Archive**: `libtpu-0.0.52-cp311-cp311-manylinux_2_31_x86_64.whl` (137,064,406 bytes compressed)
+- **Version Analyzed**: `0.0.53.1`
+- **Wheel Archives**:
+  - Standard GIL: `libtpu-0.0.53.1-cp311-cp311-manylinux_2_31_x86_64.whl` (136,292,813 bytes compressed, SHA-256 `e300a3ccd01933894103303c9886c6c0dc88fcd3166928cecfd1e36b54ae95d3`)
+  - Free-Threaded: `libtpu-0.0.53.1-cp314-cp314t-manylinux_2_31_x86_64.whl` (136,293,947 bytes compressed, SHA-256 `838295bfc8560136d0ebe4eecb55786eb2d5031a38e3d921b7e58b1977fab0b8`)
 - **Supported Python ABIs**: `cp311`, `cp312`, `cp313`, `cp314`, `cp314t` (free-threaded), `cp315`, `cp315t` (free-threaded)
 
 ## 2. Packaged Files (`RECORD`)
 | File Path | Size (Bytes) | SHA-256 Digest (URL-safe Base64) | Purpose |
 | :--- | ---: | :--- | :--- |
 | `libtpu/__init__.py` | 1,131 | `SoGncWaQwZYo1QEXcodPH75Y4C7El2NeXtDnDMAyL4M` | Python entrypoint and `TPU_LIBRARY_PATH` auto-configurator |
-| `libtpu/libtpu.so` | 467,479,448 | `-G3k0EoFjmtRAfc-CCS5XyfizsmW0rkZHZz_2nXAMHc` (hex: `f86de4d04a058e6b5101f73e0824b95f27e2cec996d2b9191d9cffda75c03077`) | Primary ELF64 shared library exporting PJRT, TfTpu, TpuTopology, TpuProfiler, TpuEmbeddingEngine, and LibtpuSdk C APIs |
-| `libtpu/sdk.so` | 37,925,248 | `Ywx3I1K0cOHzK3RZrD1geQ-NTVAAdHOQ6963Q8HzMYY` (hex: `630c772352b470e1f32b7459ac3d60790f8d4d5000747390ebdeb743c1f33186`) | Companion C++/Python SDK shared library for telemetry, diagnostics, and debug introspection |
+| `libtpu/libtpu.so` | 451,904,656 | `mwmNhl1-1YWSZG3z1-vpiNrfs_REAR3a6ZsjC7_LPcg` (hex: `9b098d865d7ed58592646df3d7ebe988dadfb3f444011ddae99b230bbfcb3dc8`) | Primary ELF64 shared library exporting PJRT, TfTpu, TpuTopology, TpuProfiler, TpuEmbeddingEngine, and LibtpuSdk C APIs |
+| `libtpu/sdk.so` (GIL) | 37,925,248 | `Ywx3I1K0cOHzK3RZrD1geQ-NTVAAdHOQ6963Q8HzMYY` (hex: `630c772352b470e1f32b7459ac3d60790f8d4d5000747390ebdeb743c1f33186`) | Standard-GIL C++/Python SDK shared library |
+| `libtpu/sdk.so` (`cp314t`/`cp315t`) | 37,930,208 | (hex: `7fb29a9b394037ac61d984948afa55147c49248cf75cd6e518c445e4a80284f6`) | Free-threaded PEP 703 (`Py_MOD_GIL_NOT_USED`) C++/Python SDK shared library |
 | `libtpu/LICENSE` | 298 | `zRkcmy07EP-5bNpkwrs-l2CFSWfdXWDXLlcgVh7PwSQ` | License notice |
-| `libtpu/THIRD_PARTY_NOTICES.txt` | 813,975 | `64tvOtSU4ZP5i7F6CFUxY8KK7IQqeKQCB_v5V-GXI2M` | Open-source attributions for `libtpu.so` |
+| `libtpu/THIRD_PARTY_NOTICES.txt` | 813,136 | `oCAVcZUvkTKeCAc2eGx8EjohirdLpqrup2mKF8e1zm0` | Open-source attributions for `libtpu.so` |
 | `libtpu/SDK_THIRD_PARTY_NOTICES.txt` | 243,577 | `gF-LaZX2vepR9jFDJ9VSAdbo1Xd2GBmUupkZjs8SsBY` | Open-source attributions for `sdk.so` |
-| `libtpu-0.0.52.dist-info/METADATA` | 2,061 | `wCKn8kvEkcqREhATlrs9EGWwfxWSKyia7cM-ISVIPSU` | Wheel package metadata |
-| `libtpu-0.0.52.dist-info/WHEEL` | 113 | `QvAd-x6XxWldJJIwKax41x0nqeGGzZdWKAl-5HwV6LQ` | Wheel build tags |
-| `libtpu-0.0.52.dist-info/top_level.txt` | 7 | `osLnDQBl5z7VhfpbHzbmqr5CNtGhnkU3Ue2zh1MfUKQ` | Top-level module name (`libtpu`) |
+| `libtpu-0.0.53.1.dist-info/METADATA` | 2,063 | `MfAQH9f_Zam5U1gdsEkXiDZ4SMPQ0yDFcI8bxrePQaE` | Wheel package metadata |
+| `libtpu-0.0.53.1.dist-info/WHEEL` | 113 | `0B89AfT_CGX5BNplYiOVk_nJ0Gg1wUFv8a9GvZXvyQ8` | Wheel build tags |
+| `libtpu-0.0.53.1.dist-info/top_level.txt` | 7 | `osLnDQBl5z7VhfpbHzbmqr5CNtGhnkU3Ue2zh1MfUKQ` | Top-level module name (`libtpu`) |
 
 ## 3. Exact `libtpu/__init__.py` Behavior
 1. **`__version__: str`**:

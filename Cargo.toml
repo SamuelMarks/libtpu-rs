@@ -13,7 +13,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.52"
+version = "0.0.53"
 edition = "2024"
 rust-version = "1.85"
 license = "Apache-2.0 OR MIT"
@@ -59,7 +59,7 @@ prost-build = { version = "0.14", default-features = false }
 prost-reflect = { version = "0.16", default-features = false, features = ["serde", "text-format"] }
 prost-types = { version = "0.14", default-features = false }
 protox = { version = "0.10", default-features = false }
-pyo3 = { version = "0.30", default-features = false, features = ["abi3-py39"] }
+pyo3 = { version = "0.30", default-features = false }
 rustix = { version = "1.1", default-features = false }
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
@@ -74,7 +74,7 @@ unsafe_op_in_unsafe_fn = "forbid"
 unreachable_pub = "deny"
 unused_qualifications = "deny"
 variant_size_differences = "deny"
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)', 'cfg(Py_GIL_DISABLED)'] }
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "forbid"

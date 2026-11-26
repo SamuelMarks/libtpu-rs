@@ -21,8 +21,16 @@ use pyo3::types::{PyBytes, PyCFunction, PyDict, PyTuple, PyType};
 /// Cached `libtpu.TpuError` Python exception class (`RuntimeError` subclass).
 static TPU_ERROR_CLASS: PyOnceLock<Py<PyType>> = PyOnceLock::new();
 
+/// Number of PEP 489 / PEP 703 `PyModuleDef_Slot` entries (`3` on `Py_GIL_DISABLED`, `2` otherwise).
+#[cfg(Py_GIL_DISABLED)]
+const MODULE_SLOT_COUNT: usize = 3;
+
+/// Number of PEP 489 `PyModuleDef_Slot` entries on standard GIL `CPython` builds.
+#[cfg(not(Py_GIL_DISABLED))]
+const MODULE_SLOT_COUNT: usize = 2;
+
 /// Thread-safe static wrapper around a PEP 489 `PyModuleDef_Slot` table.
-struct SyncModuleSlots(UnsafeCell<[ffi::PyModuleDef_Slot; 2]>);
+struct SyncModuleSlots(UnsafeCell<[ffi::PyModuleDef_Slot; MODULE_SLOT_COUNT]>);
 
 // SAFETY: `PyModuleDef_Slot` entries contain immutable function pointers read by `CPython` under the GIL.
 unsafe impl Sync for SyncModuleSlots {}
@@ -185,7 +193,7 @@ fn parse_element_type_py(py: Python<'_>, dtype_code: i32) -> PyResult<ElementTyp
 ///
 /// Returns [`PyErr`] if module attribute registration fails.
 fn register_c_core_functions(py: Python<'_>, module: &Bound<'_, PyAny>) -> PyResult<()> {
-    let mut res = module.setattr("__version__", env!("CARGO_PKG_VERSION"));
+    let mut res = module.setattr("__version__", libtpu_core::LIBTPU_PYPI_VERSION);
     res = res.and_then(|()| module.setattr("TpuError", tpu_error_type(py)));
     res = res.and_then(|()| {
         register_closure(
@@ -203,7 +211,7 @@ fn register_c_core_functions(py: Python<'_>, module: &Bound<'_, PyAny>) -> PyRes
             module,
             "protodesc_cold_count",
             c"protodesc_cold_count",
-            c"Returns the number of reconstructed `.proto` schemas in `protodesc_cold` (`738`).",
+            c"Returns the number of reconstructed `.proto` schemas in `protodesc_cold`.",
             |_args, _kwargs| Ok(libtpu_core::proto::protodesc_cold_293_file_count()),
         )
     });
@@ -289,7 +297,7 @@ fn register_c_io_functions(py: Python<'_>, module: &Bound<'_, PyAny>) -> PyResul
             let (fmt, code, dims, dtype_code, inputs, init_args): CompileExecArgs =
                 args.extract()?;
             let elem = parse_element_type_py(py_tok, dtype_code)?;
-            let rt = PyTpuRuntime::from_init_args(&init_args)
+            let rt = PyTpuRuntime::shared(&init_args)
                 .map_err(|e| lib_tpu_error_to_py_err(py_tok, &e))?;
             let rank = dims.len();
             let shape = Shape {
@@ -423,7 +431,39 @@ fn register_c_io_functions(py: Python<'_>, module: &Bound<'_, PyAny>) -> PyResul
             },
         )
     });
+    res = res.and_then(|()| register_runtime_sync_binder(py, module));
     res
+}
+
+/// Registers `bind_c_api_runtime_sync(vtable_addr: int)` onto `module` so `libtpu._C` and `sdk.so`
+/// synchronize telemetry with `libtpu.so`.
+///
+/// # Arguments
+///
+/// * `py` - Active `CPython` GIL token.
+/// * `module` - Target Python module object.
+///
+/// # Errors
+///
+/// Returns [`PyErr`] if attribute binding fails.
+fn register_runtime_sync_binder(py: Python<'_>, module: &Bound<'_, PyAny>) -> PyResult<()> {
+    register_closure(
+        py,
+        module,
+        "bind_c_api_runtime_sync",
+        c"bind_c_api_runtime_sync",
+        c"Binds `libtpu.so`'s `ExternalRuntimeSyncVtable` pointer into `SharedTpuRuntimeState`.",
+        |args, _kwargs| {
+            let (vtable_addr,): (usize,) = args.extract()?;
+            let ptr = vtable_addr as *const libtpu_core::runtime_state::ExternalRuntimeSyncVtable;
+            // SAFETY: Caller passes either `0` (unbind) or a `'static` vtable exported by `libtpu.so`.
+            unsafe {
+                libtpu_core::runtime_state::global_shared_runtime_state()
+                    .bind_peer_sync_vtable(ptr);
+            }
+            Ok(())
+        },
+    )
 }
 
 /// Populates the `libtpu._C` native module (`PyInit__C`).
@@ -452,7 +492,7 @@ pub(crate) fn populate_c_module(py: Python<'_>, module: &Bound<'_, PyAny>) -> Py
 /// Returns [`PyErr`] if attribute binding fails.
 #[allow(clippy::too_many_lines)]
 pub(crate) fn populate_sdk_module(py: Python<'_>, module: &Bound<'_, PyAny>) -> PyResult<()> {
-    let mut res = module.setattr("__version__", env!("CARGO_PKG_VERSION"));
+    let mut res = module.setattr("__version__", libtpu_core::LIBTPU_PYPI_VERSION);
     res = res.and_then(|()| module.setattr("TpuError", tpu_error_type(py)));
     res = res.and_then(|()| {
         register_closure(
@@ -462,7 +502,7 @@ pub(crate) fn populate_sdk_module(py: Python<'_>, module: &Bound<'_, PyAny>) -> 
             c"list_supported_metrics",
             c"Returns the canonical list of supported `libtpu.sdk` runtime metric names.",
             |_args, _kwargs| {
-                let bridge = PySdkBridge::new(TpuGeneration::V5e);
+                let bridge = PySdkBridge::shared(TpuGeneration::V5e);
                 Ok(bridge.sdk_client.list_metric_names())
             },
         )
@@ -478,7 +518,7 @@ pub(crate) fn populate_sdk_module(py: Python<'_>, module: &Bound<'_, PyAny>) -> 
                 let py_tok = args.py();
                 let (metric_name, gen_name): (String, String) = args.extract()?;
                 let generation = parse_generation_py(py_tok, &gen_name)?;
-                let bridge = PySdkBridge::new(generation);
+                let bridge = PySdkBridge::shared(generation);
                 let (desc, vals) = bridge
                     .sdk_client
                     .get_metric(&metric_name)
@@ -498,7 +538,7 @@ pub(crate) fn populate_sdk_module(py: Python<'_>, module: &Bound<'_, PyAny>) -> 
                 let py_tok = args.py();
                 let (gen_name,): (String,) = args.extract()?;
                 let generation = parse_generation_py(py_tok, &gen_name)?;
-                let bridge = PySdkBridge::new(generation);
+                let bridge = PySdkBridge::shared(generation);
                 let coords: Vec<(u32, u32, u32, i32)> = bridge
                     .sdk_client
                     .chip_coordinates
@@ -519,10 +559,12 @@ pub(crate) fn populate_sdk_module(py: Python<'_>, module: &Bound<'_, PyAny>) -> 
             c"Returns the human-readable TensorCore state summary for `generation`.",
             |args, _kwargs| {
                 let py_tok = args.py();
-                let (gen_name,): (String,) = args.extract()?;
+                let (gen_name, include_hlo) = args
+                    .extract::<(String, bool)>()
+                    .or_else(|_| args.extract::<(String,)>().map(|(g,)| (g, false)))?;
                 let generation = parse_generation_py(py_tok, &gen_name)?;
-                let bridge = PySdkBridge::new(generation);
-                Ok(bridge.core_state_summary())
+                let bridge = PySdkBridge::shared(generation);
+                Ok(bridge.core_state_summary_with_hlo(include_hlo))
             },
         )
     });
@@ -537,7 +579,7 @@ pub(crate) fn populate_sdk_module(py: Python<'_>, module: &Bound<'_, PyAny>) -> 
                 let py_tok = args.py();
                 let (gen_name,): (String,) = args.extract()?;
                 let generation = parse_generation_py(py_tok, &gen_name)?;
-                let bridge = PySdkBridge::new(generation);
+                let bridge = PySdkBridge::shared(generation);
                 let _ = bridge.profiler.start();
                 let _ = bridge.profiler.stop();
                 let xspace = bridge.profiler.collect_xspace_bytes();
@@ -556,7 +598,7 @@ pub(crate) fn populate_sdk_module(py: Python<'_>, module: &Bound<'_, PyAny>) -> 
                 let py_tok = args.py();
                 let (csr_path, gen_name): (String, String) = args.extract()?;
                 let generation = parse_generation_py(py_tok, &gen_name)?;
-                let bridge = PySdkBridge::new(generation);
+                let bridge = PySdkBridge::shared(generation);
                 bridge.lookup_csr_by_path(&csr_path).ok_or_else(|| {
                     lib_tpu_error_to_py_err(
                         py_tok,
@@ -569,6 +611,7 @@ pub(crate) fn populate_sdk_module(py: Python<'_>, module: &Bound<'_, PyAny>) -> 
             },
         )
     });
+    res = res.and_then(|()| register_runtime_sync_binder(py, module));
     res
 }
 
@@ -624,11 +667,16 @@ pub(crate) unsafe extern "C" fn sdk_module_exec(module: *mut ffi::PyObject) -> c
     })
 }
 
-/// PEP 489 slot array for `libtpu._C`.
+/// PEP 489 / PEP 703 slot array for `libtpu._C`.
 static C_MODULE_SLOTS: SyncModuleSlots = SyncModuleSlots(UnsafeCell::new([
     ffi::PyModuleDef_Slot {
         slot: ffi::Py_mod_exec,
         value: c_module_exec as *mut c_void,
+    },
+    #[cfg(Py_GIL_DISABLED)]
+    ffi::PyModuleDef_Slot {
+        slot: ffi::Py_mod_gil,
+        value: ffi::Py_MOD_GIL_NOT_USED,
     },
     ffi::PyModuleDef_Slot {
         slot: 0,
@@ -649,11 +697,16 @@ static C_MODULE_DEF: SyncModuleDef = SyncModuleDef(UnsafeCell::new(ffi::PyModule
     m_free: None,
 }));
 
-/// PEP 489 slot array for `libtpu/sdk.so`.
+/// PEP 489 / PEP 703 slot array for `libtpu/sdk.so`.
 static SDK_MODULE_SLOTS: SyncModuleSlots = SyncModuleSlots(UnsafeCell::new([
     ffi::PyModuleDef_Slot {
         slot: ffi::Py_mod_exec,
         value: sdk_module_exec as *mut c_void,
+    },
+    #[cfg(Py_GIL_DISABLED)]
+    ffi::PyModuleDef_Slot {
+        slot: ffi::Py_mod_gil,
+        value: ffi::Py_MOD_GIL_NOT_USED,
     },
     ffi::PyModuleDef_Slot {
         slot: 0,

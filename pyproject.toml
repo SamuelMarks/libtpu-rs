@@ -5,7 +5,7 @@ backend-path = ["."]
 
 [project]
 name = "libtpu"
-version = "0.0.52"
+version = "0.0.53.1"
 description = "Clean-room Rust drop-in replacement for Google Cloud TPU runtime library (libtpu)."
 readme = "README.md"
 requires-python = ">=3.9"

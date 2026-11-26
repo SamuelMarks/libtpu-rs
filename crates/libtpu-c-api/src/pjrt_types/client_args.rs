@@ -47,7 +47,11 @@ pub struct PJRT_Client_Create_Args {
     /// Optional key-value get user arg.
     pub kv_get_user_arg: *mut std::ffi::c_void,
     /// Optional key-value put callback.
-    pub kv_put_callback: *const std::ffi::c_void,
+    pub kv_put_callback: Option<
+        unsafe extern "C" fn(
+            *mut PJRT_KeyValuePutCallback_Args,
+        ) -> *mut crate::pjrt_types::PJRT_Error,
+    >,
     /// Optional key-value put user arg.
     pub kv_put_user_arg: *mut std::ffi::c_void,
     /// Output created `PJRT_Client*` (`0x40`).
@@ -289,7 +293,7 @@ pub struct PJRT_Client_CreateViewOfDeviceBuffer_Args {
     /// Target `PJRT_Device*`.
     pub device: *mut PJRT_Device,
     /// Optional deletion callback.
-    pub on_delete_callback: *const std::ffi::c_void,
+    pub on_delete_callback: Option<unsafe extern "C" fn(*mut std::ffi::c_void)>,
     /// Output `PJRT_Buffer*`.
     pub buffer: *mut PJRT_Buffer,
 }

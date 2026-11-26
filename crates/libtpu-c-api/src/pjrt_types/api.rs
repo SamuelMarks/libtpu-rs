@@ -1,8 +1,8 @@
-//! `#[repr(C)]` `PJRT_Api` vtable (`v0.116`, 1,144 bytes), `PJRT_Api_Version`, and `PJRT_Extension_Base`.
+//! `#[repr(C)]` `PJRT_Api` vtable (`v0.117`, 1,144 bytes), `PJRT_Api_Version`, and `PJRT_Extension_Base`.
 
 use crate::pjrt_types::PJRT_Error;
 
-/// Exact byte size of `PJRT_Api` in `libtpu-0.0.52` (`0x478` = 1,144 bytes).
+/// Exact byte size of `PJRT_Api` in `libtpu-0.0.53.1` (`0x478` = 1,144 bytes).
 pub const PJRT_API_STRUCT_SIZE: usize = 1144;
 
 /// Exact byte size of `PJRT_Api_Version` (`0x18` = 24 bytes).
@@ -11,8 +11,8 @@ pub const PJRT_API_VERSION_STRUCT_SIZE: usize = 24;
 /// Supported PJRT major API version (`0`).
 pub const PJRT_API_MAJOR: i32 = 0;
 
-/// Supported PJRT minor API version (`116` / `0x74`).
-pub const PJRT_API_MINOR: i32 = 116;
+/// Supported PJRT minor API version (`117` / `0x75`).
+pub const PJRT_API_MINOR: i32 = 117;
 
 /// Base header for all PJRT extension structures (`PJRT_Extension_Base`).
 #[repr(C)]
@@ -41,7 +41,7 @@ pub struct PJRT_Api_Version {
     pub extension_start: *const PJRT_Extension_Base,
     /// Major version number (`0`).
     pub major_version: i32,
-    /// Minor version number (`116`).
+    /// Minor version number (`117`).
     pub minor_version: i32,
 }
 
@@ -54,15 +54,15 @@ pub type PjrtFn = unsafe extern "C" fn(*mut std::ffi::c_void) -> *mut PJRT_Error
 /// Void-returning PJRT function pointer signature (used by `PJRT_Error_Destroy` and `PJRT_Error_Message`).
 pub type PjrtVoidFn = unsafe extern "C" fn(*mut std::ffi::c_void);
 
-/// Exact 1,144-byte (`143 * 8`) `PJRT_Api` vtable matching `libtpu.so` v0.116 with all 138 slots named.
+/// Exact 1,144-byte (`143 * 8`) `PJRT_Api` vtable matching `libtpu.so` v0.117 with all 138 slots named.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct PJRT_Api {
     /// Total byte size of `PJRT_Api` (`1144` / `0x478`).
     pub struct_size: usize,
-    /// Pointer to the head of the 17-node TPU PJRT extension linked list.
+    /// Pointer to the head of the 18-node TPU PJRT extension linked list.
     pub extension_start: *const PJRT_Extension_Base,
-    /// Embedded 24-byte `PJRT_Api_Version` (`0.116`).
+    /// Embedded 24-byte `PJRT_Api_Version` (`0.117`).
     pub pjrt_api_version: PJRT_Api_Version,
     /// Slot 5 (`0x028`): `PJRT_Error_Destroy`.
     pub pjrt_error_destroy: PjrtVoidFn,

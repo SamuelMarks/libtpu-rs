@@ -1049,7 +1049,7 @@ mod tests {
                 num_options: 0,
                 kv_get_callback: ptr::null(),
                 kv_get_user_arg: ptr::null_mut(),
-                kv_put_callback: ptr::null(),
+                kv_put_callback: None,
                 kv_put_user_arg: ptr::null_mut(),
                 kv_try_get_callback: ptr::null(),
                 kv_try_get_user_arg: ptr::null_mut(),

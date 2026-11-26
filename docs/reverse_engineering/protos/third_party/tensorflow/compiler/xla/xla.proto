@@ -482,9 +482,11 @@ message DebugOptions {
   optional bool xla_gpu_async_dot = 321;
   optional int32 xla_gpu_auto_spmd_partitioning_memory_budget_gb = 224;
   optional float xla_gpu_auto_spmd_partitioning_memory_budget_ratio = 225;
+  optional bool xla_gpu_autotune_flush_l2_cache = 570;
   optional float xla_gpu_autotune_gemm_rtol = 316;
   optional int32 xla_gpu_autotune_level = 123;
   optional int64 xla_gpu_autotune_max_solutions = 288;
+  optional int32 xla_gpu_autotune_num_timed_runs = 571;
   optional int64 xla_gpu_blas_max_algorithms = 523;
   optional bool xla_gpu_collect_cost_model_stats = 240;
   optional int64 xla_gpu_collective_combine_threshold_count = 461;
@@ -601,6 +603,7 @@ message DebugOptions {
   optional int32 xla_gpu_experimental_parallel_scale_up_collective_overlap_limit = 538;
   optional .xla.DebugOptions.PipelineParallelismOptLevel xla_gpu_experimental_pipeline_parallelism_opt_level = 351;
   optional bool xla_gpu_experimental_stream_annotation = 342;
+  optional bool xla_gpu_experimental_use_autotune_cache_also_for_deterministic_ops = 566;
   repeated .xla.DebugOptions.CollectiveKernelType xla_gpu_experimental_use_collective_kernels = 516;
   optional bool xla_gpu_experimental_use_ragged_dot_fusion = 401;
   optional bool xla_gpu_experimental_use_ragged_dot_grouped_gemm = 501;
@@ -775,6 +778,9 @@ message DebugOptions {
   optional bool xla_autotune_cache_require_strict_codegen_match = 559;
   optional bool xla_gpu_experimental_enable_triton_scan = 562;
   optional bool xla_gpu_experimental_enable_horizontal_fusion = 565;
+  optional bool xla_gpu_experimental_multi_phase_fusion = 567;
+  optional bool xla_gpu_temp_buffer_use_collective_color = 568;
+  optional float xla_gpu_experimental_ragged_all_to_all_fabric_cost_weight = 569;
   map<string, string> xla_backend_extra_options = 500;
   optional bool xla_enable_hlo_modules_upload = 535;
 }

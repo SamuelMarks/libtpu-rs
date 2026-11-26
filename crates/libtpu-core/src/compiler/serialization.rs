@@ -324,10 +324,10 @@ impl CompiledProgram {
                 version: 6,
                 variant: String::from("default"),
                 chip_config: String::from("default"),
-                base_abi_version: 165,
+                base_abi_version: 167,
                 hardware_abi_version: 65_539,
                 required_compiler_hash: String::from(
-                    "04aaaa86d5833da9604b4c12f1d288aeae18f36853d311e8c143611207b66f52",
+                    "f84a06ff88d86dee0671954c599f27eef7633769f4a591870a4e33a1da19ec33",
                 ),
                 options: None,
                 host_command_abi_versions: Vec::new(),
@@ -460,10 +460,10 @@ impl CompiledProgram {
                 version: 6,
                 variant: String::from("default"),
                 chip_config: String::from("default"),
-                base_abi_version: 165,
+                base_abi_version: 167,
                 hardware_abi_version: 65_539,
                 required_compiler_hash: String::from(
-                    "04aaaa86d5833da9604b4c12f1d288aeae18f36853d311e8c143611207b66f52",
+                    "f84a06ff88d86dee0671954c599f27eef7633769f4a591870a4e33a1da19ec33",
                 ),
                 options: None,
                 host_command_abi_versions: Vec::new(),
@@ -693,7 +693,7 @@ impl CompiledProgram {
             program_format: String::from("ltpuexec"),
             producer_phase: String::from("binary_serialization"),
             consumer_phases: Vec::new(),
-            version: String::from("0.0.52"),
+            version: String::from(crate::LIBTPU_PYPI_VERSION),
             program_name: self.name.clone(),
         };
         crate::proto::TpuRelocatableProto {

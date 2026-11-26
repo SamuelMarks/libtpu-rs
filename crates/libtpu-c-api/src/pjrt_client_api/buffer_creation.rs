@@ -110,10 +110,7 @@ pub unsafe extern "C" fn PJRT_Client_BufferFromHostBuffer(
 unsafe fn handle_client_create_view_of_device_buffer(
     args: &mut crate::pjrt_types::PJRT_Client_CreateViewOfDeviceBuffer_Args,
 ) -> Result<(), LibTpuError> {
-    if !args.on_delete_callback.is_null() {
-        // SAFETY: `on_delete_callback` is an `extern "C" fn(*mut c_void)`.
-        let cb: unsafe extern "C" fn(*mut std::ffi::c_void) =
-            unsafe { std::mem::transmute(args.on_delete_callback) };
+    if let Some(cb) = args.on_delete_callback {
         // SAFETY: Invoking delete callback with `device_buffer_ptr`.
         unsafe {
             cb(args.device_buffer_ptr.cast_mut());
@@ -269,12 +266,15 @@ unsafe fn handle_client_dma_map(
     args: &mut crate::pjrt_types::PJRT_Client_DmaMap_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `client` is null or a valid `PJRT_Client*`.
-    if let Some(client) = unsafe { args.client.as_ref() } {
-        let base_addr = (args.data as u64).max(0x1000);
-        let size = args.size.max(4096);
-        let _ = client.inner.dma_map(base_addr, size);
+    let client = unsafe { args.client.as_ref() }.ok_or(LibTpuError::NullPointer {
+        parameter: "client",
+    })?;
+    if args.data.is_null() {
+        return Err(LibTpuError::NullPointer { parameter: "data" });
     }
-    Ok(())
+    let base_addr = args.data as u64;
+    let size = args.size.max(4096);
+    client.inner.dma_map(base_addr, size)
 }
 
 /// Pins and maps a host memory region for zero-copy DMA (`PJRT_Client_DmaMap`).
@@ -310,11 +310,14 @@ unsafe fn handle_client_dma_unmap(
     args: &mut crate::pjrt_types::PJRT_Client_DmaUnmap_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `client` is null or a valid `PJRT_Client*`.
-    if let Some(client) = unsafe { args.client.as_ref() } {
-        let base_addr = (args.data as u64).max(0x1000);
-        let _ = client.inner.dma_unmap(base_addr);
+    let client = unsafe { args.client.as_ref() }.ok_or(LibTpuError::NullPointer {
+        parameter: "client",
+    })?;
+    if args.data.is_null() {
+        return Err(LibTpuError::NullPointer { parameter: "data" });
     }
-    Ok(())
+    let base_addr = args.data as u64;
+    client.inner.dma_unmap(base_addr)
 }
 
 /// Unmaps a previously pinned DMA host memory region (`PJRT_Client_DmaUnmap`).

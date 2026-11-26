@@ -265,11 +265,12 @@ message ScCompilationEnvironment {
   optional .xla.jellyfish.SparseCoreBackendOptLevel.Value backend_opt_level = 30;
   optional uint32 tile_tasks_prefetch_ahead = 31;
   optional bool verify_machineinstrs = 32;
-  optional bool disable_mosaic_pipeline = 33;
+  optional bool disable_mosaic_pipeline = 33 [default = true];
   optional .xla.jellyfish.AutoProto enable_accurate_exp = 34;
   optional .xla.jellyfish.AutoProto expm1_mode = 35;
   optional bool enable_barrier_tracing = 36;
   optional .xla.jellyfish.AutoProto enable_progress_tracker = 37;
+  optional .xla.jellyfish.AutoProto mlo_progress_tracker = 38;
 }
 message SparseCoreConfig {
   reserved 6;
@@ -549,6 +550,7 @@ message SteppableCollectiveConfig {
   optional int64 consumer_sync_flag_parameter_index = 1;
   optional int64 consumer_metadata_buffer_parameter_index = 2;
   optional int64 steppable_concurrent_factor = 3;
+  optional int64 num_chunks_per_update = 4;
 }
 message RaggedAllToAllOffloadConfig {
   optional bool use_single_sparse_core = 1;

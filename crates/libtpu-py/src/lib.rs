@@ -17,7 +17,17 @@ use libtpu_core::config::TpuInitConfig;
 use libtpu_core::driver::{LibtpuSdkCoreClient, TpuCoreDriver, TpuCoreProfiler};
 use libtpu_core::error::LibTpuResult;
 use libtpu_core::pjrt::PjrtCoreClient;
+use libtpu_core::runtime_state::{SharedTpuRuntimeState, global_shared_runtime_state};
 use libtpu_core::types::{DeviceId, ElementType, MemorySpaceId, Shape, TpuGeneration};
+use parking_lot::Mutex;
+use std::collections::BTreeMap;
+use std::sync::{Arc, OnceLock};
+
+/// Process-wide cache of [`PyTpuRuntime`] instances keyed by `init_args`.
+static SHARED_PY_RUNTIMES: OnceLock<Mutex<BTreeMap<String, Arc<PyTpuRuntime>>>> = OnceLock::new();
+
+/// Process-wide cache of [`PySdkBridge`] instances keyed by [`TpuGeneration`] discriminant.
+static SHARED_PY_SDK_BRIDGES: OnceLock<Mutex<BTreeMap<i32, Arc<PySdkBridge>>>> = OnceLock::new();
 
 /// High-level Rust session backing the `libtpu` Python package (`PyTpuRuntime`).
 #[derive(Debug)]
@@ -45,10 +55,37 @@ impl PyTpuRuntime {
         Ok(Self { config, client })
     }
 
-    /// Returns the PJRT API version tuple `(major, minor)` (`(0, 116)`).
+    /// Returns or initializes the shared process-wide [`Arc<PyTpuRuntime>`] for `init_args`.
+    ///
+    /// # Arguments
+    ///
+    /// * `init_args` - Whitespace-separated CLI flags (e.g., `"--tpu_generation=v5e"`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`libtpu_core::error::LibTpuError`] if `init_args` contains invalid flags.
+    pub fn shared(init_args: &str) -> LibTpuResult<Arc<Self>> {
+        let key = init_args.trim().to_owned();
+        let cache = SHARED_PY_RUNTIMES.get_or_init(|| Mutex::new(BTreeMap::new()));
+        let cached = cache.lock().get(&key).cloned();
+        if let Some(existing) = cached {
+            return Ok(existing);
+        }
+        let created = Arc::new(Self::from_init_args(&key)?);
+        cache.lock().insert(key, Arc::clone(&created));
+        Ok(created)
+    }
+
+    /// Returns a reference to the process-wide [`SharedTpuRuntimeState`].
+    #[must_use]
+    pub fn runtime_state(&self) -> &'static Arc<SharedTpuRuntimeState> {
+        global_shared_runtime_state()
+    }
+
+    /// Returns the PJRT API version tuple `(major, minor)` (`(0, 117)`).
     #[must_use]
     pub const fn pjrt_api_version() -> (i32, i32) {
-        (0, 116)
+        (0, 117)
     }
 
     /// Returns the active [`TpuGeneration`] of this runtime.
@@ -290,10 +327,29 @@ impl PySdkBridge {
             ..TpuInitConfig::default()
         };
         Self {
-            sdk_client: LibtpuSdkCoreClient::new(),
+            sdk_client: LibtpuSdkCoreClient::from_config(&cfg),
             driver: TpuCoreDriver::open(cfg),
             profiler: TpuCoreProfiler::new(),
         }
+    }
+
+    /// Returns or initializes the shared process-wide [`Arc<PySdkBridge>`] for `generation`
+    /// backed by [`global_shared_runtime_state`].
+    ///
+    /// # Arguments
+    ///
+    /// * `generation` - Target TPU hardware generation.
+    #[must_use]
+    pub fn shared(generation: TpuGeneration) -> Arc<Self> {
+        let key = generation as i32;
+        let cache = SHARED_PY_SDK_BRIDGES.get_or_init(|| Mutex::new(BTreeMap::new()));
+        let cached = cache.lock().get(&key).cloned();
+        if let Some(existing) = cached {
+            return existing;
+        }
+        let created = Arc::new(Self::new(generation));
+        cache.lock().insert(key, Arc::clone(&created));
+        created
     }
 
     /// Queries the driver system information string (`TpuDriver_QuerySystemInfo`).
@@ -306,6 +362,22 @@ impl PySdkBridge {
     #[must_use]
     pub fn core_state_summary(&self) -> String {
         self.sdk_client.core_state_summary()
+    }
+
+    /// Queries the core state summary string, optionally appending recent HLO program history.
+    ///
+    /// # Arguments
+    ///
+    /// * `include_hlo_info` - Whether to append active/completed HLO program metadata.
+    #[must_use]
+    pub fn core_state_summary_with_hlo(&self, include_hlo_info: bool) -> String {
+        let base = self.sdk_client.core_state_summary();
+        if !include_hlo_info {
+            return base;
+        }
+        let progs = self.sdk_client.runtime_state().recent_core_programs();
+        let hlo_count = progs.len();
+        format!("{base} hlo_programs={hlo_count}")
     }
 
     /// Queries a live runtime metric by name (`tpu.runtime.hbm.usage_bytes`, etc.).
@@ -630,9 +702,13 @@ mod tests {
 
     #[test]
     fn test_py_runtime_and_sdk_bridge() {
-        assert_eq!(PyTpuRuntime::pjrt_api_version(), (0, 116));
-        assert_eq!(protodesc_293_catalog_count(), 738);
-        assert_eq!(verify_protodesc_cold_293(), Ok(738));
+        let expected_proto_cnt = libtpu_core::elf::parse_golden_proto_descriptors(include_str!(
+            "../../../docs/reverse_engineering/golden_proto_descriptors.json"
+        ))
+        .map_or(0, |m| m.proto_files_count);
+        assert_eq!(PyTpuRuntime::pjrt_api_version(), (0, 117));
+        assert_eq!(protodesc_293_catalog_count(), expected_proto_cnt);
+        assert_eq!(verify_protodesc_cold_293(), Ok(expected_proto_cnt));
 
         let llo_src = "[pc=0000 gen=v5 stall=0] { S0(op=1, $s0 <- $s0, $s0, imm=0) | V0(AddF32, $v0 <- $v0, $v1, $v0) }";
         let imem_res = assemble_llo_vliw(llo_src);
@@ -853,25 +929,33 @@ mod tests {
                 // SAFETY: `c_mod` is a valid `PyModule`.
                 assert_eq!(unsafe { c_module_exec(c_mod.as_ptr()) }, 0);
 
+                let expected_proto_cnt = libtpu_core::elf::parse_golden_proto_descriptors(
+                    include_str!("../../../docs/reverse_engineering/golden_proto_descriptors.json"),
+                )
+                .map_or(0, |m| m.proto_files_count);
                 let ver: String = c_mod
                     .getattr("__version__")
                     .and_then(|v| v.extract())
                     .unwrap_or_default();
-                assert_eq!(ver, env!("CARGO_PKG_VERSION"));
+                assert_eq!(ver, libtpu_core::LIBTPU_PYPI_VERSION);
 
                 let pjrt_ver: (i32, i32) = c_mod
                     .getattr("pjrt_api_version")
                     .and_then(|f| f.call0())
                     .and_then(|v| v.extract())
                     .unwrap_or((0, 0));
-                assert_eq!(pjrt_ver, (0, 116));
+                assert_eq!(pjrt_ver, (0, 117));
+                if let Ok(bind_fn) = c_mod.getattr("bind_c_api_runtime_sync") {
+                    assert!(bind_fn.call1((0_usize,)).is_ok());
+                    assert!(bind_fn.call0().is_err());
+                }
 
                 let proto_cnt: usize = c_mod
                     .getattr("protodesc_cold_count")
                     .and_then(|f| f.call0())
                     .and_then(|v| v.extract())
                     .unwrap_or(0);
-                assert_eq!(proto_cnt, 738);
+                assert_eq!(proto_cnt, expected_proto_cnt);
 
                 let parse_fn = c_mod.getattr("parse_init_args");
                 assert!(parse_fn.is_ok());
@@ -1091,8 +1175,19 @@ mod tests {
                         .and_then(|v| v.extract())
                         .unwrap_or_default();
                     assert_ne!(summary, "");
+                    let summary_hlo: String = cs_f
+                        .call1(("v5e", true))
+                        .and_then(|v| v.extract())
+                        .unwrap_or_default();
+                    assert!(summary_hlo.contains("hlo_programs="));
                     assert!(cs_f.call1(("bad_gen",)).is_err());
                     assert!(cs_f.call0().is_err());
+                }
+                if let Ok(bind_fn) = sdk_mod.getattr("bind_c_api_runtime_sync") {
+                    assert!(bind_fn.call1((0_usize,)).is_ok());
+                }
+                if let Ok(shared_rt) = PyTpuRuntime::shared("--tpu_generation=v5e") {
+                    assert!(Arc::strong_count(shared_rt.runtime_state()) >= 1);
                 }
                 if let Ok(xs_f) = sdk_mod.getattr("capture_xspace") {
                     let xb: Vec<u8> = xs_f

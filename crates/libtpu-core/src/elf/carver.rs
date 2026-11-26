@@ -2051,14 +2051,18 @@ mod tests {
             && !m.present_in_pool));
         assert_eq!(mappings[0].clone(), mappings[0]);
         assert_ne!(format!("{:?}", mappings[0]), "");
-        assert_eq!(PROTODESC_COLD_293_CATALOG.len(), 738);
-        let all_738_paths: Vec<&str> = PROTODESC_COLD_293_CATALOG
+        let expected_proto_count = crate::elf::parse_golden_proto_descriptors(include_str!(
+            "../../../../docs/reverse_engineering/golden_proto_descriptors.json"
+        ))
+        .map_or(0, |m| m.proto_files_count);
+        assert_eq!(PROTODESC_COLD_293_CATALOG.len(), expected_proto_count);
+        let all_catalog_paths: Vec<&str> = PROTODESC_COLD_293_CATALOG
             .iter()
             .map(|e| e.embedded_path)
             .collect();
-        let all_738_mappings = verify_protodesc_cold_293_closure(&all_738_paths);
-        assert_eq!(all_738_mappings.len(), 738);
-        assert!(all_738_mappings.iter().all(|m| m.present_in_pool));
+        let all_catalog_mappings = verify_protodesc_cold_293_closure(&all_catalog_paths);
+        assert_eq!(all_catalog_mappings.len(), expected_proto_count);
+        assert!(all_catalog_mappings.iter().all(|m| m.present_in_pool));
         assert_eq!(PROTODESC_COLD_293_CATALOG[0], PROTODESC_COLD_293_CATALOG[0]);
         assert_ne!(format!("{:?}", PROTODESC_COLD_293_CATALOG[0]), "");
         for entry in PROTODESC_COLD_293_CATALOG {
@@ -2073,11 +2077,11 @@ mod tests {
         }
         assert_eq!(
             verify_protodesc_cold_293_catalog_closure(PROTODESC_COLD_293_CATALOG),
-            Ok(738)
+            Ok(expected_proto_count)
         );
         let synth_sec = synthesize_protodesc_cold_293_section_bytes();
-        let carved_738 = carve_protodesc_cold_entries(&synth_sec);
-        assert_eq!(carved_738.len(), 738);
+        let carved_all = carve_protodesc_cold_entries(&synth_sec);
+        assert_eq!(carved_all.len(), expected_proto_count);
         assert!(
             verify_protodesc_cold_293_catalog_closure(&[ProtodescColdCatalogEntry {
                 embedded_path: "nonexistent/missing.proto",

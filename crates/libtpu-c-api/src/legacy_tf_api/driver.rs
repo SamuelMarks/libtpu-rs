@@ -60,58 +60,71 @@ pub unsafe extern "C" fn TpuDriver_CompileProgramFromText(
 
 /// Queries the shape of a compiled program (`TpuDriver_GetCompiledProgramShape`).
 ///
+/// Allocates an independent [`crate::tpu_driver_types::TpuCompiledProgramShape`] handle
+/// freed via [`TpuDriver_FreeCompiledProgramShape`].
+///
 /// # Arguments
 ///
 /// * `driver` - Pointer to [`TpuDriver`].
 /// * `handle` - Pointer to [`crate::tpu_driver_types::TpuCompiledProgramHandle`].
+///
+/// # Safety
+///
+/// `driver` and `handle` must be null or valid pointers.
 #[unsafe(no_mangle)]
-pub extern "C" fn TpuDriver_GetCompiledProgramShape(
+pub unsafe extern "C" fn TpuDriver_GetCompiledProgramShape(
     driver: *mut TpuDriver,
-    handle: *mut crate::tpu_driver_types::TpuCompiledProgramHandle,
-) -> *mut crate::tpu_driver_types::TpuCompiledProgramHandle {
+    handle: *const crate::tpu_driver_types::TpuCompiledProgramHandle,
+) -> *mut crate::tpu_driver_types::TpuCompiledProgramShape {
     crate::pjrt_helpers::ffi_catch_unwind(std::ptr::null_mut(), || {
-        if driver.is_null() {
+        if driver.is_null() || handle.is_null() {
             return ptr::null_mut();
         }
-        handle
+        // SAFETY: `handle` is non-null and points to a valid `TpuCompiledProgramHandle`.
+        let prog = unsafe { &(*handle).program };
+        crate::pjrt_helpers::box_registered_handle(
+            crate::tpu_driver_types::TpuCompiledProgramShape {
+                num_parameters: prog.parameter_shapes.len(),
+                num_outputs: prog.output_shapes.len(),
+                parameter_shapes: prog.parameter_shapes.clone(),
+                output_shapes: prog.output_shapes.clone(),
+            },
+        )
     })
 }
 
 /// Registers an event completion callback on a [`TpuDriver`] (`TpuDriver_AddCallback`).
 ///
-/// When `callback_fn` is a valid C function pointer (`> 0x10000`), invokes
-/// `callback_fn(event_status, user_arg)` immediately upon event completion.
+/// When `callback_fn` is `Some(cb)`, invokes `cb(event_status, user_arg)` immediately upon
+/// event completion.
 ///
 /// # Arguments
 ///
 /// * `driver` - Pointer to [`TpuDriver`].
 /// * `event` - Pointer to [`crate::tpu_driver_types::TpuEvent`].
-/// * `callback_fn` - Callback function pointer `extern "C" fn(*mut TpuStatus, *mut c_void)`.
+/// * `callback_fn` - Nullable C callback function pointer `extern "C" fn(*mut TpuStatus, *mut c_void)`.
 /// * `user_arg` - User context pointer.
 ///
 /// # Safety
 ///
-/// `driver` and `event` must be null or valid pointers, and if `callback_fn as usize > 0x10000`,
-/// `callback_fn` must be a valid `extern "C" fn(*mut TpuStatus, *mut std::ffi::c_void)`.
+/// `driver` and `event` must be null or valid pointers, and if `callback_fn` is `Some`,
+/// it must be a valid C function pointer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_AddCallback(
     driver: *mut TpuDriver,
     event: *mut crate::tpu_driver_types::TpuEvent,
-    callback_fn: *const std::ffi::c_void,
+    callback_fn: Option<crate::tpu_driver_types::TpuDriverCallbackFn>,
     user_arg: *mut std::ffi::c_void,
 ) {
     crate::pjrt_helpers::ffi_catch_unwind((), || {
         let _ = driver;
-        if (callback_fn as usize) > 0x10000 {
+        if let Some(cb) = callback_fn {
             let status_ptr = if event.is_null() {
                 ptr::null_mut()
             } else {
                 // SAFETY: `event` is non-null.
                 unsafe { (*event).status }
             };
-            // SAFETY: `callback_fn` is a valid function pointer.
-            let cb: unsafe extern "C" fn(*mut TpuStatus, *mut std::ffi::c_void) =
-                unsafe { std::mem::transmute(callback_fn) };
             // SAFETY: Invoking caller-provided C callback with event status and user_arg.
             unsafe { cb(status_ptr, user_arg) };
         }
@@ -121,7 +134,7 @@ pub unsafe extern "C" fn TpuDriver_AddCallback(
 /// Returns the `TpuDriver` API version string (`TpuDriver_Version`).
 #[unsafe(no_mangle)]
 pub extern "C" fn TpuDriver_Version() -> *const c_char {
-    crate::pjrt_helpers::ffi_catch_unwind(std::ptr::null(), || c"0.0.52".as_ptr())
+    crate::pjrt_helpers::ffi_catch_unwind(std::ptr::null(), || c"0.0.53.1".as_ptr())
 }
 
 /// Static [`TpuDriverFn`] vtable stored at offset `0x00` of [`TpuDriver`] (`224` bytes, 28 slots).
@@ -153,7 +166,7 @@ static GLOBAL_TPU_DRIVER_FN_TABLE: TpuDriverFn = TpuDriverFn {
     reset: TpuDriver_Reset as *const std::ffi::c_void,
     query_system_info: TpuDriver_QuerySystemInfo as *const std::ffi::c_void,
     free_system_info: TpuDriver_FreeSystemInfo as *const std::ffi::c_void,
-    free_compiled_program_shape: TpuDriver_FreeCompiledProgramHandle as *const std::ffi::c_void,
+    free_compiled_program_shape: TpuDriver_FreeCompiledProgramShape as *const std::ffi::c_void,
     version: TpuDriver_Version as *const std::ffi::c_void,
 };
 
@@ -170,7 +183,12 @@ static GLOBAL_TPU_DRIVER_FN_TABLE: TpuDriverFn = TpuDriverFn {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_Initialize(driver_fn: *mut TpuDriverFn, initialize: bool) {
     crate::pjrt_helpers::ffi_catch_unwind((), || {
-        let _ = initialize;
+        if initialize {
+            // SAFETY: Initializing global TPU runtime with zero extra argv flags.
+            unsafe {
+                super::runtime::TfTpu_Initialize(false, 0, ptr::null());
+            }
+        }
         if !driver_fn.is_null() {
             // SAFETY: `driver_fn` is non-null and points to a valid `TpuDriverFn`.
             unsafe {
@@ -184,13 +202,36 @@ pub unsafe extern "C" fn TpuDriver_Initialize(driver_fn: *mut TpuDriverFn, initi
 ///
 /// # Arguments
 ///
-/// * `_worker` - Null-terminated worker specification string (e.g., `"local://"` or null).
+/// * `worker` - Null-terminated worker specification string (e.g., `"local://"`, `"grpc://host:8470"`, or null).
+///
+/// # Safety
+///
+/// `worker` must be null or a valid null-terminated C string.
 #[unsafe(no_mangle)]
-pub extern "C" fn TpuDriver_Open(_worker: *const c_char) -> *mut TpuDriver {
+pub unsafe extern "C" fn TpuDriver_Open(worker: *const c_char) -> *mut TpuDriver {
     crate::pjrt_helpers::ffi_catch_unwind(std::ptr::null_mut(), || {
+        let mut cfg = libtpu_core::config::global_init_config();
+        let worker_uri = if worker.is_null() {
+            String::from("local://")
+        } else {
+            // SAFETY: `worker` is non-null and null-terminated.
+            let raw = unsafe { CStr::from_ptr(worker).to_string_lossy().trim().to_owned() };
+            if raw.is_empty() {
+                return ptr::null_mut();
+            }
+            for token in raw.split(&['/', ':', '?', '&', '='][..]) {
+                if !token.is_empty()
+                    && let Ok(parsed_gen) = libtpu_core::types::TpuGeneration::from_name(token)
+                {
+                    cfg.generation = parsed_gen;
+                }
+            }
+            raw
+        };
         Box::into_raw(Box::new(TpuDriver {
             fn_table: ptr::addr_of!(GLOBAL_TPU_DRIVER_FN_TABLE),
-            inner: TpuCoreDriver::open(libtpu_core::config::global_init_config()),
+            inner: TpuCoreDriver::open(cfg),
+            worker_uri,
         }))
     })
 }
@@ -216,7 +257,7 @@ pub unsafe extern "C" fn TpuDriver_Close(driver: *mut TpuDriver) {
     });
 }
 
-/// Resets a [`TpuDriver`] instance (`TpuDriver_Reset`).
+/// Resets all logical TPU devices managed by a [`TpuDriver`] instance (`TpuDriver_Reset`).
 ///
 /// # Arguments
 ///
@@ -233,7 +274,16 @@ pub unsafe extern "C" fn TpuDriver_Reset(driver: *mut TpuDriver) -> *mut TpuStat
             return unsafe { TpuStatus_Create(3, c"driver is null".as_ptr()) };
         }
         // SAFETY: `driver` is non-null.
-        let _ = unsafe { (*driver).inner.reset(DeviceId(0)) };
+        let drv = unsafe { &*driver };
+        let total_devices = drv
+            .inner
+            .hal
+            .discover_topology()
+            .map_or(1, |t| t.devices.len().max(1));
+        for dev_idx in 0..total_devices {
+            let dev_id = DeviceId(u32::try_from(dev_idx).unwrap_or(0));
+            let _ = drv.inner.reset(dev_id);
+        }
         TpuStatus_New()
     })
 }
@@ -979,22 +1029,24 @@ pub unsafe extern "C" fn TpuDriver_CompileProgram(
     })
 }
 
-/// Alias for [`TpuDriver_FreeCompiledProgramHandle`] (`TpuDriver_FreeCompiledProgramShape`).
+/// Frees a compiled program shape handle (`TpuDriver_FreeCompiledProgramShape`) previously
+/// allocated by [`TpuDriver_GetCompiledProgramShape`].
 ///
 /// # Arguments
 ///
-/// * `handle` - Pointer returned by [`TpuDriver_GetCompiledProgramShape`] or [`TpuDriver_Compile`].
+/// * `shape` - Pointer to [`crate::tpu_driver_types::TpuCompiledProgramShape`] to free, or null.
 ///
 /// # Safety
 ///
-/// `handle` must be null or a valid compiled program handle.
+/// `shape` must be null or allocated by [`TpuDriver_GetCompiledProgramShape`].
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuDriver_FreeCompiledProgramShape(
-    handle: *mut crate::tpu_driver_types::TpuCompiledProgramHandle,
+    shape: *mut crate::tpu_driver_types::TpuCompiledProgramShape,
 ) {
     crate::pjrt_helpers::ffi_catch_unwind((), || {
-        // SAFETY: Delegates directly to `TpuDriver_FreeCompiledProgramHandle`.
-        unsafe { TpuDriver_FreeCompiledProgramHandle(handle) }
+        let _ = crate::pjrt_helpers::take_live_handle::<
+            crate::tpu_driver_types::TpuCompiledProgramShape,
+        >(shape);
     });
 }
 

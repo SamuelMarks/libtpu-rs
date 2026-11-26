@@ -695,9 +695,10 @@ unsafe fn handle_buffer_unsafe_pointer(
     args: &mut crate::pjrt_types::PJRT_Buffer_UnsafePointer_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `buffer` is null or a valid `PJRT_Buffer*`.
-    args.buffer_pointer = unsafe { args.buffer.as_ref() }.map_or(0x1000, |b| {
-        usize::try_from(b.inner.address.0).unwrap_or(0x1000)
-    });
+    let buf = unsafe { args.buffer.as_ref() }.ok_or(LibTpuError::NullPointer {
+        parameter: "buffer",
+    })?;
+    args.buffer_pointer = usize::try_from(buf.inner.address.0).unwrap_or(0);
     Ok(())
 }
 
@@ -814,10 +815,11 @@ unsafe fn handle_buffer_opaque_ptr(
     args: &mut crate::pjrt_types::PJRT_Buffer_OpaqueDeviceMemoryDataPointer_Args,
 ) -> Result<(), LibTpuError> {
     // SAFETY: `buffer` is null or a valid `PJRT_Buffer*`.
-    args.device_memory_ptr = unsafe { args.buffer.as_ref() }
-        .map_or(0x1000 as *mut std::ffi::c_void, |b| {
-            usize::try_from(b.inner.address.0).unwrap_or(0x1000) as *mut std::ffi::c_void
-        });
+    let buf = unsafe { args.buffer.as_ref() }.ok_or(LibTpuError::NullPointer {
+        parameter: "buffer",
+    })?;
+    args.device_memory_ptr =
+        usize::try_from(buf.inner.address.0).unwrap_or(0) as *mut std::ffi::c_void;
     Ok(())
 }
 

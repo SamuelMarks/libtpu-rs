@@ -12,7 +12,7 @@ use super::*;
 fn build_topology_from_config(cfg: &TpuInitConfig) -> TpuTopology {
     let hal = SimulatedTpuHal::new(cfg);
     let spec = hal.topology_spec();
-    let core_locations = spec
+    let core_locations: Vec<TpuCoreLocation> = spec
         .devices
         .iter()
         .map(|d| TpuCoreLocation {
@@ -23,9 +23,27 @@ fn build_topology_from_config(cfg: &TpuInitConfig) -> TpuTopology {
             chip_z: i32::try_from(d.chip_coords.z).unwrap_or(0),
         })
         .collect();
+    let sc_per_dev = usize::try_from(spec.generation.sparse_cores_per_device().max(1)).unwrap_or(1);
+    let mut sparse_core_locations = Vec::with_capacity(spec.devices.len() * sc_per_dev);
+    let mut next_sc_id = 0_i32;
+    for d in &spec.devices {
+        let base_idx =
+            i32::try_from(d.core_on_chip.0).unwrap_or(0) * i32::try_from(sc_per_dev).unwrap_or(1);
+        for sc_offset in 0..i32::try_from(sc_per_dev).unwrap_or(1) {
+            sparse_core_locations.push(TpuCoreLocation {
+                core_id: next_sc_id,
+                index_on_chip: base_idx + sc_offset,
+                chip_x: i32::try_from(d.chip_coords.x).unwrap_or(0),
+                chip_y: i32::try_from(d.chip_coords.y).unwrap_or(0),
+                chip_z: i32::try_from(d.chip_coords.z).unwrap_or(0),
+            });
+            next_sc_id = next_sc_id.saturating_add(1);
+        }
+    }
     TpuTopology {
         hal,
         core_locations,
+        sparse_core_locations,
     }
 }
 
@@ -271,12 +289,27 @@ pub unsafe extern "C" fn TpuTopology_HasChip(
     })
 }
 
+/// Selects the slice of [`TpuCoreLocation`] entries matching `core_type`
+/// (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
+///
+/// # Arguments
+///
+/// * `topo` - Resolved [`TpuTopology`] reference.
+/// * `core_type` - Core type discriminant (`0` or `1`).
+fn select_core_locations(topo: &TpuTopology, core_type: i32) -> &[TpuCoreLocation] {
+    match core_type {
+        0 => &topo.core_locations,
+        1 => &topo.sparse_core_locations,
+        _ => &[],
+    }
+}
+
 /// Looks up a [`TpuCoreLocation`] by core ID (`TpuTopology_CoreForId`).
 ///
 /// # Arguments
 ///
 /// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `_core_type` - Core type discriminant.
+/// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
 /// * `id` - Core ID.
 ///
 /// # Safety
@@ -285,14 +318,16 @@ pub unsafe extern "C" fn TpuTopology_HasChip(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_CoreForId(
     topo: *const TpuTopology,
-    _core_type: i32,
+    core_type: i32,
     id: i32,
 ) -> *const TpuCoreLocation {
     crate::pjrt_helpers::ffi_catch_unwind(std::ptr::null(), || {
         // SAFETY: `topo` is null or valid.
         let t = unsafe { resolve_topology(topo) };
         let idx = usize::try_from(id).unwrap_or(usize::MAX);
-        t.core_locations.get(idx).map_or(ptr::null(), ptr::from_ref)
+        select_core_locations(t, core_type)
+            .get(idx)
+            .map_or(ptr::null(), ptr::from_ref)
     })
 }
 
@@ -301,7 +336,7 @@ pub unsafe extern "C" fn TpuTopology_CoreForId(
 /// # Arguments
 ///
 /// * `topo` - Pointer to [`TpuTopology`] (or null for global default).
-/// * `_core_type` - Core type discriminant.
+/// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
 /// * `x` - Chip X coordinate.
 /// * `y` - Chip Y coordinate.
 /// * `z` - Chip Z coordinate.
@@ -313,7 +348,7 @@ pub unsafe extern "C" fn TpuTopology_CoreForId(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_Core(
     topo: *const TpuTopology,
-    _core_type: i32,
+    core_type: i32,
     x: i32,
     y: i32,
     z: i32,
@@ -322,7 +357,7 @@ pub unsafe extern "C" fn TpuTopology_Core(
     crate::pjrt_helpers::ffi_catch_unwind(std::ptr::null(), || {
         // SAFETY: `topo` is null or valid.
         let t = unsafe { resolve_topology(topo) };
-        t.core_locations
+        select_core_locations(t, core_type)
             .iter()
             .find(|c| (c.chip_x, c.chip_y, c.chip_z, c.index_on_chip) == (x, y, z, index))
             .map_or(ptr::null(), ptr::from_ref)
@@ -344,15 +379,7 @@ pub unsafe extern "C" fn TpuTopology_NumCores(topo: *const TpuTopology, core_typ
     crate::pjrt_helpers::ffi_catch_unwind(-1, || {
         // SAFETY: `topo` is null or valid.
         let t = unsafe { resolve_topology(topo) };
-        let tc_count = i32::try_from(t.core_locations.len()).unwrap_or(0);
-        if core_type == 1 {
-            let sc_per_dev =
-                i32::try_from(t.hal.topology_spec().generation.sparse_cores_per_device())
-                    .unwrap_or(0);
-            tc_count.saturating_mul(sc_per_dev.max(1))
-        } else {
-            tc_count
-        }
+        i32::try_from(select_core_locations(t, core_type).len()).unwrap_or(0)
     })
 }
 
@@ -361,7 +388,7 @@ pub unsafe extern "C" fn TpuTopology_NumCores(topo: *const TpuTopology, core_typ
 /// # Arguments
 ///
 /// * `topo` - Topology handle.
-/// * `_core_type` - Core type enum.
+/// * `core_type` - Core type discriminant (`0` = `kTensorCore`, `1` = `kSparseCoreV0`).
 /// * `cores_out` - Output array of `*const TpuCoreLocation`.
 ///
 /// # Safety
@@ -370,7 +397,7 @@ pub unsafe extern "C" fn TpuTopology_NumCores(topo: *const TpuTopology, core_typ
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn TpuTopology_Cores(
     topo: *const TpuTopology,
-    _core_type: i32,
+    core_type: i32,
     cores_out: *mut *const TpuCoreLocation,
 ) {
     crate::pjrt_helpers::ffi_catch_unwind((), || {
@@ -379,7 +406,7 @@ pub unsafe extern "C" fn TpuTopology_Cores(
         }
         // SAFETY: `topo` is null or valid.
         let t = unsafe { resolve_topology(topo) };
-        for (idx, loc) in t.core_locations.iter().enumerate() {
+        for (idx, loc) in select_core_locations(t, core_type).iter().enumerate() {
             // SAFETY: Caller guarantees capacity of `cores_out`.
             unsafe {
                 *cores_out.add(idx) = ptr::from_ref(loc);

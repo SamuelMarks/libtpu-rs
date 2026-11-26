@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import json
 import runpy
 import struct
 import subprocess
@@ -352,6 +353,19 @@ def test_re_extract_and_pre_commit_entrypoints_and_tables(tmp_path: Path) -> Non
     assert rx._vaddr_to_elf_offset(secs, 0x1002) == 2
     assert rx._vaddr_to_elf_offset(secs, 0x9999) is None
 
+    # Exercise 0xBA (MOV edx, imm32) and 0xE8 (CALL rel32) branches in disassemble_x86_64_prologue
+    edx_rep = rx.disassemble_x86_64_prologue(
+        b"\xba\x04\x00\x00\x00"  # imm_edx=4 (< 8, ignored)
+        + b"\xba\x28\x00\x00\x00"  # imm_edx=40 (8 <= imm_edx <= 512, captured)
+        + b"\xe8\x00\x00\x00\x00"  # CALL rel32 -> seen_call = True
+        + b"\xba\x30\x00\x00\x00"  # imm_edx after CALL (ignored)
+        + b"\xbe\x38\x00\x00\x00"  # imm_esi after CALL (ignored)
+        + b"\xc3"
+    )
+    assert edx_rep.expected_struct_size == 40
+    call_first_rep = rx.disassemble_x86_64_prologue(b"\xe8\x00\x00\x00\x00\xbe\x20\x00\x00\x00\xc3")
+    assert call_first_rep.expected_struct_size is None
+
     # Exercise __main__ of scripts/re_extract.py (passing --repo-root to real workspace)
     repo_root = Path(__file__).resolve().parent.parent.parent
     with (
@@ -657,8 +671,475 @@ def test_ghidra_lift_isa_and_abi_full_coverage(tmp_path: Path) -> None:
     with pytest.raises(gl.BinaryLiftError, match="does not exist"):
         gl.run_ghidra_headless(Path("analyzeHeadless"), tmp_path / "gp", missing_so)
 
+    # Test discover_ghidra_headless, run_ghidra_headless_lift, and verify_lift_against_golden
+    fake_ghidra_bin = tmp_path / "ghidra_install" / "support" / "analyzeHeadless"
+    fake_ghidra_bin.parent.mkdir(parents=True)
+    fake_ghidra_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_ghidra_bin.chmod(0o755)
+    assert gl.discover_ghidra_headless(explicit_path=fake_ghidra_bin) == fake_ghidra_bin
+    assert gl.discover_ghidra_headless(explicit_path=tmp_path / "nope") is None
+    assert (
+        gl.discover_ghidra_headless(env={"GHIDRA_INSTALL_DIR": str(tmp_path / "ghidra_install")})
+        == fake_ghidra_bin
+    )
+    assert (
+        gl.discover_ghidra_headless(
+            env={"PATH": str(fake_ghidra_bin.parent)},
+            search_roots=(),
+        )
+        == fake_ghidra_bin
+    )
+    cask_bin = tmp_path / "cask" / "11.3" / "ghidra_11.3_PUBLIC" / "support" / "analyzeHeadless"
+    cask_bin.parent.mkdir(parents=True)
+    cask_bin.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    assert (
+        gl.discover_ghidra_headless(env={"PATH": ""}, search_roots=(tmp_path / "cask",)) == cask_bin
+    )
+    assert (
+        gl.discover_ghidra_headless(
+            env={"GHIDRA_INSTALL_DIR": str(tmp_path / "empty_dir"), "PATH": ""},
+            search_roots=(tmp_path / "empty_cask",),
+        )
+        is None
+    )
+
+    empty_cask = tmp_path / "empty_cask"
+    empty_cask.mkdir()
+    assert (
+        gl.discover_ghidra_headless(
+            env={"PATH": ""},
+            search_roots=(empty_cask,),
+        )
+        is None
+    )
+
+    fb_report = gl.run_ghidra_headless_lift(
+        elf_path,
+        project_dir=tmp_path / "gp_fb",
+        env={"PATH": ""},
+        search_roots=(),
+    )
+    assert fb_report["ghidra_headless_status"] == "fallback_elf_disassembly"
+
+    def _writing_runner(cmd: list[str]) -> int:
+        """Simulates a headless Ghidra runner writing valid output JSON.
+
+        Args:
+            cmd: Command-line argument list passed to the headless runner.
+        """
+        proj = Path(cmd[1])
+        (proj / "ghidra_lift_output.json").write_text(
+            '{"ghidra_functions": [{"name": "GetPjrtApi", "entry": "0x1000", "size": 5}]}',
+            encoding="utf-8",
+        )
+        return 0
+
+    exec_report = gl.run_ghidra_headless_lift(
+        elf_path,
+        project_dir=tmp_path / "gp_exec",
+        ghidra_headless_bin=fake_ghidra_bin,
+        runner=_writing_runner,
+    )
+    assert exec_report["ghidra_headless_status"] == "executed"
+    assert exec_report["ghidra_functions_count"] == 1
+    with pytest.raises(gl.BinaryLiftError, match="exited with status 2"):
+        gl.run_ghidra_headless_lift(
+            elf_path,
+            project_dir=tmp_path / "gp_fail",
+            ghidra_headless_bin=fake_ghidra_bin,
+            runner=lambda _cmd: 2,
+        )
+
+    repo_root = Path(__file__).resolve().parents[2]
+    assert gl.verify_lift_against_golden({"vtable_layouts": "bad"}, repo_root) != []
+    assert gl.verify_lift_against_golden(fb_report, repo_root) != []
+
+    # Runner returning 0 without writing output JSON and with non-list ghidra_functions
+    no_json_report = gl.run_ghidra_headless_lift(
+        elf_path,
+        project_dir=tmp_path / "gp_no_json",
+        ghidra_headless_bin=fake_ghidra_bin,
+        runner=lambda _cmd: 0,
+    )
+    assert no_json_report["ghidra_functions_count"] == 0
+
+    def _bad_json_runner(cmd: list[str]) -> int:
+        """Simulates a headless Ghidra runner writing non-list ghidra_functions JSON.
+
+        Args:
+            cmd: Command-line argument list passed to the headless runner.
+        """
+        proj = Path(cmd[1])
+        (proj / "ghidra_lift_output.json").write_text(
+            '{"ghidra_functions": "nope"}', encoding="utf-8"
+        )
+        return 0
+
+    bad_json_report = gl.run_ghidra_headless_lift(
+        elf_path,
+        project_dir=tmp_path / "gp_bad_json",
+        ghidra_headless_bin=fake_ghidra_bin,
+        runner=_bad_json_runner,
+    )
+    assert bad_json_report["ghidra_functions_count"] == 0
+
+    # Exercise _extract_symtab_index edge cases (tiny symtab, st_value=0, non-matching, nonul)
+    raw_strtab = (
+        b"\x00UnrelatedSymbol"
+        + (b"_" * 48)
+        + b"\x00_ZN4pjrt4SymAE\x00PJRT_Alias\x00_ZN4pjrt4SymBE\x00PJRT_Unterm"
+    )
+    off_unrelated = raw_strtab.index(b"UnrelatedSymbol")
+    off_sym_a = raw_strtab.index(b"_ZN4pjrt4SymAE")
+    off_alias = raw_strtab.index(b"PJRT_Alias")
+    off_sym_b = raw_strtab.index(b"_ZN4pjrt4SymBE")
+    off_unterm = raw_strtab.index(b"PJRT_Unterm")
+    raw_symtab = b"".join(
+        [
+            struct.pack("<IBBHQQ", 0, 0x12, 0, 1, 0, 0),  # st_value == 0
+            struct.pack("<IBBHQQ", 9999, 0x12, 0, 1, 0x1000, 8),  # st_name >= len(strtab)
+            struct.pack("<IBBHQQ", off_unrelated, 0x12, 0, 1, 0x1010, 8),  # non-matching prefix
+            struct.pack("<IBBHQQ", off_sym_a, 0x12, 0, 1, 0x1020, 8),  # _ZN4pjrt first
+            struct.pack("<IBBHQQ", off_alias, 0x12, 0, 1, 0x1020, 8),  # non-_ZN4pjrt duplicate addr
+            struct.pack("<IBBHQQ", off_sym_b, 0x12, 0, 1, 0x1020, 8),  # _ZN4pjrt override addr
+            struct.pack("<IBBHQQ", off_unterm, 0x12, 0, 1, 0x1030, 8),  # nul == -1
+        ]
+    )
+    sym_blob = raw_strtab + raw_symtab
+    sym_secs = [
+        rx.ElfSectionHeader(".dynsym", 11, 2, 0, 0, 12, 0, 0),  # sh_size < 24
+        rx.ElfSectionHeader(".dynstr", 3, 2, 0, 0, 1, 0, 0),
+        rx.ElfSectionHeader(".strtab", 3, 2, 0, 0, len(raw_strtab), 0, 0),
+        rx.ElfSectionHeader(".symtab", 2, 2, 0, len(raw_strtab), len(raw_symtab), 0, 0),
+    ]
+    s_loc, a_sym = gl._extract_symtab_index(sym_blob, sym_secs)
+    assert a_sym[0x1020] == "_ZN4pjrt4SymBE"
+    assert "PJRT_Unterm" not in s_loc
+
+    # Exercise _scan_x86_mov_lea_stores GOT/reloc/disp8/disp32/non-RIP-LEA branches
+    got_va = 0x5000
+    got_bytes = struct.pack("<QQ", 0x7000, 0x8000)
+    got_secs = [rx.ElfSectionHeader(".got", 1, 3, got_va, 0, len(got_bytes), 0, 0)]
+    scan_code = bytearray()
+    scan_code.extend(b"\x48\xc7\x07" + struct.pack("<I", 64))  # struct_size = 64
+    scan_code.extend(b"\xc7\x47\x08" + struct.pack("<I", 5))  # ext_type = 5
+    scan_code.extend(b"\x48\x8d\x00")  # non-RIP-relative LEA (modrm != 0x05)
+    # LEA rbx, [rip + disp_to_got] (0x48 0x8D 0x1D <disp32>)
+    disp_got = got_va - (0x2000 + len(scan_code) + 7)
+    scan_code.extend(b"\x48\x8d\x1d" + struct.pack("<i", disp_got))
+    # MOVABS rcx, 0 (0x48 0xB9 <imm64>) -> got_disp_reg[1] = 0 (hits reloc_map)
+    scan_code.extend(b"\x48\xb9" + struct.pack("<q", 0))
+    # MOVABS rdx, 8 (0x48 0xBA <imm64>) -> got_disp_reg[2] = 8 (hits elf_bytes GOT read)
+    scan_code.extend(b"\x48\xba" + struct.pack("<q", 8))
+    # MOVABS rsi, 64 -> got_disp_reg[6] = 64 (out-of-bounds goff -> None)
+    scan_code.extend(b"\x48\xbe" + struct.pack("<q", 64))
+    # MOV rax, [rbx + rbp*8] (idx_reg=5 not in got_disp_reg) -> sib = (3<<6)|(5<<3)|3 = 0xEB
+    scan_code.extend(b"\x48\x8b\x04\xeb")
+    # MOV rax, [rbx + rcx*8] (idx_reg=1 -> reloc_map[0x5000] = 0x9000) -> sib = 0xCB
+    scan_code.extend(b"\x48\x8b\x04\xcb")
+    # MOV [rdi + 8], rax (mod=1 disp8=8 valid) & [rdi + 4], rax (disp8=4 invalid)
+    scan_code.extend(b"\x48\x89\x47\x08\x48\x89\x47\x04")
+    # MOV rax, [rbx + rdx*8] (idx_reg=2 -> GOT elf_bytes = 0x8000) -> sib = 0xD3
+    scan_code.extend(b"\x48\x8b\x04\xd3")
+    # MOV [rdi + 0x100], rax (mod=2 disp32=0x100 valid) & [rdi + 4], rax (mod=2 disp32=4 invalid)
+    scan_code.extend(b"\x48\x89\x87" + struct.pack("<i", 0x100))
+    scan_code.extend(b"\x48\x89\x87" + struct.pack("<i", 4))
+    # MOV [rdi], rax (mod=0), MOV [rcx + 8], rax (rm=1), and out-of-bounds GOT read (sib=0xF3)
+    scan_code.extend(b"\x48\x89\x07\x48\x89\x41\x08\x48\x8b\x04\xf3")
+    st_sz, hdr_int, sl_map = gl._scan_x86_mov_lea_stores(
+        bytes(scan_code),
+        0x2000,
+        got_vaddr=got_va,
+        elf_bytes=got_bytes,
+        sections=got_secs,
+        reloc_map={got_va: 0x9000},
+    )
+    assert (st_sz, hdr_int) == (64, 5)
+    assert sl_map == {8: 0x9000, 0x100: 0x8000}
+    # Also test _scan_x86_mov_lea_stores with elf_bytes=None on unmapped GOT slot
+    _, _, sl_no_elf = gl._scan_x86_mov_lea_stores(
+        bytes(scan_code),
+        0x2000,
+        got_vaddr=got_va,
+        elf_bytes=None,
+        sections=None,
+        reloc_map={},
+    )
+    assert sl_no_elf == {}
+
+    # Build a synthetic ELF exercising Creator PJRT, Extension forwarders, Profiler, SDK & Driver
+    def _build_creator_and_relro_elf(mode: str) -> bytes:
+        """Constructs a synthetic ELF64 test image exercising ABI lifting branches.
+
+        Args:
+            mode: Layout variant selector controlling symbol and section emission.
+        """
+        sh_str = (
+            b"\x00.shstrtab\x00.rodata\x00.data.rel.ro\x00.data\x00.text\x00.strtab\x00.symtab\x00"
+        )
+        ebuf = bytearray(b"\x00" * 64)
+        sh_off = len(ebuf)
+        ebuf.extend(sh_str)
+        while len(ebuf) % 8 != 0:
+            ebuf.append(0)
+        bva = 0x300000
+
+        ro_o = len(ebuf)
+        prof_va = bva + len(ebuf)
+        ebuf.extend(struct.pack("<QQQ", 32, 1, 0))  # profiler_extension (size=32, type=1)
+        ro_l = len(ebuf) - ro_o
+
+        dr_o = len(ebuf)
+        ext_relro_va = bva + len(ebuf)
+        ebuf.extend(struct.pack("<QQQ", 32, 5, 0))
+        ebuf.extend(struct.pack("<QQQii", 512, ext_relro_va, 24, 0, 117))
+        ebuf.extend(b"\x00" * (512 - 32))
+        dr_l = len(ebuf) - dr_o
+
+        da_o = len(ebuf)
+        ebuf.extend(b"\x00" * 4)  # .data with sh_size=4 (< 8)
+        da_l = 4
+        while len(ebuf) % 8 != 0:
+            ebuf.append(0)
+
+        tx_o = len(ebuf)
+        # Slot target with struct_size check 32
+        slot_fn_va = bva + len(ebuf)
+        ebuf.extend(b"\x48\x83\x3f\x20\x72\x02\x31\xc0\xc3" + b"\x90" * 23)
+        # CreatePjrtApi: struct_size=64, minor=117, 0x28->slot_fn_va, 0x30->0x999999, 0x38->0
+        create_pjrt_va = bva + len(ebuf)
+        cp_code = bytearray()
+        cp_code.extend(b"\x48\xc7\x00" + struct.pack("<I", 64))
+        cp_code.extend(b"\x49\xb9" + struct.pack("<ii", 0, 117))
+        disp_slot = slot_fn_va - (create_pjrt_va + len(cp_code) + 7)
+        cp_code.extend(b"\x48\x8d\x05" + struct.pack("<i", disp_slot) + b"\x48\x89\x40\x28")
+        disp_unmapped = 0x999999 - (create_pjrt_va + len(cp_code) + 7)
+        cp_code.extend(b"\x48\x8d\x05" + struct.pack("<i", disp_unmapped) + b"\x48\x89\x40\x30")
+        cp_code.extend(b"\xc3")
+        ebuf.extend(cp_code)
+
+        # Direct extension creator (size=32, type=5)
+        ext_direct_va = bva + len(ebuf)
+        ebuf.extend(b"\x48\xc7\x07\x20\x00\x00\x00\xc7\x47\x08\x05\x00\x00\x00\xc3")
+        # Impl extension creator for tail-jump (size=40, type=7)
+        ext_impl_va = bva + len(ebuf)
+        ebuf.extend(b"\x48\xc7\x07\x28\x00\x00\x00\xc7\x47\x08\x07\x00\x00\x00\xc3")
+        # Forwarder #1 -> jumps to ext_impl_va
+        ext_fwd_ok_va = bva + len(ebuf)
+        ebuf.extend(b"\xe9" + struct.pack("<i", ext_impl_va - (ext_fwd_ok_va + 5)))
+        # Forwarder #2 -> jumps to unmapped target
+        ext_fwd_bad_va = bva + len(ebuf)
+        ebuf.extend(b"\xe9" + struct.pack("<i", 0x888888 - (ext_fwd_bad_va + 5)))
+        # Forwarder #3 -> Jumps to symbol at unmapped section addr (j_off is None)
+        ext_fwd_unmap_va = bva + len(ebuf)
+        ebuf.extend(b"\xe9" + struct.pack("<i", 0x777777 - (ext_fwd_unmap_va + 5)))
+        # Empty creator (len < 5, no E9) & >=5 creator with no E9
+        ext_short_va = bva + len(ebuf)
+        ebuf.extend(b"\xc3\x90\x90\x90")
+        ext_no_jmp_va = bva + len(ebuf)
+        ebuf.extend(b"\x90\x90\x90\x90\x90\xc3")
+
+        # GetTpuPjrtApi calling creators
+        get_pjrt_va = bva + len(ebuf)
+        gp_code = bytearray()
+        for callee_va in (
+            ext_direct_va,
+            ext_fwd_ok_va,
+            ext_fwd_bad_va,
+            ext_fwd_unmap_va,
+            ext_short_va,
+            ext_no_jmp_va,
+            0x666666,  # unmapped creator symbol (e_off is None)
+            slot_fn_va,  # non-extension call
+        ):
+            gp_code.extend(
+                b"\xe8" + struct.pack("<i", callee_va - (get_pjrt_va + len(gp_code) + 5))
+            )
+        gp_code.extend(b"\xc3")
+        ebuf.extend(gp_code)
+
+        # CreateLibtpuSdkApi: first immediate 16, then 144 (or 16-only when mode != "creator")
+        sdk_va = bva + len(ebuf)
+        sdk_bytes = (
+            b"\xbf\x10\x00\x00\x00\xbf\x90\x00\x00\x00\xc3"
+            if mode == "creator"
+            else b"\xbf\x10\x00\x00\x00\xc3"
+        )
+        ebuf.extend(sdk_bytes)
+
+        # Embedding & Gasket helpers
+        emb_ok_va = bva + len(ebuf)
+        ebuf.extend(b"\x48\x83\x3f\x30\x72\x02\x31\xc0\xc3" + b"\x90" * 23)
+        emb_plain_va = bva + len(ebuf)
+        ebuf.extend(b"\x31\xc0\xc3\x90\x90\x90\x90\x90")
+        gasket_va = bva + len(ebuf)
+        ebuf.extend(b"\xba\x01\xdc\x08\x40\xc3\x90\x90")
+        tx_l = len(ebuf) - tx_o
+
+        sym_defs: list[tuple[bytes, int, int]] = [
+            (b"PJRT_SlotFn", slot_fn_va, 32),
+            (b"TpuDriver_Initialize", emb_plain_va, 8),
+            (b"TpuEmbeddingEngine_Ok", emb_ok_va, 32),
+            (b"TpuEmbeddingEngine_Plain", emb_plain_va, 8),
+            (b"TpuEmbeddingEngine_Unmapped", 0x555555, 16),
+            (b"GasketIoctlFn", gasket_va, 8),
+            (b"VfioUnmappedFn", 0x555550, 8),
+        ]
+        if mode.startswith("creator"):
+            sym_defs.extend(
+                [
+                    (b"_ZN4pjrt13CreatePjrtApiEv", create_pjrt_va, len(cp_code)),
+                    (
+                        b"_ZN4pjrt10tpu_plugin22PJRT_Plugin_InitializeEP27PJRT_Plugin_Initialize_Args",
+                        slot_fn_va,
+                        32,
+                    ),
+                    (b"_ZN4pjrt10tpu_plugin13GetTpuPjrtApiEv", get_pjrt_va, len(gp_code)),
+                    (b"_ZN4pjrt20CreateDirectExtensionEv", ext_direct_va, 15),
+                    (b"_ZN4pjrt22CreateForwardExtensionEv", ext_fwd_ok_va, 5),
+                    (b"_ZN4pjrt26CreateForwardImplExtensionEv", ext_impl_va, 15),
+                    (b"_ZN4pjrt25CreateBadForwardExtensionEv", ext_fwd_bad_va, 5),
+                    (b"_ZN4pjrt27CreateUnmapForwardExtensionEv", ext_fwd_unmap_va, 5),
+                    (b"_ZN4pjrt24CreateUnmapImplExtensionEv", 0x777777, 15),
+                    (b"_ZN4pjrt20CreateShortExtensionEv", ext_short_va, 4),
+                    (b"_ZN4pjrt20CreateNoJmpExtensionEv", ext_no_jmp_va, 6),
+                    (b"_ZN4pjrt23CreateUnmappedExtensionEv", 0x666666, 8),
+                    (b"_ZN6libtpu3sdk18CreateLibtpuSdkApiEv", sdk_va, len(sdk_bytes)),
+                ]
+            )
+            if mode == "creator":
+                sym_defs.append((b"_ZN4pjrt10tpu_plugin18profiler_extensionE", prof_va, 24))
+            elif mode == "creator_unmap_prof":
+                sym_defs.append((b"_ZN4pjrt10tpu_plugin18profiler_extensionE", 0x999990, 24))
+        else:
+            # Exercise unmapped c_off, g_off, prof_off, sdk_off == None + relro fallback!
+            sym_defs.extend(
+                [
+                    (b"_ZN4pjrt13CreatePjrtApiEv", 0x444440, 16),
+                    (b"_ZN4pjrt10tpu_plugin13GetTpuPjrtApiEv", 0x444450, 16),
+                    (b"_ZN4pjrt10tpu_plugin18profiler_extensionE", 0x444460, 24),
+                    (b"_ZN6libtpu3sdk18CreateLibtpuSdkApiEv", 0x444480, 16),
+                ]
+            )
+
+        st_o = len(ebuf)
+        st_bytes = bytearray(b"\x00")
+        sy_entries = [struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)]
+        for s_nm, s_va, s_sz in sym_defs:
+            nm_idx = len(st_bytes)
+            st_bytes.extend(s_nm + b"\x00")
+            sy_entries.append(struct.pack("<IBBHQQ", nm_idx, 0x12, 0, 5, s_va, s_sz))
+        ebuf.extend(st_bytes)
+        st_l = len(st_bytes)
+        while len(ebuf) % 8 != 0:
+            ebuf.append(0)
+        sy_o = len(ebuf)
+        for ent in sy_entries:
+            ebuf.extend(ent)
+        sy_l = len(ebuf) - sy_o
+
+        def _s_idx(nm: bytes) -> int:
+            """Looks up the byte offset of section name `nm` in `.shstrtab`.
+
+            Args:
+                nm: Null-free section name bytes.
+            """
+            return sh_str.index(nm + b"\x00")
+
+        sh_tbl = len(ebuf)
+        for nm_i, tp, fl, va, of, sz, lk in (
+            (0, 0, 0, 0, 0, 0, 0),
+            (_s_idx(b".shstrtab"), 3, 0, 0, sh_off, len(sh_str), 0),
+            (_s_idx(b".rodata"), 1, 2, bva + ro_o, ro_o, ro_l, 0),
+            (_s_idx(b".data.rel.ro"), 1, 3, bva + dr_o, dr_o, dr_l, 0),
+            (_s_idx(b".data"), 1, 3, bva + da_o, da_o, da_l, 0),
+            (_s_idx(b".text"), 1, 6, bva + tx_o, tx_o, tx_l, 0),
+            (_s_idx(b".strtab"), 3, 0, 0, st_o, st_l, 0),
+            (_s_idx(b".symtab"), 2, 0, 0, sy_o, sy_l, 6),
+        ):
+            ebuf.extend(
+                struct.pack("<IIQQQQIIQQ", nm_i, tp, fl, va, of, sz, lk, 0, 8, 24 if tp == 2 else 0)
+            )
+
+        hdr = struct.pack(
+            "<4sBBBBB7xHHIQQQIHHHHHH",
+            b"\x7fELF",
+            2,
+            1,
+            1,
+            0,
+            0,
+            3,
+            62,
+            1,
+            0,
+            0,
+            sh_tbl,
+            0,
+            64,
+            0,
+            0,
+            64,
+            8,
+            1,
+        )
+        ebuf[:64] = hdr
+        return bytes(ebuf)
+
+    creator_elf = _build_creator_and_relro_elf("creator")
+    creator_path = tmp_path / "creator_synth.so"
+    creator_path.write_bytes(creator_elf)
+    creator_vt = gl.lift_vtable_and_entrypoint_layouts(creator_elf)
+    assert creator_vt["pjrt_api_struct_size"] == 64
+    assert creator_vt["pjrt_api_minor"] == 117
+    assert creator_vt["extensions_count"] == 3
+    assert creator_vt["libtpu_sdk_api_struct_size"] == 144
+    assert creator_vt["tpu_driver_fn_struct_size"] == 224
+    assert 0x4008DC01 in gl.lift_isa_and_driver_ioctls(creator_elf).gasket_ioctl_cmds
+    assert 32 in gl.lift_pjrt_args_and_extensions(creator_elf).observed_struct_sizes
+
+    no_prof_vt = gl.lift_vtable_and_entrypoint_layouts(
+        _build_creator_and_relro_elf("creator_no_prof")
+    )
+    assert no_prof_vt["extensions_count"] == 2
+    assert no_prof_vt["libtpu_sdk_api_struct_size"] == 0
+    unmap_prof_vt = gl.lift_vtable_and_entrypoint_layouts(
+        _build_creator_and_relro_elf("creator_unmap_prof")
+    )
+    assert unmap_prof_vt["extensions_count"] == 2
+
+    relro_elf = _build_creator_and_relro_elf("relro")
+    relro_vt = gl.lift_vtable_and_entrypoint_layouts(relro_elf)
+    assert relro_vt["pjrt_api_struct_size"] == 512
+    assert relro_vt["pjrt_api_minor"] == 117
+    assert relro_vt["extensions_count"] == 1
+
+    # Verify golden manifest pass path deterministically offline
+    synth_golden_root = tmp_path / "golden_repo"
+    synth_re_dir = synth_golden_root / "docs" / "reverse_engineering"
+    synth_re_dir.mkdir(parents=True)
+    (synth_re_dir / "golden_binary_manifest.json").write_text(
+        json.dumps(
+            {
+                "libtpu_so": {
+                    "pjrt_api_struct_size": 64,
+                    "pjrt_api_version_minor": 117,
+                    "libtpu_sdk_api_struct_size": 144,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (synth_re_dir / "golden_struct_layouts.json").write_text(
+        json.dumps({"extensions": [1, 2, 3]}),
+        encoding="utf-8",
+    )
+    assert gl.verify_lift_against_golden({"vtable_layouts": creator_vt}, synth_golden_root) == []
+
     # CLI modes + __main__
     assert gl.main(["--binary", str(elf_path)]) == 0
+    assert gl.main(["--binary", str(creator_path), "--verify-golden", str(synth_golden_root)]) == 0
+    assert gl.main(["--binary", str(elf_path), "--verify-golden", str(repo_root)]) == 1
     assert (
         gl.main(
             [
@@ -684,7 +1165,7 @@ def test_ghidra_lift_isa_and_abi_full_coverage(tmp_path: Path) -> None:
 
 
 def test_differential_oracle_full_coverage(tmp_path: Path) -> None:
-    """Tests `scripts/differential_oracle.py` corpus, wire decoder, ctypes backend, and MMIO trace.
+    """Tests `scripts/differential_oracle.py` corpus, wire decoder, PJRT backend, and MMIO trace.
 
     Args:
         tmp_path: Temporary directory fixture provided by pytest.
@@ -696,7 +1177,6 @@ def test_differential_oracle_full_coverage(tmp_path: Path) -> None:
     assert len(corpus) == 25
     assert {c.dialect_kind for c in corpus} == {"stablehlo", "shardy", "mosaic_tpu"}
 
-    # Test LibtpuSharedLibraryBackend missing library, NULL GetPjrtApi, and valid GetPjrtApi
     with pytest.raises(do.DifferentialOracleError, match="not found"):
         do.LibtpuSharedLibraryBackend(tmp_path / "absent.so")
 
@@ -710,17 +1190,126 @@ def test_differential_oracle_full_coverage(tmp_path: Path) -> None:
     ):
         do.LibtpuSharedLibraryBackend(fake_so)
 
-    valid_cdll = SimpleNamespace(GetPjrtApi=lambda: 0xDEADBEEF)
-    with patch.object(ctypes, "CDLL", return_value=valid_cdll):
-        backend = do.LibtpuSharedLibraryBackend(fake_so)
-        assert backend.api_pointer == 0xDEADBEEF
-        # Include a >128 byte mlir case to cover multi-byte _encode_varint loop
-        summaries = do.run_differential_corpus(backend, corpus[:3])
-        assert len(summaries) == 3
-        assert summaries[0].wire_field_numbers == (1, 2)
+    # Test undersized struct_size and NULL slot error paths on synthetic PJRT_Api buffer
+    tiny_api = (ctypes.c_uint64 * 8)(16, 0, 24, 0, 0, 0, 0, 0)
+    tiny_cdll = SimpleNamespace(GetPjrtApi=lambda: ctypes.addressof(tiny_api))
+    with patch.object(ctypes, "CDLL", return_value=tiny_cdll):
+        tiny_backend = do.LibtpuSharedLibraryBackend(fake_so)
+        assert tiny_backend.api_pointer == ctypes.addressof(tiny_api)
+        with pytest.raises(do.DifferentialOracleError, match="too small"):
+            tiny_backend.compile_to_serialized_executable(corpus[0])
 
-    # Wire decoder: wire_type 0 (varint), 1 (64-bit), 2 (bytes), 5 (32-bit), and error branches
+    null_slot_api = (ctypes.c_uint64 * 143)(1144)
+    null_slot_cdll = SimpleNamespace(GetPjrtApi=lambda: ctypes.addressof(null_slot_api))
+    with patch.object(ctypes, "CDLL", return_value=null_slot_cdll):
+        ns_backend = do.LibtpuSharedLibraryBackend(fake_so)
+        with pytest.raises(do.DifferentialOracleError, match="is NULL"):
+            ns_backend.compile_to_serialized_executable(corpus[0])
+
+    # Test real PJRT compilation, serialization, error handling, and H2D -> Execute -> D2H smoke!
+    repo_root = Path(__file__).resolve().parents[2]
+    real_lib = next(
+        (
+            cand
+            for cand in (
+                repo_root / "target" / "debug" / "libtpu.dylib",
+                repo_root / "target" / "debug" / "libtpu.so",
+                repo_root / "target" / "release" / "libtpu.dylib",
+                repo_root / "target" / "release" / "libtpu.so",
+            )
+            if cand.exists()
+        ),
+        None,
+    )
+    assert real_lib is not None, "Expected built libtpu shared library in target/"
+    real_backend = do.LibtpuSharedLibraryBackend(real_lib)
+    assert real_backend.api_pointer != 0
+    summaries = do.run_differential_corpus(real_backend, corpus[:3])
+    assert len(summaries) == 3
+    assert summaries[0].byte_length > 12
+    assert len(summaries[0].wire_field_numbers) >= 1
+
+    smoke_out = real_backend.compile_and_execute_smoke()
+    assert smoke_out == [11.0, 22.0, 33.0, 44.0]
+    real_backend._destroy_event_if_set(0)
+
+    # Exercise PJRT_Error_Message + PJRT_Error_Destroy path on invalid MLIR program
+    bad_case = do.OracleProgramCase(
+        case_id="bad_mlir",
+        generation="v5e",
+        topology_spec="2x2",
+        dialect_kind="stablehlo",
+        op_name="invalid",
+        mlir_text="SYNTAX_ERROR",
+    )
+    with pytest.raises(do.DifferentialOracleError):
+        real_backend.compile_to_serialized_executable(bad_case)
+
+    # Exercise mock vtable branches: NULL error message, topo_handle==0, and smoke 0-devices cleanup
+    noop_err_cb = do._PJRT_VOID_FN_PROTO(lambda _arg: None)
+    always_err_cb = do._PJRT_FN_PROTO(lambda _arg: 0xDEAD)
+    ok_cb = do._PJRT_FN_PROTO(lambda _arg: 0)
+
+    def _set_client_cb(raw_ptr: int) -> int:
+        """Populates a synthetic non-zero client handle in `PJRT_Client_Create_Args`.
+
+        Args:
+            raw_ptr: Raw integer address of `PJRT_Client_Create_Args`.
+        """
+        c_args = do.PJRT_Client_Create_Args.from_address(raw_ptr)
+        c_args.client = 0xBEEF
+        return 0
+
+    set_client_fn = do._PJRT_FN_PROTO(_set_client_cb)
+    mock_api = (ctypes.c_uint64 * 143)(0)
+    mock_api[0] = 1144
+    mock_api[0x028 // 8] = ctypes.cast(noop_err_cb, ctypes.c_void_p).value or 0
+    mock_api[0x030 // 8] = ctypes.cast(noop_err_cb, ctypes.c_void_p).value or 0
+    mock_api[0x040 // 8] = ctypes.cast(ok_cb, ctypes.c_void_p).value or 0
+    mock_api[0x078 // 8] = ctypes.cast(set_client_fn, ctypes.c_void_p).value or 0
+    mock_api[0x080 // 8] = ctypes.cast(ok_cb, ctypes.c_void_p).value or 0
+    mock_api[0x0A8 // 8] = ctypes.cast(ok_cb, ctypes.c_void_p).value or 0
+    mock_api[0x2B8 // 8] = ctypes.cast(always_err_cb, ctypes.c_void_p).value or 0
+    mock_cdll = SimpleNamespace(GetPjrtApi=lambda: ctypes.addressof(mock_api))
+    with patch.object(ctypes, "CDLL", return_value=mock_cdll):
+        mock_backend = do.LibtpuSharedLibraryBackend(fake_so)
+        with pytest.raises(do.DifferentialOracleError, match="PJRT call at 0x2b8 failed"):
+            mock_backend.compile_to_serialized_executable(corpus[0])
+        with pytest.raises(do.DifferentialOracleError, match="0 addressable devices"):
+            mock_backend.compile_and_execute_smoke()
+        # Also test client_handle == 0 cleanup branch when client_create leaves client = None
+        mock_api[0x078 // 8] = ctypes.cast(ok_cb, ctypes.c_void_p).value or 0
+        with pytest.raises(do.DifferentialOracleError, match="0 addressable devices"):
+            mock_backend.compile_and_execute_smoke()
+
+    # Wire decoder: LTPUEXEC envelope + error branches, wire_type 0/1/2/5, and protobuf errors
     case0 = corpus[0]
+    with pytest.raises(do.DifferentialOracleError, match="Truncated LTPUEXEC binary header"):
+        do.decode_serialized_executable_wire_summary(case0, b"LTPUEXECshort")
+    with pytest.raises(do.DifferentialOracleError, match="Unsupported LTPUEXEC format version"):
+        do.decode_serialized_executable_wire_summary(
+            case0, b"LTPUEXEC" + struct.pack("<IBI", 2, 0, 0) + b"\x00" * 8
+        )
+    with pytest.raises(do.DifferentialOracleError, match="Truncated LTPUEXEC format section"):
+        do.decode_serialized_executable_wire_summary(
+            case0, b"LTPUEXEC" + struct.pack("<IBI", 1, 0, 99) + b"\x00" * 8
+        )
+    with pytest.raises(do.DifferentialOracleError, match="Truncated LTPUEXEC source section"):
+        do.decode_serialized_executable_wire_summary(
+            case0,
+            b"LTPUEXEC" + struct.pack("<IBI", 1, 0, 4) + b"mlir" + struct.pack("<I", 99) + b"abcd",
+        )
+    with pytest.raises(do.DifferentialOracleError, match="Mismatched LTPUEXEC payload length"):
+        do.decode_serialized_executable_wire_summary(
+            case0,
+            b"LTPUEXEC"
+            + struct.pack("<IBI", 1, 0, 4)
+            + b"mlir"
+            + struct.pack("<I", 2)
+            + b"ok"
+            + struct.pack("<I", 99),
+        )
+
     all_wire_types = (
         b"\x08\x96\x01"  # field 1, varint 150
         + b"\x11"
@@ -765,8 +1354,7 @@ def test_differential_oracle_full_coverage(tmp_path: Path) -> None:
     assert do.main(["--emit-preload-c", str(preload_out)]) == 0
     assert preload_out.exists()
     assert do.main(["--corpus-count", "7"]) == 0
-    with patch.object(ctypes, "CDLL", return_value=valid_cdll):
-        assert do.main(["--corpus-count", "2", "--library", str(fake_so)]) == 0
+    assert do.main(["--corpus-count", "2", "--library", str(real_lib)]) == 0
     assert do.main(["--corpus-count", "0"]) == 1
 
     with (

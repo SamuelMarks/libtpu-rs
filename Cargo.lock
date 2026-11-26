@@ -430,7 +430,7 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "libtpu-c-api"
-version = "0.0.52"
+version = "0.0.53"
 dependencies = [
  "libtpu-core",
  "parking_lot",
@@ -439,7 +439,7 @@ dependencies = [
 
 [[package]]
 name = "libtpu-core"
-version = "0.0.52"
+version = "0.0.53"
 dependencies = [
  "bitflags",
  "blake3",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "libtpu-proto-s0"
-version = "0.0.52"
+version = "0.0.53"
 dependencies = [
  "heck",
  "prost",
@@ -496,7 +496,7 @@ dependencies = [
 
 [[package]]
 name = "libtpu-proto-s1"
-version = "0.0.52"
+version = "0.0.53"
 dependencies = [
  "heck",
  "libtpu-proto-s0",
@@ -508,7 +508,7 @@ dependencies = [
 
 [[package]]
 name = "libtpu-proto-s2"
-version = "0.0.52"
+version = "0.0.53"
 dependencies = [
  "heck",
  "libtpu-proto-s0",
@@ -521,7 +521,7 @@ dependencies = [
 
 [[package]]
 name = "libtpu-proto-s3"
-version = "0.0.52"
+version = "0.0.53"
 dependencies = [
  "heck",
  "libtpu-proto-s0",
@@ -535,7 +535,7 @@ dependencies = [
 
 [[package]]
 name = "libtpu-proto-s4"
-version = "0.0.52"
+version = "0.0.53"
 dependencies = [
  "heck",
  "libtpu-proto-s0",
@@ -550,7 +550,7 @@ dependencies = [
 
 [[package]]
 name = "libtpu-proto-s5"
-version = "0.0.52"
+version = "0.0.53"
 dependencies = [
  "heck",
  "libtpu-proto-s0",
@@ -566,9 +566,10 @@ dependencies = [
 
 [[package]]
 name = "libtpu-py"
-version = "0.0.52"
+version = "0.0.53"
 dependencies = [
  "libtpu-core",
+ "parking_lot",
  "pyo3",
 ]
 

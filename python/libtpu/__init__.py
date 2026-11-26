@@ -12,20 +12,51 @@ import ctypes
 import enum
 import os
 import struct
+import types
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
-__version__: str = "0.0.52"
+if TYPE_CHECKING:
+    import numpy as np
+    import numpy.typing as npt
+
+    from libtpu._interop import PyCapsule, SupportsArrayInterface
+
+    _NumericScalar = (
+        np.bool_
+        | np.int8
+        | np.int16
+        | np.int32
+        | np.int64
+        | np.uint8
+        | np.uint16
+        | np.uint32
+        | np.uint64
+        | np.float16
+        | np.float32
+        | np.float64
+        | np.complex64
+        | np.complex128
+    )
+    TpuArray = npt.NDArray[_NumericScalar]
+
+__version__: str = "0.0.53.1"
 
 
-class ArrayInterfaceDict(TypedDict):
-    """NumPy `__array_interface__` v3 descriptor dictionary."""
+class _ArrayInterfaceRequired(TypedDict):
+    """Required keys of `ArrayInterfaceDict`."""
 
     shape: tuple[int, ...]
     typestr: str
-    data: tuple[int, bool]
+    data: bytes | tuple[int, bool]
     version: int
+
+
+class ArrayInterfaceDict(_ArrayInterfaceRequired, total=False):
+    """NumPy `__array_interface__` v3 descriptor dictionary."""
+
+    readonly: bool
 
 
 class ExecutableCostAnalysis(TypedDict, total=False):
@@ -260,6 +291,24 @@ class _DLManagedTensor(ctypes.Structure):
     ]
 
 
+def _cargo_target_roots(repo_root: Path) -> list[Path]:
+    """Returns candidate Cargo `target` directories for local workspace builds.
+
+    Args:
+        repo_root: Repository root directory.
+
+    Returns:
+        Ordered list of candidate Cargo `target` directory paths.
+    """
+    roots: list[Path] = []
+    env_target = os.environ.get("CARGO_TARGET_DIR", "")
+    if env_target:
+        roots.append(Path(env_target))
+    roots.append(repo_root.parent / "shared-cargo-target" / "global-target")
+    roots.append(repo_root / "target")
+    return roots
+
+
 def get_library_path() -> str:
     """Resolves the filesystem path to the compiled `libtpu` shared library.
 
@@ -268,21 +317,24 @@ def get_library_path() -> str:
     """
     pkg_dir = Path(__file__).resolve().parent
     repo_root = pkg_dir.parent.parent
-    candidates = [
+    pkg_candidates = [
         pkg_dir / "libtpu.dylib",
         pkg_dir / "libtpu.so",
         pkg_dir / "tpu.dll",
-        repo_root / "target" / "debug" / "libtpu.dylib",
-        repo_root / "target" / "debug" / "libtpu.so",
-        repo_root / "target" / "debug" / "tpu.dll",
-        repo_root / "target" / "release" / "libtpu.dylib",
-        repo_root / "target" / "release" / "libtpu.so",
-        repo_root / "target" / "release" / "tpu.dll",
     ]
-    for candidate in candidates:
+    for candidate in pkg_candidates:
         if candidate.exists():
             return str(candidate)
-    return str(candidates[0])
+    cargo_existing: list[Path] = []
+    for target_root in _cargo_target_roots(repo_root):
+        for profile in ("debug", "release"):
+            for name in ("libtpu.dylib", "libtpu.so", "tpu.dll"):
+                cand = target_root / profile / name
+                if cand.exists():
+                    cargo_existing.append(cand)
+    if cargo_existing:
+        return str(max(cargo_existing, key=lambda p: p.stat().st_mtime_ns))
+    return str(pkg_candidates[0])
 
 
 def configure_library_path() -> str:
@@ -1061,7 +1113,7 @@ class TpuBuffer:
 
         return cast(memoryview, call_native_c("buffer_view", self.to_bytes()))
 
-    def to_numpy(self) -> object:
+    def to_numpy(self) -> TpuArray:
         """Materializes this `TpuBuffer` as a `numpy.ndarray` (including `ml_dtypes` types).
 
         Returns:
@@ -1071,7 +1123,7 @@ class TpuBuffer:
 
         return buffer_to_numpy(self)
 
-    def __array__(self, dtype: object = None, copy: bool | None = None) -> object:
+    def __array__(self, dtype: npt.DTypeLike = None, copy: bool | None = None) -> TpuArray:
         """NumPy array protocol entrypoint supporting `ml_dtypes` (`bfloat16`, `float8`, `int4`).
 
         Args:
@@ -1128,7 +1180,7 @@ class TpuBuffer:
         max_version: tuple[int, int] | None = None,
         dl_device: tuple[int, int] | None = None,
         copy: bool | None = None,
-    ) -> object:
+    ) -> PyCapsule:
         """Returns a `CPython` `PyCapsule` (`"dltensor"`) wrapping a heap `DLManagedTensor`.
 
         Args:
@@ -1144,7 +1196,7 @@ class TpuBuffer:
             BufferError: If `dl_device` requests CPU (`(1, 0)`) while `copy is False`.
         """
         _ = (stream, max_version)
-        from libtpu._interop import call_native_c
+        from libtpu._interop import PyCapsule, call_native_c
 
         dev_type, dev_id = self.__dlpack_device__()
         if dl_device is not None:
@@ -1152,14 +1204,17 @@ class TpuBuffer:
                 raise BufferError("Cross-device DLPack export requires copy=True or copy=None")
             dev_type, dev_id = dl_device
         dt = self.dtype()
-        return call_native_c(
-            "export_dlpack",
-            self.to_bytes(),
-            list(self.shape()),
-            dt.dlpack_type_code(),
-            max(dt.bit_size(), 8),
-            dev_type,
-            dev_id,
+        return cast(
+            PyCapsule,
+            call_native_c(
+                "export_dlpack",
+                self.to_bytes(),
+                list(self.shape()),
+                dt.dlpack_type_code(),
+                max(dt.bit_size(), 8),
+                dev_type,
+                dev_id,
+            ),
         )
 
     def close(self) -> None:
@@ -1172,15 +1227,27 @@ class TpuBuffer:
             self._handle = ctypes.c_void_p(0)
 
     def __enter__(self) -> TpuBuffer:
-        """Enters a context manager block returning `self`."""
+        """Enters a context manager block returning `self`.
+
+        Returns:
+            This `TpuBuffer` instance.
+        """
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `TpuBuffer` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
+        _ = (exc_type, exc_val, exc_tb)
         self.close()
 
 
@@ -1465,15 +1532,27 @@ class TpuExecutable:
             self._handle = ctypes.c_void_p(0)
 
     def __enter__(self) -> TpuExecutable:
-        """Enters a context manager block returning `self`."""
+        """Enters a context manager block returning `self`.
+
+        Returns:
+            This `TpuExecutable` instance.
+        """
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `TpuExecutable` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
+        _ = (exc_type, exc_val, exc_tb)
         self.close()
 
 
@@ -1537,15 +1616,27 @@ class TpuProfiler:
             self._status = ctypes.c_void_p(0)
 
     def __enter__(self) -> TpuProfiler:
-        """Enters a context manager block returning `self`."""
+        """Enters a context manager block returning `self`.
+
+        Returns:
+            This `TpuProfiler` instance.
+        """
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `TpuProfiler` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
+        _ = (exc_type, exc_val, exc_tb)
         self.close()
 
 
@@ -1623,7 +1714,9 @@ class TpuClient:
 
         return query_client_topology(self._lib, self._handle.value or 0)
 
-    def buffer_from_numpy(self, device_id: int, array: object) -> TpuBuffer:
+    def buffer_from_numpy(
+        self, device_id: int, array: npt.ArrayLike | SupportsArrayInterface
+    ) -> TpuBuffer:
         """Allocates a `TpuBuffer` on `device_id` from a `numpy.ndarray` (including `ml_dtypes`).
 
         Args:
@@ -1859,15 +1952,27 @@ class TpuClient:
             self._handle = ctypes.c_void_p(0)
 
     def __enter__(self) -> TpuClient:
-        """Enters a context manager block returning `self`."""
+        """Enters a context manager block returning `self`.
+
+        Returns:
+            This `TpuClient` instance.
+        """
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `TpuClient` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple (`exc_type`, `exc_val`, `exc_tb`) if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
+        _ = (exc_type, exc_val, exc_tb)
         self.close()
 
 
@@ -2242,15 +2347,27 @@ class PhaseCompiler:
             self._handle = ctypes.c_void_p(0)
 
     def __enter__(self) -> PhaseCompiler:
-        """Enters a context manager block returning `self`."""
+        """Enters a context manager block returning `self`.
+
+        Returns:
+            This `PhaseCompiler` instance.
+        """
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `PhaseCompiler` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
+        _ = (exc_type, exc_val, exc_tb)
         self.close()
 
 
@@ -2343,15 +2460,27 @@ class MegascaleContext:
             self._ctx_handle = ctypes.c_void_p(0)
 
     def __enter__(self) -> MegascaleContext:
-        """Enters a context manager block returning `self`."""
+        """Enters a context manager block returning `self`.
+
+        Returns:
+            This `MegascaleContext` instance.
+        """
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `MegascaleContext` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
+        _ = (exc_type, exc_val, exc_tb)
         self.close()
 
 
@@ -2487,24 +2616,47 @@ class Communicator:
         _check_pjrt_error(self._lib, err)
         self._destroy_event(int(a2a_args.event or 0))
 
-    def collective_permute(self, send_buf: TpuBuffer, recv_buf: TpuBuffer) -> None:
+    def collective_permute(
+        self,
+        send_buf: TpuBuffer,
+        recv_buf: TpuBuffer,
+        source_target_pairs: Sequence[tuple[int, int]] | None = None,
+    ) -> None:
         """Executes a `CollectivePermute` via `PJRT_Communicator_CollectivePermute`.
 
         Args:
             send_buf: Source `TpuBuffer`.
             recv_buf: Destination `TpuBuffer`.
+            source_target_pairs: Optional `(src_rank, dst_rank)` routing pairs.
         """
-        cp_args = _PjrtCommunicatorCollectivePermuteArgs(
-            ctypes.sizeof(_PjrtCommunicatorCollectivePermuteArgs),
-            0,
-            self._handle.value or 0,
-            send_buf._handle.value or 0,
-            recv_buf._handle.value or 0,
-            0,
-            send_buf._num_elements,
-            0,
-        )
-        err = self._lib.PJRT_Communicator_CollectivePermute(ctypes.byref(cp_args))
+        if source_target_pairs is None:
+            cp_args = _PjrtCommunicatorCollectivePermuteArgs(
+                ctypes.sizeof(_PjrtCommunicatorCollectivePermuteArgs),
+                0,
+                self._handle.value or 0,
+                send_buf._handle.value or 0,
+                recv_buf._handle.value or 0,
+                0,
+                send_buf._num_elements,
+                0,
+            )
+            err = self._lib.PJRT_Communicator_CollectivePermute(ctypes.byref(cp_args))
+        else:
+            flat_ranks: list[int] = []
+            for src_r, dst_r in source_target_pairs:
+                flat_ranks.extend((int(src_r), int(dst_r)))
+            c_ranks = (ctypes.c_int32 * len(flat_ranks))(*flat_ranks)
+            cp_args = _PjrtCommunicatorCollectivePermuteArgs(
+                ctypes.sizeof(_PjrtCommunicatorCollectivePermuteArgs),
+                0,
+                self._handle.value or 0,
+                send_buf._handle.value or 0,
+                recv_buf._handle.value or 0,
+                ctypes.addressof(c_ranks) if flat_ranks else 0,
+                len(flat_ranks),
+                0,
+            )
+            err = self._lib.PJRT_Communicator_CollectivePermute(ctypes.byref(cp_args))
         _check_pjrt_error(self._lib, err)
         self._destroy_event(int(cp_args.event or 0))
 
@@ -2535,16 +2687,81 @@ class Communicator:
             self._handle = ctypes.c_void_p(0)
 
     def __enter__(self) -> Communicator:
-        """Enters a context manager block returning `self`."""
+        """Enters a context manager block returning `self`.
+
+        Returns:
+            This `Communicator` instance.
+        """
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `Communicator` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
+        _ = (exc_type, exc_val, exc_tb)
         self.close()
+
+
+class _TpuSerializedProto(ctypes.Structure):
+    """C ABI structure matching `TpuSerializedProto` (`16` bytes)."""
+
+    _fields_ = [
+        ("bytes", ctypes.c_void_p),
+        ("size", ctypes.c_size_t),
+    ]
+
+
+class _TpuEmbeddingExecutePartitionerParams(ctypes.Structure):
+    """C ABI structure matching `TpuEmbeddingEngine_ExecutePartitioner_Params` (`56` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("priv_data", ctypes.c_void_p),
+        ("tpu_embedding_config_bytes", ctypes.c_void_p),
+        ("tpu_embedding_config_size", ctypes.c_size_t),
+        ("common_config_string_size", ctypes.POINTER(ctypes.c_size_t)),
+        ("common_config_string", ctypes.POINTER(ctypes.c_void_p)),
+        ("status", ctypes.c_void_p),
+    ]
+
+
+class _TpuEmbeddingConfigureMemoryParams(ctypes.Structure):
+    """C ABI structure matching `TpuEmbeddingEngine_ConfigureMemory_Params` (`64` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("priv_data", ctypes.c_void_p),
+        ("num_inputs", ctypes.c_int32),
+        ("pad", ctypes.c_int32),
+        ("common_config_string", ctypes.c_void_p),
+        ("common_config_string_size", ctypes.c_size_t),
+        ("task_host_config_size", ctypes.POINTER(ctypes.c_size_t)),
+        ("task_host_config", ctypes.POINTER(ctypes.c_void_p)),
+        ("status", ctypes.c_void_p),
+    ]
+
+
+class _TpuEmbeddingCollateMemoryParams(ctypes.Structure):
+    """C ABI structure matching `TpuEmbeddingEngine_CollateMemory_Params` (`56` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("priv_data", ctypes.c_void_p),
+        ("memory_configs_size", ctypes.c_size_t),
+        ("memory_configs", ctypes.c_void_p),
+        ("merged_memory_config_size", ctypes.POINTER(ctypes.c_size_t)),
+        ("merged_memory_config", ctypes.POINTER(ctypes.c_void_p)),
+        ("status", ctypes.c_void_p),
+    ]
 
 
 class EmbeddingEngine:
@@ -2553,6 +2770,20 @@ class EmbeddingEngine:
     def __init__(self) -> None:
         """Initializes an `EmbeddingEngine` backed by `TpuEmbeddingEngine_*` in `libtpu.so`."""
         self._lib: ctypes.CDLL = _load_cdll()
+        self._lib.TpuConfigurationApi_FreeCharArray.argtypes = [ctypes.c_void_p]
+        self._lib.TpuConfigurationApi_FreeCharArray.restype = None
+        self._lib.TpuEmbeddingEngine_ExecutePartitioner.argtypes = [
+            ctypes.POINTER(_TpuEmbeddingExecutePartitionerParams)
+        ]
+        self._lib.TpuEmbeddingEngine_ExecutePartitioner.restype = ctypes.c_int32
+        self._lib.TpuEmbeddingEngine_ConfigureMemory.argtypes = [
+            ctypes.POINTER(_TpuEmbeddingConfigureMemoryParams)
+        ]
+        self._lib.TpuEmbeddingEngine_ConfigureMemory.restype = ctypes.c_int32
+        self._lib.TpuEmbeddingEngine_CollateMemory.argtypes = [
+            ctypes.POINTER(_TpuEmbeddingCollateMemoryParams)
+        ]
+        self._lib.TpuEmbeddingEngine_CollateMemory.restype = ctypes.c_int32
         self._state: ctypes.c_void_p = ctypes.c_void_p(
             int(self._lib.TpuEmbeddingEngineState_Create() or 0)
         )
@@ -2619,6 +2850,117 @@ class EmbeddingEngine:
         self._lib.TpuEmbeddingEngine_ReadParameters(ctypes.byref(params))
         return [float(out_vals[i]) for i in range(num_floats)]
 
+    def execute_partitioner(self, config_bytes: bytes) -> bytes:
+        """Executes `TpuEmbeddingEngine_ExecutePartitioner` preserving binary protobuf bytes.
+
+        Args:
+            config_bytes: Binary `TpuEmbeddingConfigurationProto` wire bytes.
+
+        Returns:
+            Partitioned binary protobuf configuration bytes.
+
+        Raises:
+            TpuError: If `config_bytes` is empty or partitioning fails.
+        """
+        in_buf = (ctypes.c_uint8 * len(config_bytes)).from_buffer_copy(config_bytes)
+        out_sz = ctypes.c_size_t(0)
+        out_ptr = ctypes.c_void_p(0)
+        st = ctypes.c_void_p(self._lib.TpuStatus_New())
+        try:
+            params = _TpuEmbeddingExecutePartitionerParams(
+                ctypes.sizeof(_TpuEmbeddingExecutePartitionerParams),
+                0,
+                ctypes.addressof(in_buf),
+                len(config_bytes),
+                ctypes.pointer(out_sz),
+                ctypes.pointer(out_ptr),
+                st.value or 0,
+            )
+            rc = int(self._lib.TpuEmbeddingEngine_ExecutePartitioner(ctypes.byref(params)))
+            if rc != 0 or not bool(self._lib.TpuStatus_Ok(st)):
+                raise TpuError(3, "TpuEmbeddingEngine_ExecutePartitioner failed")
+            raw = ctypes.string_at(int(out_ptr.value or 0), int(out_sz.value))
+            self._lib.TpuConfigurationApi_FreeCharArray(out_ptr)
+            return raw
+        finally:
+            self._lib.TpuStatus_Free(st)
+
+    def configure_memory(self, config_bytes: bytes, num_inputs: int = 1) -> bytes:
+        """Executes `TpuEmbeddingEngine_ConfigureMemory` preserving `0x00`/`0xFF` binary bytes.
+
+        Args:
+            config_bytes: Binary common configuration wire bytes.
+            num_inputs: Number of embedding table inputs.
+
+        Returns:
+            Task HBM memory configuration protobuf bytes.
+
+        Raises:
+            TpuError: If `config_bytes` is empty or memory configuration fails.
+        """
+        in_buf = (ctypes.c_uint8 * len(config_bytes)).from_buffer_copy(config_bytes)
+        out_sz = ctypes.c_size_t(0)
+        out_ptr = ctypes.c_void_p(0)
+        st = ctypes.c_void_p(self._lib.TpuStatus_New())
+        try:
+            params = _TpuEmbeddingConfigureMemoryParams(
+                ctypes.sizeof(_TpuEmbeddingConfigureMemoryParams),
+                0,
+                int(num_inputs),
+                0,
+                ctypes.addressof(in_buf),
+                len(config_bytes),
+                ctypes.pointer(out_sz),
+                ctypes.pointer(out_ptr),
+                st.value or 0,
+            )
+            rc = int(self._lib.TpuEmbeddingEngine_ConfigureMemory(ctypes.byref(params)))
+            if rc != 0 or not bool(self._lib.TpuStatus_Ok(st)):
+                raise TpuError(3, "TpuEmbeddingEngine_ConfigureMemory failed")
+            raw = ctypes.string_at(int(out_ptr.value or 0), int(out_sz.value))
+            self._lib.TpuConfigurationApi_FreeCharArray(out_ptr)
+            return raw
+        finally:
+            self._lib.TpuStatus_Free(st)
+
+    def collate_memory(self, task_configs: Sequence[bytes]) -> bytes:
+        """Collates per-task HBM memory configs via `TpuEmbeddingEngine_CollateMemory`.
+
+        Args:
+            task_configs: Sequence of serialized per-task memory config protobufs.
+
+        Returns:
+            Collated `CollatedTpuEmbeddingMemoryProto` wire bytes.
+
+        Raises:
+            TpuError: If any task config is malformed or empty.
+        """
+        pinned = [(ctypes.c_uint8 * len(cfg)).from_buffer_copy(cfg) for cfg in task_configs]
+        slices = (_TpuSerializedProto * len(task_configs))(
+            *[_TpuSerializedProto(ctypes.addressof(buf), len(buf)) for buf in pinned]
+        )
+        out_sz = ctypes.c_size_t(0)
+        out_ptr = ctypes.c_void_p(0)
+        st = ctypes.c_void_p(self._lib.TpuStatus_New())
+        try:
+            params = _TpuEmbeddingCollateMemoryParams(
+                ctypes.sizeof(_TpuEmbeddingCollateMemoryParams),
+                0,
+                len(task_configs),
+                ctypes.addressof(slices),
+                ctypes.pointer(out_sz),
+                ctypes.pointer(out_ptr),
+                st.value or 0,
+            )
+            rc = int(self._lib.TpuEmbeddingEngine_CollateMemory(ctypes.byref(params)))
+            if rc != 0 or not bool(self._lib.TpuStatus_Ok(st)):
+                raise TpuError(3, "TpuEmbeddingEngine_CollateMemory failed")
+            raw = ctypes.string_at(int(out_ptr.value or 0), int(out_sz.value))
+            self._lib.TpuConfigurationApi_FreeCharArray(out_ptr)
+            return raw
+        finally:
+            self._lib.TpuStatus_Free(st)
+
     def close(self) -> None:
         """Frees the native `TpuEmbeddingEngineState*` handle."""
         if self._state.value:
@@ -2626,16 +2968,557 @@ class EmbeddingEngine:
             self._state = ctypes.c_void_p(0)
 
     def __enter__(self) -> EmbeddingEngine:
-        """Enters a context manager block returning `self`."""
+        """Enters a context manager block returning `self`.
+
+        Returns:
+            This `EmbeddingEngine` instance.
+        """
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Closes this `EmbeddingEngine` when exiting a context manager block.
 
         Args:
-            exc_info: Exception tuple if raised.
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
         """
+        _ = (exc_type, exc_val, exc_tb)
         self.close()
+
+
+class _PjrtRawBufferCreateArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_RawBuffer_Create_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("buffer", ctypes.c_void_p),
+        ("raw_buffer_out", ctypes.c_void_p),
+    ]
+
+
+class _PjrtRawBufferDestroyArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_RawBuffer_Destroy_Args` (`24` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("raw_buffer", ctypes.c_void_p),
+    ]
+
+
+class _PjrtRawBufferQueryPtrArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_RawBuffer_GetHostPointer/GetMemorySpace_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("raw_buffer", ctypes.c_void_p),
+        ("out_ptr", ctypes.c_void_p),
+    ]
+
+
+class _PjrtRawBufferSizeArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("raw_buffer", ctypes.c_void_p),
+        ("on_device_size_in_bytes", ctypes.c_size_t),
+    ]
+
+
+class _PjrtRawBufferCopyRawArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_RawBuffer_CopyRaw_Args` (`56` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("raw_buffer", ctypes.c_void_p),
+        ("host_buf", ctypes.c_void_p),
+        ("offset", ctypes.c_int64),
+        ("transfer_size", ctypes.c_int64),
+        ("event", ctypes.c_void_p),
+    ]
+
+
+class RawBuffer:
+    """Strongly-typed RAII wrapper over `PJRT_RawBuffer*` (`PJRT_RawBuffer_Extension`)."""
+
+    def __init__(self, lib: ctypes.CDLL, handle: ctypes.c_void_p) -> None:
+        """Initializes a `RawBuffer` from a `PJRT_RawBuffer*` handle.
+
+        Args:
+            lib: Loaded `ctypes.CDLL` instance.
+            handle: Opaque `PJRT_RawBuffer*` pointer.
+        """
+        self._lib: ctypes.CDLL = lib
+        self._handle: ctypes.c_void_p = handle
+
+    @classmethod
+    def from_buffer(cls, buffer: TpuBuffer) -> RawBuffer:
+        """Creates a `RawBuffer` alias of `buffer` via `PJRT_RawBuffer_CreateRawAliasOfBuffer`.
+
+        Args:
+            buffer: Backing `TpuBuffer` handle.
+
+        Returns:
+            Owning `RawBuffer` handle aliasing `buffer`.
+        """
+        lib = buffer._lib
+        lib.PJRT_RawBuffer_CreateRawAliasOfBuffer.argtypes = [
+            ctypes.POINTER(_PjrtRawBufferCreateArgs)
+        ]
+        lib.PJRT_RawBuffer_CreateRawAliasOfBuffer.restype = ctypes.c_void_p
+        lib.PJRT_RawBuffer_Destroy.argtypes = [ctypes.POINTER(_PjrtRawBufferDestroyArgs)]
+        lib.PJRT_RawBuffer_Destroy.restype = ctypes.c_void_p
+        lib.PJRT_RawBuffer_GetHostPointer.argtypes = [ctypes.POINTER(_PjrtRawBufferQueryPtrArgs)]
+        lib.PJRT_RawBuffer_GetHostPointer.restype = ctypes.c_void_p
+        lib.PJRT_RawBuffer_GetMemorySpace.argtypes = [ctypes.POINTER(_PjrtRawBufferQueryPtrArgs)]
+        lib.PJRT_RawBuffer_GetMemorySpace.restype = ctypes.c_void_p
+        lib.PJRT_RawBuffer_GetOnDeviceSizeInBytes.argtypes = [
+            ctypes.POINTER(_PjrtRawBufferSizeArgs)
+        ]
+        lib.PJRT_RawBuffer_GetOnDeviceSizeInBytes.restype = ctypes.c_void_p
+        lib.PJRT_RawBuffer_CopyRawHostToDevice.argtypes = [
+            ctypes.POINTER(_PjrtRawBufferCopyRawArgs)
+        ]
+        lib.PJRT_RawBuffer_CopyRawHostToDevice.restype = ctypes.c_void_p
+        lib.PJRT_RawBuffer_CopyRawDeviceToHost.argtypes = [
+            ctypes.POINTER(_PjrtRawBufferCopyRawArgs)
+        ]
+        lib.PJRT_RawBuffer_CopyRawDeviceToHost.restype = ctypes.c_void_p
+        args = _PjrtRawBufferCreateArgs(
+            ctypes.sizeof(_PjrtRawBufferCreateArgs), 0, buffer._handle.value or 0, 0
+        )
+        err = lib.PJRT_RawBuffer_CreateRawAliasOfBuffer(ctypes.byref(args))
+        _check_pjrt_error(lib, err)
+        return cls(lib, ctypes.c_void_p(int(args.raw_buffer_out or 0)))
+
+    def host_pointer(self) -> int:
+        """Queries the raw device/host address via `PJRT_RawBuffer_GetHostPointer`.
+
+        Returns:
+            Non-zero opaque HBM address integer.
+        """
+        args = _PjrtRawBufferQueryPtrArgs(
+            ctypes.sizeof(_PjrtRawBufferQueryPtrArgs), 0, self._handle.value or 0, 0
+        )
+        err = self._lib.PJRT_RawBuffer_GetHostPointer(ctypes.byref(args))
+        _check_pjrt_error(self._lib, err)
+        return int(args.out_ptr or 0)
+
+    def on_device_size_bytes(self) -> int:
+        """Queries the 256-byte-aligned HBM byte size via `PJRT_RawBuffer_GetOnDeviceSizeInBytes`.
+
+        Returns:
+            On-device allocation size in bytes.
+        """
+        args = _PjrtRawBufferSizeArgs(
+            ctypes.sizeof(_PjrtRawBufferSizeArgs), 0, self._handle.value or 0, 0
+        )
+        err = self._lib.PJRT_RawBuffer_GetOnDeviceSizeInBytes(ctypes.byref(args))
+        _check_pjrt_error(self._lib, err)
+        return int(args.on_device_size_in_bytes)
+
+    def memory_space(self) -> int:
+        """Queries the owning `PJRT_Memory*` pointer via `PJRT_RawBuffer_GetMemorySpace`.
+
+        Returns:
+            Non-zero `PJRT_Memory*` pointer address.
+        """
+        args = _PjrtRawBufferQueryPtrArgs(
+            ctypes.sizeof(_PjrtRawBufferQueryPtrArgs), 0, self._handle.value or 0, 0
+        )
+        err = self._lib.PJRT_RawBuffer_GetMemorySpace(ctypes.byref(args))
+        _check_pjrt_error(self._lib, err)
+        return int(args.out_ptr or 0)
+
+    def copy_raw_host_to_device(self, src: bytes, offset: int = 0) -> None:
+        """Writes `src` into device HBM at byte `offset` via `PJRT_RawBuffer_CopyRawHostToDevice`.
+
+        Args:
+            src: Source host byte slice.
+            offset: Byte offset within the raw device buffer.
+        """
+        in_buf = (ctypes.c_uint8 * len(src)).from_buffer_copy(src)
+        args = _PjrtRawBufferCopyRawArgs(
+            ctypes.sizeof(_PjrtRawBufferCopyRawArgs),
+            0,
+            self._handle.value or 0,
+            ctypes.addressof(in_buf),
+            offset,
+            len(src),
+            0,
+        )
+        err = self._lib.PJRT_RawBuffer_CopyRawHostToDevice(ctypes.byref(args))
+        _check_pjrt_error(self._lib, err)
+        ev_del = _PjrtEventDestroyArgs(
+            ctypes.sizeof(_PjrtEventDestroyArgs), 0, int(args.event or 0)
+        )
+        self._lib.PJRT_Event_Destroy(ctypes.byref(ev_del))
+
+    def copy_raw_device_to_host(self, size: int, offset: int = 0) -> bytes:
+        """Reads `size` bytes from device HBM at `offset` via `PJRT_RawBuffer_CopyRawDeviceToHost`.
+
+        Args:
+            size: Number of bytes to read from device HBM.
+            offset: Byte offset within the raw device buffer.
+
+        Returns:
+            Bytes copied from device HBM.
+        """
+        out_buf = (ctypes.c_uint8 * max(size, 1))()
+        args = _PjrtRawBufferCopyRawArgs(
+            ctypes.sizeof(_PjrtRawBufferCopyRawArgs),
+            0,
+            self._handle.value or 0,
+            ctypes.addressof(out_buf),
+            offset,
+            size,
+            0,
+        )
+        err = self._lib.PJRT_RawBuffer_CopyRawDeviceToHost(ctypes.byref(args))
+        _check_pjrt_error(self._lib, err)
+        ev_del = _PjrtEventDestroyArgs(
+            ctypes.sizeof(_PjrtEventDestroyArgs), 0, int(args.event or 0)
+        )
+        self._lib.PJRT_Event_Destroy(ctypes.byref(ev_del))
+        return bytes(out_buf)[:size]
+
+    def close(self) -> None:
+        """Destroys the `PJRT_RawBuffer*` handle via `PJRT_RawBuffer_Destroy`."""
+        if self._handle.value:
+            args = _PjrtRawBufferDestroyArgs(
+                ctypes.sizeof(_PjrtRawBufferDestroyArgs), 0, self._handle.value
+            )
+            err = self._lib.PJRT_RawBuffer_Destroy(ctypes.byref(args))
+            self._handle = ctypes.c_void_p(0)
+            _check_pjrt_error(self._lib, err)
+
+    def __enter__(self) -> RawBuffer:
+        """Enters a context manager block returning `self`.
+
+        Returns:
+            This `RawBuffer` instance.
+        """
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
+        """Closes this `RawBuffer` when exiting a context manager block.
+
+        Args:
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
+        """
+        _ = (exc_type, exc_val, exc_tb)
+        self.close()
+
+
+TpuRawBuffer = RawBuffer
+
+
+class _PjrtMultiSliceCreateDefaultArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_Megascale_CreateDefaultConfig_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("topology", ctypes.c_void_p),
+        ("config_out", ctypes.c_void_p),
+    ]
+
+
+class _PjrtMultiSliceScalarArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_MultiSlice_Config_NumSlices/SliceId_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("config", ctypes.c_void_p),
+        ("out_val", ctypes.c_size_t),
+    ]
+
+
+class _PjrtMultiSliceDevicesArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_MultiSlice_Config_NumDevicesPerSlice_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("config", ctypes.c_void_p),
+        ("num_devices_per_slice_map", ctypes.c_size_t),
+        ("slice_ids", ctypes.c_size_t),
+    ]
+
+
+class _PjrtMultiSliceSerializeArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_MultiSlice_Config_Serialize_Args` (`48` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("config", ctypes.c_void_p),
+        ("serialized_bytes", ctypes.c_void_p),
+        ("serialized_bytes_size", ctypes.c_size_t),
+        ("serialized_config", ctypes.c_void_p),
+    ]
+
+
+class _PjrtMultiSliceDestroyArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_MultiSlice_Config_Destroy_Args` (`24` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("config", ctypes.c_void_p),
+    ]
+
+
+class MultiSliceConfig:
+    """Strongly-typed RAII wrapper over `PJRT_MultiSlice_Config*`."""
+
+    def __init__(self) -> None:
+        """Creates a `PJRT_MultiSlice_Config*` handle via `PJRT_Megascale_CreateDefaultConfig`."""
+        self._lib: ctypes.CDLL = _load_cdll()
+        self._lib.PJRT_Megascale_CreateDefaultConfig.argtypes = [
+            ctypes.POINTER(_PjrtMultiSliceCreateDefaultArgs)
+        ]
+        self._lib.PJRT_Megascale_CreateDefaultConfig.restype = ctypes.c_void_p
+        self._lib.PJRT_MultiSlice_Config_NumSlices.argtypes = [
+            ctypes.POINTER(_PjrtMultiSliceScalarArgs)
+        ]
+        self._lib.PJRT_MultiSlice_Config_NumSlices.restype = ctypes.c_void_p
+        self._lib.PJRT_MultiSlice_Config_SliceId.argtypes = [
+            ctypes.POINTER(_PjrtMultiSliceScalarArgs)
+        ]
+        self._lib.PJRT_MultiSlice_Config_SliceId.restype = ctypes.c_void_p
+        self._lib.PJRT_MultiSlice_Config_NumDevicesPerSlice.argtypes = [
+            ctypes.POINTER(_PjrtMultiSliceDevicesArgs)
+        ]
+        self._lib.PJRT_MultiSlice_Config_NumDevicesPerSlice.restype = ctypes.c_void_p
+        self._lib.PJRT_MultiSlice_Config_Serialize.argtypes = [
+            ctypes.POINTER(_PjrtMultiSliceSerializeArgs)
+        ]
+        self._lib.PJRT_MultiSlice_Config_Serialize.restype = ctypes.c_void_p
+        self._lib.PJRT_MultiSlice_Config_Destroy.argtypes = [
+            ctypes.POINTER(_PjrtMultiSliceDestroyArgs)
+        ]
+        self._lib.PJRT_MultiSlice_Config_Destroy.restype = ctypes.c_void_p
+        self._lib.PJRT_ExecutableMetadata_Destroy.argtypes = [
+            ctypes.POINTER(_PjrtMultiSliceDestroyArgs)
+        ]
+        self._lib.PJRT_ExecutableMetadata_Destroy.restype = ctypes.c_void_p
+        cr = _PjrtMultiSliceCreateDefaultArgs(
+            ctypes.sizeof(_PjrtMultiSliceCreateDefaultArgs), 0, 0, 0
+        )
+        err = self._lib.PJRT_Megascale_CreateDefaultConfig(ctypes.byref(cr))
+        _check_pjrt_error(self._lib, err)
+        self._handle: ctypes.c_void_p = ctypes.c_void_p(int(cr.config_out or 0))
+
+    def num_slices(self) -> int:
+        """Queries slice count via `PJRT_MultiSlice_Config_NumSlices`.
+
+        Returns:
+            Number of slices in this configuration.
+        """
+        args = _PjrtMultiSliceScalarArgs(
+            ctypes.sizeof(_PjrtMultiSliceScalarArgs), 0, self._handle.value or 0, 0
+        )
+        err = self._lib.PJRT_MultiSlice_Config_NumSlices(ctypes.byref(args))
+        _check_pjrt_error(self._lib, err)
+        return int(args.out_val)
+
+    def num_devices_per_slice(self) -> int:
+        """Queries devices-per-slice via `PJRT_MultiSlice_Config_NumDevicesPerSlice`.
+
+        Returns:
+            Number of devices per slice.
+        """
+        args = _PjrtMultiSliceDevicesArgs(
+            ctypes.sizeof(_PjrtMultiSliceDevicesArgs), 0, self._handle.value or 0, 0, 0
+        )
+        err = self._lib.PJRT_MultiSlice_Config_NumDevicesPerSlice(ctypes.byref(args))
+        _check_pjrt_error(self._lib, err)
+        return int(args.num_devices_per_slice_map)
+
+    def slice_id(self) -> int:
+        """Queries local slice ID via `PJRT_MultiSlice_Config_SliceId`.
+
+        Returns:
+            Zero-based slice index.
+        """
+        args = _PjrtMultiSliceScalarArgs(
+            ctypes.sizeof(_PjrtMultiSliceScalarArgs), 0, self._handle.value or 0, 0
+        )
+        err = self._lib.PJRT_MultiSlice_Config_SliceId(ctypes.byref(args))
+        _check_pjrt_error(self._lib, err)
+        return int(args.out_val)
+
+    def serialize(self) -> bytes:
+        """Serializes this configuration via `PJRT_MultiSlice_Config_Serialize`.
+
+        Returns:
+            Wire-encoded multi-slice configuration bytes.
+        """
+        args = _PjrtMultiSliceSerializeArgs(
+            ctypes.sizeof(_PjrtMultiSliceSerializeArgs), 0, self._handle.value or 0, 0, 0, 0
+        )
+        err = self._lib.PJRT_MultiSlice_Config_Serialize(ctypes.byref(args))
+        _check_pjrt_error(self._lib, err)
+        raw = ctypes.string_at(int(args.serialized_bytes or 0), int(args.serialized_bytes_size))
+        del_meta = _PjrtMultiSliceDestroyArgs(
+            ctypes.sizeof(_PjrtMultiSliceDestroyArgs), 0, int(args.serialized_config or 0)
+        )
+        self._lib.PJRT_ExecutableMetadata_Destroy(ctypes.byref(del_meta))
+        return raw
+
+    def close(self) -> None:
+        """Destroys the `PJRT_MultiSlice_Config*` via `PJRT_MultiSlice_Config_Destroy`."""
+        if self._handle.value:
+            args = _PjrtMultiSliceDestroyArgs(
+                ctypes.sizeof(_PjrtMultiSliceDestroyArgs), 0, self._handle.value
+            )
+            err = self._lib.PJRT_MultiSlice_Config_Destroy(ctypes.byref(args))
+            self._handle = ctypes.c_void_p(0)
+            _check_pjrt_error(self._lib, err)
+
+    def __enter__(self) -> MultiSliceConfig:
+        """Enters a context manager block returning `self`.
+
+        Returns:
+            This `MultiSliceConfig` instance.
+        """
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
+        """Closes this `MultiSliceConfig` when exiting a context manager block.
+
+        Args:
+            exc_type: Exception class if an exception was raised, else `None`.
+            exc_val: Exception instance if an exception was raised, else `None`.
+            exc_tb: Traceback if an exception was raised, else `None`.
+        """
+        _ = (exc_type, exc_val, exc_tb)
+        self.close()
+
+
+TpuMultiSliceConfig = MultiSliceConfig
+
+
+class _PjrtXlaTransformRegisterArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_XlaTransform_Register_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("name", ctypes.c_char_p),
+        ("name_size", ctypes.c_size_t),
+        ("transform_fn", ctypes.c_size_t),
+    ]
+
+
+class _PjrtXlaTransformUnregisterArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_XlaTransform_Unregister_Args` (`32` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("name", ctypes.c_char_p),
+        ("name_size", ctypes.c_size_t),
+    ]
+
+
+class _PjrtXlaTransformListArgs(ctypes.Structure):
+    """C ABI structure matching `PJRT_XlaTransform_List_Args` (`40` bytes)."""
+
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("extension_start", ctypes.c_void_p),
+        ("names_out", ctypes.POINTER(ctypes.c_void_p)),
+        ("num_names_out", ctypes.c_size_t),
+        ("name_sizes_out", ctypes.POINTER(ctypes.c_size_t)),
+    ]
+
+
+def register_xla_transform(name: str, pass_id: int = 1) -> None:
+    """Registers a custom XLA HLO transform pass via `PJRT_XlaTransform_Register`.
+
+    Args:
+        name: Unique transform pass name.
+        pass_id: Non-zero opaque pass identifier (`1` by default).
+    """
+    lib = _load_cdll()
+    lib.PJRT_XlaTransform_Register.argtypes = [ctypes.POINTER(_PjrtXlaTransformRegisterArgs)]
+    lib.PJRT_XlaTransform_Register.restype = ctypes.c_void_p
+    c_name = name.encode("utf-8")
+    args = _PjrtXlaTransformRegisterArgs(
+        ctypes.sizeof(_PjrtXlaTransformRegisterArgs), 0, c_name, len(c_name), int(pass_id)
+    )
+    err = lib.PJRT_XlaTransform_Register(ctypes.byref(args))
+    _check_pjrt_error(lib, err)
+
+
+def unregister_xla_transform(name: str) -> None:
+    """Unregisters a custom XLA HLO transform pass via `PJRT_XlaTransform_Unregister`.
+
+    Args:
+        name: Previously registered transform pass name.
+    """
+    lib = _load_cdll()
+    lib.PJRT_XlaTransform_Unregister.argtypes = [ctypes.POINTER(_PjrtXlaTransformUnregisterArgs)]
+    lib.PJRT_XlaTransform_Unregister.restype = ctypes.c_void_p
+    c_name = name.encode("utf-8")
+    args = _PjrtXlaTransformUnregisterArgs(
+        ctypes.sizeof(_PjrtXlaTransformUnregisterArgs), 0, c_name, len(c_name)
+    )
+    err = lib.PJRT_XlaTransform_Unregister(ctypes.byref(args))
+    _check_pjrt_error(lib, err)
+
+
+def list_xla_transforms() -> list[str]:
+    """Lists all registered XLA HLO transform pass names via `PJRT_XlaTransform_List`.
+
+    Returns:
+        Ordered list of registered XLA transform pass names.
+    """
+    lib = _load_cdll()
+    lib.PJRT_XlaTransform_List.argtypes = [ctypes.POINTER(_PjrtXlaTransformListArgs)]
+    lib.PJRT_XlaTransform_List.restype = ctypes.c_void_p
+    args = _PjrtXlaTransformListArgs(
+        ctypes.sizeof(_PjrtXlaTransformListArgs),
+        0,
+        ctypes.POINTER(ctypes.c_void_p)(),
+        0,
+        ctypes.POINTER(ctypes.c_size_t)(),
+    )
+    err = lib.PJRT_XlaTransform_List(ctypes.byref(args))
+    _check_pjrt_error(lib, err)
+    count = int(args.num_names_out)
+    return [
+        ctypes.string_at(int(args.names_out[idx] or 0), int(args.name_sizes_out[idx])).decode(
+            "utf-8"
+        )
+        for idx in range(count)
+    ]
 
 
 _CAPSULE_NAMES: dict[str, bytes] = {
@@ -2645,32 +3528,36 @@ _CAPSULE_NAMES: dict[str, bytes] = {
 }
 
 
-def _create_c_api_capsule(ptr_addr: int, name_key: str) -> object:
-    """Wraps a non-null C vtable pointer address in a CPython `PyCapsule` object.
+def _create_c_api_capsule(ptr_addr: int, name_key: str) -> PyCapsule:
+    """Wraps a non-null C vtable pointer address in a CPython `PyCapsule` handle.
 
     Args:
         ptr_addr: Raw memory address of the static C vtable (`GetPjrtApi` or `GetLibtpuSdkApi`).
         name_key: Key into `_CAPSULE_NAMES` providing the persistent C string name.
 
     Returns:
-        CPython `PyCapsule` object wrapping `ptr_addr`.
+        CPython `PyCapsule` wrapping `ptr_addr`.
     """
+    from libtpu._interop import PyCapsule
+
     py_capsule_new = ctypes.pythonapi.PyCapsule_New
     py_capsule_new.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
     py_capsule_new.restype = ctypes.py_object
-    capsule_obj: object = py_capsule_new(
-        ctypes.c_void_p(ptr_addr),
-        _CAPSULE_NAMES[name_key],
-        None,
+    return cast(
+        PyCapsule,
+        py_capsule_new(
+            ctypes.c_void_p(ptr_addr),
+            _CAPSULE_NAMES[name_key],
+            None,
+        ),
     )
-    return capsule_obj
 
 
-def get_pjrt_c_api_capsule() -> object:
+def get_pjrt_c_api_capsule() -> PyCapsule:
     """Returns a `PyCapsule` (`"pjrt_c_api"`) wrapping `GetPjrtApi()` for `jaxlib` / `torch_xla`.
 
     Returns:
-        `PyCapsule` object pointing to the static 1,144-byte `PJRT_Api` vtable.
+        `PyCapsule` pointing to the static 1,144-byte `PJRT_Api` vtable.
     """
     lib = _load_cdll()
     lib.GetPjrtApi.argtypes = []
@@ -2679,11 +3566,11 @@ def get_pjrt_c_api_capsule() -> object:
     return _create_c_api_capsule(ptr_addr, "pjrt_c_api")
 
 
-def get_sdk_c_api_capsule() -> object:
+def get_sdk_c_api_capsule() -> PyCapsule:
     """Returns a `PyCapsule` (`"libtpu.sdk._C_API"`) wrapping `GetLibtpuSdkApi()`.
 
     Returns:
-        `PyCapsule` object pointing to the static 144-byte `LibtpuSdk_Api` vtable.
+        `PyCapsule` pointing to the static 144-byte `LibtpuSdk_Api` vtable.
     """
     lib = _load_cdll()
     lib.GetLibtpuSdkApi.argtypes = []

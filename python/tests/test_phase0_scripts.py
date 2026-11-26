@@ -190,15 +190,15 @@ def test_fetch_artifacts_url_hashing_and_tag_parsing(tmp_path: Path) -> None:
     sample_file.write_bytes(b"libtpu-rs")
     assert fa.compute_sha256_file(sample_file) == fa.compute_sha256_bytes(b"libtpu-rs")
 
-    assert fa.parse_wheel_tags("libtpu-0.0.52-cp311-cp311-manylinux_2_31_x86_64.whl") == (
-        "0.0.52",
+    assert fa.parse_wheel_tags("libtpu-0.0.53.1-cp311-cp311-manylinux_2_31_x86_64.whl") == (
+        "0.0.53.1",
         "cp311",
         "manylinux_2_31_x86_64",
     )
     with pytest.raises(fa.ArtifactFetchError, match="missing .whl suffix"):
-        fa.parse_wheel_tags("libtpu-0.0.52.tar.gz")
+        fa.parse_wheel_tags("libtpu-0.0.53.1.tar.gz")
     with pytest.raises(fa.ArtifactFetchError, match="Malformed PEP 427"):
-        fa.parse_wheel_tags("libtpu-0.0.52.whl")
+        fa.parse_wheel_tags("libtpu-0.0.53.1.whl")
 
 
 def test_resolve_download_inspect_and_diff_wheels(tmp_path: Path) -> None:
@@ -207,15 +207,16 @@ def test_resolve_download_inspect_and_diff_wheels(tmp_path: Path) -> None:
     Args:
         tmp_path: Temporary directory fixture provided by pytest.
     """
-    cp311_whl = "libtpu-0.0.52-cp311-cp311-manylinux_2_31_x86_64.whl"
-    cp312_whl = "libtpu-0.0.52-cp312-cp312-manylinux_2_31_x86_64.whl"
+    cp311_whl = "libtpu-0.0.53.1-cp311-cp311-manylinux_2_31_x86_64.whl"
+    cp312_whl = "libtpu-0.0.53.1-cp312-cp312-manylinux_2_31_x86_64.whl"
+    cp314t_whl = "libtpu-0.0.53.1-cp314-cp314t-manylinux_2_31_x86_64.whl"
     pypi_doc = {
-        "info": {"version": "0.0.52"},
+        "info": {"version": "0.0.53.1"},
         "releases": {
-            "0.0.52": [
-                {"filename": "libtpu-0.0.52.tar.gz", "url": "https://x/s.tar.gz", "digests": {}},
+            "0.0.53.1": [
+                {"filename": "libtpu-0.0.53.1.tar.gz", "url": "https://x/s.tar.gz", "digests": {}},
                 {
-                    "filename": "libtpu-0.0.52-cp311-cp311-manylinux_2_35_aarch64.whl",
+                    "filename": "libtpu-0.0.53.1-cp311-cp311-manylinux_2_35_aarch64.whl",
                     "url": "https://x/arm.whl",
                     "size": 10,
                     "digests": {"sha256": "aa" * 32},
@@ -246,7 +247,7 @@ def test_resolve_download_inspect_and_diff_wheels(tmp_path: Path) -> None:
     assert [s.filename for s in specs_latest] == [cp311_whl, cp312_whl]
 
     arm_specs = fa.resolve_pypi_wheels(
-        version="0.0.52",
+        version="0.0.53.1",
         platform_tag="manylinux_2_35_aarch64",
         python_tag="cp311",
         reader=lambda _u: raw_json,
@@ -258,16 +259,16 @@ def test_resolve_download_inspect_and_diff_wheels(tmp_path: Path) -> None:
 
     with pytest.raises(fa.ArtifactFetchError, match="No wheels matched"):
         fa.resolve_pypi_wheels(
-            version="0.0.52",
+            version="0.0.53.1",
             platform_tag="manylinux_2_31_x86_64",
             python_tag="cp39",
             reader=lambda _u: raw_json,
         )
 
     tampered_doc = {
-        "info": {"version": "0.0.52"},
+        "info": {"version": "0.0.53.1"},
         "releases": {
-            "0.0.52": [
+            "0.0.53.1": [
                 {
                     "filename": cp311_whl,
                     "url": "https://x/cp311.whl",
@@ -279,6 +280,38 @@ def test_resolve_download_inspect_and_diff_wheels(tmp_path: Path) -> None:
     }
     with pytest.raises(fa.ArtifactFetchError, match="PyPI SHA-256 mismatch"):
         fa.resolve_pypi_wheels(reader=lambda _u: json.dumps(tampered_doc).encode("utf-8"))
+
+    # Test resolve_pinned_wheels & --dry-run (cache hit, corrupt cache, filter, no cache_dir)
+    assert len(fa.resolve_pinned_wheels("0.0.53.1", python_tag=None, cache_dir=None)) == 7
+    pin_cache = tmp_path / "pin_cache"
+    pin_cache.mkdir()
+    sample_whl_bytes = b"pinned-wheel"
+    sample_sha = fa.compute_sha256_bytes(sample_whl_bytes)
+    with patch.dict(fa.PINNED_WHEEL_SHA256, {cp314t_whl: sample_sha}):
+        (pin_cache / cp314t_whl).write_bytes(sample_whl_bytes)
+        pinned_ft = fa.resolve_pinned_wheels("0.0.53.1", python_tag="cp314t", cache_dir=pin_cache)
+        assert pinned_ft[0].size_bytes == len(sample_whl_bytes)
+        assert (
+            fa.main(
+                [
+                    "--version",
+                    "0.0.53.1",
+                    "--python-tag",
+                    "cp314t",
+                    "--dry-run",
+                    "--cache-dir",
+                    str(pin_cache),
+                ]
+            )
+            == 0
+        )
+        (pin_cache / cp314t_whl).write_bytes(b"corrupt")
+        with pytest.raises(fa.ArtifactFetchError, match="Cached wheel SHA-256 mismatch"):
+            fa.resolve_pinned_wheels("0.0.53.1", python_tag="cp314t", cache_dir=pin_cache)
+    with pytest.raises(fa.ArtifactFetchError, match="No pinned wheels matched"):
+        fa.resolve_pinned_wheels("9.9.9")
+    with pytest.raises(fa.ArtifactFetchError, match="No pinned wheels matched"):
+        fa.resolve_pinned_wheels("0.0.53.1", platform_tag="manylinux_2_35_aarch64")
 
     gcs_html = (
         b'<a href="libtpu-0.0.53.dev1-cp311-cp311-manylinux_2_31_x86_64.whl">x</a>'
@@ -355,6 +388,61 @@ def test_resolve_download_inspect_and_diff_wheels(tmp_path: Path) -> None:
             custom_spec, cache_dir, reader=lambda _u: old_whl_bytes
         )
         assert len(bins3) == 2
+
+    # Test free-threaded sdk.so extraction & .text CreatePjrtApi header scan
+    ft_spec = fa.WheelArtifactSpec(
+        version="0.0.99",
+        filename="libtpu-0.0.99-cp314-cp314t-manylinux_2_31_x86_64.whl",
+        url="https://example.com/libtpu-0.0.99-ft.whl",
+        sha256=fa.compute_sha256_bytes(old_whl_bytes),
+        platform_tag="manylinux_2_31_x86_64",
+        python_tag="cp314t",
+        size_bytes=len(old_whl_bytes),
+    )
+    with patch.dict(
+        fa.PINNED_BINARY_SHA256,
+        {("0.0.99", "libtpu/sdk.so:freethreaded"): fa.compute_sha256_bytes(elf_sdk_no_pjrt)},
+    ):
+        _, ft_bins = fa.download_and_extract_wheel(
+            ft_spec, cache_dir, reader=lambda _u: old_whl_bytes
+        )
+        assert len(ft_bins) == 2
+        assert (cache_dir / "0.0.99" / "sdk_freethreaded.so").exists()
+
+    text_code = (
+        b"\x90" * 16
+        + b"\x48\xc7\x00\x78\x04\x00\x00"
+        + b"\x48\xc7\x40\x10\x18\x00\x00\x00"
+        + b"\x49\xb9\x00\x00\x00\x00\x75\x00\x00\x00"
+        + b"\x90" * 16
+    )
+    sec_text = fa.ElfSectionHeader(".text", 1, 6, 0x1000, 0, len(text_code), 0, 0)
+    assert fa._extract_pjrt_header_from_sections(text_code, [sec_text]) == (1144, 0, 117)
+    bad_text = (
+        b"\x90" * 16
+        + b"\x48\xc7\x00\x01\x00\x00\x00"
+        + b"\x48\xc7\x40\x10\x18\x00\x00\x00"
+        + b"\x49\xb9\x00\x00\x00\x00\x75\x00\x00\x00"
+        + b"\x90" * 16
+    )
+    assert fa._extract_pjrt_header_from_sections(bad_text, [sec_text]) == (0, 0, 0)
+    no_sz_text = b"\x90" * 16 + b"\x48\xc7\x40\x10\x18\x00\x00\x00" + b"\x90" * 32
+    sec_no_sz = fa.ElfSectionHeader(".text", 1, 6, 0x1000, 0, len(no_sz_text), 0, 0)
+    assert fa._extract_pjrt_header_from_sections(no_sz_text, [sec_no_sz]) == (0, 0, 0)
+    short_text = b"\x90" * 16 + b"\x48\xc7\x40\x10\x18\x00\x00\x00" + b"\x90" * 8
+    sec_short = fa.ElfSectionHeader(".text", 1, 6, 0x1000, 0, len(short_text), 0, 0)
+    assert fa._extract_pjrt_header_from_sections(short_text, [sec_short]) == (0, 0, 0)
+    assert fa._extract_pjrt_header_from_sections(b"\x00" * 32, [sec_text]) == (0, 0, 0)
+
+    # Exercise resolve_pinned_wheels python_tag filtering and uncached directory lookup
+    cp311_specs = fa.resolve_pinned_wheels(
+        version="0.0.53.1",
+        python_tag="cp311",
+        cache_dir=tmp_path / "empty_pinned_cache",
+    )
+    assert len(cp311_specs) == 1
+    assert cp311_specs[0].python_tag == "cp311"
+    assert cp311_specs[0].size_bytes == 0
 
     new_whl_path = tmp_path / "libtpu-0.0.100-cp311-cp311-manylinux_2_31_x86_64.whl"
     new_whl_path.write_bytes(new_whl_bytes)
@@ -486,6 +574,122 @@ message HloInstructionProto {
     # Sync all pins
     all_summaries = oa.sync_all_anchors(cache_dir=tmp_path / "all_oss", reader=fake_reader)
     assert len(all_summaries) >= 30
+
+    # Cross-validation of pjrt_c_api.h against golden_struct_layouts.json
+    valid_hdr = """
+#define PJRT_API_MINOR 117
+typedef enum {
+  #ifdef PJRT_ENABLE_EXT
+  PJRT_Extension_Type_Gpu_Custom_Call = 0,
+  PJRT_Extension_Type_Profiler,
+  PJRT_Extension_Type_FFI = 5,
+} PJRT_Extension_Type;
+struct PJRT_Buffer_MemoryLayout_Tiled {
+  size_t struct_size;
+  const int64_t* minor_to_major;
+};
+struct PJRT_Buffer_MemoryLayout {
+  size_t struct_size;
+  union {
+    PJRT_Buffer_MemoryLayout_Tiled tiled;
+    size_t raw_stride;
+  };
+};
+struct PJRT_Error_Destroy_Args {
+  #ifdef PJRT_ENABLE_EXT
+  size_t struct_size;
+  void* extension_start;
+  PJRT_Buffer_MemoryLayout layout;
+  void (*cb)(
+      void* arg);
+  int *;
+  ;
+};
+struct PJRT_Empty_Args {
+  // comment only
+};
+"""
+    parsed_unclosed = oa.parse_pjrt_c_api_header("struct PJRT_Unclosed_Args { size_t struct_size;")
+    assert parsed_unclosed["args_structs"] == {}
+    mock_golden: dict[str, object] = {
+        "pjrt_api_minor": 117,
+        "extensions": [
+            "skip_non_dict",
+            {"name": "PJRT_FFI_Extension", "ext_type": 5},
+            {"name": "PJRT_CustomOnly_Extension", "ext_type": 99},
+        ],
+        "pjrt_slots": [
+            "skip_non_dict",
+            {
+                "mangled_symbol": "_ZN4pjrt18PJRT_Error_DestroyEP23PJRT_Error_Destroy_Args",
+                "min_struct_size": 24,
+            },
+            {"mangled_symbol": "no_args_suffix", "min_struct_size": 16},
+        ],
+    }
+    errs_empty = oa.validate_pjrt_header_against_golden(
+        valid_hdr.replace("struct PJRT_Empty_Args {\n  // comment only\n};", ""),
+        mock_golden,
+    )
+    assert errs_empty == []
+
+    bad_golden: dict[str, object] = {
+        "pjrt_api_minor": 999,
+        "extensions": [{"name": "PJRT_FFI_Extension", "ext_type": 12}],
+        "pjrt_slots": [
+            {
+                "mangled_symbol": "_ZN4pjrt18PJRT_Error_DestroyEP23PJRT_Error_Destroy_Args",
+                "min_struct_size": 64,
+            }
+        ],
+    }
+    errs_bad = oa.validate_pjrt_header_against_golden(valid_hdr, bad_golden)
+    assert any("PJRT_API_MINOR mismatch" in e for e in errs_bad)
+    assert any("ext_type mismatch" in e for e in errs_bad)
+    assert any("missing leading struct_size" in e for e in errs_bad)
+    assert any("min_struct_size" in e for e in errs_bad)
+    assert oa.parse_pjrt_c_api_header("/* no minor or enum */")["pjrt_api_minor"] is None
+    assert (
+        oa.validate_pjrt_header_against_golden(
+            "#define PJRT_API_MINOR 117\n",
+            {"pjrt_api_minor": 117, "extensions": "bad", "pjrt_slots": "bad"},
+        )
+        == []
+    )
+
+    golden_file = tmp_path / "golden_layouts.json"
+    golden_file.write_text(json.dumps({"pjrt_api_minor": 117}), encoding="utf-8")
+    clean_hdr = valid_hdr.replace("struct PJRT_Empty_Args {\n  // comment only\n};", "")
+    assert (
+        oa.main(
+            [
+                "--validate-golden",
+                str(golden_file),
+                "--cache-dir",
+                str(tmp_path / "empty_cache"),
+            ],
+            reader=lambda _u: clean_hdr,
+        )
+        == 0
+    )
+    xla_pin = oa.get_pin_by_key("openxla_xla")
+    cached_pjrt = tmp_path / "cached_hdr" / xla_pin.key / xla_pin.commit / "xla/pjrt/c/pjrt_c_api.h"
+    cached_pjrt.parent.mkdir(parents=True, exist_ok=True)
+    cached_pjrt.write_text(clean_hdr, encoding="utf-8")
+    assert (
+        oa.main(
+            ["--validate-golden", str(golden_file), "--cache-dir", str(tmp_path / "cached_hdr")],
+            reader=fake_reader,
+        )
+        == 0
+    )
+    assert (
+        oa.main(
+            ["--validate-golden", str(golden_file), "--cache-dir", str(tmp_path / "empty_cache")],
+            reader=lambda _u: "#define PJRT_API_MINOR 1\n",
+        )
+        == 1
+    )
 
     # CLI paths: list all, list filtered, sync filtered, error handling, and __main__
     assert oa.main([], reader=fake_reader) == 0

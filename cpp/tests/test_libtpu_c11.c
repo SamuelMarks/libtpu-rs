@@ -326,18 +326,19 @@ _Static_assert(offsetof(PJRT_Client_BufferFromHostBuffer_Args, buffer) == 0x70,
 int main(void) {
   const PJRT_Api *api = GetPjrtApi();
   if (api == NULL || api->struct_size != 1144U ||
-      api->pjrt_api_version.minor_version != 116) {
+      api->pjrt_api_version.minor_version != 117) {
     return 1;
   }
 
-  /* Verify exact 17-node TPU PJRT extension chain order, IDs, and sizes. */
-  const int32_t expected_types[17] = {29, 28, 26, 25, 20, 19, 18, 17, 16,
-                                      14, 9,  12, 11, 7,  6,  8,  1};
-  const size_t expected_sizes[17] = {56U,  32U, 64U,  96U, 120U, 40U,
-                                     248U, 96U, 280U, 40U, 64U,  56U,
-                                     40U,  40U, 80U,  80U, 40U};
+  /* Verify exact 18-node 0.0.53.1 TPU PJRT extension chain order, IDs, & sizes.
+   */
+  const int32_t expected_types[18] = {5,  24, 23, 22, 21, 20, 19, 18, 17,
+                                      16, 14, 9,  12, 13, 6,  4,  8,  1};
+  const size_t expected_sizes[18] = {48U, 56U,  32U, 64U,  96U, 120U,
+                                     40U, 288U, 96U, 280U, 40U, 192U,
+                                     56U, 40U,  40U, 80U,  80U, 40U};
   const PJRT_Extension_Base *cur = api->extension_start;
-  for (size_t i = 0U; i < 17U; ++i) {
+  for (size_t i = 0U; i < 18U; ++i) {
     if (cur == NULL || cur->ext_type != expected_types[i] ||
         cur->struct_size != expected_sizes[i]) {
       return 2;
@@ -350,13 +351,14 @@ int main(void) {
 
   const PJRT_FFI_Extension *ffi_ext = PJRT_FFI_GetExtension();
   const LibtpuSdk_Api *sdk = GetLibtpuSdkApi();
-  if (ffi_ext == NULL || ffi_ext->base.ext_type != 3 ||
+  if (ffi_ext == NULL || ffi_ext->base.ext_type != 5 ||
       ffi_ext->base.struct_size != 48U || sdk == NULL ||
       sdk->version_header != 0x0000000100000000ULL) {
     return 4;
   }
 
-  /* Create PJRT_Client, compile StableHLO add, and destroy cleanly in C11. */
+  /* Create PJRT_Client, exercise PJRT_XlaTransform_*, compile, and test ABI
+   * compatibility. */
   PJRT_Client_Create_Args create_args;
   memset(&create_args, 0, sizeof(create_args));
   create_args.struct_size = sizeof(create_args);
@@ -365,11 +367,26 @@ int main(void) {
     return 5;
   }
 
-  const char mlir_src[] = "module @c11 { stablehlo.add }";
+  PJRT_XlaTransform_Register_Args xt_reg = {
+      sizeof(PJRT_XlaTransform_Register_Args), NULL, "c11_test_pass", 13U, 77U};
+  if (PJRT_XlaTransform_Register(&xt_reg) != NULL) {
+    return 51;
+  }
+  PJRT_XlaTransform_List_Args xt_list = {sizeof(PJRT_XlaTransform_List_Args),
+                                         NULL, NULL, 0U, NULL};
+  if (PJRT_XlaTransform_List(&xt_list) != NULL || xt_list.num_names_out < 1U ||
+      xt_list.names_out == NULL || xt_list.name_sizes_out == NULL) {
+    return 52;
+  }
+
+  const char mlir_src[] =
+      "module @c11 { func.func @main(%a: tensor<4xf32>, %b: tensor<4xf32>) -> "
+      "tensor<4xf32> { %0 = stablehlo.add %a, %b : tensor<4xf32> return %0 : "
+      "tensor<4xf32> } }";
   PJRT_Program prog;
   memset(&prog, 0, sizeof(prog));
   prog.struct_size = sizeof(prog);
-  prog.code = (char *)(uintptr_t)mlir_src;
+  prog.code = (const char *)(uintptr_t)mlir_src;
   prog.code_size = sizeof(mlir_src) - 1U;
   prog.format = "mlir";
   prog.format_size = 4U;
@@ -383,6 +400,257 @@ int main(void) {
       comp_args.executable == NULL) {
     return 6;
   }
+
+  PJRT_XlaTransform_Unregister_Args xt_unreg = {
+      sizeof(PJRT_XlaTransform_Unregister_Args), NULL, "c11_test_pass", 13U};
+  if (PJRT_XlaTransform_Unregister(&xt_unreg) != NULL) {
+    return 53;
+  }
+
+  /* PJRT_AbiVersion_IsCompatible: Runtime <-> Runtime and Runtime <->
+   * Executable */
+  PJRT_LoadedExecutable_GetExecutable_Args get_ex = {
+      sizeof(PJRT_LoadedExecutable_GetExecutable_Args), NULL,
+      comp_args.executable, NULL};
+  if (api->pjrt_loaded_executable_get_executable(&get_ex) != NULL ||
+      get_ex.executable == NULL) {
+    return 54;
+  }
+  PJRT_AbiVersion_Get_Args rt_abi_args = {sizeof(PJRT_AbiVersion_Get_Args),
+                                          NULL, create_args.client, NULL};
+  PJRT_AbiVersion_Get_Args ex_abi_args = {sizeof(PJRT_AbiVersion_Get_Args),
+                                          NULL, get_ex.executable, NULL};
+  if (PJRT_AbiVersion_ClientRuntime(&rt_abi_args) != NULL ||
+      PJRT_AbiVersion_ExecutableGet(&ex_abi_args) != NULL ||
+      rt_abi_args.abi_version_out == NULL ||
+      ex_abi_args.abi_version_out == NULL) {
+    return 55;
+  }
+  PJRT_AbiVersion_IsCompatible_Args abi_cmp = {
+      sizeof(PJRT_AbiVersion_IsCompatible_Args), NULL,
+      rt_abi_args.abi_version_out, ex_abi_args.abi_version_out, 0U};
+  if (PJRT_AbiVersion_RuntimeCompatibleWithExecutable(&abi_cmp) != NULL ||
+      abi_cmp.is_compatible_out != 1U) {
+    return 56;
+  }
+  abi_cmp.other_abi_version = rt_abi_args.abi_version_out;
+  abi_cmp.is_compatible_out = 0U;
+  if (PJRT_AbiVersion_RuntimeCompatibleWithRuntime(&abi_cmp) != NULL ||
+      abi_cmp.is_compatible_out != 1U) {
+    return 57;
+  }
+  PJRT_AbiVersion_Destroy_Args rt_abi_del = {
+      sizeof(PJRT_AbiVersion_Destroy_Args), NULL, rt_abi_args.abi_version_out};
+  PJRT_AbiVersion_Destroy_Args ex_abi_del = {
+      sizeof(PJRT_AbiVersion_Destroy_Args), NULL, ex_abi_args.abi_version_out};
+  if (PJRT_AbiVersion_RuntimeDestroy(&rt_abi_del) != NULL ||
+      PJRT_AbiVersion_ExecutableDestroy(&ex_abi_del) != NULL) {
+    return 58;
+  }
+  PJRT_Executable_Destroy_Args raw_ex_del = {
+      sizeof(PJRT_Executable_Destroy_Args), NULL, get_ex.executable};
+  if (api->pjrt_executable_destroy(&raw_ex_del) != NULL) {
+    return 59;
+  }
+
+  /* PJRT_RawBuffer_* lifecycle, offset H2D/D2H, and out-of-bounds error
+   * contracts */
+  PJRT_Client_Devices_Args devs_args = {sizeof(PJRT_Client_Devices_Args), NULL,
+                                        create_args.client, NULL, 0U};
+  if (api->pjrt_client_addressable_devices(&devs_args) != NULL ||
+      devs_args.num_devices == 0U) {
+    return 60;
+  }
+  const float init_vals[4] = {1.0F, 2.0F, 3.0F, 4.0F};
+  const int64_t rb_dims[1] = {4};
+  PJRT_Client_BufferFromHostBuffer_Args h2d = {
+      sizeof(PJRT_Client_BufferFromHostBuffer_Args),
+      NULL,
+      create_args.client,
+      init_vals,
+      11,
+      0,
+      rb_dims,
+      1U,
+      NULL,
+      0U,
+      0,
+      0,
+      devs_args.devices[0],
+      NULL,
+      NULL,
+      NULL,
+      NULL};
+  if (api->pjrt_client_buffer_from_host_buffer(&h2d) != NULL ||
+      h2d.buffer == NULL) {
+    return 61;
+  }
+  PJRT_Event_Destroy_Args ev_del = {sizeof(PJRT_Event_Destroy_Args), NULL,
+                                    h2d.done_with_host_buffer};
+  (void)api->pjrt_event_destroy(&ev_del);
+
+  PJRT_RawBuffer_Create_Args rb_create = {sizeof(PJRT_RawBuffer_Create_Args),
+                                          NULL, h2d.buffer, NULL};
+  if (PJRT_RawBuffer_CreateRawAliasOfBuffer(&rb_create) != NULL ||
+      rb_create.raw_buffer_out == NULL) {
+    return 62;
+  }
+  PJRT_RawBuffer_GetHostPointer_Args rb_ptr = {
+      sizeof(PJRT_RawBuffer_GetHostPointer_Args), NULL,
+      rb_create.raw_buffer_out, NULL};
+  PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args rb_sz = {
+      sizeof(PJRT_RawBuffer_GetOnDeviceSizeInBytes_Args), NULL,
+      rb_create.raw_buffer_out, 0U};
+  PJRT_RawBuffer_GetMemorySpace_Args rb_mem = {
+      sizeof(PJRT_RawBuffer_GetMemorySpace_Args), NULL,
+      rb_create.raw_buffer_out, NULL};
+  if (PJRT_RawBuffer_GetHostPointer(&rb_ptr) != NULL ||
+      rb_ptr.host_pointer_out == NULL ||
+      PJRT_RawBuffer_GetOnDeviceSizeInBytes(&rb_sz) != NULL ||
+      rb_sz.on_device_size_in_bytes != 256U ||
+      PJRT_RawBuffer_GetMemorySpace(&rb_mem) != NULL ||
+      rb_mem.memory_space_out == NULL) {
+    return 63;
+  }
+  const float patch_vals[2] = {99.0F, 100.0F};
+  PJRT_RawBuffer_CopyRaw_Args rb_h2d = {sizeof(PJRT_RawBuffer_CopyRaw_Args),
+                                        NULL,
+                                        rb_create.raw_buffer_out,
+                                        (void *)(uintptr_t)patch_vals,
+                                        4,
+                                        8,
+                                        NULL};
+  if (PJRT_RawBuffer_CopyRawHostToDevice(&rb_h2d) != NULL) {
+    return 64;
+  }
+  ev_del.event = rb_h2d.event;
+  (void)api->pjrt_event_destroy(&ev_del);
+
+  float readback[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+  PJRT_RawBuffer_CopyRaw_Args rb_d2h = {sizeof(PJRT_RawBuffer_CopyRaw_Args),
+                                        NULL,
+                                        rb_create.raw_buffer_out,
+                                        readback,
+                                        0,
+                                        16,
+                                        NULL};
+  if (PJRT_RawBuffer_CopyRawDeviceToHost(&rb_d2h) != NULL ||
+      readback[0] != 1.0F || readback[1] != 99.0F || readback[2] != 100.0F ||
+      readback[3] != 4.0F) {
+    return 65;
+  }
+  ev_del.event = rb_d2h.event;
+  (void)api->pjrt_event_destroy(&ev_del);
+
+  /* Out-of-bounds offset + transfer_size must return PJRT_Error* */
+  PJRT_RawBuffer_CopyRaw_Args rb_oob = {sizeof(PJRT_RawBuffer_CopyRaw_Args),
+                                        NULL,
+                                        rb_create.raw_buffer_out,
+                                        readback,
+                                        252,
+                                        8,
+                                        NULL};
+  PJRT_Error *oob_err = PJRT_RawBuffer_CopyRawDeviceToHost(&rb_oob);
+  if (oob_err == NULL) {
+    return 66;
+  }
+  PJRT_Error_Destroy_Args oob_del = {sizeof(PJRT_Error_Destroy_Args), NULL,
+                                     oob_err};
+  api->pjrt_error_destroy(&oob_del);
+
+  PJRT_RawBuffer_Destroy_Args rb_del = {sizeof(PJRT_RawBuffer_Destroy_Args),
+                                        NULL, rb_create.raw_buffer_out};
+  if (PJRT_RawBuffer_Destroy(&rb_del) != NULL) {
+    return 67;
+  }
+  PJRT_Buffer_Destroy_Args b_del = {sizeof(PJRT_Buffer_Destroy_Args), NULL,
+                                    h2d.buffer};
+  if (api->pjrt_buffer_destroy(&b_del) != NULL) {
+    return 68;
+  }
+
+  /* PJRT_MultiSlice_Config_* lifecycle */
+  PJRT_Megascale_CreateDefaultConfig_Args msc_cr = {
+      sizeof(PJRT_Megascale_CreateDefaultConfig_Args), NULL, NULL, NULL};
+  if (PJRT_Megascale_CreateDefaultConfig(&msc_cr) != NULL ||
+      msc_cr.config_out == NULL) {
+    return 69;
+  }
+  PJRT_MultiSlice_Config_NumSlices_Args msc_ns = {
+      sizeof(PJRT_MultiSlice_Config_NumSlices_Args), NULL, msc_cr.config_out,
+      0U};
+  PJRT_MultiSlice_Config_NumDevicesPerSlice_Args msc_nd = {
+      sizeof(PJRT_MultiSlice_Config_NumDevicesPerSlice_Args), NULL,
+      msc_cr.config_out, 0U, 0U};
+  PJRT_MultiSlice_Config_SliceId_Args msc_sid = {
+      sizeof(PJRT_MultiSlice_Config_SliceId_Args), NULL, msc_cr.config_out,
+      99U};
+  PJRT_MultiSlice_Config_Serialize_Args msc_ser = {
+      sizeof(PJRT_MultiSlice_Config_Serialize_Args),
+      NULL,
+      msc_cr.config_out,
+      NULL,
+      0U,
+      NULL};
+  if (PJRT_MultiSlice_Config_NumSlices(&msc_ns) != NULL ||
+      msc_ns.num_slices < 1U ||
+      PJRT_MultiSlice_Config_NumDevicesPerSlice(&msc_nd) != NULL ||
+      msc_nd.num_devices_per_slice_map < 1U ||
+      PJRT_MultiSlice_Config_SliceId(&msc_sid) != NULL ||
+      PJRT_MultiSlice_Config_Serialize(&msc_ser) != NULL ||
+      msc_ser.serialized_bytes_size == 0U) {
+    return 70;
+  }
+  PJRT_Metadata_Destroy_Args msc_ser_del = {sizeof(PJRT_Metadata_Destroy_Args),
+                                            NULL, msc_ser.serialized_config};
+  (void)PJRT_ExecutableMetadata_Destroy(&msc_ser_del);
+  PJRT_MultiSlice_Config_Destroy_Args msc_del = {
+      sizeof(PJRT_MultiSlice_Config_Destroy_Args), NULL, msc_cr.config_out};
+  if (PJRT_MultiSlice_Config_Destroy(&msc_del) != NULL) {
+    return 71;
+  }
+
+  /* TpuEmbeddingEngine_ConfigureMemory + CollateMemory with 0x00/0xFF binary
+   * bytes */
+  const uint8_t bin_cfg_in[6] = {0x00U, 0xFFU, 0x10U, 0x00U, 0xFEU, 0x01U};
+  size_t mem0_sz = 0U;
+  char *mem0_ptr = NULL;
+  TpuStatus *emb_st = TpuStatus_New();
+  TpuEmbeddingEngine_ConfigureMemory_Params cfg_mem = {
+      sizeof(TpuEmbeddingEngine_ConfigureMemory_Params),
+      NULL,
+      2,
+      0,
+      (const char *)bin_cfg_in,
+      sizeof(bin_cfg_in),
+      &mem0_sz,
+      &mem0_ptr,
+      emb_st};
+  if (TpuEmbeddingEngine_ConfigureMemory(&cfg_mem) != 0 ||
+      !TpuStatus_Ok(emb_st) || mem0_ptr == NULL || mem0_sz == 0U) {
+    return 72;
+  }
+  TpuSerializedProto task_slices[2] = {
+      {mem0_ptr, mem0_sz},
+      {mem0_ptr, mem0_sz},
+  };
+  size_t merged_sz = 0U;
+  char *merged_ptr = NULL;
+  TpuEmbeddingEngine_CollateMemory_Params col_mem = {
+      sizeof(TpuEmbeddingEngine_CollateMemory_Params),
+      NULL,
+      2U,
+      task_slices,
+      &merged_sz,
+      &merged_ptr,
+      emb_st};
+  if (TpuEmbeddingEngine_CollateMemory(&col_mem) != 0 ||
+      !TpuStatus_Ok(emb_st) || merged_ptr == NULL || merged_sz == 0U) {
+    return 73;
+  }
+  TpuConfigurationApi_FreeCharArray(mem0_ptr);
+  TpuConfigurationApi_FreeCharArray(merged_ptr);
+  TpuStatus_Free(emb_st);
 
   PJRT_LoadedExecutable_Destroy_Args del_exec;
   memset(&del_exec, 0, sizeof(del_exec));
@@ -400,10 +668,26 @@ int main(void) {
     return 8;
   }
 
-  TpuDriver *drv = TpuDriver_Open("local://");
+  /* TpuDriver: GetCompiledProgramShape + FreeCompiledProgramShape +
+   * Load/UnloadProgram (no double-free) */
+  TpuDriver *drv = TpuDriver_Open("local://0");
   if (drv == NULL) {
     return 9;
   }
+  TpuCompiledProgramHandle *cprog =
+      TpuDriver_CompileProgramFromText(drv, mlir_src, 1, 0, NULL);
+  TpuCompiledProgramShape *cshape =
+      TpuDriver_GetCompiledProgramShape(drv, cprog);
+  TpuLoadedProgramHandle *lprog = TpuDriver_LoadProgram(drv, 0, cprog, 0, NULL);
+  if (cprog == NULL || cshape == NULL || lprog == NULL) {
+    return 91;
+  }
+  TpuDriver_FreeCompiledProgramShape(cshape);
+  TpuEvent *unld_ev = TpuDriver_UnloadProgram(drv, lprog, 0, NULL);
+  TpuDriver_FreeEvent(unld_ev);
+  TpuDriver_FreeCompiledProgramHandle(cprog);
+  TpuStatus *rst_st = TpuDriver_Reset(drv);
+  TpuStatus_Free(rst_st);
   TpuDriver_Close(drv);
 
   PJRT_Client_Create_Args doc_create_args = {
@@ -431,6 +715,6 @@ int main(void) {
     return 11;
   }
 
-  PJRT_Triton_FreeCompiledAsm(NULL, 0U);
+  PJRT_Triton_FreeAsm(NULL, 0U);
   return 0;
 }

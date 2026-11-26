@@ -90,6 +90,7 @@ pub use self::vm::{
     DeepSeaVm, ImemAttributeEntry, MultiCoreChipVmState, SparseCoreOptimizer,
     SparseCoreSubcoreState, SparseCoreVmState, TpuCoreVmState, VmExecutionReport, VregTile2D,
 };
+pub use crate::runtime_state::{SharedTpuRuntimeState, global_shared_runtime_state};
 
 use crate::compiler::CompiledProgram;
 use crate::error::LibTpuResult;

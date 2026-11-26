@@ -6,6 +6,9 @@
 
 #![cfg_attr(all(test, coverage_nightly), feature(coverage_attribute))]
 
+/// Upstream `PyPI` PEP 440 version string targeted by `libtpu-rs`.
+pub const LIBTPU_PYPI_VERSION: &str = "0.0.53.1";
+
 pub mod compiler;
 pub mod config;
 pub mod distributed;
@@ -15,6 +18,7 @@ pub mod error;
 pub mod hal;
 pub mod pjrt;
 pub mod proto;
+pub mod runtime_state;
 pub mod types;
 
 #[cfg(test)]
