@@ -37,4 +37,10 @@ def collect_profiler_tool_data(tool_name: str = "trace_viewer.json") -> bytes:
     """
     ...
 
-__all__: list[str]
+__all__ = [
+    "collect_profiler_tool_data",
+    "collect_xspace",
+    "get_core_state_summary",
+    "inspect_executable_buffer_assignment",
+    "start_server",
+]

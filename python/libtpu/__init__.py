@@ -1123,7 +1123,7 @@ class TpuBuffer:
 
         return buffer_to_numpy(self)
 
-    def __array__(self, dtype: npt.DTypeLike = None, copy: bool | None = None) -> TpuArray:
+    def __array__(self, dtype: npt.DTypeLike | None = None, copy: bool | None = None) -> TpuArray:
         """NumPy array protocol entrypoint supporting `ml_dtypes` (`bfloat16`, `float8`, `int4`).
 
         Args:

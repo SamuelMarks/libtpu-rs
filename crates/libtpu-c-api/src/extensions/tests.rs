@@ -2789,9 +2789,23 @@ fn test_compiler_executable_memory_collectives_profiler_exhaustive() {
             serialized_layout_deleter: None,
         };
         assert!(PJRT_Layouts_MemoryLayout_Serialize(ptr::addr_of_mut!(lser).cast()).is_null());
+        assert_eq!(
+            std::slice::from_raw_parts(
+                lser.serialized_bytes.cast::<u8>(),
+                lser.serialized_bytes_size
+            ),
+            b"{1,0}"
+        );
         pjrt_serialized_artifact_deleter(lser.serialized_layout);
         lser.layout = ptr::null();
         assert!(PJRT_Layouts_MemoryLayout_Serialize(ptr::addr_of_mut!(lser).cast()).is_null());
+        assert!(
+            std::slice::from_raw_parts(
+                lser.serialized_bytes.cast::<u8>(),
+                lser.serialized_bytes_size
+            )
+            .starts_with(b"{1,0:T(8,")
+        );
         pjrt_serialized_artifact_deleter(lser.serialized_layout);
         let mut ldel_stride = PJRT_Layouts_MemoryLayout_Destroy_Args {
             struct_size: size_of::<PJRT_Layouts_MemoryLayout_Destroy_Args>(),
@@ -2803,19 +2817,38 @@ fn test_compiler_executable_memory_collectives_profiler_exhaustive() {
         assert!(PJRT_Layouts_MemoryLayout_Destroy(ptr::addr_of_mut!(ldel_stride).cast()).is_null());
 
         let dims2 = [4_i64, 4];
-        let mut def_lay = PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args {
-            struct_size: size_of::<PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args>(),
-            extension_start: ptr::null_mut(),
-            client,
-            elem_type: 11,
-            pad: 0,
-            dims: dims2.as_ptr(),
-            num_dims: 2,
-            layout: ptr::null_mut(),
-        };
-        assert!(PJRT_Layouts_Client_GetDefaultLayout(ptr::addr_of_mut!(def_lay).cast()).is_null());
-        ldel_stride.layout = def_lay.layout;
-        assert!(PJRT_Layouts_MemoryLayout_Destroy(ptr::addr_of_mut!(ldel_stride).cast()).is_null());
+        for (rank, expected_prefix) in [
+            (0_usize, &b"{}"[..]),
+            (1_usize, &b"{0:T("[..]),
+            (2_usize, &b"{1,0:T(8,"[..]),
+        ] {
+            let mut def_lay = PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args {
+                struct_size: size_of::<PJRT_Layouts_PJRT_Client_GetDefaultLayout_Args>(),
+                extension_start: ptr::null_mut(),
+                client,
+                elem_type: 11,
+                pad: 0,
+                dims: dims2.as_ptr(),
+                num_dims: rank,
+                layout: ptr::null_mut(),
+            };
+            assert!(
+                PJRT_Layouts_Client_GetDefaultLayout(ptr::addr_of_mut!(def_lay).cast()).is_null()
+            );
+            lser.layout = def_lay.layout.cast_const();
+            assert!(PJRT_Layouts_MemoryLayout_Serialize(ptr::addr_of_mut!(lser).cast()).is_null());
+            let ser_slice = std::slice::from_raw_parts(
+                lser.serialized_bytes.cast::<u8>(),
+                lser.serialized_bytes_size,
+            );
+            assert!(ser_slice.starts_with(expected_prefix));
+            assert!(ser_slice.ends_with(b"}"));
+            pjrt_serialized_artifact_deleter(lser.serialized_layout);
+            ldel_stride.layout = def_lay.layout;
+            assert!(
+                PJRT_Layouts_MemoryLayout_Destroy(ptr::addr_of_mut!(ldel_stride).cast()).is_null()
+            );
+        }
 
         assert_and_free_pjrt_error(PJRT_Layouts_Executable_GetOutputLayouts(ptr::null_mut()), 3);
         let mut bad_elay = PJRT_Layouts_PJRT_Executable_Layouts_Args {

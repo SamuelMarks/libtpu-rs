@@ -216,8 +216,8 @@ def test_pep3118_numpy_ml_dtypes_and_dlpack_roundtrip() -> None:
                     """Returns the `(kDLCPU, 0)` DLPack device tuple."""
                     return (1, 0)
 
-                def __dlpack__(self, stream: int | None = None) -> object:
-                    """Exports a host-copied CPU DLPack capsule.
+                def __dlpack__(self, stream: int | None = None) -> interop.PyCapsule:
+                    """Exports a CPU-staged DLPack v1.0 PyCapsule.
 
                     Args:
                         stream: Optional stream identifier.

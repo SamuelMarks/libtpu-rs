@@ -244,7 +244,7 @@ def get_augmented_env() -> dict[str, str]:
     ]
     for candidate in candidate_dirs:
         if candidate.exists() and str(candidate) not in paths:
-            paths.insert(0, str(candidate))
+            paths.append(str(candidate))
 
     env["PATH"] = os.pathsep.join(paths)
     env["CARGO_TARGET_DIR"] = str(get_repo_root() / "target")
@@ -608,6 +608,13 @@ def hook_clippy(repo_root: Path, check_only: bool = False) -> int:
 
     print("==> [lint] Running mypy --strict on Python files...")
     run_command(["mypy", "--strict", *py_targets], cwd=repo_root)
+    shadowed_py_files = [
+        str(p.relative_to(repo_root))
+        for p in sorted((repo_root / "python" / "libtpu").rglob("*.py"))
+        if p.with_suffix(".pyi").exists()
+    ]
+    if shadowed_py_files:
+        run_command(["mypy", "--strict", *shadowed_py_files], cwd=repo_root)
 
     print("==> [lint] Running Doxygen strict documentation check on C/C++ files...")
     (repo_root / "cpp" / "build" / "doxygen").mkdir(parents=True, exist_ok=True)

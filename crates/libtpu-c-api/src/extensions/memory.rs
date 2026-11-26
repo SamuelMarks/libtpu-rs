@@ -520,7 +520,43 @@ pub(crate) fn alloc_registered_memory_layout(
 ///
 /// * `rank` - Tensor rank.
 fn alloc_memory_layout_handle(rank: usize) -> *mut PJRT_Layouts_MemoryLayout {
-    alloc_registered_memory_layout(MemoryLayout::default_tpu_tiled(rank.max(1)))
+    alloc_registered_memory_layout(MemoryLayout::default_tpu_tiled(rank))
+}
+
+/// Formats a [`MemoryLayout`] into canonical `OpenXLA` HLO layout syntax (`xla::Layout::ToString`).
+///
+/// Produces strings parseable by `xla::ParseLayout` (`{...}`), such as `"{}"` for 0D scalars,
+/// `"{0:T(128)}"` for 1D vectors, `"{1,0:T(8,128)}"` for >=2D tiled tensors, and `"{1,0}"`
+/// for untiled strided host layouts.
+///
+/// # Arguments
+///
+/// * `layout` - Strongly-typed [`MemoryLayout`] descriptor.
+/// * `sublane_tile` - Sublane tile extent (typically `8`).
+/// * `lane_tile` - Lane tile extent (typically `128`).
+fn format_hlo_memory_layout(layout: &MemoryLayout, sublane_tile: i64, lane_tile: i64) -> String {
+    match layout {
+        MemoryLayout::Tiled { minor_to_major, .. } => {
+            let m2m_str = minor_to_major
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            match minor_to_major.len() {
+                0 => String::from("{}"),
+                1 => format!("{{{m2m_str}:T({lane_tile})}}"),
+                _ => format!("{{{m2m_str}:T({sublane_tile},{lane_tile})}}"),
+            }
+        }
+        MemoryLayout::Strides { byte_strides } => {
+            let m2m_str = (0..i64::try_from(byte_strides.len()).unwrap_or(0))
+                .rev()
+                .map(|idx| idx.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{{{m2m_str}}}")
+        }
+    }
 }
 
 /// Strongly-typed handler for [`PJRT_Layouts_MemoryLayout_Destroy`].
@@ -569,40 +605,15 @@ pub unsafe extern "C" fn PJRT_Layouts_MemoryLayout_Destroy(
 ///
 /// `args` must be a valid [`PJRT_Layouts_MemoryLayout_Serialize_Args`].
 unsafe fn handle_layouts_serialize(args: &mut PJRT_Layouts_MemoryLayout_Serialize_Args) {
-    let (minor_to_major, sublane, lane) = borrow_live_handle(args.layout).map_or_else(
-        || {
-            let mxu_dim = i64::from(global_init_config().generation.mxu_dimension());
-            (vec![1, 0], 8, mxu_dim)
-        },
-        |l_ref| {
-            let m2m: Vec<i64> = match &l_ref.layout {
-                MemoryLayout::Tiled { minor_to_major, .. } => minor_to_major.clone(),
-                MemoryLayout::Strides { byte_strides } => (0..i64::try_from(byte_strides.len())
-                    .unwrap_or(1))
-                    .rev()
-                    .collect(),
-            };
-            (
-                if m2m.is_empty() { vec![0] } else { m2m },
-                l_ref.sublane_tile,
-                l_ref.lane_tile,
-            )
-        },
-    );
-    let encoded = libtpu_core::proto::LayoutProto {
-        minor_to_major,
-        tiles: vec![libtpu_core::proto::TileProto {
-            dimensions: vec![sublane, lane],
-        }],
-        tail_padding_alignment_in_elements: 1,
-        index_primitive_type: 0,
-        pointer_primitive_type: 0,
-        memory_space: 0,
-        element_size_in_bits: 32,
-        dynamic_shape_metadata_prefix_bytes: 0,
-        ..libtpu_core::proto::LayoutProto::default()
-    }
-    .encode_proto();
+    let encoded = borrow_live_handle(args.layout)
+        .map_or_else(
+            || {
+                let mxu_dim = i64::from(global_init_config().generation.mxu_dimension());
+                format!("{{1,0:T(8,{mxu_dim})}}")
+            },
+            |l_ref| format_hlo_memory_layout(&l_ref.layout, l_ref.sublane_tile, l_ref.lane_tile),
+        )
+        .into_bytes();
     let (ptr, len, holder) = box_serialized_artifact(encoded);
     args.serialized_bytes = ptr;
     args.serialized_bytes_size = len;

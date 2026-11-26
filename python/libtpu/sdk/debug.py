@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import ctypes
 from collections.abc import Callable
-from typing import TYPE_CHECKING
 
 from libtpu.sdk.tpumonitoring import SdkClient, _check_sdk_error
-
-if TYPE_CHECKING:
-    _CDebugTrampoline = Callable[[int | None], None]
 
 
 class _RegisterDebugCallbackArgs(ctypes.Structure):
@@ -33,7 +29,7 @@ class _UnregisterDebugCallbackArgs(ctypes.Structure):
 
 
 _CDebugCallback = ctypes.CFUNCTYPE(None, ctypes.c_void_p)
-_ACTIVE_CALLBACKS: dict[int, _CDebugTrampoline] = {}
+_ACTIVE_CALLBACKS: dict[int, object] = {}
 _SHARED_CLIENT: SdkClient | None = None
 
 
@@ -70,7 +66,6 @@ def register_debug_callback(cb: Callable[[], None]) -> int:
     """
     client = _get_debug_client()
 
-    @_CDebugCallback
     def _trampoline(_user_data: int | None) -> None:
         """C FFI callback trampoline invoking the registered Python callable.
 
@@ -79,12 +74,13 @@ def register_debug_callback(cb: Callable[[], None]) -> int:
         """
         cb()
 
-    fn_addr = ctypes.cast(_trampoline, ctypes.c_void_p).value or 0
+    c_trampoline = _CDebugCallback(_trampoline)
+    fn_addr = ctypes.cast(c_trampoline, ctypes.c_void_p).value or 0
     args = _RegisterDebugCallbackArgs(client._handle, fn_addr, 0, 0)
     err = client._cdll.LibtpuSdk_RegisterDebugCallback(ctypes.byref(args))
     _check_sdk_error(client._cdll, err)
     cb_id = int(args.callback_id)
-    _ACTIVE_CALLBACKS[cb_id] = _trampoline
+    _ACTIVE_CALLBACKS[cb_id] = c_trampoline
     return cb_id
 
 

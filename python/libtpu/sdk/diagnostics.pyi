@@ -235,4 +235,29 @@ def compute_torus_route_hops(
     """
     ...
 
-__all__: list[str]
+__all__ = [
+    "CompilerMetadataReport",
+    "CompletedProgramInfoDict",
+    "CoreDumpAnalyzerReport",
+    "CoreDumpCoreStateEntry",
+    "CoreDumpHardware",
+    "CoreDumpMachineInfo",
+    "CoreDumpReport",
+    "CoreDumpTimestamps",
+    "CoreIdentifierDict",
+    "CoreStateSummaryDict",
+    "QueuedProgramInfoDict",
+    "SequencerInfoDict",
+    "StallArtifactMetadataDict",
+    "StallSummariesReport",
+    "StallSummaryReportDict",
+    "StallTriggerInfoDict",
+    "compute_torus_route_hops",
+    "emit_proto_schema",
+    "invoke_coordination_grpc",
+    "protodesc_cold_file_count",
+    "read_compiler_metadata",
+    "read_core_dump",
+    "read_stall_summaries",
+    "riegeli_highwayhash64",
+]

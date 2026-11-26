@@ -492,6 +492,18 @@ def test_hooks_and_cli_dispatch(tmp_path: Path) -> None:
         ] in lint_cmds
         assert (tmp_path / "cpp" / "build" / "doxygen").is_dir()
 
+    stubbed_pkg = tmp_path / "python" / "libtpu"
+    stubbed_pkg.mkdir(parents=True, exist_ok=True)
+    (stubbed_pkg / "shadowed.py").write_text('"""Doc."""\nx: int = 1\n', encoding="utf-8")
+    (stubbed_pkg / "shadowed.pyi").write_text('"""Stub."""\nx: int\n', encoding="utf-8")
+    (stubbed_pkg / "unshadowed.py").write_text('"""Doc."""\ny: int = 2\n', encoding="utf-8")
+    with patch.object(pc, "run_command") as mock_lint_shadowed:
+        assert pc.hook_clippy(tmp_path) == 0
+        assert mock_lint_shadowed.call_count == 6
+        assert ["mypy", "--strict", "python/libtpu/shadowed.py"] in [
+            call.args[0] for call in mock_lint_shadowed.call_args_list
+        ]
+
     with patch.object(pc, "run_command") as mock_test:
         assert pc.hook_test(tmp_path) == 0
         assert mock_test.call_count == 5

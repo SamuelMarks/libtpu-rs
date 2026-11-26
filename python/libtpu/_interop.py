@@ -9,18 +9,25 @@ import sys
 import types
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import ClassVar, Protocol, Union, cast, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, Protocol, Union, cast, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
 
 import libtpu
 
+if TYPE_CHECKING:
+    from typing import TypeAlias
 
-class PyCapsule(Protocol):
-    """Opaque protocol representing a `CPython` `PyCapsule` handle."""
+    from typing_extensions import CapsuleType
 
-    _pycapsule_opaque: ClassVar[str]
+    PyCapsule: TypeAlias = CapsuleType
+else:
+
+    class PyCapsule(Protocol):
+        """Opaque protocol representing a `CPython` `PyCapsule` handle."""
+
+        _pycapsule_opaque: ClassVar[str]
 
 
 @runtime_checkable
@@ -931,7 +938,7 @@ def unpack_subbyte_elements(
 
 def buffer_to_numpy(
     buf: libtpu.TpuBuffer,
-    requested_dtype: npt.DTypeLike = None,
+    requested_dtype: npt.DTypeLike | None = None,
 ) -> npt.NDArray[
     np.bool_
     | np.int8
@@ -970,7 +977,7 @@ def buffer_to_numpy(
         raw = unpack_subbyte_elements(raw, num_elements, bits, signed=signed)
     arr = np.frombuffer(raw, dtype=np_dt, count=num_elements).reshape(shape).copy()
     if requested_dtype is not None:
-        arr = arr.astype(cast("npt.DTypeLike", requested_dtype))
+        arr = arr.astype(requested_dtype)
     return cast(
         "npt.NDArray[np.bool_ | np.int8 | np.int16 | np.int32 | np.int64 | np.uint8"
         " | np.uint16 | np.uint32 | np.uint64 | np.float16 | np.float32 | np.float64"

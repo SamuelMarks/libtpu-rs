@@ -27,4 +27,10 @@ def get_slice_topology() -> list[ChipCoordinates]:
     """Returns the full list of `ChipCoordinates` across the TPU slice."""
     ...
 
-__all__: list[str]
+__all__ = [
+    "ChipCoordinates",
+    "get_chip_coordinates",
+    "get_chip_index",
+    "get_host_name",
+    "get_slice_topology",
+]
