@@ -850,9 +850,7 @@ impl PosixKernelDriverBackend {
             .map_anon()
             .map_err(|err| LibTpuError::HardwareIoError {
                 operation: "memmap2::map_anon",
-                errno: err
-                    .raw_os_error()
-                    .unwrap_or(nix::errno::Errno::EINVAL as i32),
+                errno: err.raw_os_error().unwrap_or(libc::EINVAL),
                 message: err.to_string(),
             })
     }

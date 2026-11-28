@@ -8,7 +8,7 @@ use crate::proto::{HloComputationProto, PjRtPartialProgramProto, ProtoSchemaMess
 use crate::types::{ElementType, MemoryKind, MemoryLayout, Shape};
 use indexmap::IndexMap;
 use petgraph::algo::toposort;
-use petgraph::stable_graph::StableDiGraph;
+use petgraph::graph::DiGraph;
 
 /// Parsed GSPMD / `OpenXLA` Shardy (`sdy`) tensor sharding specification.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -894,7 +894,7 @@ pub struct HloDagAnalysisReport {
     pub total_hbm_bytes: u64,
 }
 
-/// Builds a `petgraph::stable_graph::StableDiGraph` over an [`HloComputationProto`], verifies
+/// Builds a `petgraph::graph::DiGraph` over an [`HloComputationProto`], verifies
 /// DAG acyclicity via `petgraph::algo::toposort`, and assigns 4096-byte-aligned HBM offsets in
 /// an `indexmap::IndexMap`.
 ///
@@ -908,7 +908,7 @@ pub struct HloDagAnalysisReport {
 pub fn analyze_hlo_computation_dag(
     computation: &HloComputationProto,
 ) -> LibTpuResult<HloDagAnalysisReport> {
-    let mut graph = StableDiGraph::<i64, ()>::new();
+    let mut graph = DiGraph::<i64, ()>::new();
     let mut id_to_node = IndexMap::new();
     let mut id_to_bytes = IndexMap::new();
 

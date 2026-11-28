@@ -11,7 +11,8 @@
 
 use crate::error::{LibTpuError, LibTpuResult};
 use gimli::{BaseAddresses, CieOrFde, EhFrame, LittleEndian, UnwindSection};
-use goblin::Object;
+use goblin::elf::Elf;
+use goblin::mach::Mach;
 use object::{Object as _, ObjectSection as _, ObjectSymbol as _};
 use std::collections::BTreeMap;
 
@@ -41,7 +42,7 @@ pub struct ExportedBinarySymbol {
     pub size: u64,
 }
 
-/// Summary report produced by [`inspect_binary_symbols`] via `goblin::Object::parse`.
+/// Summary report produced by [`inspect_binary_symbols`] via `goblin` ELF/Mach-O parsers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BinarySymbolReport {
     /// Detected binary container format.
@@ -388,12 +389,12 @@ pub struct ElfProgramHeaderInfo {
 ///
 /// Returns [`LibTpuError`] if `bytes` is not a valid ELF image.
 pub fn inspect_elf_program_headers(bytes: &[u8]) -> LibTpuResult<Vec<ElfProgramHeaderInfo>> {
-    let obj = Object::parse(bytes)?;
-    let Object::Elf(elf) = obj else {
+    if !bytes.starts_with(b"\x7fELF") {
         return Err(LibTpuError::BinaryFormatError {
             reason: String::from("Expected ELF binary for program header inspection"),
         });
-    };
+    }
+    let elf = Elf::parse(bytes)?;
     let mut headers = Vec::with_capacity(elf.program_headers.len());
     for ph in &elf.program_headers {
         headers.push(ElfProgramHeaderInfo {
@@ -418,88 +419,85 @@ pub fn inspect_elf_program_headers(bytes: &[u8]) -> LibTpuResult<Vec<ElfProgramH
 ///
 /// # Errors
 ///
-/// Returns [`LibTpuError::GoblinParseFailed`] if `goblin::Object::parse` fails or
+/// Returns [`LibTpuError::GoblinParseFailed`] if `goblin::elf::Elf::parse` fails or
 /// [`LibTpuError::BinaryFormatError`] if the container is an archive or unsupported format.
 pub fn inspect_binary_symbols(bytes: &[u8]) -> LibTpuResult<BinarySymbolReport> {
-    let obj = Object::parse(bytes)?;
-    match obj {
-        Object::Elf(elf) => {
-            let mut section_names = Vec::new();
-            let mut exported_symbols = Vec::new();
-            for sh in &elf.section_headers {
-                let sec_name = elf.shdr_strtab.get_at(sh.sh_name).unwrap_or_default();
-                if !sec_name.is_empty() {
-                    section_names.push(String::from(sec_name));
-                }
-                if sh.sh_type == goblin::elf::section_header::SHT_DYNSYM && sh.sh_entsize == 24 {
-                    let str_sh = elf.section_headers.get(sh.sh_link as usize).unwrap_or(sh);
-                    let str_start = usize::try_from(str_sh.sh_offset).unwrap_or(0);
-                    let str_end =
-                        str_start.saturating_add(usize::try_from(str_sh.sh_size).unwrap_or(0));
-                    let str_bytes = bytes.get(str_start..str_end).unwrap_or_default();
+    if bytes.starts_with(b"\x7fELF") {
+        let elf = Elf::parse(bytes)?;
+        let mut section_names = Vec::new();
+        let mut exported_symbols = Vec::new();
+        for sh in &elf.section_headers {
+            let sec_name = elf.shdr_strtab.get_at(sh.sh_name).unwrap_or_default();
+            if !sec_name.is_empty() {
+                section_names.push(String::from(sec_name));
+            }
+            if sh.sh_type == goblin::elf::section_header::SHT_DYNSYM && sh.sh_entsize == 24 {
+                let str_sh = elf.section_headers.get(sh.sh_link as usize).unwrap_or(sh);
+                let str_start = usize::try_from(str_sh.sh_offset).unwrap_or(0);
+                let str_end =
+                    str_start.saturating_add(usize::try_from(str_sh.sh_size).unwrap_or(0));
+                let str_bytes = bytes.get(str_start..str_end).unwrap_or_default();
 
-                    let sym_start = usize::try_from(sh.sh_offset).unwrap_or(0);
-                    let sym_end =
-                        sym_start.saturating_add(usize::try_from(sh.sh_size).unwrap_or(0));
-                    let sym_bytes = bytes.get(sym_start..sym_end).unwrap_or_default();
+                let sym_start = usize::try_from(sh.sh_offset).unwrap_or(0);
+                let sym_end = sym_start.saturating_add(usize::try_from(sh.sh_size).unwrap_or(0));
+                let sym_bytes = bytes.get(sym_start..sym_end).unwrap_or_default();
 
-                    for chunk in sym_bytes.chunks_exact(24) {
-                        let st_name =
-                            bytemuck::pod_read_unaligned::<u32>(chunk.get(0..4).unwrap_or(&[0; 4]))
-                                as usize;
-                        let st_info = chunk.get(4).copied().unwrap_or(0);
-                        let st_shndx =
-                            bytemuck::pod_read_unaligned::<u16>(chunk.get(6..8).unwrap_or(&[0; 2]));
-                        let st_value = bytemuck::pod_read_unaligned::<u64>(
-                            chunk.get(8..16).unwrap_or(&[0; 8]),
-                        );
-                        let st_size = bytemuck::pod_read_unaligned::<u64>(
-                            chunk.get(16..24).unwrap_or(&[0; 8]),
-                        );
-                        let st_bind = st_info >> 4;
-                        let st_type = st_info & 0x0F;
-                        if st_shndx != 0
-                            && (st_bind == ELF_STB_GLOBAL || st_bind == ELF_STB_WEAK)
-                            && st_type == goblin::elf::sym::STT_FUNC
-                        {
-                            let tail = str_bytes.get(st_name..).unwrap_or_default();
-                            let nul_pos = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
-                            let name_str =
-                                String::from_utf8_lossy(tail.get(..nul_pos).unwrap_or_default());
-                            if !name_str.is_empty() {
-                                exported_symbols.push(ExportedBinarySymbol {
-                                    name: name_str.into_owned(),
-                                    address: u64::from_le(st_value),
-                                    size: u64::from_le(st_size),
-                                });
-                            }
+                for chunk in sym_bytes.chunks_exact(24) {
+                    let st_name =
+                        bytemuck::pod_read_unaligned::<u32>(chunk.get(0..4).unwrap_or(&[0; 4]))
+                            as usize;
+                    let st_info = chunk.get(4).copied().unwrap_or(0);
+                    let st_shndx =
+                        bytemuck::pod_read_unaligned::<u16>(chunk.get(6..8).unwrap_or(&[0; 2]));
+                    let st_value =
+                        bytemuck::pod_read_unaligned::<u64>(chunk.get(8..16).unwrap_or(&[0; 8]));
+                    let st_size =
+                        bytemuck::pod_read_unaligned::<u64>(chunk.get(16..24).unwrap_or(&[0; 8]));
+                    let st_bind = st_info >> 4;
+                    let st_type = st_info & 0x0F;
+                    if st_shndx != 0
+                        && (st_bind == ELF_STB_GLOBAL || st_bind == ELF_STB_WEAK)
+                        && st_type == goblin::elf::sym::STT_FUNC
+                    {
+                        let tail = str_bytes.get(st_name..).unwrap_or_default();
+                        let nul_pos = tail.iter().position(|&b| b == 0).unwrap_or(tail.len());
+                        let name_str =
+                            String::from_utf8_lossy(tail.get(..nul_pos).unwrap_or_default());
+                        if !name_str.is_empty() {
+                            exported_symbols.push(ExportedBinarySymbol {
+                                name: name_str.into_owned(),
+                                address: u64::from_le(st_value),
+                                size: u64::from_le(st_size),
+                            });
                         }
                     }
                 }
             }
-            Ok(BinarySymbolReport {
-                format: BinaryFormatKind::Elf,
-                section_names,
-                exported_symbols,
-            })
         }
-        Object::Mach(goblin::mach::Mach::Binary(_)) => Ok(BinarySymbolReport {
+        Ok(BinarySymbolReport {
+            format: BinaryFormatKind::Elf,
+            section_names,
+            exported_symbols,
+        })
+    } else if let Ok(Mach::Binary(_)) = Mach::parse(bytes) {
+        Ok(BinarySymbolReport {
             format: BinaryFormatKind::MachO,
             section_names: Vec::new(),
             exported_symbols: Vec::new(),
-        }),
-        _ => Err(LibTpuError::BinaryFormatError {
+        })
+    } else {
+        Err(LibTpuError::BinaryFormatError {
             reason: String::from("Unsupported binary container format (expected ELF or Mach-O)"),
-        }),
+        })
     }
 }
 
-/// Parses an ELF or Mach-O binary image using `object::File::parse` and returns its
+/// Parses an ELF binary image using `object::File::parse` and returns its
 /// section names, dynamic symbol names, and endianness/bitness profile.
 ///
 /// # Arguments
 ///
-/// * `bytes` - Raw ELF64 or Mach-O binary image bytes.
+/// * `bytes` - Raw ELF64 binary image bytes.
 ///
 /// # Errors
 ///
@@ -901,6 +899,7 @@ mod tests {
             assert_ne!(format!("{:?}", ph_list[0]), "");
         }
         assert!(inspect_elf_program_headers(b"bad").is_err());
+        assert!(inspect_elf_program_headers(b"\x7fELF\x02").is_err());
 
         let report_res = inspect_binary_symbols(&elf_bytes);
         assert!(report_res.is_ok());

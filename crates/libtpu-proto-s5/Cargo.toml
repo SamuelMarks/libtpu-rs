@@ -25,7 +25,6 @@ prost-types.workspace = true
 
 [build-dependencies]
 heck.workspace = true
-prost.workspace = true
 prost-build.workspace = true
 prost-types.workspace = true
 protox.workspace = true

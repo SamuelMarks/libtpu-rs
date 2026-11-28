@@ -277,12 +277,31 @@ def test_phase6_live_telemetry_raw_buffer_multislice_xla_transform_and_embedding
         patch.object(libtpu, "_cargo_target_roots", return_value=[tmp_path / "empty_target"]),
     ):
         assert libtpu.get_library_path().endswith("libtpu.dylib")
+    populated_target = tmp_path / "populated_target"
+    (populated_target / "debug").mkdir(parents=True)
+    fake_cargo_cdylib = populated_target / "debug" / "libtpu.so"
+    fake_cargo_pyo3 = populated_target / "debug" / "liblibtpu_py.so"
+    fake_cargo_cdylib.write_bytes(b"CARGO_CDYLIB")
+    fake_cargo_pyo3.write_bytes(b"CARGO_PYO3")
+    with (
+        patch.object(libtpu, "__file__", str(fake_pkg / "__init__.py")),
+        patch.object(interop, "__file__", str(fake_pkg / "_interop.py")),
+        patch.object(libtpu, "_cargo_target_roots", return_value=[populated_target]),
+    ):
+        assert libtpu.get_library_path() == str(fake_cargo_cdylib)
+        assert interop._resolve_pyo3_extension_path(False) == fake_cargo_pyo3
     (fake_pkg / "libtpu.dylib").write_bytes(b"WHEEL_DYLIB")
     (fake_pkg / "sdk.so").write_bytes(b"WHEEL_SDK")
     with patch.object(libtpu, "__file__", str(fake_pkg / "__init__.py")):
         assert libtpu.get_library_path() == str(fake_pkg / "libtpu.dylib")
     with patch.object(interop, "__file__", str(fake_pkg / "_interop.py")):
         assert interop._resolve_pyo3_extension_path(True) == fake_pkg / "sdk.so"
+    # Verify `_interop` loads cleanly even in a zero-dependency venv without `numpy` installed.
+    no_np_spec = importlib.util.spec_from_file_location("libtpu._interop_no_np", interop.__file__)
+    assert no_np_spec is not None and no_np_spec.loader is not None
+    no_np_mod = importlib.util.module_from_spec(no_np_spec)
+    with patch.dict("sys.modules", {"numpy": None, "numpy.typing": None}):
+        no_np_spec.loader.exec_module(no_np_mod)
 
     # Ensure both `libtpu._C` and `sdk` are loaded and test `set_init_args` sync to `_C`.
     _ = libtpu.load_native_c_module()

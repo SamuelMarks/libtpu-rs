@@ -12,7 +12,7 @@
 
 use crate::elf::symbols::demangle_and_classify_cpp_symbol;
 use crate::error::{LibTpuError, LibTpuResult};
-use goblin::Object;
+use goblin::elf::Elf;
 use std::collections::BTreeMap;
 
 /// x86-64 relative relocation type (`R_X86_64_RELATIVE = 8`).
@@ -278,12 +278,12 @@ impl CppRttiHierarchyExtractor {
 ///
 /// Returns [`LibTpuError`] if `bytes` is not a valid ELF image.
 pub fn resolve_relative_relocations(bytes: &[u8]) -> LibTpuResult<Vec<ElfRelativeRelocation>> {
-    let obj = Object::parse(bytes)?;
-    let Object::Elf(elf) = obj else {
+    if !bytes.starts_with(b"\x7fELF") {
         return Err(LibTpuError::BinaryFormatError {
             reason: String::from("Expected ELF64 binary for relocation resolution"),
         });
-    };
+    }
+    let elf = Elf::parse(bytes)?;
     let mut relocations = Vec::new();
     for sh in &elf.section_headers {
         if sh.sh_type == goblin::elf::section_header::SHT_RELA && sh.sh_entsize == 24 {

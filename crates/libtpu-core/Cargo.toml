@@ -32,7 +32,6 @@ libtpu-proto-s3.workspace = true
 libtpu-proto-s4.workspace = true
 libtpu-proto-s5.workspace = true
 memmap2.workspace = true
-nix.workspace = true
 num-complex.workspace = true
 num_enum.workspace = true
 object.workspace = true

@@ -113,9 +113,9 @@ jobs:
       - name: Build C/C++ static library (Unix)
         if: runner.os != 'Windows'
         run: |
-          cmake -B cpp/build -S cpp 
-            -DCMAKE_BUILD_TYPE=Release 
-            -DENABLE_COVERAGE=OFF 
+          cmake -B cpp/build -S cpp \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_COVERAGE=OFF \
             -DLIBTPU_RUST_STATICLIB="${{ github.workspace }}/target/${{ matrix.target }}/release/libtpu.a"
           cmake --build cpp/build --config Release
 
@@ -153,7 +153,7 @@ jobs:
           tar -C dist -czf "dist/artifacts/${ARCHIVE_BASENAME}.tar.gz" "${ARCHIVE_BASENAME}"
 
           python -m pip install --upgrade pip build wheel maturin
-          python -m build --wheel --outdir dist/artifacts
+          python -m build --wheel --no-isolation --outdir dist/artifacts
 
           # Smoke-test the built abi3-py39 (>=3.9) wheel in an isolated virtual environment
           python -m venv /tmp/test-venv
@@ -189,7 +189,7 @@ jobs:
           (cd dist && 7z a -tzip "artifacts/${ARCHIVE_BASENAME}.zip" "${ARCHIVE_BASENAME}")
 
           python -m pip install --upgrade pip build wheel maturin
-          python -m build --wheel --outdir dist/artifacts
+          python -m build --wheel --no-isolation --outdir dist/artifacts
 
           cd dist/artifacts
           sha256sum * > "SHA256SUMS-${{ matrix.os_name }}-${{ matrix.arch }}.txt"
@@ -261,7 +261,7 @@ jobs:
             cp "target/${{ matrix.target }}/release/libtpu.dylib" "python/libtpu/libtpu.dylib"
           fi
           python -m pip install --upgrade pip build wheel maturin
-          python -m build --wheel --outdir dist/ft-artifacts
+          python -m build --wheel --no-isolation --outdir dist/ft-artifacts
 
           python -m venv /tmp/ft-venv
           /tmp/ft-venv/bin/pip install dist/ft-artifacts/*.whl

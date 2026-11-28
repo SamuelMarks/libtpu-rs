@@ -27,32 +27,31 @@ categories = ["science", "api-bindings", "hardware-support"]
 bitflags = { version = "2.13", default-features = false }
 blake3 = { version = "1.8", default-features = false }
 brotli = { version = "9.1", default-features = false, features = ["std"] }
-bytemuck = { version = "1.25", default-features = false, features = ["derive", "extern_crate_alloc"] }
+bytemuck = { version = "1.25", default-features = false, features = ["derive"] }
 cpp_demangle = { version = "0.5", default-features = false, features = ["alloc"] }
 derive_more = { version = "2.1", default-features = false, features = ["add", "display", "error", "from", "into"] }
 float8 = { version = "0.7", default-features = false }
-gimli = { version = "0.34", default-features = false, features = ["read"] }
-goblin = { version = "0.10", default-features = false, features = ["archive", "elf32", "elf64", "endian_fd", "mach32", "mach64", "pe32", "pe64", "te"] }
+gimli = { version = "0.34", default-features = false, features = ["read-core"] }
+goblin = { version = "0.10", default-features = false, features = ["elf32", "elf64", "mach64"] }
 half = { version = "2.7", default-features = false }
 heck = { version = "0.5", default-features = false }
 iced-x86 = { version = "1.21", default-features = false, features = ["decoder", "instr_info", "std"] }
 indexmap = { version = "2.14", default-features = false, features = ["std"] }
 lexopt = { version = "0.3", default-features = false }
 libc = { version = "0.2", default-features = false }
-libtpu-core = { version = "0.0", path = "crates/libtpu-core" }
-libtpu-proto-s0 = { version = "0.0", path = "crates/libtpu-proto-s0" }
-libtpu-proto-s1 = { version = "0.0", path = "crates/libtpu-proto-s1" }
-libtpu-proto-s2 = { version = "0.0", path = "crates/libtpu-proto-s2" }
-libtpu-proto-s3 = { version = "0.0", path = "crates/libtpu-proto-s3" }
-libtpu-proto-s4 = { version = "0.0", path = "crates/libtpu-proto-s4" }
-libtpu-proto-s5 = { version = "0.0", path = "crates/libtpu-proto-s5" }
+libtpu-core = { version = "0.0", path = "crates/libtpu-core", default-features = false }
+libtpu-proto-s0 = { version = "0.0", path = "crates/libtpu-proto-s0", default-features = false }
+libtpu-proto-s1 = { version = "0.0", path = "crates/libtpu-proto-s1", default-features = false }
+libtpu-proto-s2 = { version = "0.0", path = "crates/libtpu-proto-s2", default-features = false }
+libtpu-proto-s3 = { version = "0.0", path = "crates/libtpu-proto-s3", default-features = false }
+libtpu-proto-s4 = { version = "0.0", path = "crates/libtpu-proto-s4", default-features = false }
+libtpu-proto-s5 = { version = "0.0", path = "crates/libtpu-proto-s5", default-features = false }
 memmap2 = { version = "0.9", default-features = false }
-nix = { version = "0.31", default-features = false }
 num-complex = { version = "0.4", default-features = false }
 num_enum = { version = "0.7", default-features = false }
-object = { version = "0.40", default-features = false, features = ["elf", "macho", "read_core"] }
+object = { version = "0.40", default-features = false, features = ["elf", "read_core"] }
 parking_lot = { version = "0.13", default-features = false }
-petgraph = { version = "0.8", default-features = false, features = ["stable_graph"] }
+petgraph = { version = "0.8", default-features = false }
 proptest = { version = "1.12", default-features = false, features = ["std"] }
 prost = { version = "0.14", default-features = false, features = ["derive"] }
 prost-build = { version = "0.14", default-features = false }

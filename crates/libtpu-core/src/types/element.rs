@@ -706,7 +706,6 @@ impl ElementType {
     #[must_use]
     #[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
     pub fn unpack_to_f64_vec(self, bytes: &[u8]) -> Vec<f64> {
-        let aligned_len = |elem_size: usize| (bytes.len() / elem_size) * elem_size;
         match self {
             Self::Pred | Self::U8 => bytes
                 .iter()
@@ -765,66 +764,56 @@ impl ElementType {
                 .iter()
                 .map(|&b| f64::from(Self::f8e8m0fnu_bits_to_f32(b)))
                 .collect(),
-            Self::S16 => bytemuck::pod_collect_to_vec::<u8, i16>(
-                bytes.get(..aligned_len(2)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| f64::from(i16::from_le(v)))
-            .collect(),
-            Self::U16 => bytemuck::pod_collect_to_vec::<u8, u16>(
-                bytes.get(..aligned_len(2)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| f64::from(u16::from_le(v)))
-            .collect(),
-            Self::F16 => bytemuck::pod_collect_to_vec::<u8, u16>(
-                bytes.get(..aligned_len(2)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| f64::from(F16Scalar::from_bits(u16::from_le(v)).to_f32()))
-            .collect(),
-            Self::Bf16 => bytemuck::pod_collect_to_vec::<u8, u16>(
-                bytes.get(..aligned_len(2)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| f64::from(Bf16Scalar::from_bits(u16::from_le(v)).to_f32()))
-            .collect(),
-            Self::S32 => bytemuck::pod_collect_to_vec::<u8, i32>(
-                bytes.get(..aligned_len(4)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| f64::from(i32::from_le(v)))
-            .collect(),
-            Self::U32 => bytemuck::pod_collect_to_vec::<u8, u32>(
-                bytes.get(..aligned_len(4)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| f64::from(u32::from_le(v)))
-            .collect(),
-            Self::F32 | Self::C64 => bytemuck::pod_collect_to_vec::<u8, u32>(
-                bytes.get(..aligned_len(4)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|bits| f64::from(f32::from_bits(u32::from_le(bits))))
-            .collect(),
-            Self::S64 => bytemuck::pod_collect_to_vec::<u8, i64>(
-                bytes.get(..aligned_len(8)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| i64::from_le(v) as f64)
-            .collect(),
-            Self::U64 => bytemuck::pod_collect_to_vec::<u8, u64>(
-                bytes.get(..aligned_len(8)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| u64::from_le(v) as f64)
-            .collect(),
-            Self::F64 | Self::C128 => bytemuck::pod_collect_to_vec::<u8, u64>(
-                bytes.get(..aligned_len(8)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|bits| f64::from_bits(u64::from_le(bits)))
-            .collect(),
+            Self::S16 => bytes
+                .chunks_exact(2)
+                .map(|c| f64::from(i16::from_le(bytemuck::pod_read_unaligned::<i16>(c))))
+                .collect(),
+            Self::U16 => bytes
+                .chunks_exact(2)
+                .map(|c| f64::from(u16::from_le(bytemuck::pod_read_unaligned::<u16>(c))))
+                .collect(),
+            Self::F16 => bytes
+                .chunks_exact(2)
+                .map(|c| {
+                    let bits = u16::from_le(bytemuck::pod_read_unaligned::<u16>(c));
+                    f64::from(F16Scalar::from_bits(bits).to_f32())
+                })
+                .collect(),
+            Self::Bf16 => bytes
+                .chunks_exact(2)
+                .map(|c| {
+                    let bits = u16::from_le(bytemuck::pod_read_unaligned::<u16>(c));
+                    f64::from(Bf16Scalar::from_bits(bits).to_f32())
+                })
+                .collect(),
+            Self::S32 => bytes
+                .chunks_exact(4)
+                .map(|c| f64::from(i32::from_le(bytemuck::pod_read_unaligned::<i32>(c))))
+                .collect(),
+            Self::U32 => bytes
+                .chunks_exact(4)
+                .map(|c| f64::from(u32::from_le(bytemuck::pod_read_unaligned::<u32>(c))))
+                .collect(),
+            Self::F32 | Self::C64 => bytes
+                .chunks_exact(4)
+                .map(|c| {
+                    f64::from(f32::from_bits(u32::from_le(
+                        bytemuck::pod_read_unaligned::<u32>(c),
+                    )))
+                })
+                .collect(),
+            Self::S64 => bytes
+                .chunks_exact(8)
+                .map(|c| i64::from_le(bytemuck::pod_read_unaligned::<i64>(c)) as f64)
+                .collect(),
+            Self::U64 => bytes
+                .chunks_exact(8)
+                .map(|c| u64::from_le(bytemuck::pod_read_unaligned::<u64>(c)) as f64)
+                .collect(),
+            Self::F64 | Self::C128 => bytes
+                .chunks_exact(8)
+                .map(|c| f64::from_bits(u64::from_le(bytemuck::pod_read_unaligned::<u64>(c))))
+                .collect(),
             _ => bytes.iter().map(|&b| f64::from(b)).collect(),
         }
     }
@@ -935,7 +924,6 @@ impl ElementType {
     #[must_use]
     #[allow(clippy::cast_possible_wrap)]
     pub fn unpack_to_i64_vec(self, bytes: &[u8]) -> Vec<i64> {
-        let aligned_len = |elem_size: usize| (bytes.len() / elem_size) * elem_size;
         match self {
             Self::Pred => bytes.iter().map(|&b| i64::from(b != 0)).collect(),
             Self::U8 => bytes.iter().map(|&b| i64::from(b)).collect(),
@@ -953,42 +941,30 @@ impl ElementType {
                     i64::from(clamped)
                 })
                 .collect(),
-            Self::S16 => bytemuck::pod_collect_to_vec::<u8, i16>(
-                bytes.get(..aligned_len(2)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| i64::from(i16::from_le(v)))
-            .collect(),
-            Self::U16 => bytemuck::pod_collect_to_vec::<u8, u16>(
-                bytes.get(..aligned_len(2)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| i64::from(u16::from_le(v)))
-            .collect(),
-            Self::S32 => bytemuck::pod_collect_to_vec::<u8, i32>(
-                bytes.get(..aligned_len(4)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| i64::from(i32::from_le(v)))
-            .collect(),
-            Self::U32 => bytemuck::pod_collect_to_vec::<u8, u32>(
-                bytes.get(..aligned_len(4)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| i64::from(u32::from_le(v)))
-            .collect(),
-            Self::S64 => bytemuck::pod_collect_to_vec::<u8, i64>(
-                bytes.get(..aligned_len(8)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(i64::from_le)
-            .collect(),
-            Self::U64 => bytemuck::pod_collect_to_vec::<u8, u64>(
-                bytes.get(..aligned_len(8)).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| u64::from_le(v) as i64)
-            .collect(),
+            Self::S16 => bytes
+                .chunks_exact(2)
+                .map(|c| i64::from(i16::from_le(bytemuck::pod_read_unaligned::<i16>(c))))
+                .collect(),
+            Self::U16 => bytes
+                .chunks_exact(2)
+                .map(|c| i64::from(u16::from_le(bytemuck::pod_read_unaligned::<u16>(c))))
+                .collect(),
+            Self::S32 => bytes
+                .chunks_exact(4)
+                .map(|c| i64::from(i32::from_le(bytemuck::pod_read_unaligned::<i32>(c))))
+                .collect(),
+            Self::U32 => bytes
+                .chunks_exact(4)
+                .map(|c| i64::from(u32::from_le(bytemuck::pod_read_unaligned::<u32>(c))))
+                .collect(),
+            Self::S64 => bytes
+                .chunks_exact(8)
+                .map(|c| i64::from_le(bytemuck::pod_read_unaligned::<i64>(c)))
+                .collect(),
+            Self::U64 => bytes
+                .chunks_exact(8)
+                .map(|c| u64::from_le(bytemuck::pod_read_unaligned::<u64>(c)) as i64)
+                .collect(),
             _ => self
                 .unpack_to_f64_vec(bytes)
                 .into_iter()
@@ -1096,13 +1072,10 @@ impl ElementType {
     #[must_use]
     pub fn unpack_to_i128_vec(self, bytes: &[u8]) -> Vec<i128> {
         if self == Self::U64 {
-            let aligned = (bytes.len() / 8) * 8;
-            return bytemuck::pod_collect_to_vec::<u8, u64>(
-                bytes.get(..aligned).unwrap_or_default(),
-            )
-            .into_iter()
-            .map(|v| i128::from(u64::from_le(v)))
-            .collect();
+            return bytes
+                .chunks_exact(8)
+                .map(|c| i128::from(u64::from_le(bytemuck::pod_read_unaligned::<u64>(c))))
+                .collect();
         }
         self.unpack_to_i64_vec(bytes)
             .into_iter()

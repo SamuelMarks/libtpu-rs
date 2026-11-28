@@ -11,14 +11,13 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Protocol, Union, cast, runtime_checkable
 
-import numpy as np
-import numpy.typing as npt
-
 import libtpu
 
 if TYPE_CHECKING:
     from typing import TypeAlias
 
+    import numpy as np
+    import numpy.typing as npt
     from typing_extensions import CapsuleType
 
     PyCapsule: TypeAlias = CapsuleType
@@ -804,6 +803,7 @@ def _resolve_numpy_dtype(dt: libtpu.DataType) -> np.dtype[np.generic]:
         TpuError: If `dt` is `INVALID`, `TOKEN`, or `TUPLE`.
     """
     import ml_dtypes
+    import numpy as np
 
     table: dict[int, np.dtype[np.generic]] = {
         1: np.dtype(np.bool_),
@@ -852,6 +852,7 @@ def _resolve_libtpu_dtype_from_numpy(np_dtype: npt.DTypeLike) -> libtpu.DataType
         TpuError: If `np_dtype` is unsupported.
     """
     import ml_dtypes
+    import numpy as np
 
     reverse_map: list[tuple[np.dtype[np.generic], libtpu.DataType]] = [
         (np.dtype(np.bool_), libtpu.DataType.PRED),
@@ -964,6 +965,8 @@ def buffer_to_numpy(
     Returns:
         Populated `numpy.ndarray` matching `buf.shape()`.
     """
+    import numpy as np
+
     dt = buf.dtype()
     np_dt = _resolve_numpy_dtype(dt)
     shape = buf.shape()
@@ -1001,6 +1004,8 @@ def client_buffer_from_numpy(
     Returns:
         Allocated `TpuBuffer` on `device_id`.
     """
+    import numpy as np
+
     arr = np.ascontiguousarray(cast("npt.ArrayLike", array))
     dt = _resolve_libtpu_dtype_from_numpy(arr.dtype)
     dims: list[int] = [int(d) for d in arr.shape]
