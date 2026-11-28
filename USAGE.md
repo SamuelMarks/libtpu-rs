@@ -2,7 +2,7 @@
 
 `libtpu-rs` is a clean-room, pure-Rust drop-in replacement for the Google Cloud TPU runtime library (`libtpu` v0.0.53.1). It exports the exact C11 binary ABI expected by OpenXLA PJRT (`GetPjrtApi` v0.117 + 18 chained TPU extensions), the TPU monitoring SDK (`GetLibtpuSdkApi`), legacy TensorFlow TPU symbols (`TfTpu_*`, `TpuDriver_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*`), a zero-exception C++20 RAII + `Result<T>` SDK, and `PyO3` (`abi3-py39` + PEP 703 `cp314t`/`cp315t` free-threaded) native Python extensions (`libtpu._C` and `libtpu/sdk.so`) with unified `SharedTpuRuntimeState` telemetry and zero-copy NumPy / PEP 3118 / DLPack interop.
 
-By default, `libtpu-rs` executes programs through `LinuxDeviceHal` (speaking real `VFIO` `0x3B` and `Gasket` `0xDC` kernel ioctls, IOMMU DMA mappings, authentic `csr_register_map.json` BAR0/GCSR register doorbells, and generation-exact binary VLIW/SparseCore bitstreams), automatically attaching to `/dev/vfio/*` or `/dev/accel*` on Cloud TPU hosts and seamlessly falling back to the cycle-accurate `VirtualVfioGasketDevice` architectural emulator on developer workstations and CI runners (macOS and Linux).
+By default, `PJRT_Client_Create` (`HalBackend::from_config`) executes programs through `LinuxDeviceHal<VirtualVfioGasketDevice>` — driving real `VFIO` `0x3B` and `Gasket` `0xDC` kernel ioctl payloads, IOMMU DMA mappings, authentic `csr_register_map.json` BAR0/GCSR register doorbells, and generation-exact binary VLIW/SparseCore bitstreams on the cycle-accurate architectural emulator across **Linux, macOS, and Windows** (or `SimulatedTpuHal` when `--tpu_driver_mode=simulated` is set). Rust callers invoking `create_default_hal()` automatically scan `/sys/bus/pci/devices` and `/dev` to bind `PosixKernelDriverBackend` when real Cloud TPU PCIe (`0x1ae0`) `/dev/vfio/*` or `/dev/accel*` device nodes are present, falling back cleanly to `VirtualVfioGasketDevice` otherwise.
 
 ---
 
@@ -63,7 +63,7 @@ pip install .
 | `TPU_LIBRARY_PATH` | Auto-detected | Explicit path to `libtpu.so` / `libtpu.dylib` / `tpu.dll` consumed by JAX and XLA. |
 | `PJRT_NAMES_AND_LIBRARY_PATHS` | `tpu:<path>` | OpenXLA PJRT plugin registration mapping (`<platform>:<library_path>`). |
 | `LIBTPU_INIT_ARGS` | `""` | Space-separated `--flag=value` flags (including `--tpu_generation`, `--tpu_chips_per_host_bounds` / `--chips_per_host`, `--tpu_host_bounds` / `--host_bounds`, and `--xla_tpu_*`). |
-| `TPU_ACCELERATOR_TYPE` | `"v5e"` | Target generation (`v2`, `v3`, `v4`, `v4lite`, `v5litepod`/`v5e`, `v5p`, `v6e`, `v7x`). |
+| `TPU_ACCELERATOR_TYPE` | `"v5e"` | Target generation (`v2`, `v3`, `v4`, `v4lite`, `v5e`/`v5lite`, `v5p`, `v6e`/`trillium`, `v7x`/`tpu7x`/`ironwood`). |
 | `TPU_CHIPS_PER_HOST_BOUNDS` | `"2,2,1"` | 3D torus chip mesh dimensions per host (`X,Y,Z` or `XxYxZ`). |
 | `TPU_HOST_BOUNDS` | `"1,1,1"` | Global 3D host mesh dimensions across the slice (`X,Y,Z`). |
 | `TPU_WORKER_ID` | `"0"` | Zero-based worker process index in multi-host slices. |
@@ -71,7 +71,7 @@ pip install .
 | `TPU_PREMAPPED_BUFFER_SIZE` | `67108864` | Host pinned / premapped DMA staging buffer size in bytes (`64 MiB` default). |
 | `MEGASCALE_NUM_SLICES` | `"1"` | Number of DCN-connected TPU slices for MegaScale collectives. |
 | `MEGASCALE_SLICE_ID` | `"0"` | Zero-based MegaScale slice identifier for this worker. |
-| `LIBTPU_PJRT_API_MINOR_VERSION` | `"116"` | Optional PJRT minor-version negotiation override for older JAX releases (e.g., `"54"` for JAX 0.4.x). |
+| `LIBTPU_PJRT_API_MINOR_VERSION` | `"117"` | Optional PJRT minor-version negotiation override (`-1..=256`) for older JAX releases (e.g., `"54"` for JAX 0.4.x). |
 | `LIBTPU_TRACE_PJRT` | Unset | When set to any value, traces every PJRT C-API vtable call to `stderr`. |
 
 ---
@@ -297,7 +297,7 @@ int verify_pjrt_c11_lifecycle(void) {
     16. `PJRT_Layouts_Extension` (`ext_type = 4`, `80` B)
     17. `PJRT_RawBuffer_Extension` (`ext_type = 8`, `80` B)
     18. `PJRT_Profiler_Extension` (`ext_type = 1`, `40` B) + `PLUGIN_Profiler_Api` (`104` B)
-- **TPU SDK, Driver & Legacy TensorFlow C Symbols**: `GetLibtpuSdkApi()` (`144` B, 17 slots), `TpuDriver_Open` (`TpuDriverFn`, `224` B, 28 slots), `TfTpu_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*`, and ergonomic `libtpu_rs_*` C helpers.
+- **TPU SDK, Driver & Legacy TensorFlow C Symbols**: `GetLibtpuSdkApi()` (`144` B, `17` slots), `TpuDriver_Open` (`TpuDriverFn`, `224` B, `28` slots), `TfTpu_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*` (all `75` Google `libtpu.so` `.dynsym` exports + `3` legacy `TpuDriver_*`), and `45` ergonomic `libtpu_rs_*` C helpers (`522` exported C symbols total in `libtpu-c-api`).
 
 ---
 
@@ -353,7 +353,7 @@ int main() {
       libtpu::Result<float>(host_out[3]).map([](const float &v) noexcept {
         return v * 2.0F;
       });
-  std::printf("scaled[3] = %.1f\\n", static_cast<double>(scaled.value_or(0.0F)));
+  std::printf("scaled[3] = %.1f\n", static_cast<double>(scaled.value_or(0.0F)));
   return 0;
 }
 ```
@@ -362,16 +362,16 @@ int main() {
 
 ## 8. Supported Cloud TPU Generations (`v2` – `v7x`)
 
-| Generation | Codename / ISA | PCIe Device ID | Kernel Driver | HBM / Logical Device | VMEM / Core | MXU Array | Physical `TensorCores` / Chip | Logical PJRT Devices / Chip |
-| :--- | :--- | :---: | :--- | :---: | :---: | :---: | :---: | :---: |
-| **TPU v2** | Jellyfish (`jfc`) | `0x0027` | Gasket (`0xdc`) | `8 GiB` (`16 GiB`/chip) | `16 MiB` | `128x128` | `2` | `2` |
-| **TPU v3** | Dragonfish (`dfc`) | `0x0027` | Gasket (`0xdc`) | `16 GiB` (`32 GiB`/chip) | `16 MiB` | `128x128` | `2` | `2` |
-| **TPU v4** | Pufferfish (`pfc`) | `0x0056` | Gasket (`0xdc`) / VFIO (`0x3b`) | `32 GiB` | `32 MiB` | `128x128` | `2` | `1` *(Megacore)* |
-| **TPU v4lite** | Pufferfish Lite (`pfc`) | `0x005e` | VFIO (`0x3b`) | `16 GiB` | `16 MiB` | `128x128` | `1` | `1` |
-| **TPU v5e** | Viperfish Lite (`vfc`) | `0x0063` | VFIO (`0x3b`) | `16 GiB` | `32 MiB` | `128x128` | `1` | `1` |
-| **TPU v5p** | Viperfish (`vfc`) | `0x0062` | VFIO (`0x3b`) | `95 GiB` | `64 MiB` | `128x128` | `2` | `1` *(Megacore)* |
-| **TPU v6e** | Ghostfish / Trillium (`gfc`) | `0x006f` | VFIO (`0x3b`) | `32 GiB` | `64 MiB` | `256x256` | `1` | `1` |
-| **TPU v7x** | Ironwood (`iwc`) | `0x0076` (`0x007f`/`0x0073`) | VFIO (`0x3b`) | `192 GiB` | `64 MiB` | `256x256` | `2` | `1` *(Megacore)* |
+| Generation | Codename / ISA | PCIe Device ID (`0x1ae0:*`) | Kernel Driver | Hardware ABI | HBM / Logical Device | VMEM / Core | MXU Array | Physical `TensorCores` / `SparseCores` (per Chip) | Logical PJRT Devices / Chip |
+| :--- | :--- | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **TPU v2** | Jellyfish (`jfc`) | `0x0027` | Gasket (`0xdc`) | `0x10000` | `8 GiB` (`16 GiB`/chip) | `16 MiB` | `128x128` | `2` / `0` *(BarnaCore)* | `2` |
+| **TPU v3** | Dragonfish (`dfc`) | `0x0027` | Gasket (`0xdc`) | `0x10000` | `16 GiB` (`32 GiB`/chip) | `16 MiB` | `128x128` | `2` / `0` *(BarnaCore)* | `2` |
+| **TPU v4** | Pufferfish (`pfc`) | `0x0056` | Gasket (`0xdc`) / VFIO (`0x3b`) | `0x10001` | `32 GiB` | `32 MiB` | `128x128` | `2` *(Megacore)* / `4` | `1` |
+| **TPU v4lite** | Pufferfish Lite (`pfc`) | `0x005e` | VFIO (`0x3b`) | `0x10001` | `16 GiB` | `16 MiB` | `128x128` | `1` / `0` | `1` |
+| **TPU v5e** | Viperfish Lite (`vfc`) | `0x0063` | VFIO (`0x3b`) | `0x10001` | `16 GiB` | `32 MiB` | `128x128` | `1` / `2` | `1` |
+| **TPU v5p** | Viperfish (`vfc`) | `0x0062` | VFIO (`0x3b`) | `0x10003` | `95 GiB` | `64 MiB` | `128x128` | `2` *(Megacore)* / `4` | `1` |
+| **TPU v6e** | Ghostfish / Trillium (`gfc`) | `0x006f` | VFIO (`0x3b`) | `0x10003` | `32 GiB` | `64 MiB` | `256x256` | `1` / `2` | `1` |
+| **TPU7x** | Ironwood (`iwc`) | `0x0076` | VFIO (`0x3b`) | `0x10003` | `192 GiB` | `64 MiB` | `256x256` | `2` *(Megacore)* / `4` | `1` |
 
 ---
 

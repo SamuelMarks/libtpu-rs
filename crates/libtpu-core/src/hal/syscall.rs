@@ -566,11 +566,307 @@ pub const POSIX_FIOCLEX_IOCTL: u64 = 0x2000_6601;
 pub const POSIX_FIOCLEX_IOCTL: u64 = 0x5451;
 
 /// Low-level POSIX C library (`libc`) FFI wrappers for [`PosixKernelDriverBackend`].
+#[cfg(unix)]
 mod posix_libc {
     pub(super) use libc::{
         MAP_ANON as MAP_ANONYMOUS, MAP_PRIVATE, MAP_SHARED, O_RDWR, POLLIN, PROT_READ, PROT_WRITE,
         close, ioctl, mmap, munmap, open, pipe, poll, pollfd, read, write,
     };
+}
+
+/// Cross-platform in-process anonymous BAR mapping and event-pipe table for non-Unix hosts.
+#[cfg(not(unix))]
+mod non_unix_host {
+    use crate::error::{LibTpuError, LibTpuResult};
+    use crate::types::EventFdHandle;
+    use parking_lot::{Condvar, Mutex};
+    use std::alloc::{Layout, alloc_zeroed, dealloc};
+    use std::collections::{BTreeMap, VecDeque};
+    use std::sync::{Arc, OnceLock};
+    use std::time::Duration;
+
+    /// Shared state of an in-process event notification pipe on non-Unix hosts.
+    #[derive(Debug)]
+    struct EventPipeChannel {
+        /// Queued 64-bit interrupt counter increments awaiting consumption.
+        counter_queue: VecDeque<u64>,
+        /// Whether the read endpoint remains open.
+        read_open: bool,
+        /// Whether the write endpoint remains open.
+        write_open: bool,
+    }
+
+    /// Synchronized synchronization pair `(Mutex<EventPipeChannel>, Condvar)`.
+    type SharedEventPipe = Arc<(Mutex<EventPipeChannel>, Condvar)>;
+
+    /// Process-wide table of anonymous BAR allocations and virtual event descriptors on non-Unix hosts.
+    #[derive(Debug)]
+    struct NonUnixHostRegistry {
+        /// Next monotonically increasing virtual file descriptor (`>= 1000`).
+        next_fd: i32,
+        /// Active 4096-byte-aligned anonymous BAR mappings keyed by base virtual address.
+        anon_mmaps: BTreeMap<usize, Layout>,
+        /// Open event pipe read endpoints keyed by virtual file descriptor.
+        read_pipes: BTreeMap<i32, SharedEventPipe>,
+        /// Open event pipe write endpoints keyed by virtual file descriptor.
+        write_pipes: BTreeMap<i32, SharedEventPipe>,
+    }
+
+    /// Global singleton registry backing [`super::PosixKernelDriverBackend`] on non-Unix targets.
+    static NON_UNIX_REGISTRY: OnceLock<Mutex<NonUnixHostRegistry>> = OnceLock::new();
+
+    /// Returns a reference to the process-wide [`NonUnixHostRegistry`] mutex.
+    fn registry() -> &'static Mutex<NonUnixHostRegistry> {
+        NON_UNIX_REGISTRY.get_or_init(|| {
+            Mutex::new(NonUnixHostRegistry {
+                next_fd: 1000,
+                anon_mmaps: BTreeMap::new(),
+                read_pipes: BTreeMap::new(),
+                write_pipes: BTreeMap::new(),
+            })
+        })
+    }
+
+    /// Allocates a 4096-byte page-aligned zeroed anonymous BAR buffer when `fd < 0` and `size > 0`.
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - Requested file descriptor (`< 0` for anonymous mapping).
+    /// * `size` - Mapping byte length (`> 0`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareIoError`] if `fd >= 0`, `size == 0`, or allocation fails.
+    pub(super) fn mmap_bar0_anon(fd: i32, size: usize) -> LibTpuResult<usize> {
+        if fd >= 0 || size == 0 {
+            return Err(LibTpuError::HardwareIoError {
+                operation: "mmap",
+                errno: 22,
+                message: String::from(
+                    "Non-Unix host BAR mmap requires anonymous fd < 0 and size > 0",
+                ),
+            });
+        }
+        let layout =
+            Layout::from_size_align(size, 4096).map_err(|_| LibTpuError::HardwareIoError {
+                operation: "mmap",
+                errno: 22,
+                message: String::from("Invalid BAR mmap size/alignment"),
+            })?;
+        // SAFETY: `layout` has non-zero size (`size > 0`) and power-of-two alignment (`4096`).
+        let ptr = unsafe { alloc_zeroed(layout) };
+        if ptr.is_null() {
+            return Err(LibTpuError::HardwareIoError {
+                operation: "mmap",
+                errno: 12,
+                message: String::from("Failed to allocate anonymous BAR buffer"),
+            });
+        }
+        let addr = ptr as usize;
+        registry().lock().anon_mmaps.insert(addr, layout);
+        Ok(addr)
+    }
+
+    /// Deallocates an anonymous BAR buffer previously mapped by [`mmap_bar0_anon`].
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - Base virtual address returned by [`mmap_bar0_anon`].
+    /// * `size` - Mapping byte length (`> 0`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareIoError`] if `size == 0` or `(addr, size)` does not match an active mapping.
+    pub(super) fn munmap_bar0_anon(addr: usize, size: usize) -> LibTpuResult<()> {
+        if size == 0 {
+            return Err(LibTpuError::HardwareIoError {
+                operation: "munmap",
+                errno: 22,
+                message: String::from("BAR munmap size must be greater than 0"),
+            });
+        }
+        let removed = {
+            let mut guard = registry().lock();
+            match guard.anon_mmaps.get(&addr).copied() {
+                Some(layout) if layout.size() == size => guard.anon_mmaps.remove(&addr),
+                _ => None,
+            }
+        };
+        let Some(layout) = removed else {
+            return Err(LibTpuError::HardwareIoError {
+                operation: "munmap",
+                errno: 22,
+                message: String::from("Unknown or mismatched anonymous BAR munmap range"),
+            });
+        };
+        // SAFETY: `addr` was allocated with `layout` in `mmap_bar0_anon` and removed from `anon_mmaps`.
+        unsafe { dealloc(addr as *mut u8, layout) };
+        Ok(())
+    }
+
+    /// Allocates an in-process `(read_fd, write_fd)` event notification pair.
+    pub(super) fn create_pipe_pair() -> (EventFdHandle, EventFdHandle) {
+        let chan = Arc::new((
+            Mutex::new(EventPipeChannel {
+                counter_queue: VecDeque::new(),
+                read_open: true,
+                write_open: true,
+            }),
+            Condvar::new(),
+        ));
+        let mut guard = registry().lock();
+        let r = guard.next_fd;
+        let w = r.saturating_add(1);
+        guard.next_fd = r.saturating_add(2);
+        guard.read_pipes.insert(r, Arc::clone(&chan));
+        guard.write_pipes.insert(w, chan);
+        drop(guard);
+        (EventFdHandle(r), EventFdHandle(w))
+    }
+
+    /// Allocates an in-process event pipe, closes the write end, and returns the read descriptor.
+    pub(super) fn create_closed_write_pipe_read_fd() -> i32 {
+        let (r_fd, w_fd) = create_pipe_pair();
+        let _ = close_virtual_fd(w_fd.0);
+        r_fd.0
+    }
+
+    /// Enqueues `counter_delta` onto `write_fd` and wakes any waiting reader.
+    ///
+    /// # Arguments
+    ///
+    /// * `write_fd` - Write endpoint [`EventFdHandle`].
+    /// * `counter_delta` - 64-bit interrupt counter increment.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EventFdError`] if `write_fd` is not an open write endpoint.
+    pub(super) fn signal_pipe(write_fd: EventFdHandle, counter_delta: u64) -> LibTpuResult<()> {
+        let chan_opt = registry().lock().write_pipes.get(&write_fd.0).cloned();
+        let Some(chan) = chan_opt else {
+            return Err(LibTpuError::EventFdError {
+                operation: "write",
+                errno: 9,
+                message: format!("Invalid eventfd write handle fd={write_fd}"),
+            });
+        };
+        let (lock, cvar) = &*chan;
+        {
+            let mut state = lock.lock();
+            if !state.write_open || !state.read_open {
+                return Err(LibTpuError::EventFdError {
+                    operation: "write",
+                    errno: 32,
+                    message: format!("Closed eventfd pipe on fd={write_fd}"),
+                });
+            }
+            state.counter_queue.push_back(counter_delta);
+        }
+        cvar.notify_all();
+        Ok(())
+    }
+
+    /// Pops one queued 64-bit counter value from `read_fd` without blocking.
+    ///
+    /// # Arguments
+    ///
+    /// * `read_fd` - Read endpoint [`EventFdHandle`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EventFdError`] if `read_fd` is invalid or has no queued value.
+    pub(super) fn read_pipe_nonblocking(read_fd: EventFdHandle) -> LibTpuResult<u64> {
+        let chan_opt = registry().lock().read_pipes.get(&read_fd.0).cloned();
+        let Some(chan) = chan_opt else {
+            return Err(LibTpuError::EventFdError {
+                operation: "read",
+                errno: 9,
+                message: format!("Invalid eventfd read handle fd={read_fd}"),
+            });
+        };
+        let (lock, _cvar) = &*chan;
+        let value_opt = {
+            let mut state = lock.lock();
+            if state.read_open {
+                state.counter_queue.pop_front()
+            } else {
+                None
+            }
+        };
+        value_opt.ok_or_else(|| LibTpuError::EventFdError {
+            operation: "read",
+            errno: 11,
+            message: format!("No signaled counter available on interrupt eventfd fd={read_fd}"),
+        })
+    }
+
+    /// Waits up to `timeout_ms` milliseconds for a 64-bit counter value on `read_fd`.
+    ///
+    /// # Arguments
+    ///
+    /// * `read_fd` - Read endpoint [`EventFdHandle`].
+    /// * `timeout_ms` - Maximum wait duration in milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EventFdError`] on invalid handle, closed write end (EOF), or timeout.
+    pub(super) fn wait_pipe(read_fd: EventFdHandle, timeout_ms: i32) -> LibTpuResult<u64> {
+        let chan_opt = registry().lock().read_pipes.get(&read_fd.0).cloned();
+        let Some(chan) = chan_opt else {
+            return Err(LibTpuError::EventFdError {
+                operation: "poll",
+                errno: 9,
+                message: format!("Invalid eventfd read handle fd={read_fd}"),
+            });
+        };
+        let wait_ms = u64::try_from(timeout_ms).unwrap_or(0);
+        let (lock, cvar) = &*chan;
+        let value_opt = {
+            let mut state = lock.lock();
+            if state.counter_queue.is_empty() && state.write_open && wait_ms > 0 {
+                let _ = cvar.wait_for(&mut state, Duration::from_millis(wait_ms));
+            }
+            state.counter_queue.pop_front()
+        };
+        value_opt.ok_or_else(|| LibTpuError::EventFdError {
+            operation: "poll",
+            errno: 110,
+            message: format!("Interrupt eventfd poll timed out or failed on fd={read_fd}"),
+        })
+    }
+
+    /// Closes a virtual read or write descriptor created by [`create_pipe_pair`].
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - Virtual descriptor handle to close.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareIoError`] if `fd` is not an open virtual descriptor.
+    pub(super) fn close_virtual_fd(fd: i32) -> LibTpuResult<()> {
+        let (read_chan, write_chan) = {
+            let mut guard = registry().lock();
+            (guard.read_pipes.remove(&fd), guard.write_pipes.remove(&fd))
+        };
+        if let Some(chan) = read_chan {
+            let (lock, cvar) = &*chan;
+            lock.lock().read_open = false;
+            cvar.notify_all();
+            return Ok(());
+        }
+        if let Some(chan) = write_chan {
+            let (lock, cvar) = &*chan;
+            lock.lock().write_open = false;
+            cvar.notify_all();
+            return Ok(());
+        }
+        Err(LibTpuError::HardwareIoError {
+            operation: "close",
+            errno: 9,
+            message: format!("Bad virtual file descriptor fd={fd}"),
+        })
+    }
 }
 
 /// Discovered Google Cloud TPU `PCIe` function metadata from `/sys/bus/pci/devices/*` (`DiscoveredPciDevice`).
@@ -665,6 +961,7 @@ impl PosixKernelDriverBackend {
     /// # Errors
     ///
     /// Returns [`LibTpuError::IoctlFailed`] if `libc::ioctl` returns `< 0`.
+    #[cfg(unix)]
     pub fn ioctl_with_payload<T>(
         &self,
         fd: i32,
@@ -685,6 +982,31 @@ impl PosixKernelDriverBackend {
             });
         }
         Ok(rc)
+    }
+
+    /// Returns [`LibTpuError::IoctlFailed`] on non-Unix hosts where kernel `ioctl` device nodes do not exist.
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - Device descriptor handle.
+    /// * `request` - Raw `ioctl` command number.
+    /// * `_payload` - Mutable reference to a `#[repr(C)]` `ioctl` payload structure.
+    ///
+    /// # Errors
+    ///
+    /// Always returns [`LibTpuError::IoctlFailed`] on non-Unix targets.
+    #[cfg(not(unix))]
+    pub fn ioctl_with_payload<T>(
+        &self,
+        fd: i32,
+        request: u64,
+        _payload: &mut T,
+    ) -> LibTpuResult<i32> {
+        Err(LibTpuError::IoctlFailed {
+            request,
+            errno: 9,
+            message: format!("POSIX ioctl unsupported on non-Unix host (fd={fd})"),
+        })
     }
 
     /// Maps a `PCIe` BAR aperture of `size` bytes at `offset_bytes` into a [`MappedBarAperture`].
@@ -755,6 +1077,7 @@ impl PosixKernelDriverBackend {
     /// # Errors
     ///
     /// Returns [`LibTpuError::HardwareIoError`] if `mmap` returns `MAP_FAILED`.
+    #[cfg(unix)]
     pub fn mmap_bar0_at_offset(
         &self,
         fd: i32,
@@ -790,6 +1113,27 @@ impl PosixKernelDriverBackend {
         Ok(ptr as usize)
     }
 
+    /// Maps an anonymous `PCIe` BAR buffer of `size` bytes when `fd < 0` on non-Unix hosts.
+    ///
+    /// # Arguments
+    ///
+    /// * `fd` - Device file descriptor (`-1` for anonymous mapping).
+    /// * `size` - Mapping byte size (must be `> 0`).
+    /// * `_offset_bytes` - Page-aligned BAR region byte offset (unused for anonymous mappings).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareIoError`] if `fd >= 0`, `size == 0`, or allocation fails.
+    #[cfg(not(unix))]
+    pub fn mmap_bar0_at_offset(
+        &self,
+        fd: i32,
+        size: usize,
+        _offset_bytes: u64,
+    ) -> LibTpuResult<usize> {
+        non_unix_host::mmap_bar0_anon(fd, size)
+    }
+
     /// Maps a `PCIe` BAR0 region of `size` bytes on file descriptor `fd` (or anonymous memory when `fd == -1`).
     ///
     /// # Arguments
@@ -814,6 +1158,7 @@ impl PosixKernelDriverBackend {
     /// # Errors
     ///
     /// Returns [`LibTpuError::HardwareIoError`] if `munmap` fails.
+    #[cfg(unix)]
     pub fn munmap_bar0(&self, addr: usize, size: usize) -> LibTpuResult<()> {
         // SAFETY: `munmap` validates `addr` and `size` in the kernel (`size == 0` returns `EINVAL`).
         let rc = unsafe { posix_libc::munmap(addr as *mut std::ffi::c_void, size) };
@@ -826,6 +1171,21 @@ impl PosixKernelDriverBackend {
             });
         }
         Ok(())
+    }
+
+    /// Unmaps an anonymous `PCIe` BAR0 region previously mapped on a non-Unix host.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - Mapped virtual address returned by `mmap_bar0`.
+    /// * `size` - Mapping byte size (must be `> 0`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::HardwareIoError`] if `size == 0` or `addr` is not an active mapping.
+    #[cfg(not(unix))]
+    pub fn munmap_bar0(&self, addr: usize, size: usize) -> LibTpuResult<()> {
+        non_unix_host::munmap_bar0_anon(addr, size)
     }
 
     /// Allocates an anonymous read-write memory-mapped `PCIe` BAR0 buffer of `size` bytes
@@ -850,7 +1210,7 @@ impl PosixKernelDriverBackend {
             .map_anon()
             .map_err(|err| LibTpuError::HardwareIoError {
                 operation: "memmap2::map_anon",
-                errno: err.raw_os_error().unwrap_or(libc::EINVAL),
+                errno: err.raw_os_error().unwrap_or(22),
                 message: err.to_string(),
             })
     }
@@ -861,11 +1221,23 @@ impl PosixKernelDriverBackend {
     /// # Errors
     ///
     /// Returns [`LibTpuError::EventFdError`] if `libc::pipe` fails.
+    #[cfg(unix)]
     pub fn create_eventfd_pair(&self) -> LibTpuResult<(EventFdHandle, EventFdHandle)> {
         let mut fds = [-1_i32; 2];
         // SAFETY: `fds` points to a valid 2-element `c_int` array.
         let _ = unsafe { posix_libc::pipe(fds.as_mut_ptr()) };
         Ok((EventFdHandle(fds[0]), EventFdHandle(fds[1])))
+    }
+
+    /// Allocates an in-process event notification descriptor pair `(read_fd, write_fd)` on non-Unix hosts.
+    ///
+    /// # Errors
+    ///
+    /// Infallible on non-Unix hosts; returns [`LibTpuResult`] for API symmetry with Unix targets.
+    #[cfg(not(unix))]
+    #[allow(clippy::unnecessary_wraps)]
+    pub fn create_eventfd_pair(&self) -> LibTpuResult<(EventFdHandle, EventFdHandle)> {
+        Ok(non_unix_host::create_pipe_pair())
     }
 
     /// Closes both endpoints of an event descriptor pair returned by [`PosixKernelDriverBackend::create_eventfd_pair`].
@@ -897,6 +1269,7 @@ impl PosixKernelDriverBackend {
     /// # Errors
     ///
     /// Returns [`LibTpuError::EventFdError`] if `libc::write` fails.
+    #[cfg(unix)]
     pub fn signal_eventfd(&self, write_fd: EventFdHandle, counter_delta: u64) -> LibTpuResult<()> {
         let bytes = counter_delta.to_le_bytes();
         // SAFETY: `bytes` is a valid 8-byte stack buffer.
@@ -917,6 +1290,21 @@ impl PosixKernelDriverBackend {
         Ok(())
     }
 
+    /// Enqueues a 64-bit interrupt counter increment (`counter_delta`) onto `write_fd` on non-Unix hosts.
+    ///
+    /// # Arguments
+    ///
+    /// * `write_fd` - Write end [`EventFdHandle`] of an event descriptor pair.
+    /// * `counter_delta` - 64-bit interrupt counter increment to signal.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EventFdError`] if `write_fd` is invalid or closed.
+    #[cfg(not(unix))]
+    pub fn signal_eventfd(&self, write_fd: EventFdHandle, counter_delta: u64) -> LibTpuResult<()> {
+        non_unix_host::signal_pipe(write_fd, counter_delta)
+    }
+
     /// Reads an 8-byte little-endian interrupt counter value from `read_fd` without blocking
     /// when `read_fd` has already been signaled.
     ///
@@ -927,6 +1315,7 @@ impl PosixKernelDriverBackend {
     /// # Errors
     ///
     /// Returns [`LibTpuError::EventFdError`] if `libc::read` does not return 8 bytes.
+    #[cfg(unix)]
     pub fn read_eventfd(&self, read_fd: EventFdHandle) -> LibTpuResult<u64> {
         let mut buf = [0_u8; 8];
         // SAFETY: `buf` is a valid 8-byte mutable buffer on the stack.
@@ -947,6 +1336,20 @@ impl PosixKernelDriverBackend {
         Ok(u64::from_le_bytes(buf))
     }
 
+    /// Reads one queued 64-bit interrupt counter value from `read_fd` without blocking on non-Unix hosts.
+    ///
+    /// # Arguments
+    ///
+    /// * `read_fd` - Read end [`EventFdHandle`] of an event descriptor pair.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EventFdError`] if `read_fd` is invalid or empty.
+    #[cfg(not(unix))]
+    pub fn read_eventfd(&self, read_fd: EventFdHandle) -> LibTpuResult<u64> {
+        non_unix_host::read_pipe_nonblocking(read_fd)
+    }
+
     /// Polls `read_fd` for up to `timeout_ms` milliseconds using `libc::poll` and reads the 8-byte
     /// interrupt completion counter when signaled.
     ///
@@ -958,6 +1361,7 @@ impl PosixKernelDriverBackend {
     /// # Errors
     ///
     /// Returns [`LibTpuError::EventFdError`] if `poll` times out (`<= 0`) or reading the 8-byte counter fails.
+    #[cfg(unix)]
     pub fn wait_for_interrupt_eventfd(
         &self,
         read_fd: EventFdHandle,
@@ -980,8 +1384,27 @@ impl PosixKernelDriverBackend {
         self.read_eventfd(read_fd)
     }
 
+    /// Waits up to `timeout_ms` milliseconds on `read_fd` for a signaled 64-bit counter on non-Unix hosts.
+    ///
+    /// # Arguments
+    ///
+    /// * `read_fd` - Read end [`EventFdHandle`] registered for MSI-X / Gasket interrupts.
+    /// * `timeout_ms` - Maximum wait timeout in milliseconds.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LibTpuError::EventFdError`] on timeout, closed write endpoint, or invalid handle.
+    #[cfg(not(unix))]
+    pub fn wait_for_interrupt_eventfd(
+        &self,
+        read_fd: EventFdHandle,
+        timeout_ms: i32,
+    ) -> LibTpuResult<u64> {
+        non_unix_host::wait_pipe(read_fd, timeout_ms)
+    }
+
     /// Allocates a single OS-backed event notification descriptor (`SYS_eventfd2` on Linux,
-    /// or pipe read end on macOS/BSD).
+    /// or pipe read end on macOS/BSD/Windows).
     #[must_use]
     pub fn create_eventfd(&self) -> EventFdHandle {
         select_eventfd_or_pipe(try_os_eventfd, create_posix_pipe_read_fd)
@@ -1002,6 +1425,7 @@ const fn try_os_eventfd() -> i32 {
 }
 
 /// Allocates a POSIX `pipe()` pair, closes the write descriptor, and returns the read descriptor.
+#[cfg(unix)]
 pub(crate) fn create_posix_pipe_read_fd() -> i32 {
     let mut fds = [0_i32; 2];
     // SAFETY: `fds` points to a valid 2-element `c_int` array.
@@ -1009,6 +1433,12 @@ pub(crate) fn create_posix_pipe_read_fd() -> i32 {
     // SAFETY: Closing the write end of the newly created pipe when only a single handle is requested.
     let _ = unsafe { posix_libc::close(fds[1]) };
     fds[0]
+}
+
+/// Allocates a virtual event pipe read descriptor on non-Unix platforms.
+#[cfg(not(unix))]
+pub(crate) fn create_posix_pipe_read_fd() -> i32 {
+    non_unix_host::create_closed_write_pipe_read_fd()
 }
 
 /// Selects a valid `eventfd` (`>= 0`) when available or falls back to `make_pipe_fd()`.
@@ -1031,6 +1461,7 @@ pub(crate) fn select_eventfd_or_pipe(
 }
 
 impl SyscallProvider for PosixKernelDriverBackend {
+    #[cfg(unix)]
     fn open_device(&self, path: &str) -> LibTpuResult<i32> {
         let c_path = std::ffi::CString::new(path).map_err(|_| LibTpuError::InvalidArgument {
             parameter: "path",
@@ -1049,11 +1480,25 @@ impl SyscallProvider for PosixKernelDriverBackend {
         Ok(fd)
     }
 
+    #[cfg(not(unix))]
+    fn open_device(&self, path: &str) -> LibTpuResult<i32> {
+        let _c_path = std::ffi::CString::new(path).map_err(|_| LibTpuError::InvalidArgument {
+            parameter: "path",
+            reason: String::from("Device path contains interior NUL byte"),
+        })?;
+        Err(LibTpuError::HardwareIoError {
+            operation: "open",
+            errno: 2,
+            message: format!("POSIX kernel device node '{path}' unavailable on non-Unix host"),
+        })
+    }
+
     fn ioctl_device(&self, fd: i32, request: u64, payload_size: usize) -> LibTpuResult<i32> {
         let mut arg_buf = vec![0_u8; payload_size.max(64)];
         self.ioctl_bytes(fd, request, &mut arg_buf)
     }
 
+    #[cfg(unix)]
     fn ioctl_bytes(&self, fd: i32, request: u64, payload: &mut [u8]) -> LibTpuResult<i32> {
         #[allow(clippy::cast_possible_truncation)]
         let req_ulong = request as std::ffi::c_ulong;
@@ -1076,6 +1521,16 @@ impl SyscallProvider for PosixKernelDriverBackend {
         Ok(rc)
     }
 
+    #[cfg(not(unix))]
+    fn ioctl_bytes(&self, fd: i32, request: u64, _payload: &mut [u8]) -> LibTpuResult<i32> {
+        Err(LibTpuError::IoctlFailed {
+            request,
+            errno: 9,
+            message: format!("POSIX ioctl unsupported on non-Unix host (fd={fd})"),
+        })
+    }
+
+    #[cfg(unix)]
     fn close_device(&self, fd: i32) -> LibTpuResult<()> {
         // SAFETY: `close` is safe for any integer file descriptor (returns `-1` with `EBADF` if invalid).
         let rc = unsafe { posix_libc::close(fd) };
@@ -1088,5 +1543,10 @@ impl SyscallProvider for PosixKernelDriverBackend {
             });
         }
         Ok(())
+    }
+
+    #[cfg(not(unix))]
+    fn close_device(&self, fd: i32) -> LibTpuResult<()> {
+        non_unix_host::close_virtual_fd(fd)
     }
 }

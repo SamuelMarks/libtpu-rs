@@ -250,11 +250,6 @@ impl From<std::io::Error> for IoErrorWrapper {
     }
 }
 
-/// Wrapper struct for `rustix::io::Errno` POSIX syscall errors to enable `From` conversion into [`LibTpuError`].
-#[derive(Debug, Clone, PartialEq, Eq, Display, Error, From)]
-#[display("POSIX syscall error: {_0}")]
-pub struct RustixErrnoWrapper(#[error(not(source))] pub rustix::io::Errno);
-
 /// Wrapper struct for `winnow::error::ContextError` combinator parse errors to enable `From` conversion into [`LibTpuError`].
 #[derive(Debug, Clone, PartialEq, Eq, Display, Error)]
 #[display("Winnow parser error: {_0}")]
@@ -1005,10 +1000,6 @@ pub enum LibTpuError {
     #[display("{_0}")]
     IoFailed(#[error(not(source))] IoErrorWrapper),
 
-    /// A low-level POSIX syscall failed via `rustix`.
-    #[display("{_0}")]
-    RustixSyscallFailed(#[error(not(source))] RustixErrnoWrapper),
-
     /// An executable or shared library binary had an invalid or unsupported format.
     #[display("Binary format error: {reason}")]
     #[from(ignore)]
@@ -1602,12 +1593,6 @@ impl From<std::io::Error> for LibTpuError {
     }
 }
 
-impl From<rustix::io::Errno> for LibTpuError {
-    fn from(err: rustix::io::Errno) -> Self {
-        Self::RustixSyscallFailed(RustixErrnoWrapper::from(err))
-    }
-}
-
 impl LibTpuError {
     /// Maps this [`LibTpuError`] to its corresponding [`PjrtErrorCode`].
     #[must_use]
@@ -1745,8 +1730,7 @@ impl LibTpuError {
             | Self::VfioIommuError { .. }
             | Self::IciRoutingError { .. }
             | Self::IoError { .. }
-            | Self::IoFailed(_)
-            | Self::RustixSyscallFailed(_) => PjrtErrorCode::Unavailable,
+            | Self::IoFailed(_) => PjrtErrorCode::Unavailable,
         }
     }
 
@@ -2899,10 +2883,6 @@ mod tests {
             ),
             (
                 LibTpuError::from(std::io::Error::from_raw_os_error(2)),
-                PjrtErrorCode::Unavailable,
-            ),
-            (
-                LibTpuError::from(rustix::io::Errno::INVAL),
                 PjrtErrorCode::Unavailable,
             ),
             (

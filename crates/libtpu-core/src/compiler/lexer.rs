@@ -7,7 +7,7 @@ use crate::proto::HloModuleProto;
 use crate::types::{ElementType, MemoryLayout, Shape};
 use winnow::Parser;
 use winnow::ascii::{digit1, multispace0};
-use winnow::combinator::{alt, delimited, preceded, repeat, separated};
+use winnow::combinator::{alt, delimited, opt, preceded, repeat};
 use winnow::error::ContextError;
 use winnow::token::{any, take_till, take_while};
 
@@ -461,11 +461,27 @@ fn winnow_parse_hlo_shape_parts<'a>(
     let dtype = take_till(1.., |c: char| c == '[').parse_next(input)?;
     let dims: Vec<i64> = delimited(
         '[',
-        separated(
-            0..,
+        opt((
             delimited(multispace0, digit1.try_map(str::parse::<i64>), multispace0),
-            ',',
-        ),
+            repeat(
+                0..,
+                preceded(
+                    ',',
+                    delimited(multispace0, digit1.try_map(str::parse::<i64>), multispace0),
+                ),
+            )
+            .fold(Vec::new, |mut acc, dim| {
+                acc.push(dim);
+                acc
+            }),
+        ))
+        .map(|parsed| match parsed {
+            Some((first, mut rest)) => {
+                rest.insert(0, first);
+                rest
+            }
+            None => Vec::new(),
+        }),
         ']',
     )
     .parse_next(input)?;
@@ -645,7 +661,10 @@ impl HloLexer {
 /// Builds a `winnow` parser that collects all [`HloToken`]s and consumes trailing whitespace and comments.
 fn terminated_token_stream<'a>() -> impl Parser<&'a str, Vec<HloToken>, ContextError> {
     (
-        repeat(0.., winnow_lex_one_token),
+        repeat(0.., winnow_lex_one_token).fold(Vec::new, |mut acc, tok| {
+            acc.push(tok);
+            acc
+        }),
         skip_whitespace_and_comments,
     )
         .map(|(tokens, ())| tokens)

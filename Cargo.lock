@@ -468,7 +468,6 @@ dependencies = [
  "prost-reflect",
  "prost-types",
  "protox",
- "rustix",
  "serde",
  "serde_json",
  "sha2",

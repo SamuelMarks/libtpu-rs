@@ -80,6 +80,35 @@ jobs:
           CXX: clang++
         run: python3 scripts/pre_commit.py build --check
 
+  build-windows:
+    name: "Hook 2b: Build, Clippy, Docs & Tests (windows-latest)"
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install Rust toolchain with clippy and rustdoc
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rust-docs
+
+      - name: Cache Cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build, lint, document, and test Rust workspace on Windows MSVC
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: |
+          cargo build --workspace --all-targets
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo doc --workspace --no-deps --document-private-items
+          cargo test --workspace
+
   clippy-and-lint:
     name: "Hook 3: Strict Lints & Docs (${{ matrix.os }})"
     runs-on: ${{ matrix.os }}

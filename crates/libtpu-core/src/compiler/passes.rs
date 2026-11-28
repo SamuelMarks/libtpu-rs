@@ -889,7 +889,7 @@ pub struct HloDagAnalysisReport {
     /// Topologically sorted HLO instruction IDs (`operand` before `user`).
     pub topological_order: Vec<i64>,
     /// Deterministic insertion-ordered map from instruction ID to 4096-byte-aligned HBM byte offset.
-    pub buffer_offsets: IndexMap<i64, u64>,
+    pub buffer_offsets: IndexMap<i64, u64, std::hash::RandomState>,
     /// Total HBM bytes planned across all scheduled instructions.
     pub total_hbm_bytes: u64,
 }
@@ -909,8 +909,8 @@ pub fn analyze_hlo_computation_dag(
     computation: &HloComputationProto,
 ) -> LibTpuResult<HloDagAnalysisReport> {
     let mut graph = DiGraph::<i64, ()>::new();
-    let mut id_to_node = IndexMap::new();
-    let mut id_to_bytes = IndexMap::new();
+    let mut id_to_node = IndexMap::with_hasher(std::hash::RandomState::new());
+    let mut id_to_bytes = IndexMap::with_hasher(std::hash::RandomState::new());
 
     let mut nodes = Vec::with_capacity(computation.instructions.len());
     for inst in &computation.instructions {
@@ -943,7 +943,7 @@ pub fn analyze_hlo_computation_dag(
     })?;
 
     let mut topological_order = Vec::with_capacity(sorted_nodes.len());
-    let mut buffer_offsets = IndexMap::new();
+    let mut buffer_offsets = IndexMap::with_hasher(std::hash::RandomState::new());
     let mut next_offset = 0_u64;
 
     for node_idx in sorted_nodes {

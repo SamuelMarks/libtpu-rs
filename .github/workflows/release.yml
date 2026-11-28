@@ -77,7 +77,7 @@ jobs:
             os_name: linux
             arch: aarch64
             whl_plat: manylinux_2_31_aarch64
-          - runner: macos-14
+          - runner: macos-latest
             target: aarch64-apple-darwin
             os_name: macos
             arch: arm64
@@ -87,6 +87,9 @@ jobs:
             os_name: windows
             arch: x86_64
             whl_plat: win_amd64
+
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
 
     steps:
       - name: Checkout repository
@@ -191,6 +194,11 @@ jobs:
           python -m pip install --upgrade pip build wheel maturin
           python -m build --wheel --no-isolation --outdir dist/artifacts
 
+          # Smoke-test the built abi3-py39 (>=3.9) wheel in an isolated virtual environment
+          python -m venv "${RUNNER_TEMP}/test-venv"
+          "${RUNNER_TEMP}/test-venv/Scripts/pip.exe" install dist/artifacts/*.whl
+          "${RUNNER_TEMP}/test-venv/Scripts/python.exe" -c "import libtpu, libtpu._C, pathlib; p = libtpu.get_library_path(); assert pathlib.Path(p).exists(), p; assert (pathlib.Path(libtpu.__file__).parent / 'sdk.so').exists(); c = libtpu.TpuClient(); assert c.device_count() == 4; c.close()"
+
           cd dist/artifacts
           sha256sum * > "SHA256SUMS-${{ matrix.os_name }}-${{ matrix.arch }}.txt"
 
@@ -205,6 +213,8 @@ jobs:
     name: "Build Free-Threaded Wheel (${{ matrix.os_name }}-${{ matrix.arch }}, Python ${{ matrix.python_version }})"
     needs: pre-release-gates
     runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     strategy:
       fail-fast: false
       matrix:
@@ -219,12 +229,12 @@ jobs:
             os_name: linux
             arch: x86_64
             python_version: "3.15t"
-          - runner: macos-14
+          - runner: macos-latest
             target: aarch64-apple-darwin
             os_name: macos
             arch: arm64
             python_version: "3.14t"
-          - runner: macos-14
+          - runner: macos-latest
             target: aarch64-apple-darwin
             os_name: macos
             arch: arm64

@@ -16,7 +16,7 @@ This document provides the ground-truth architectural reference for **`libtpu-rs
 8. [Distributed Coordination, 2D/3D Twisted-Torus ICI & MegaScale DCN (`distributed/*`)](#8-distributed-coordination-2d3d-twisted-torus-ici--megascale-dcn-distributed)
 9. [C11 ABI, 138-Slot `PJRT_Api` & 18-Node Extension Chain (`libtpu-c-api` & `cpp/src/libtpu.h`)](#9-c11-abi-138-slot-pjrt_api--18-node-extension-chain-libtpu-c-api--cppsrclibtpuh)
 10. [Zero-Exception C++20 RAII & Monadic `Result<T>` SDK (`cpp/src/libtpu.hpp`)](#10-zero-exception-c20-raii--monadic-resultt-sdk-cppsrclibtpuhpp)
-11. [Drop-In Python Wheel, `PyO3` (`abi3`) Extensions, DLPack & Live JAX (`libtpu-py` & `python/`)](#11-drop-in-python-wheel-pyo3-abi3-extensions-dlpack--live-jax-libtpu-py--python)
+11. [Drop-In Python Wheel, `PyO3` (`abi3` + Free-Threaded) Extensions, DLPack & Live JAX (`libtpu-py` & `python/`)](#11-drop-in-python-wheel-pyo3-abi3--free-threaded-extensions-dlpack--live-jax-libtpu-py--python)
 12. [Zero-Bypass 100% Doc & 100% Function/Line/Branch Coverage Gate (`scripts/pre_commit.py`)](#12-zero-bypass-100-doc--100-functionlinebranch-coverage-gate-scriptspre_commitpy)
 
 ---
@@ -32,7 +32,7 @@ Google's closed-source `libtpu` Python wheel bundles two native shared libraries
 3. **Strong Domain Typing (`INV-3`)**: `#[repr(transparent)]` checked-arithmetic hardware/memory/ISA newtypes in Rust, `-fno-exceptions -fno-rtti` `enum class` / `std::span` / `Result<T>` in C++20, and `mypy --strict` + PEP 561 `.pyi` stubs in Python.
 4. **Zero Panics or Unchecked Indexing (`INV-4`)**: Zero `.unwrap()`, `.expect()`, `panic!()`, `todo!()`, `unimplemented!()`, `unreachable!()`, or unchecked `slice[idx]`, plus 100% `ffi_catch_unwind` at every `extern "C"` boundary.
 5. **Single Unified `derive_more` Error Enum (`INV-5`)**: Zero `anyhow` or `thiserror`; every fallible Rust function returns `Result<T, LibTpuError>` using the single workspace-wide `LibTpuError` enum in `crates/libtpu-core/src/error.rs`.
-6. **1:1 `.proto` <-> `.rs` Synchronization (`INV-6`)**: All **738** reconstructed `.proto` schemas in `docs/reverse_engineering/protos/` together with the **6** pure-Rust extension schemas in `protos/libtpu_ext/` compile directly into the active Rust `prost` structs (`7,266` generated messages, `1,139` enums) with zero hand-written `*Proto` structs outside `OUT_DIR`.
+6. **1:1 `.proto` <-> `.rs` Synchronization (`INV-6`)**: All **738** reconstructed `.proto` schemas in `docs/reverse_engineering/protos/` together with the **6** pure-Rust extension schemas in `protos/libtpu_ext/` (`744` `.proto` files total) compile directly via 6 Tarjan-SCC shard crates (`crates/libtpu-proto-s0..s5`) into the active Rust `prost` structs (**`7,267`** generated messages — `7,187` carved + `80` extension — and **`1,139`** enums) with zero hand-written `*Proto` structs outside `OUT_DIR`.
 
 ---
 
@@ -41,7 +41,7 @@ Google's closed-source `libtpu` Python wheel bundles two native shared libraries
 ```mermaid
 flowchart TD
     subgraph External["Host Frameworks & Callers"]
-        JAX["JAX / OpenXLA / PyTorch-XLA<br/>(dlopen GetPjrtApi + 17 Extensions)"]
+        JAX["JAX / OpenXLA / PyTorch-XLA<br/>(dlopen GetPjrtApi + 18 Extensions)"]
         CppApp["C11 & C++20 Applications<br/>(cpp/src/libtpu.h & libtpu.hpp)"]
         PyApp["Python Applications<br/>(import libtpu / libtpu.sdk)"]
     end
@@ -57,19 +57,19 @@ flowchart TD
         CppSdk["cpp/src/libtpu.hpp & libtpu.cpp<br/>(RAII Handles + Monadic Result&lt;T&gt;)"]
     end
 
-    subgraph CApi["C ABI Layer (crates/libtpu-c-api -> libtpu.so / .dylib / .dll)"]
+    subgraph CApi["C ABI Layer (crates/libtpu-c-api -> libtpu.so / .dylib / tpu.dll)"]
         PjrtVtbl["pjrt_vtable.rs & pjrt_*_api/<br/>PJRT_Api v0.117 (1,144 B, 138 Slots)"]
         ExtChain["extensions.rs & extensions/*<br/>18 Chained TPU Extensions (PJRT_FFI .. PJRT_Profiler)"]
         SdkVtbl["sdk_api.rs<br/>LibtpuSdk_Api v0.1 (144 B, 17 Slots)"]
         LegacyTf["legacy_tf_api/*<br/>TfTpu_*, TpuDriverFn (224 B), Profiler, Embedding"]
     end
 
-    subgraph Core["Pure-Rust Core (crates/libtpu-core)"]
-        ErrTypes["error.rs & types/* & config.rs<br/>LibTpuError (derive_more) + 29 ElementTypes + Newtypes"]
-        Proto["proto/* & build.rs & protos/libtpu_ext/*<br/>738 + 6 .proto Schemas -> 7,266 Generated Prost Structs"]
+    subgraph Core["Pure-Rust Core (crates/libtpu-core & libtpu-proto-s0..s5)"]
+        ErrTypes["error.rs & types/* & config.rs<br/>LibTpuError (125 Variants, derive_more) + 29 ElementTypes + Newtypes"]
+        Proto["proto/* & crates/libtpu-proto-s0..s5 & protos/libtpu_ext/*<br/>738 + 6 .proto Schemas -> 7,267 Generated Prost Structs & 1,139 Enums"]
         Compiler["compiler/*<br/>MLIR v1-v6 / VHLO / StableHLO / Shardy / Mosaic -> Middle-End -> LLO -> VLIW & SparseCore"]
-        Dist["distributed/*<br/>HTTP/2 gRPC CoordinationService + 2D/3D ICI + MegaScale DCN"]
-        Hal["hal/*<br/>Sysfs 0x1ae0 + VFIO/Gasket + Real CSR Maps + LinuxDeviceHal + VirtualVfioGasketDevice"]
+        Dist["distributed/*<br/>HTTP/2 gRPC CoordinationService (19 RPCs) + 2D/3D ICI + MegaScale DCN"]
+        Hal["hal/*<br/>Sysfs 0x1ae0 + VFIO/Gasket + Non-Unix Host + Real CSR Maps + LinuxDeviceHal + VirtualVfioGasketDevice"]
         Elf["elf/*<br/>ELF64/Mach-O, CFI/RTTI, Brotli CSRs & protodesc_cold Carver"]
     end
 
@@ -86,7 +86,7 @@ flowchart TD
 
 ## 3. Unified Error Model & Strong Domain Typing
 
-- **Single `LibTpuError` (`crates/libtpu-core/src/error.rs`)**: Derived solely via `derive_more::{Display, Error, From}`, carrying structured context variants for binary forensics, protobuf wire/reflection errors, MLIR/VHLO/StableHLO/Shardy/Mosaic diagnostics, MSA OOM, LLO scheduling/register allocation, VLIW/SparseCore codecs, `VFIO`/`Gasket`/`dma-buf`/`mmap` syscalls, hardware CSR/ECC/watchdog faults, `CoordinationService`/ICI/MegaScale errors, and FFI struct-size/null-pointer checks. Converts losslessly to `PjrtErrorCode` (`0..=16`), `LibtpuSdkErrorCode`, `tensorflow.StatusProto`, `MegaScaleRuntimeError`, and `PJRT_Error_ForEachPayload`.
+- **Single `LibTpuError` (`crates/libtpu-core/src/error.rs`, `125` variants)**: Derived solely via `derive_more::{Display, Error, From}`, carrying structured context variants for binary forensics, protobuf wire/reflection errors, MLIR/VHLO/StableHLO/Shardy/Mosaic diagnostics, MSA OOM, LLO scheduling/register allocation, VLIW/SparseCore codecs, `VFIO`/`Gasket`/`dma-buf`/`mmap` syscalls, hardware CSR/ECC/watchdog faults, `CoordinationService`/ICI/MegaScale errors, and FFI struct-size/null-pointer checks. Converts losslessly to `PjrtErrorCode` (`0..=16`), `LibtpuSdkErrorCode`, `tensorflow.StatusProto`, `MegaScaleRuntimeError`, and `PJRT_Error_ForEachPayload`.
 - **Hardware, Memory & ISA Newtypes (`crates/libtpu-core/src/types/`)**:
   - `#[repr(transparent)]` checked-arithmetic types: `PcieDomainBusDevFn`, `PcieVendorId`, `PcieDeviceId`, `BarIndex`, `MmioOffset`, `IovaAddress`, `HbmAddress`, `VmemAddress`, `SmemAddress`, `CmemAddress`, `SpMemAddress`, `ImemPc`, `SregIndex`, `VregIndex`, `MregIndex`, `PredRegIndex`, `SyncFlagIndex`, `SublaneCount`, `LaneCount`, `CoreId`, `ChipId`, `HostId`, `SliceId`, `TaskId`, `CommunicatorId`, and `ChannelId`.
   - Exact scalar codecs, sub-byte lane packing/unpacking, NaN/Inf handling, and stochastic rounding across all **29 OpenXLA `ElementType`s** (including `S2`/`U2`, `S4`/`U4`, FP4 `F4E2M1FN`, FP8 `F8E4M3FN` / `F8E5M2` / `F8E4M3B11FNUZ` / `F8E4M3FNUZ` / `F8E5M2FNUZ` / `F8E8M0FNU`, `BF16`, `F16`, `F32`, `F64`, `C64`, `C128`).
@@ -97,7 +97,7 @@ flowchart TD
 
 `docs/reverse_engineering/protos/` contains all **738** `.proto` files reconstructed verbatim from `libtpu.so`'s embedded `protodesc_cold` descriptor pool (covering the **293** TPU/XLA/HLO/PJRT/Shardy/DeepSea/BarnaCore/MegaScale/XPlane/CoordinationService domain catalog schemas plus all transitive Google/Protobuf/RPC/TF imports), complemented by `protos/libtpu_ext/*.proto` (**6** pure-Rust extension schemas for HLO passes, Shardy/Mosaic/LLO metadata, MegaScale, and XPlane profiler RPCs).
 
-- **Dual-Root Single Source of Truth (`crates/libtpu-core/build.rs`)**: Preserves the exact **738**-file `PROTODESC_COLD_293_CATALOG` forensic manifest while compiling all **744** `.proto` files via `protox` + `prost-build` into `OUT_DIR` (`generated_prost_schemas`, **7,266** message structs, **1,139** enums) and auto-generating `ProtoSchemaMessage` implementations (`full_name()`, `descriptor()`, binary `encode`/`decode`, canonical ProtoJSON transcode, textproto transcode, SHA-256 & HighwayHash64 fingerprinting).
+- **Dual-Root Single Source of Truth (`crates/proto_codegen_shared.rs`, `crates/libtpu-proto-s0..s5` & `crates/libtpu-core/build.rs`)**: Preserves the exact **738**-file `PROTODESC_COLD_293_CATALOG` forensic manifest while partitioning and compiling all **744** `.proto` files via Tarjan SCC sharding + `protox` + `prost-build` into `OUT_DIR` (`generated_prost_schemas`, **`7,267`** message structs — `7,187` carved + `80` extension — and **`1,139`** enums) and auto-generating `ProtoSchemaMessage` implementations (`full_name()`, `descriptor()`, binary `encode`/`decode`, canonical ProtoJSON transcode, textproto transcode, SHA-256 & HighwayHash64 fingerprinting).
 - **Zero Duplicate Structs**: `crates/libtpu-core/src/proto/{descriptor,xla_data,hlo,pjrt,tpu,deepsea,megascale,xplane}.rs` re-export and operate directly on the generated `prost` types; `scripts/pre_commit.py proto-sync` forbids any manual `#[derive(prost::Message)]` or hand-written `pub struct *Proto` / `pub enum *Proto` outside `OUT_DIR` and verifies 1:1 field/tag bijection.
 
 ---
@@ -105,7 +105,7 @@ flowchart TD
 ## 5. Binary Forensics & Differential Oracle (`elf/*` & `scripts/*`)
 
 - **`elf/proto_carver.rs` & `scripts/re_extract.py`**: Carves `protodesc_cold` wire-format `FileDescriptorProto` blobs, verifies topological dependency closure, and validates round-trip `FileDescriptorSet` parity (`golden_proto_descriptors.json`).
-- **`elf/carver.rs` & `csr_register_map.json`**: Scans `FileToc` tables (verifying 16-byte MD5 checksums) and decompresses embedded Brotli (`*_pf_csrs.br`, `*_error_collector_error_sources.br`) hardware register maps plus **194,929** static `.lrodata` CSR descriptors across Cloud TPU `v2` (`jf`), `v3` (`df`), `v4`/`v4lite` (`pf`), `v5e`/`v5p` (`vf`), `v6e` (`gf`), and `v7x` (`iw`).
+- **`elf/carver.rs` & `csr_register_map.json`**: Scans `FileToc` tables (verifying 16-byte MD5 checksums) and decompresses embedded Brotli (`*_pf_csrs.br`, `*_error_collector_error_sources.br`) hardware register maps (**2,542** mapped BAR0/GCSR register entries) plus **194,929** unique (**198,737** summed across 8 generations, as `V2`/`V3` share the 3,808-entry `jxc` catalog) static `.lrodata` CSR descriptors across Cloud TPU `v2` (`jf`), `v3` (`df`), `v4`/`v4lite` (`pf`), `v5e`/`v5p` (`vf`), `v6e` (`gf`), and `v7x` (`iw`).
 - **`elf/symbols.rs`, `elf/relocations.rs`, `elf/disassembler.rs` & `scripts/ghidra_lift_isa_and_abi.py`**: Decodes Itanium C++ ABI RTTI (`_ZTI*`, `_ZTV*`), `.eh_frame` / `.eh_frame_hdr` CIE/FDE records (`x86_64` & `aarch64`), dynamic vtable relocations, `PJRT_*_Args` `struct_size` prologues, VLIW slot encodings, and `Gasket`/`VFIO` ioctls.
 - **`scripts/differential_oracle.py`, `fetch_artifacts.py` & `sync_oss_anchors.py`**: Deterministic PyPI `libtpu` wheel verifier/differ, OpenXLA/LLVM/StableHLO/Shardy/JAX/Linux UAPI anchor synchronizer, and AOT compiler + `LD_PRELOAD` MMIO trace differential oracle.
 
@@ -131,8 +131,8 @@ flowchart TD
 ## 7. Linux Kernel Driver (`VFIO` & `Gasket`), Real CSR Maps & Hardware Emulator (`hal/*`)
 
 - **PCIe `0x1ae0` Sysfs Discovery & IOMMU (`hal/pcie.rs`, `hal/iommu.rs`)**: Enumerates `/sys/bus/pci/devices/*` (`0x0027` v2/v3, `0x0056` v4, `0x005e` v4lite, `0x0063` v5e, `0x0062` v5p, `0x006f` v6e, `0x0076`/`0x007f`/`0x0073` v7x), manages `VFIO` (`0x3B`, `VFIO_TYPE1v2_IOMMU`, BAR `mmap`, MSI-X `VFIO_DEVICE_SET_IRQS`) and `Gasket` (`0xDC`, page-table partitioning, `MAP_BUFFER`, `MAP_DMABUF`, `SET_EVENTFD`) lifecycles, buddy/slab HBM allocation, hugepage staging pools, and zero-copy `dma-buf` import/export.
-- **Non-Simulated `LinuxDeviceHal` (`hal/linux.rs`)**: Performs real IMEM relocation, H2D DMA descriptor ring enqueueing, BAR0/GCSR TensorCore & SparseCore CSR initialization using authentic `csr_register_map.json` offsets, asynchronous MSI-X `eventfd` completion (`PJRT_Event_OnReady`), `HostCommandEnvelopeProto` host-callback servicing, ECC/watchdog fault decoding, and hardware XPlane harvesting.
-- **Cycle-Accurate `VirtualVfioGasketDevice` (`hal/emulator/*`)**: Standalone virtual PCIe/VFIO/Gasket kernel backend trapping exact `VFIO`/`Gasket` ioctls and BAR0/BAR2 MMIO doorbells, decoding and executing the real generation-specific binary VLIW & SparseCore bitstreams from IMEM/HBM across `[8, 128]` vector lanes and `128x128`/`256x256` MXU systolic arrays, and signaling OS `eventfd`s.
+- **Non-Simulated `LinuxDeviceHal` (`hal/linux.rs`, `hal/syscall.rs`)**: Performs real IMEM relocation, H2D DMA descriptor ring enqueueing, BAR0/GCSR TensorCore & SparseCore CSR initialization using authentic `csr_register_map.json` offsets (`2,542` mapped entries), asynchronous MSI-X `eventfd` completion (`PJRT_Event_OnReady`), `HostCommandEnvelopeProto` host-callback servicing, ECC/watchdog fault decoding, and hardware XPlane harvesting. On non-Unix targets (Windows MSVC), `hal/syscall.rs` provides an in-process page-aligned anonymous BAR and condvar event-pipe backend; `create_default_hal()` auto-probes `/sys/bus/pci/devices` + `/dev` for PCIe `0x1ae0` hardware before falling back to `VirtualVfioGasketDevice`, while `PJRT_Client_Create` (`HalBackend::from_config`) currently defaults to `LinuxDeviceHal<VirtualVfioGasketDevice>` (or `SimulatedTpuHal` via `--tpu_driver_mode=simulated`).
+- **Cycle-Accurate `VirtualVfioGasketDevice` (`hal/emulator/*`)**: Standalone virtual PCIe/VFIO/Gasket kernel backend trapping exact `VFIO`/`Gasket` ioctls and BAR0/BAR2 MMIO doorbells, decoding and executing the real generation-specific binary VLIW & SparseCore bitstreams from IMEM/HBM across `[8, 128]` vector lanes and `128x128`/`256x256` MXU systolic arrays, and signaling OS `eventfd`s (or virtual event pipes on Windows).
 
 ---
 
@@ -171,7 +171,7 @@ flowchart TD
 | 17 | `PJRT_RawBuffer_Extension` | `8` (`0x08`) | `80` | `7` |
 | 18 | `PJRT_Profiler_Extension` | `1` (`0x01`) | `40` | `2` (`PLUGIN_Profiler_Api` `104` B, `11` slots + header) |
 
-- **Additional C Vtables & Unified Telemetry (`SharedTpuRuntimeState`)**: `LibtpuSdk_Api` v0.1 (`144` B, 17 slots), `TpuDriverFn` (`224` B, 28 slots), `TfTpu_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*` (75 `libtpu.so` dynamic exports + `PyInit_sdk`), and ergonomic `libtpu_rs_*` C helpers—all unified over `libtpu_core::runtime_state::SharedTpuRuntimeState`.
+- **Additional C Vtables & Unified Telemetry (`SharedTpuRuntimeState`)**: `LibtpuSdk_Api` v0.1 (`144` B, `17` slots), `TpuDriverFn` (`224` B, `28` slots), `TfTpu_*`, `TpuTopology_*`, `TpuProfiler_*`, `TpuEmbeddingEngine_*` (**75** Google `libtpu.so` `.dynsym` exports + `PyInit_sdk` + `3` legacy `TpuDriver_*` = **79** ABI-gated symbols, plus `45` ergonomic `libtpu_rs_*` helpers and directly exported vtable functions totaling **522** `#[unsafe(no_mangle)] extern "C"` symbols in `libtpu-c-api`, alongside **3** CPython module initializers in `libtpu-py`) — all unified over `libtpu_core::runtime_state::SharedTpuRuntimeState`.
 
 ---
 
@@ -199,7 +199,7 @@ Built via two-level CMake (`cpp/CMakeLists.txt` + `cpp/src/CMakeLists.txt`) unde
 1. **`fmt`**: `cargo fmt --all -- --check`, `ruff format --check`, and `clang-format --dry-run --Werror` across `.h`, `.hpp`, `.c`, and `.cpp`.
 2. **`build`**: `cargo build --workspace --all-targets` and `cmake -B cpp/build -S cpp -DENABLE_COVERAGE=ON && cmake --build cpp/build`.
 3. **`clippy` (`lint`)**: Strictest workspace Clippy (`-D warnings`), `cargo doc` (`-D missing_docs -D rustdoc::broken_intra_doc_links`), `ruff check` (`D` Google pydocstyle), `mypy --strict`, `doxygen` (`WARN_AS_ERROR = YES`, `WARN_NO_PARAMDOC = YES`), and AST auditors banning `unwrap`/`expect`/`panic`/`anyhow`/`thiserror`/`allow(dead_code)`/`coverage(off)`/`pragma: no cover` and verifying `# Arguments` / `Args:` / `@param` completeness.
-4. **`abi`**: Source & `ctypes.CDLL` binary verification of all 79 exported symbols, `PJRT_Api` (1,144 B, 138 slots), 17 PJRT extensions, `LibtpuSdk_Api` (144 B), and `TpuDriverFn` (224 B).
-5. **`proto-sync`**: Bidirectional AST + `prost-build` verification across all 744 `.proto` files (`738` `protodesc_cold` + `6` `protos/libtpu_ext/`) and 7,266 generated Rust message structs.
+4. **`abi`**: Source & `ctypes.CDLL` binary verification of all **79** ABI-gated exported symbols (`75` Google `libtpu.so` `.dynsym` functions + `PyInit_sdk` + `3` legacy `TpuDriver_*`), `PJRT_Api` (`1,144` B, `138` slots, `v0.117`), all **18** chained PJRT extensions (`157` struct slots / `150` active + `11` `PLUGIN_Profiler_Api` slots = `162` golden functions), `LibtpuSdk_Api` (`144` B, `17` slots), and `TpuDriverFn` (`224` B, `28` slots).
+5. **`proto-sync`**: Bidirectional AST + `prost-build` verification across all **744** `.proto` files (`738` `protodesc_cold` + `6` `protos/libtpu_ext/`) and **`7,267`** generated Rust message structs (`1,139` enums).
 6. **`test`**: `cargo test --workspace --all-targets`, `pytest --cov=libtpu --cov=scripts --cov-branch --cov-fail-under=100` (including live `jax`), and `ctest --test-dir cpp/build` (`test_libtpu` + `test_libtpu_c11`, plus ASan/UBSan in CI).
 7. **`shields`**: Enforces **100.0% doc coverage** and **100.0% function, line, and branch/region test coverage** across Rust, Python, and C11/C++20, verifying `README.md` shields are up to date.

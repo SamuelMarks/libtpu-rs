@@ -438,11 +438,11 @@ fn phase7_pinned_dma_hugetlb_and_eventfd_fallback_branches() -> LibTpuResult<()>
     let fallback_4k = PinnedDmaBuffer::allocate_with_mapper(2_097_152, true, &mut |sz, huge| {
         if huge {
             let probe = super::iommu::os_mmap_anonymous(4096, true);
-            if probe != libc::MAP_FAILED {
+            if probe != super::iommu::DMA_MAP_FAILED {
                 // SAFETY: `probe` is a valid 4096-byte mapping returned by `os_mmap_anonymous`.
-                let _ = unsafe { libc::munmap(probe, 4096) };
+                unsafe { super::iommu::os_munmap_anonymous(probe, 4096) };
             }
-            libc::MAP_FAILED
+            super::iommu::DMA_MAP_FAILED
         } else {
             super::iommu::os_mmap_anonymous(sz, false)
         }
@@ -458,8 +458,10 @@ fn phase7_pinned_dma_hugetlb_and_eventfd_fallback_branches() -> LibTpuResult<()>
     drop(small_with_hugetlb);
 
     assert!(
-        PinnedDmaBuffer::allocate_with_mapper(4096, false, &mut |_sz, _huge| libc::MAP_FAILED)
-            .is_err()
+        PinnedDmaBuffer::allocate_with_mapper(4096, false, &mut |_sz, _huge| {
+            super::iommu::DMA_MAP_FAILED
+        })
+        .is_err()
     );
 
     let direct_ev = super::syscall::select_eventfd_or_pipe(

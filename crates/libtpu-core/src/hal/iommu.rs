@@ -407,21 +407,26 @@ pub struct PinnedDmaBuffer {
     pub is_hugetlb: bool,
 }
 
+/// Sentinel pointer (`usize::MAX as *mut c_void`, matching POSIX `MAP_FAILED`) returned when
+/// anonymous host DMA mapping fails.
+pub(crate) const DMA_MAP_FAILED: *mut std::ffi::c_void = usize::MAX as *mut std::ffi::c_void;
+
 /// Platform `MAP_HUGETLB` flag (`libc::MAP_HUGETLB` on Linux, `0` on non-Linux POSIX).
 #[cfg(target_os = "linux")]
 const PLATFORM_MAP_HUGETLB_FLAG: libc::c_int = libc::MAP_HUGETLB;
 
 /// Platform `MAP_HUGETLB` flag (`0` on non-Linux POSIX).
-#[cfg(not(target_os = "linux"))]
+#[cfg(all(unix, not(target_os = "linux")))]
 const PLATFORM_MAP_HUGETLB_FLAG: libc::c_int = 0;
 
-/// Invokes anonymous private `libc::mmap` with optional `MAP_HUGETLB` hint.
+/// Invokes anonymous private `libc::mmap` with optional `MAP_HUGETLB` hint on Unix targets.
 ///
 /// # Arguments
 ///
 /// * `size_bytes` - Mapping byte length.
 /// * `request_hugetlb` - Whether to include [`PLATFORM_MAP_HUGETLB_FLAG`] in `mmap` flags.
-pub(crate) fn os_mmap_anonymous(size_bytes: usize, request_hugetlb: bool) -> *mut libc::c_void {
+#[cfg(unix)]
+pub(crate) fn os_mmap_anonymous(size_bytes: usize, request_hugetlb: bool) -> *mut std::ffi::c_void {
     let hugetlb_bits = if request_hugetlb {
         PLATFORM_MAP_HUGETLB_FLAG
     } else {
@@ -433,10 +438,67 @@ pub(crate) fn os_mmap_anonymous(size_bytes: usize, request_hugetlb: bool) -> *mu
             std::ptr::null_mut(),
             size_bytes,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | hugetlb_bits,
+            libc::MAP_PRIVATE | libc::MAP_ANON | hugetlb_bits,
             -1,
             0,
         )
+    }
+}
+
+/// Allocates a 4096-byte page-aligned zeroed host DMA buffer on non-Unix targets.
+///
+/// # Arguments
+///
+/// * `size_bytes` - Mapping byte length.
+/// * `request_hugetlb` - Whether a hugepage mapping was requested (returns [`DMA_MAP_FAILED`] so the `4 KiB` fallback path executes).
+#[cfg(not(unix))]
+pub(crate) fn os_mmap_anonymous(size_bytes: usize, request_hugetlb: bool) -> *mut std::ffi::c_void {
+    if request_hugetlb {
+        return DMA_MAP_FAILED;
+    }
+    let Ok(layout) = std::alloc::Layout::from_size_align(size_bytes.max(4096), 4096) else {
+        return DMA_MAP_FAILED;
+    };
+    // SAFETY: `layout` has non-zero size (`>= 4096`) and power-of-two alignment (`4096`).
+    let ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+    if ptr.is_null() {
+        DMA_MAP_FAILED
+    } else {
+        ptr.cast::<std::ffi::c_void>()
+    }
+}
+
+/// Releases an anonymous host DMA mapping previously returned by [`os_mmap_anonymous`] on Unix targets.
+///
+/// # Arguments
+///
+/// * `ptr` - Non-sentinel base pointer returned by [`os_mmap_anonymous`].
+/// * `size_bytes` - Mapped byte length passed to [`os_mmap_anonymous`].
+///
+/// # Safety
+///
+/// `ptr` and `size_bytes` must identify a live mapping returned by [`os_mmap_anonymous`].
+#[cfg(unix)]
+pub(crate) unsafe fn os_munmap_anonymous(ptr: *mut std::ffi::c_void, size_bytes: usize) {
+    // SAFETY: Caller guarantees `ptr` and `size_bytes` came from `os_mmap_anonymous`.
+    let _ = unsafe { libc::munmap(ptr, size_bytes) };
+}
+
+/// Releases a page-aligned host DMA allocation previously returned by [`os_mmap_anonymous`] on non-Unix targets.
+///
+/// # Arguments
+///
+/// * `ptr` - Non-sentinel base pointer returned by [`os_mmap_anonymous`].
+/// * `size_bytes` - Mapped byte length passed to [`os_mmap_anonymous`].
+///
+/// # Safety
+///
+/// `ptr` and `size_bytes` must identify a live allocation returned by [`os_mmap_anonymous`].
+#[cfg(not(unix))]
+pub(crate) unsafe fn os_munmap_anonymous(ptr: *mut std::ffi::c_void, size_bytes: usize) {
+    if let Ok(layout) = std::alloc::Layout::from_size_align(size_bytes.max(4096), 4096) {
+        // SAFETY: Caller guarantees `ptr` was allocated with `layout` by `os_mmap_anonymous`.
+        unsafe { std::alloc::dealloc(ptr.cast::<u8>(), layout) };
     }
 }
 
@@ -463,21 +525,21 @@ impl PinnedDmaBuffer {
     ///
     /// * `len` - Minimum buffer capacity in bytes (`>= 1`).
     /// * `attempt_hugetlb` - Whether to attempt a `2 MiB` hugepage mapping when `len >= 2 MiB`.
-    /// * `mapper` - Mutable trait-object closure returning an `mmap` pointer or `libc::MAP_FAILED`.
+    /// * `mapper` - Mutable trait-object closure returning an `mmap` pointer or [`DMA_MAP_FAILED`].
     ///
     /// # Errors
     ///
-    /// Returns [`LibTpuError::HardwareIoError`] if the fallback `4 KiB` mapping returns `MAP_FAILED`.
+    /// Returns [`LibTpuError::HardwareIoError`] if the fallback `4 KiB` mapping returns [`DMA_MAP_FAILED`].
     pub(crate) fn allocate_with_mapper(
         len: usize,
         attempt_hugetlb: bool,
-        mapper: &mut dyn FnMut(usize, bool) -> *mut libc::c_void,
+        mapper: &mut dyn FnMut(usize, bool) -> *mut std::ffi::c_void,
     ) -> LibTpuResult<Self> {
         let page_aligned_bytes = len.max(4096).div_ceil(4096) * 4096;
         if attempt_hugetlb && page_aligned_bytes >= 2_097_152 {
             let hugepage_aligned_bytes = page_aligned_bytes.div_ceil(2_097_152) * 2_097_152;
             let huge_ptr = mapper(hugepage_aligned_bytes, true);
-            if huge_ptr != libc::MAP_FAILED {
+            if huge_ptr != DMA_MAP_FAILED {
                 return Ok(Self {
                     vaddr: huge_ptr as usize,
                     mapped_len: hugepage_aligned_bytes,
@@ -486,7 +548,7 @@ impl PinnedDmaBuffer {
             }
         }
         let ptr = mapper(page_aligned_bytes, false);
-        if ptr == libc::MAP_FAILED {
+        if ptr == DMA_MAP_FAILED {
             return Err(LibTpuError::HardwareIoError {
                 operation: "mmap(PinnedDmaBuffer)",
                 errno: 12,
@@ -528,8 +590,8 @@ impl PinnedDmaBuffer {
 
 impl Drop for PinnedDmaBuffer {
     fn drop(&mut self) {
-        // SAFETY: `self.vaddr` and `self.mapped_len` were returned by `libc::mmap` in `Self::allocate`.
-        let _ = unsafe { libc::munmap(self.vaddr as *mut libc::c_void, self.mapped_len) };
+        // SAFETY: `self.vaddr` and `self.mapped_len` were returned by `os_mmap_anonymous` in `Self::allocate`.
+        unsafe { os_munmap_anonymous(self.vaddr as *mut std::ffi::c_void, self.mapped_len) };
     }
 }
 

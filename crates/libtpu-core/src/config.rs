@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::OnceLock;
 use winnow::Parser;
 use winnow::ascii::{digit1, multispace0};
-use winnow::combinator::{delimited, separated};
+use winnow::combinator::delimited;
 use winnow::error::ContextError;
 use winnow::token::one_of;
 
@@ -25,10 +25,17 @@ use winnow::token::one_of;
 ///
 /// # Errors
 ///
-/// Returns a `winnow` [`ContextError`] if the input does not match three positive integers.
-fn winnow_parse_bounds_vec(input: &mut &str) -> Result<Vec<u32>, ContextError> {
-    let uint_token = delimited(multispace0, digit1.try_map(str::parse::<u32>), multispace0);
-    separated(1..=4, uint_token, one_of([',', 'x', 'X'])).parse_next(input)
+/// Returns a `winnow` [`ContextError`] if the input does not match three unsigned integers.
+fn winnow_parse_bounds_triple(input: &mut &str) -> Result<(u32, u32, u32), ContextError> {
+    (
+        delimited(multispace0, digit1.try_map(str::parse::<u32>), multispace0),
+        one_of([',', 'x', 'X']),
+        delimited(multispace0, digit1.try_map(str::parse::<u32>), multispace0),
+        one_of([',', 'x', 'X']),
+        delimited(multispace0, digit1.try_map(str::parse::<u32>), multispace0),
+    )
+        .map(|(x, _, y, _, z)| (x, y, z))
+        .parse_next(input)
 }
 
 /// Process-wide global [`TpuInitConfig`] synchronized across `TfTpu_Initialize`,
@@ -156,25 +163,19 @@ impl TpuInitConfig {
     ///
     /// Returns [`LibTpuError::InvalidArgument`] if the string does not contain 3 positive integers.
     pub fn parse_bounds(raw: &str) -> LibTpuResult<ChipCoordinates> {
-        let coords = winnow_parse_bounds_vec.parse(raw.trim()).map_err(|_| {
+        let (x, y, z) = winnow_parse_bounds_triple.parse(raw.trim()).map_err(|_| {
             LibTpuError::InvalidArgument {
                 parameter: "bounds",
                 reason: format!("Expected 3 coordinates 'x,y,z', got '{raw}'"),
             }
         })?;
-        let [x, y, z] = coords.as_slice() else {
-            return Err(LibTpuError::InvalidArgument {
-                parameter: "bounds",
-                reason: format!("Expected 3 coordinates 'x,y,z', got '{raw}'"),
-            });
-        };
-        if *x == 0 || *y == 0 || *z == 0 {
+        if x == 0 || y == 0 || z == 0 {
             return Err(LibTpuError::InvalidArgument {
                 parameter: "bounds",
                 reason: String::from("Mesh bounds must be strictly positive (>= 1)"),
             });
         }
-        Ok(ChipCoordinates::new(*x, *y, *z))
+        Ok(ChipCoordinates::new(x, y, z))
     }
 
     /// Parses a whitespace-separated `LIBTPU_INIT_ARGS` string via `lexopt` and applies flags to this config.

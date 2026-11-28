@@ -319,8 +319,8 @@ def get_library_path() -> str:
     repo_root = pkg_dir.parent.parent
     pkg_candidates = [
         pkg_dir / "libtpu.dylib",
-        pkg_dir / "libtpu.so",
         pkg_dir / "tpu.dll",
+        pkg_dir / "libtpu.so",
     ]
     for candidate in pkg_candidates:
         if candidate.exists():

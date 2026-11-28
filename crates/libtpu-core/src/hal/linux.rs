@@ -327,6 +327,7 @@ impl HardwareDoorbellRing {
 /// # Arguments
 ///
 /// * `fd` - Open POSIX file descriptor.
+#[cfg(unix)]
 fn set_fd_nonblocking(fd: i32) {
     // SAFETY: `fcntl(fd, F_GETFL)` and `fcntl(fd, F_SETFL, ...)` are safe on any file descriptor (returning -1 on invalid fd).
     unsafe {
@@ -334,6 +335,14 @@ fn set_fd_nonblocking(fd: i32) {
         let _ = libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
     }
 }
+
+/// No-op nonblocking descriptor configuration on non-Unix hosts where event pipes are synchronized in-process.
+///
+/// # Arguments
+///
+/// * `_fd` - Virtual event descriptor handle.
+#[cfg(not(unix))]
+const fn set_fd_nonblocking(_fd: i32) {}
 
 /// Non-simulated Linux `Gasket` (`0xDC`) / `VFIO` (`0x3B`) Hardware Driver HAL (`LinuxDeviceHal`).
 ///
